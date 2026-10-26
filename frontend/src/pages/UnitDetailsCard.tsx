@@ -89,7 +89,8 @@ function DetailsForm({ details, onSave }: {
       <Field label="Bathrooms" id="unit-bathrooms" inputMode="decimal" {...field("bathrooms")} />
       <Field label="Square feet" id="unit-square-feet" inputMode="numeric" {...field("square_feet")} />
       <Field label="Market rent a month" id="unit-market-rent" inputMode="decimal" {...field("market_rent")} />
-      <div><Button type="submit">Save details</Button></div>
+      <div><Button type="submit"
+        says="Saves them; the old ones stay in the history. Listings show them; no lease's rent changes.">Save details</Button></div>
     </Form>
   );
 }

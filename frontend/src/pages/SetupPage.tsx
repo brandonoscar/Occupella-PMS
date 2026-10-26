@@ -146,7 +146,8 @@ function CompanyForm({ company, save }: { company: Company; save: Save }) {
       <Field label="ZIP code" id="company-zip" required={given} maxLength={20} value={address.postal_code} onChange={set("postal_code")} />
       <Field label="Replies to the company's emails go to (optional)" id="company-reply-to" type="email" maxLength={254}
         value={replyTo} onChange={(e) => setReplyTo(e.target.value)} />
-      <div><Button type="submit">Save</Button></div>
+      <div><Button type="submit"
+        says="Owners and tenants see the name and address in their portal. Nothing is sent; earlier details stay in the history.">Save</Button></div>
     </Form>
   );
 }
@@ -186,10 +187,11 @@ function FeesForm({ company, save }: { company: Company; save: Save }) {
         </>
       )}
       <Field label="NSF fee (empty for none)" id="default-nsf" inputMode="decimal" value={nsf} onChange={(e) => setNsf(e.target.value)} />
-      <p className="text-sm text-ink-muted">
-        {`A property already here keeps its own terms${nsf.trim() ? `; a new one charges ${money(nsf.trim())} for a returned payment` : ""}.`}
-      </p>
-      <div><Button type="submit">Save</Button></div>
+      {nsf.trim() && (
+        <p className="text-sm text-ink-muted">{`A new property charges ${money(nsf.trim())} for a returned payment.`}</p>
+      )}
+      <div><Button type="submit"
+        says="Properties added from now on start with these. A property already here keeps its own terms.">Save</Button></div>
     </Form>
   );
 }
@@ -221,7 +223,8 @@ function LogoCard({ company, refresh }: { company: Company; refresh: () => void 
             }} />
         </label>
         {company.logo && (
-          <Button variant="ghost" onClick={() => record("/api/company/logo/remove", {}, () => "The logo is removed.")}>Remove logo</Button>
+          <Button variant="ghost" says="Takes this logo off owners' and tenants' portals. Its file stays in the records."
+            onClick={() => record("/api/company/logo/remove", {}, () => "The logo is removed.")}>Remove logo</Button>
         )}
       </div>
       <Said>{said}</Said>

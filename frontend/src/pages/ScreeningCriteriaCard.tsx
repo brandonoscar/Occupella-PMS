@@ -92,7 +92,8 @@ function CriteriaForm({ criteria, save }: { criteria: ScreeningCriteria; save: (
         <textarea id="criteria-written" rows={4} maxLength={4000} value={written} onChange={(e) => setWritten(e.target.value)}
           className="rounded-sm border border-line-strong bg-sunken px-3 py-2 text-base text-ink" />
       </label>
-      <div><Button type="submit">Save</Button></div>
+      <div><Button type="submit"
+        says="Screenings from now on use these, and the apply page shows the words. Earlier screenings stay as they were.">Save</Button></div>
     </Form>
   );
 }

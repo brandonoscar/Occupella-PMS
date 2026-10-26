@@ -262,7 +262,8 @@ function RecurringRow({ item, record }: { item: RecurringWorkOrder; record: Reco
         }}>
           <Field label={`Stop "${item.summary}" from`} id={`end-${item.id}`} type="date" required value={ends}
             onChange={(e) => setEnds(e.target.value)} />
-          <Button type="submit" variant="secondary">Stop it</Button>
+          <Button type="submit" variant="secondary"
+            says="None of it opens from that day; work orders already opened stay as they are. It can't be restarted.">Stop it</Button>
         </Form>
       )}
     </li>
@@ -324,7 +325,8 @@ function NewRecurringForm({ books, record, opened }: { books: Portfolio; record:
         <option value="">None: staff assign each one</option>
         {books.vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
       </Select>
-      <div><Button type="submit">Add recurring work order</Button></div>
+      <div><Button type="submit"
+        says="A work order opens on each of its days, any already due right away. The vendor isn't emailed when one opens.">Add recurring work order</Button></div>
     </Form>
   );
 }
@@ -410,7 +412,7 @@ function NewWorkOrderForm({ opened }: { opened: (id: string) => void }) {
       <Field label="Title" id="work-order-summary" required maxLength={500} value={summary}
         onChange={(event) => setSummary(event.target.value)} />
       <DetailsFields draft={draft} change={(part) => setDraft({ ...draft, ...part })} />
-      <div><Button type="submit">Open work order</Button></div>
+      <div><Button type="submit" says="Opens it with no vendor yet; assign one with Next step. Nothing is sent to anyone.">Open work order</Button></div>
       <Notice tone="error">{error}</Notice>
     </Form>
   );
@@ -652,7 +654,8 @@ function ChargeForm({ order, record }: { order: WorkOrder; record: Recorder }) {
         onChange={(event) => setAmount(event.target.value)} />
       <Field label="Due" id="charge-due" type="date" required value={due} onChange={(event) => setDue(event.target.value)} />
       <Field label="Memo" id="charge-memo" required maxLength={200} value={memo} onChange={(event) => setMemo(event.target.value)} />
-      <div><Button type="submit">Charge</Button></div>
+      <div><Button type="submit"
+        says={`Adds ${amount.trim() ? `a ${money(amount.trim())}` : "this"} fee to the lease${due ? `, due ${usDate(due)}` : ""}. Nothing is paid now; the owner still pays the vendor's bill.`}>Charge</Button></div>
     </Form>
   );
 }
@@ -686,7 +689,7 @@ function DetailsForm({ order, record }: { order: WorkOrder; record: Recorder }) 
         (answer) => (answer.changed ? "Saved the details." : "Nothing changed."));
     }}>
       <DetailsFields draft={draft} change={(part) => setDraft({ ...draft, ...part })} />
-      <div><Button type="submit">Save</Button></div>
+      <div><Button type="submit" says="Saves these details; the old ones stay in the history. No one is emailed.">Save</Button></div>
     </Form>
   );
 }
@@ -738,7 +741,16 @@ function StepForm({ order, vendors, record }: { order: WorkOrder; vendors: Named
         </>
       )}
       <Field label="Note (optional)" id="step-note" maxLength={2000} value={note} onChange={(event) => setNote(event.target.value)} />
-      <div><Button type="submit">Record</Button></div>
+      <div><Button type="submit" says={STEP_SAYS[step]}>Record</Button></div>
     </Form>
   );
 }
+
+// What recording each step does (ADR 0010, rule 1). The vendor's email goes only while the server
+// sends email, the company has work orders to vendors on and the vendor has an email on file.
+const STEP_SAYS: Record<NextStep, string> = {
+  assigned: "Assigns them; it stays in the timeline. They're emailed the work order only if work order emails are on.",
+  scheduled: "Adds the visit to the timeline. The vendor is emailed the day only if work order emails are on.",
+  completed: "Closes the work order; no step can follow it. No one is emailed.",
+  cancelled: "Closes the work order as cancelled; no step can follow it. No one is emailed.",
+};

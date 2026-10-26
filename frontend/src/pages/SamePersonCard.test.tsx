@@ -116,7 +116,7 @@ describe("Other properties on a tenant's page", () => {
     const found = await within(panel).findByRole("list", { name: "Tenants found" });
     // Only other tenants: not this record, not an owner.
     expect(within(found).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
-      "Tenant 1 Unit 2, Property 3This is them",
+      "Tenant 1 Unit 2, Property 3This is themLinks the two for good: one portal sign-in, and each record keeps its own leases and money.",
     ]);
     fireEvent.click(within(found).getByRole("button", { name: "Same person: Tenant 1, Unit 2, Property 3" }));
 

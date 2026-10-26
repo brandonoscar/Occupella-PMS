@@ -114,7 +114,7 @@ function ContactDetails({
               onChange={(event) => setDraft({ ...draft, [field]: event.target.value })} />
           ))}
           <div className="flex gap-2 sm:col-span-2">
-            <Button type="submit" size="sm">Save contact details</Button>
+            <Button type="submit" size="sm" says="Saves these details; the old ones stay in the history. Nothing is sent to them.">Save contact details</Button>
             <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
           </div>
         </Form>

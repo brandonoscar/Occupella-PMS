@@ -54,7 +54,15 @@ export function RemoveTenantForm({ lease, person, record }: { lease: LeaseDetail
           {staying.map((p) => <option key={p.id} value={p.id}>Moves to {p.name}</option>)}
         </Select>
       )}
-      <div><Button type="submit">Take {person.name} off the lease</Button></div>
+      <div>
+        <Button type="submit" says={Number(held) <= 0
+          ? "No money moves. They can still read the lease in the portal, but file nothing under it."
+          : taker
+            ? `Their ${money(held)} deposit moves to ${taker.name}; nothing is paid out. They can still read the lease in the portal.`
+            : `Their ${money(held)} deposit stays theirs until move-out; nothing is paid out. They can still read the lease in the portal.`}>
+          Take {person.name} off the lease
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -96,10 +104,12 @@ export function EndLeaseForm({ lease, record }: { lease: LeaseDetail; record: Re
       {fee !== null && fee.early && fee.fee === null && (
         <p className="text-sm text-ink-muted">This lease's property charges no lease-break fee.</p>
       )}
-      <p className="text-sm text-ink-muted">
-        Rent for the days after the last day comes off. Return the deposit from Move-outs.
-      </p>
-      <div><Button type="submit">End lease</Button></div>
+      <div>
+        <Button type="submit"
+          says={`The lease ends on ${usDate(last)}; rent is charged only through that day${charging ? `, and the ${money(offered)} lease-break fee is charged` : ""}. The deposit is returned from Move-outs.`}>
+          End lease
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -140,7 +150,7 @@ export function HouseholdCards({ leaseId }: { leaseId: string }) {
   const off = (kind: Kind, id: string, what: string): RowAction[] => [{
     label: "Take off the lease",
     danger: true,
-    confirm: `Take ${what} off this lease?`,
+    confirm: `Take ${what} off this lease? Nothing is charged, refunded or sent. To put them back, add them again.`,
     onSelect: () => record(`/api/leases/${leaseId}/${kind}/${id}/remove`, {}, () => `${what} is off the lease.`),
   }];
   const section = (kind: Kind, title: string, rows: { id: string; what: string; cells: React.ReactNode[] }[]) => (
@@ -224,7 +234,11 @@ function GuarantorForm({ leaseId, record }: { leaseId: string; record: Recorder 
       <Field label="Name" id="guarantor-name" required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} />
       <Field label="Email" id="guarantor-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
       <Field label="Phone" id="guarantor-phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
-      <div><Button type="submit">Add guarantor</Button></div>
+      <div>
+        <Button type="submit" says="Adds them as the lease's guarantor. Nothing is sent to them, and they get no portal login.">
+          Add guarantor
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -241,7 +255,11 @@ function OccupantForm({ leaseId, record }: { leaseId: string; record: Recorder }
       <Field label="Name" id="occupant-name" required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} />
       <Field label="Relationship to the tenants" id="occupant-relationship" maxLength={100} value={relationship}
         onChange={(e) => setRelationship(e.target.value)} />
-      <div><Button type="submit">Add occupant</Button></div>
+      <div>
+        <Button type="submit" says="Adds them as living there, not as a tenant on the lease. Nothing is charged or sent.">
+          Add occupant
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -267,7 +285,13 @@ function PetForm({ leaseId, record }: { leaseId: string; record: Recorder }) {
         <input type="checkbox" checked={assistance} onChange={(e) => setAssistance(e.target.checked)} />
         An assistance animal (service or support): no pet rent, fee or deposit is charged for it
       </label>
-      <div><Button type="submit">Add pet</Button></div>
+      <div>
+        <Button type="submit" says={assistance
+          ? "Adds the assistance animal to the lease. No pet rent, fee or deposit is charged for it."
+          : "Adds the pet to the lease. Nothing is charged: add pet rent or a pet deposit yourself."}>
+          Add pet
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -290,7 +314,9 @@ function VehicleForm({ leaseId, record }: { leaseId: string; record: Recorder })
       <Field label="Color" id="vehicle-color" maxLength={30} value={color} onChange={(e) => setColor(e.target.value)} />
       <Field label="Plate" id="vehicle-plate" required maxLength={15} value={plate} onChange={(e) => setPlate(e.target.value)} />
       <Field label="Plate state" id="vehicle-state" maxLength={30} value={state} onChange={(e) => setState(e.target.value)} />
-      <div><Button type="submit">Add vehicle</Button></div>
+      <div>
+        <Button type="submit" says="Adds the vehicle to the lease. Nothing is charged or sent.">Add vehicle</Button>
+      </div>
     </Form>
   );
 }

@@ -134,7 +134,9 @@ function ProposeCard({ journal, refresh }: { journal: Journal; refresh: () => vo
               Add a line
             </Button>
           )}
-          <Button type="submit">Propose entry</Button>
+          <Button type="submit" says="It waits until another staff member who may approve presses Post. No money moves until then.">
+            Propose entry
+          </Button>
         </div>
         <p className="text-sm text-ink-subtle">
           Each line moves money from one account to another. Money moves to another trust bank
@@ -196,8 +198,9 @@ function EntryRow({ journal, entry, refresh, say }: {
       {entry.status === "waiting" && (
         <div className="flex flex-wrap items-end gap-3">
           {mayPost(journal, entry) ? (
-            <Button onClick={() =>
-              record(`/api/journal/${entry.id}/post`, {}, () => `Posted: ${entry.memo}.`)}>
+            <Button
+              says={`Moves ${money(entryTotal(entry))} as its lines say, dated ${usDate(entry.event_on)}. It isn't undone later: correct it with a new entry.`}
+              onClick={() => record(`/api/journal/${entry.id}/post`, {}, () => `Posted: ${entry.memo}.`)}>
               Post
             </Button>
           ) : (
@@ -228,7 +231,9 @@ function DeclineForm({ entry, record }: { entry: JournalEntry; record: Recorder 
     >
       <Field label="Why" id={`journal-why-${entry.id}`} required maxLength={1000} value={why}
         onChange={(e) => setWhy(e.target.value)} />
-      <Button type="submit" variant="secondary">Decline entry</Button>
+      <Button type="submit" variant="secondary" says="Declines it for good: no money moves, now or later. Your reason shows with it.">
+        Decline entry
+      </Button>
     </Form>
   );
 }

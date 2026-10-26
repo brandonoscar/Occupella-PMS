@@ -163,6 +163,22 @@ def emails_of(
     ]
 
 
+class Addressee(BaseModel):
+    name: str
+    # The address an email to them goes to now; none when they have no email on file.
+    to: str | None
+
+
+@router.get("/emails/to")
+def recipient(
+    session: Staff, conn: Conn, about: Annotated[About, Query()], about_id: UUID
+) -> Addressee:
+    """Who an email to a tenant, an owner or a vendor goes to, shown before staff send it (ADR
+    0010, rule 3): their name and the address it would go to now."""
+    name, to = address_of(conn, session.pmc_id, about, about_id)
+    return Addressee(name=name, to=to)
+
+
 @router.post("/emails", status_code=201)
 def send_email(session: Staff, conn: Conn, new: NewEmail) -> Sent:
     """Writes a staff member's email to a tenant, an owner or a vendor of the company; it goes

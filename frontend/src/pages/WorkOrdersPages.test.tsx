@@ -107,6 +107,8 @@ const posted = (fetch: ReturnType<typeof server>) =>
   fetch.mock.calls
     .filter(([, init]) => init?.method === "POST")
     .map(([path, init]) => [path, JSON.parse(String(init?.body))]);
+// The plain line under a button (ADR 0010, rule 1): what describes it.
+const says = (button: HTMLElement) => document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent;
 
 describe("shownQuery and stepLine", () => {
   it("asks for the open ones, all, or one status among all", () => {
@@ -376,12 +378,17 @@ describe("WorkOrderPage", () => {
     expect(within(panel).queryByRole("option", { name: "Schedule the visit" })).toBeNull();
     fireEvent.change(await within(panel).findByLabelText("Vendor"), { target: { value: "v2" } });
     fireEvent.change(within(panel).getByLabelText("Note (optional)"), { target: { value: " Friday " } });
+    expect(says(within(panel).getByRole("button", { name: "Record" }))).toBe(
+      "Assigns them; it stays in the timeline. They're emailed the work order only if work order emails are on.",
+    );
     fireEvent.click(within(panel).getByRole("button", { name: "Record" }));
     expect((await within(panel).findByRole("alert")).textContent).toBe(
       "the vendor's insurance expired on 09/30/2026; record its renewal before assigning them",
     );
     fireEvent.change(within(panel).getByLabelText("What happens next"), { target: { value: "completed" } });
     expect(within(panel).queryByLabelText("Vendor")).toBeNull();
+    expect(says(within(panel).getByRole("button", { name: "Record" })))
+      .toBe("Closes the work order; no step can follow it. No one is emailed.");
 
     expect(posted(fetch)).toEqual([
       ["/api/maintenance/work-orders/w1/steps", { step: "assigned", vendor_id: "v2", scheduled_for: null, visit_window: null, note: "Friday" }],
@@ -398,6 +405,8 @@ describe("WorkOrderPage", () => {
     expect((within(panel).getByLabelText("What happens next") as HTMLSelectElement).value).toBe("scheduled");
     fireEvent.change(within(panel).getByLabelText("Visit on"), { target: { value: "2026-10-20" } });
     fireEvent.change(within(panel).getByLabelText("Window (optional, like 8-10 am)"), { target: { value: " 9-11 am " } });
+    expect(says(within(panel).getByRole("button", { name: "Record" })))
+      .toBe("Adds the visit to the timeline. The vendor is emailed the day only if work order emails are on.");
     fireEvent.click(within(panel).getByRole("button", { name: "Record" }));
     expect(await screen.findByText("Scheduled for 10/20/2026.")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -425,6 +434,9 @@ describe("WorkOrderPage", () => {
     expect((within(panel).getByLabelText("Memo") as HTMLInputElement).value).toBe("Work order #7: Leak under the sink");
     fireEvent.change(within(panel).getByLabelText("Amount"), { target: { value: "85.00" } });
     fireEvent.change(within(panel).getByLabelText("Due"), { target: { value: "2026-10-20" } });
+    expect(says(within(panel).getByRole("button", { name: "Charge" }))).toBe(
+      "Adds a $85.00 fee to the lease, due 10/20/2026. Nothing is paid now; the owner still pays the vendor's bill.",
+    );
     fireEvent.click(within(panel).getByRole("button", { name: "Charge" }));
     expect(await screen.findByText("$85.00 charged to Tenant 1, Tenant 2.")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();

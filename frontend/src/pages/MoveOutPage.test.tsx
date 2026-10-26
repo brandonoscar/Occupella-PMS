@@ -79,7 +79,8 @@ describe("MoveOutPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Return the deposit" }));
     const ask = screen.getByRole("alertdialog");
     expect(ask.getAttribute("aria-label")).toBe(
-      "Return the deposit on 07/05/2026: keep $350.00 for what the lease owes and pay $850.00 back to the tenants?",
+      "Return the deposit on 07/05/2026: keep $350.00 for what the lease owes and pay $850.00 back to the tenants?"
+        + " This records what you paid at the bank; it sends no money or email.",
     );
     expect(posted(fetch)).toHaveLength(0);
     fireEvent.click(within(ask).getByRole("button", { name: "Confirm" }));

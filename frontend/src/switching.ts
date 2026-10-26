@@ -46,8 +46,8 @@ export const ROSTER: { kind: RosterKind; label: string; columns: string }[] = [
     columns:
       "Vendor, Owner, Property, Reference, Bill date, Due on, Amount, Memo, and Approved by and " +
       "Approved on for a bill the owner approved there (Bank account if there are several). A bill " +
-      "the old system set aside but didn't pay: carry its money over on the owner's line and " +
-      "the bill here",
+      "the old system already took from the owner's balance but didn't pay: carry its money over " +
+      "on the owner's line and the bill here",
   },
   // The years before the switch, as history: never posted, read under Before the switch (q129).
   {

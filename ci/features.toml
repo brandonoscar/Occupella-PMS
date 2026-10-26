@@ -53,7 +53,7 @@ browser = [
   "features.spec.ts › staff charge this month's rent and its late fees, and the Dashboard shows the rent that is late",
   "features.spec.ts › staff add a recurring bill and stop it, and record the decline of an owner with no login",
   "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff screen and approve it and record its withdrawal, take it off the page and close the link",
-  "portal.spec.ts › every page of the demo meets WCAG 2.2 AA as axe checks it: staff's, an owner's, a tenant's and the public ones",
+  "portal.spec.ts › every page of the demo meets WCAG 2.2 AA as axe checks it, in plain words: staff's, an owner's, a tenant's and the public ones",
   "features.spec.ts › staff send a reminder of rent past due from the Dashboard, seeing who gets it first, once a day",
 ]
 
@@ -760,9 +760,10 @@ browser = [
 
 [[feature]]
 id = "email"
-statement = "Staff email a tenant, an owner or a vendor from their page's Email tab, and the tenants living at a property from its page, seeing first who gets it (each with a box, the count and who has no email on file; current tenants only); each email is signed with the staff member's name and the company's and kept on the person's Email tab with whether it went (an invite, a password reset or a bill waiting for an owner's approval too). An owner or a tenant resets a forgotten password from sign-in by an emailed link, never kept in the outbox; the answer never says whether the email has a login (docs/adr/0007-email.md)."
+statement = "Staff email a tenant, an owner or a vendor from their page's Email tab, seeing first the address it goes to (none without an email on file), and the tenants living at a property from its page, seeing first who gets it (each with a box, the count and who has no email on file; current tenants only); each email is signed with the staff member's name and the company's and kept on the person's Email tab with whether it went (an invite, a password reset or a bill waiting for an owner's approval too). An owner or a tenant resets a forgotten password from sign-in by an emailed link, never kept in the outbox; the answer never says whether the email has a login (docs/adr/0007-email.md)."
 operations = [
   "GET /api/emails",
+  "GET /api/emails/to",
   "POST /api/emails",
   "GET /api/emails/property/{property_id}",
   "POST /api/emails/property",

@@ -14,6 +14,34 @@ import { Form } from "../components/Form";
 
 type Chosen = { type: ContentType | null; size: number; base64: string };
 
+// Who sees a file once it is uploaded, said under Upload (rule 1): the portal or public page that
+// shows its kind (src/pms/api/owner.py's OWNER_SEES, tenant.py's lease files, a deposit
+// statement's photos, listings.py), else staff alone. An upload writes no email.
+export function uploadSays(kind: Kind): string {
+  switch (kind) {
+    case "owner_document":
+      return "Keeps it on file; the owner sees it in their portal. Nothing is emailed.";
+    case "property_document":
+    case "unit_document":
+      return "Keeps it on file; the property's owners see it in their portal. Nothing is emailed.";
+    case "receipt":
+      return "Keeps it with the bill; its owner sees it in their portal. Nothing is emailed.";
+    case "lease_document":
+      return "Keeps it with the lease; its tenants see it in their portal. Nothing is emailed.";
+    case "listing_photo":
+      return "Shows on the unit's public listing while the unit is listed. Nothing is emailed.";
+    case "move_out_photo":
+      return "Keeps it with the lease; it goes with the deposit statement the tenants get. Nothing is emailed.";
+    case "tenant_document":
+    case "vendor_document":
+    case "w9":
+    case "work_order_photo":
+      return "Keeps it on file; only staff see it. Nothing is emailed.";
+    default:
+      return "Keeps it on file. Nothing is emailed.";
+  }
+}
+
 // The Files card of a record's page (ADR 0005, ADR 0006): the documents about that record, each
 // to download or remove, and one more to upload. It reads and writes what Files does
 // (/api/documents), kept to this record's kind of document and any `also` its record takes
@@ -66,6 +94,7 @@ export function FilesCard({ kind, also = [], listed = [], aboutId, name, note }:
                 {kindLabel(d.kind)}, {sizeLabel(d.size)}, uploaded {usDate(d.uploaded_at)}
               </span>
               <Button variant="secondary" aria-label={`Remove ${d.title}`}
+                says="Takes it off every list, here and in the portals, and stops its download. Its record stays."
                 onClick={() => record(`/api/documents/${d.id}/remove`, {}, () => `Removed ${d.title}.`)}>
                 Remove
               </Button>
@@ -105,7 +134,7 @@ export function FilesCard({ kind, also = [], listed = [], aboutId, name, note }:
               }} />
           </label>
           <Field label="Title" id={`file-title-${aboutId}`} required value={title} onChange={(e) => setTitle(e.target.value)} />
-          <Button type="submit" disabled={file === null || problem !== ""}>Upload</Button>
+          <Button type="submit" disabled={file === null || problem !== ""} says={uploadSays(category)}>Upload</Button>
         </Form>
       )}
       <Notice tone="error">{problem}</Notice>

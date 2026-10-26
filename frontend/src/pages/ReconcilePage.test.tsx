@@ -156,7 +156,7 @@ describe("ReconcilePage", () => {
     // Off by the difference, until the books lack no line.
     expect(screen.getByText("Off by $65.00").closest("[data-tone]")?.getAttribute("data-tone")).toBe("caution");
     expect(cells(screen.getByRole("table", { name: "Reconciling items" }))).toEqual([
-      ["bank line not in the books", "2026-01-28 Service fee", "($15.00)"],
+      ["bank line not in the books", "01/28/2026 Service fee", "($15.00)"],
     ]);
     expect(cells(screen.getByRole("table", { name: "Approved" }))).toEqual([
       ["12/01/2025 to 12/31/2025", "$0.00", "$0.00", "Staff 1", "PDF"],

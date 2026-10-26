@@ -41,7 +41,10 @@ export function ForgotPasswordPage() {
             For owners and tenants. Staff: ask an admin for a new invite.
           </p>
           <Notice tone="error">{error}</Notice>
-          <Button type="submit">Email me a link</Button>
+          <Button type="submit"
+            says="Emails a link to set a new password, if this email signs in here. Your password works until you use it.">
+            Email me a link
+          </Button>
         </Form>
       )}
       <a href={pmcId ? `/sign-in?pmc=${pmcId}` : "/sign-in"} className="text-sm text-iris underline hover:text-iris-hover">Back to sign in</a>

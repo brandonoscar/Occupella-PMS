@@ -87,7 +87,9 @@ function Elsewhere({ tenant, say, onClose }: { tenant: Tenant; say: (said: strin
           <option value="">Pick a property</option>
           {choices.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </Select>
-        <Button type="submit">Make them a tenant there</Button>
+        <Button type="submit" says="Adds only the record there: they aren't put on a lease, and nothing is charged or sent.">
+          Make them a tenant there
+        </Button>
       </Form>
       <Notice tone="error">{error}</Notice>
     </SidePanel>
@@ -116,7 +118,9 @@ function SamePerson({ tenant, refresh, say, onClose }: {
       }}>
         <Field label="Name, email or phone" id="same-person-words" required value={words}
           onChange={(event) => setWords(event.target.value)} />
-        <Button type="submit" variant="secondary">Find</Button>
+        <Button type="submit" variant="secondary" says="Only searches tenants; nothing is linked until you pick one below.">
+          Find
+        </Button>
       </Form>
       {found !== null && (found.length === 0 ? (
         <p className="text-base text-ink-muted">No other tenant holds those words.</p>
@@ -129,7 +133,9 @@ function SamePerson({ tenant, refresh, say, onClose }: {
                 const done = await record(`/api/tenants/${tenant.id}/same-person`, { tenant_id: hit.id },
                   () => `${tenant.name} and ${hit.label} (${hit.detail}) are the same person now.`);
                 if (done) onClose();
-              }}>This is them</Button>
+              }} says="Links the two for good: one portal sign-in, and each record keeps its own leases and money.">
+                This is them
+              </Button>
             </li>
           ))}
         </ul>

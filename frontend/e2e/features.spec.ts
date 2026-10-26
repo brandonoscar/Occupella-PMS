@@ -2697,6 +2697,8 @@ test("staff email a tenant from their page and every tenant of a property, an ow
   await page.getByRole("tab", { name: "Email", exact: true }).click();
   await page.getByRole("button", { name: "Write email" }).click();
   const panel = page.getByRole("dialog", { name: "Email Drew Sample" });
+  // Who gets it, before it is sent (ADR 0010, rule 3).
+  await expect(panel).toContainText(/To Drew Sample, .+@example\.com\./);
   await panel.getByLabel("Subject").fill("Parking lot repaving");
   await panel.getByLabel("Message").fill("Please move your car from the lot on Friday.");
   await panel.getByRole("button", { name: "Send email" }).click();
@@ -4461,7 +4463,7 @@ test("staff name the operating trust account's cash for QuickBooks and download 
 });
 
 
-test("staff bring in a lockbox's payment file once: lines naming one lease are recorded to it, and staff record or set aside the ones that wait", async ({
+test("staff bring in a lockbox's payment file once: lines naming one lease are recorded to it, and staff record or skip the ones that wait", async ({
   page,
 }) => {
   const people = seed.features["payment-files"]!;
@@ -4508,7 +4510,7 @@ test("staff bring in a lockbox's payment file once: lines naming one lease are r
   await expect(page.getByText(`Line 3: $100.00 received ${us(day)} recorded to Riley Demo, Elm Court Unit 1.`)).toBeVisible();
   await expect(page.getByTestId("file-summary")).toContainText("3 payments recorded ($1,545.00); nothing waits.");
 
-  // The same file again comes in once; a line naming nobody is set aside, with why.
+  // The same file again comes in once; a line naming nobody is skipped, with why.
   await section(page, "Payment files");
   const again = await bringIn("lockbox-again.csv", lockbox);
   await expect(again.getByText(`This file came in on ${us(day)}; it comes in once.`)).toBeVisible();
@@ -4518,11 +4520,11 @@ test("staff bring in a lockbox's payment file once: lines naming one lease are r
   await stray.getByRole("button", { name: "Bring it in" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "stray.csv" })).toBeVisible();
   await page.getByRole("row", { name: "Line 2" }).getByRole("button", { name: "Actions for line 2" }).click();
-  await page.getByRole("menuitem", { name: "Set aside" }).click();
-  const aside = page.getByRole("dialog", { name: "Set line 2 aside" });
+  await page.getByRole("menuitem", { name: "Skip" }).click();
+  const aside = page.getByRole("dialog", { name: "Skip line 2" });
   await aside.getByLabel("Why").fill("A refund from the water utility, not rent");
-  await aside.getByRole("button", { name: "Set it aside" }).click();
-  await expect(page.getByRole("row", { name: "Line 2" })).toContainText("Set asideA refund from the water utility, not rent");
+  await aside.getByRole("button", { name: "Skip this line" }).click();
+  await expect(page.getByRole("row", { name: "Line 2" })).toContainText("SkippedA refund from the water utility, not rent");
 
   // Both files are listed, newest first; the payment is on Morgan Demo's lease.
   await section(page, "Payment files");

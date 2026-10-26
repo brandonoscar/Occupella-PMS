@@ -223,7 +223,10 @@ export function PayOwnersPage({ me }: { me: Me }) {
             </Select>
             <Field label="Paid out on" id="pay-on" type="date" required value={on}
               onChange={(event) => setOn(event.target.value)} />
-            <Button type="submit" disabled={payouts.length === 0}>
+            <Button type="submit" disabled={payouts.length === 0}
+              says={files
+                ? `Records each draw from the owner's balance, all or none, and ${files}. The PMS sends no money; the bank does.`
+                : "Records each draw from the owner's balance, all or none. The PMS sends no money."}>
               {payouts.length === 0 ? "Choose owners to pay" : `Pay ${money(total)}`}
             </Button>
           </div>

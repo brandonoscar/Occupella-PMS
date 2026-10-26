@@ -253,7 +253,8 @@ function ProfileForm({ vendor, record }: { vendor: VendorPageData; record: Recor
         (answer) => (answer.changed ? `Saved ${vendor.name}.` : "Nothing changed."));
     }}>
       <ProfileFields draft={draft} change={(part) => setDraft({ ...draft, ...part })} />
-      <div><Button type="submit">Save</Button></div>
+      <div><Button type="submit"
+        says="Saves their trade, 1099 and how they're paid; the old ones stay in the history. Nothing is paid or sent.">Save</Button></div>
     </Form>
   );
 }
@@ -290,7 +291,8 @@ function PolicyForm({ vendor, record }: { vendor: VendorPageData; record: Record
       </div>
       <Field label="Limit (optional)" id="policy-limit" inputMode="decimal" value={limit}
         onChange={(e) => setLimit(e.target.value)} />
-      <div><Button type="submit">Record policy</Button></div>
+      <div><Button type="submit"
+        says="Adds this policy; their earlier policies stay on file. Nothing is sent to the vendor or the carrier.">Record policy</Button></div>
     </Form>
   );
 }

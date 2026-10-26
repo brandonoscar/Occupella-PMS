@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { fillApplicant } from "./apply";
 import { expectAccessible } from "./a11y";
+import { expectPlainWords } from "./words";
 import { totp } from "./totp";
 
 type Seed = {
@@ -956,14 +957,18 @@ async function hrefs(page: Page, where: Locator = page.locator("body")): Promise
   return where.locator("a[href^='/']").evaluateAll((links) => links.map((a) => a.getAttribute("href") ?? ""));
 }
 
+// The reports print the ledger's own words (ADR 0010, phase 4 leaves them to the founder's call).
+const REPORT_TEXT = /^\/(reports\/|general-ledger)/;
+
 async function scanned(page: Page, path: string): Promise<void> {
   await page.goto(path);
   await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
   await page.waitForLoadState("networkidle");
   await expectAccessible(page, path);
+  if (!REPORT_TEXT.test(path)) await expectPlainWords(page, path);
 }
 
-test("every page of the demo meets WCAG 2.2 AA as axe checks it: staff's, an owner's, a tenant's and the public ones", async ({
+test("every page of the demo meets WCAG 2.2 AA as axe checks it, in plain words: staff's, an owner's, a tenant's and the public ones", async ({
   browser,
   page,
 }) => {
@@ -1013,6 +1018,7 @@ test("every page of the demo meets WCAG 2.2 AA as axe checks it: staff's, an own
     await expect(portal.getByRole("navigation", { name: "Sections" })).toBeVisible();
     await portal.waitForLoadState("networkidle");
     await expectAccessible(portal, `the ${who === demo.owner ? "owner" : "tenant"}'s portal`);
+    await expectPlainWords(portal, `the ${who === demo.owner ? "owner" : "tenant"}'s portal`);
     await portal.context().close();
   }
 });

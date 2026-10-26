@@ -227,7 +227,8 @@ export function DepositsTab({ bankId }: { bankId: string }) {
             <div className="flex flex-wrap items-end gap-3">
               <Field label="Deposited on" id={`deposited-on-${bankId}`} type="date" required value={on}
                 onChange={(event) => setOn(event.target.value)} />
-              <Button type="submit" disabled={picked.length === 0}>
+              <Button type="submit" disabled={picked.length === 0}
+                says="Groups these as one trip to the bank, with a slip to print. No money moves; a deposit isn't changed later.">
                 {picked.length === 0 ? "Record deposit" : `Record deposit of ${money(totalText)}`}
               </Button>
             </div>

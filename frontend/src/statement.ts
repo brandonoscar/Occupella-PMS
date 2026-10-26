@@ -102,7 +102,13 @@ export function describePosting(detail: string, amount: string): { what: string;
   const rest = match[2] ?? "";
   const dash = rest.indexOf(" - ");
   if (dash < 0) return { what: said(amount), with: rest };
-  return { what: rest.slice(dash + 3), with: rest.slice(0, dash) };
+  return { what: plainMemo(rest.slice(dash + 3)), with: rest.slice(0, dash) };
+}
+
+// A bill's money leaving the owner's balance is written "Bill RF-1 set aside" in the ledger (the
+// step's old name, ADR 0010 phase 1a); the owner reads the bill it paid for.
+function plainMemo(memo: string): string {
+  return memo.replace(/^(Bill .+) set aside$/, "$1");
 }
 
 // The report's period ("2026-09-01 00:00:00 to 2026-10-01 00:00:00 UTC", its end not included)

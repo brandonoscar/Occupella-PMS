@@ -145,7 +145,7 @@ function AddOwner() {
     }}>
       <Field label="Name" id="new-owner" required maxLength={100} value={name}
         onChange={(event) => setName(event.target.value)} />
-      <div><Button type="submit">Add owner</Button></div>
+      <div><Button type="submit" says="Adds them by name and opens their page. Nothing is sent to them.">Add owner</Button></div>
       <Notice tone="error">{error}</Notice>
     </Form>
   );
@@ -400,7 +400,11 @@ function ContributionForm({ owner, record }: { owner: Owner; record: Recorder })
         onChange={(event) => setOn(event.target.value)} />
       <Field label="For" id="contribution-memo" maxLength={200} value={memo}
         onChange={(event) => setMemo(event.target.value)} />
-      <div><Button type="submit">Record contribution</Button></div>
+      <div>
+        <Button type="submit" says="Adds it to the owner's balance, as money already received. The PMS collects nothing from them.">
+          Record contribution
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -441,10 +445,11 @@ function OwnerFeeForm({ owner, record }: { owner: Owner; record: Recorder }) {
         onChange={(event) => setMemo(event.target.value)} />
       <Field label="Taken on" id="owner-fee-on" type="date" required value={on}
         onChange={(event) => setOn(event.target.value)} />
-      <p className="text-sm text-ink-muted">
-        It moves from the owner's account to the company's fee account, inside trust, and shows on their statement.
-      </p>
-      <div><Button type="submit">Take fee</Button></div>
+      <div>
+        <Button type="submit" says="Moves it from the owner's balance to the company's fees and shows on their statement. Nothing leaves trust.">
+          Take fee
+        </Button>
+      </div>
     </Form>
   );
 }

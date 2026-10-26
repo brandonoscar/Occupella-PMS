@@ -271,7 +271,13 @@ function PlanForm({ property, record }: { property: string; record: Recorder }) 
         <Field label="Owner keeps (percent, for the common areas)" id="plan-owner" inputMode="decimal" value={ownerPercent}
           onChange={(e) => setOwnerPercent(e.target.value)} />
       )}
-      <div><Button type="submit">Save plan</Button></div>
+      <div>
+        <Button type="submit" says={method === "none"
+          ? "Stops billing it back from that day; the plan before stays in the history. Nothing is charged now."
+          : "Shares this utility's bills that way from that day; the plan before stays in the history. Nothing is charged now."}>
+          Save plan
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -286,7 +292,11 @@ function AreaForm({ unit, record }: { unit: UnitArea; record: Recorder }) {
     }}>
       <Field label={`Square feet, ${unit.unit}`} id="unit-area" inputMode="numeric" required value={area}
         onChange={(e) => setArea(e.target.value)} />
-      <div><Button type="submit">Save</Button></div>
+      <div>
+        <Button type="submit" says="Bills shared by square feet use it from now on; bills already shared keep theirs. Nothing is charged.">
+          Save
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -308,7 +318,11 @@ function BilledForm({ lease, today, record }: { lease: BilledLease; today: strin
         Billed for it
       </label>
       <Field label="From" id="billed-from" type="date" required value={startsOn} onChange={(e) => setStartsOn(e.target.value)} />
-      <div><Button type="submit">Save</Button></div>
+      <div>
+        <Button type="submit" says="Bills from that day follow it; the choice before stays in the history. Nothing is charged now.">
+          Save
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -383,7 +397,11 @@ function BillForm({ property, page, inForce, record }: {
       )}
       <Notice tone="error">{error}</Notice>
       <div className="flex gap-2">
-        <Button type="submit">{preview ? "Charge the leases" : "Preview"}</Button>
+        <Button type="submit" says={preview
+          ? `Charges the leases ${money(preview.charged)} in all, due ${usDate(dueOn)}; the owner keeps ${money(preview.owner_keeps)}. No one is emailed.`
+          : "Shows each lease's share first. Nothing is charged until you press Charge the leases."}>
+          {preview ? "Charge the leases" : "Preview"}
+        </Button>
       </div>
     </Form>
   );

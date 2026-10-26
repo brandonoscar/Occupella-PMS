@@ -49,7 +49,7 @@ export function NotesCard({ about, aboutId, name }: { about: NoteAbout; aboutId:
         <textarea id={`note-${aboutId}`} required maxLength={5000} rows={3} value={body}
           onChange={(event) => setBody(event.target.value)}
           className="rounded-sm border border-line-strong bg-sunken px-2 py-1.5 text-base text-ink" />
-        <div><Button type="submit" variant="secondary">Add note</Button></div>
+        <div><Button type="submit" variant="secondary" says="Only staff see notes. A note isn't changed later: add another to correct it.">Add note</Button></div>
       </Form>
       <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>

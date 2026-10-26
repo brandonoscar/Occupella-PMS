@@ -180,7 +180,7 @@ function ShowingForm({ lead, record }: { lead: Lead; record: Recorder }) {
         <option value="">Nobody named</option>
         {staff.map((s) => <option key={s.staff_id} value={s.staff_id}>{s.name}</option>)}
       </Select>
-      <div><Button type="submit">Schedule</Button></div>
+      <div><Button type="submit" says="Adds the showing to their page. No email or invite goes to them or to whoever shows it.">Schedule</Button></div>
     </Form>
   );
 }
@@ -201,7 +201,7 @@ function CloseForm({ lead, record }: { lead: Lead; record: Recorder }) {
         <option value="lost">Lost them</option>
       </Select>
       <Field label="Why (optional)" id="close-reason" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
-      <div><Button type="submit">Close lead</Button></div>
+      <div><Button type="submit" says="Closes the lead for good; it takes no new showing. Nothing is sent to them.">Close lead</Button></div>
     </Form>
   );
 }

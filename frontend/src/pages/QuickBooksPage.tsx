@@ -124,11 +124,14 @@ function RenamePanel({ account, say, refresh, close }: {
         <Field label="Name in QuickBooks" id="qb-name" required maxLength={200} value={name}
           onChange={(e) => setName(e.target.value)} />
         <div className="flex flex-wrap gap-3">
-          <Button type="submit">Save</Button>
+          <Button type="submit" says="The export uses this name from now on; the old one stays in the history. Nothing is sent to QuickBooks.">
+            Save
+          </Button>
           {account.name !== null && (
-            <Button type="button" variant="secondary" onClick={async () => {
-              if (await record(path, { name: null }, () => `${account.holder} goes into QuickBooks as ${account.default_name}.`)) close();
-            }}>Use the PMS&apos;s name</Button>
+            <Button type="button" variant="secondary" says="The export uses the PMS's name for it again. Nothing is sent to QuickBooks."
+              onClick={async () => {
+                if (await record(path, { name: null }, () => `${account.holder} goes into QuickBooks as ${account.default_name}.`)) close();
+              }}>Use the PMS&apos;s name</Button>
           )}
         </div>
         <Notice tone="error">{error}</Notice>

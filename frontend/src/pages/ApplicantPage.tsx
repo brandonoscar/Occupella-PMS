@@ -82,7 +82,7 @@ export function ApplicantPage({ me, id }: { me: Me; id: string }) {
         <div className="flex flex-wrap items-center gap-2">
           {deciding && (
             <>
-              <Button variant="secondary"
+              <Button variant="secondary" says="Asks the screening partner and records its answer here. It decides nothing."
                 onClick={() => record(`/api/leasing/applications/${id}/screen`, {}, () => `Screened ${names}.`)}>
                 Screen
               </Button>
@@ -275,10 +275,25 @@ function DecideForm({ application, rejecting, record }: {
         </>
       )}
       <div>
-        <Button type="submit" variant={rejecting ? "danger" : "primary"}>{rejecting ? "Reject" : "Approve"}</Button>
+        <Button type="submit" variant={rejecting ? "danger" : "primary"} says={decideSays(decision, notice)}>
+          {rejecting ? "Reject" : "Approve"}
+        </Button>
       </div>
     </Form>
   );
+}
+
+// What a decision does (ADR 0010, rule 1): it is final, and its adverse action notice is emailed to
+// each applicant only while the server sends email and the company has those notices on.
+function decideSays(decision: Decision["decision"], notice: boolean): string {
+  const does = {
+    approved: "Approves it; this is final. A draft lease comes next.",
+    conditional: "Approves it on these conditions; this is final.",
+    declined: "Rejects it; this is final.",
+  }[decision];
+  return notice
+    ? `${does} Each applicant gets the notice by email only if adverse action emails are on.`
+    : `${does} Nothing is sent to the applicants.`;
 }
 
 // Records that the applicants withdrew the application, and why if they said.
@@ -295,7 +310,8 @@ function WithdrawForm({ application, record }: { application: Application; recor
         <textarea id="withdraw-reason" rows={3} maxLength={500} value={reason}
           onChange={(e) => setReason(e.target.value)} className={TEXTAREA} />
       </label>
-      <div><Button type="submit" variant="danger">Record withdrawal</Button></div>
+      <div><Button type="submit" variant="danger"
+        says="Records that they withdrew; it takes no screening, decision or lease after. Nothing is sent to them.">Record withdrawal</Button></div>
     </Form>
   );
 }

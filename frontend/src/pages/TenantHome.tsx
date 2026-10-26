@@ -12,7 +12,7 @@ import type { ContentType } from "../documents";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
 import type { MaintenanceRequest } from "../maintenance";
 import { PHOTOS_PER_REQUEST, photosLabel, photosProblem, statusLabel, visitLabel, when } from "../maintenance";
-import { day, money, usDate } from "../money";
+import { day, money, usDate, usDatesIn } from "../money";
 import type { StatementData } from "../statement";
 import type { DepositAsked, Paid, RentersInsurance } from "../rent";
 import { dueDayLabel, insuranceLine, methodLabel, tenantDepositLine } from "../rent";
@@ -78,7 +78,7 @@ export function monthlyLabel(item: Monthly, today: string): string {
 
 // "10/23/2026 Key replacement: $50.00" (the kind when it has no memo).
 export function comingDueLabel(charge: ComingDue): string {
-  const what = charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee");
+  const what = usDatesIn(charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee"));
   return `${usDate(charge.due_on)} ${what}: ${money(charge.open)}`;
 }
 
@@ -421,7 +421,11 @@ export function TenantHome({ me }: { me: Me }) {
                   </p>
                 )}
                 <div className="flex items-center gap-4">
-                  <Button type="submit">Send request</Button>
+                  <Button type="submit" says={emergency
+                    ? `Sends it to ${me.pmc_name} as an emergency. You can't change it after; if anyone is in danger, call 911.`
+                    : `Sends it to ${me.pmc_name}; how it's going shows below. You can't change it after it's sent.`}>
+                    Send request
+                  </Button>
                   <Said>{sent}</Said>
                 </div>
               </Form>

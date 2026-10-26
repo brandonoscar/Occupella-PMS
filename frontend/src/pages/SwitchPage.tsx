@@ -91,7 +91,12 @@ function RosterCard() {
           ))}
         </Select>
         <FileField id="roster-file" label="CSV file" onRead={setContent} />
-        <Button type="submit" disabled={content === null}>Import</Button>
+        <Button type="submit" disabled={content === null}
+          says={kind === "bills"
+            ? "Adds the bills, all or none; nothing is paid. An owner who uses the portal is emailed any over their limit not yet approved."
+            : "Adds what is new in the file, all or none; what is here already is kept. No money moves."}>
+          Import
+        </Button>
       </Form>
       <p className="mt-3 text-sm text-ink-subtle">Columns: {columns}.</p>
       <Said>{said}</Said>
@@ -117,7 +122,10 @@ function VendorPaymentsCard() {
         <Field label="Cutover day" id="vendor-payments-cutover" type="date" required value={cutover}
           onChange={(e) => setCutover(e.target.value)} />
         <FileField id="vendor-payments-file" label="Vendor payments (CSV)" onRead={setContent} />
-        <Button type="submit" variant="secondary" disabled={content === null}>Carry over</Button>
+        <Button type="submit" variant="secondary" disabled={content === null}
+          says="Adds each vendor's total to their 1099 year; the same file again adds nothing. No money moves.">
+          Carry over
+        </Button>
       </Form>
       <p className="mt-3 text-sm text-ink-subtle">Columns: {VENDOR_PAYMENT_COLUMNS}.</p>
       <Said>{said}</Said>
@@ -153,7 +161,10 @@ function CutoverCard({ cutover, refresh }: { cutover: Cutover; refresh: () => vo
           <Field label="Old system's book cash" id={`book-${bank}`} inputMode="decimal" required
             value={book} onChange={(e) => setBook(e.target.value)} />
           <FileField id={`balances-${bank}`} label="Opening balances (CSV)" onRead={setBalances} />
-          <Button type="submit" disabled={balances === null}>Open with balances</Button>
+          <Button type="submit" disabled={balances === null}
+            says="Records what each account held at the cutover, checked against the old book cash. Done once; it can't be redone.">
+            Open with balances
+          </Button>
           <p className="w-full text-sm text-ink-subtle">Columns: {BALANCE_COLUMNS}.</p>
         </Form>
       ) : (
@@ -182,12 +193,16 @@ function CutoverCard({ cutover, refresh }: { cutover: Cutover; refresh: () => vo
                 }}
               >
                 <FileField id={`items-${bank}`} label="Checks and deposits not cleared (CSV)" onRead={setItems} />
-                <Button type="submit" variant="secondary" disabled={items === null}>Add items</Button>
+                <Button type="submit" variant="secondary" disabled={items === null}
+                  says="Carries these over as not cleared at the cutover; more can be added until you sign off. No money moves.">
+                  Add items
+                </Button>
               </Form>
             )}
             {!cutover.signed_off && (
-              <Button onClick={() => record("/api/switching/sign-off", { bank_account_id: bank },
-                () => "Signed off. The items carried over are frozen.")}>
+              <Button says="Freezes the items carried over: none can be added after, and it isn't undone. No money moves."
+                onClick={() => record("/api/switching/sign-off", { bank_account_id: bank },
+                  () => "Signed off. The items carried over are frozen.")}>
                 Sign off the tie-out
               </Button>
             )}

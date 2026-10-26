@@ -87,14 +87,20 @@ function VendorOrder({ order, step }: { order: VendorWorkOrder; step: Step }) {
         }}>
           <Field label="Visit on" id={`visit-${order.id}`} type="date" required value={on} onChange={(e) => setOn(e.target.value)} />
           <Field label="Window (optional)" id={`window-${order.id}`} maxLength={60} value={slot} onChange={(e) => setSlot(e.target.value)} />
-          <Button type="submit" variant="secondary">{order.visit_on ? "Change the visit" : "Schedule the visit"}</Button>
+          <Button type="submit" variant="secondary"
+            says={`The company and any tenant who asked for the repair see the ${order.visit_on ? "new " : ""}day. No email is sent.`}>
+            {order.visit_on ? "Change the visit" : "Schedule the visit"}
+          </Button>
         </Form>
         <Form className="flex flex-wrap items-end gap-2" onSubmit={(event) => {
           event.preventDefault();
           return step(order, { step: "completed", note: note.trim() || null }, `#${order.number} is done. Thank you.`);
         }}>
           <Field label="What you did (optional)" id={`note-${order.id}`} maxLength={2000} value={note} onChange={(e) => setNote(e.target.value)} />
-          <Button type="submit">The work is done</Button>
+          <Button type="submit"
+            says="Tells the company it's done and closes the work order; it leaves this list and can't be reopened.">
+            The work is done
+          </Button>
         </Form>
       </section>
     </Card>

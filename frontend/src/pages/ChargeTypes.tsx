@@ -84,7 +84,8 @@ function AddChargeTypePanel({ say, refresh, close }: {
       }}>
         <Field label="Charge type" id="charge-type-name" required maxLength={100} value={name}
           onChange={(e) => setName(e.target.value)} />
-        <div><Button type="submit">Add charge type</Button></div>
+        <div><Button type="submit"
+          says="Adds it to the types a fee can have. Nothing is charged, and fees already charged stay as they were.">Add charge type</Button></div>
         <Notice tone="error">{error}</Notice>
       </Form>
     </SidePanel>

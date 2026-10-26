@@ -52,7 +52,9 @@ export function SignersCard({ me, members }: { me: Me; members: Member[] }) {
                       <span>{signerLine(signer)}</span>
                       <Badge tone={standingTone(signer.standing)}>{signer.standing}</Badge>
                       {signer.role === "signer" && (
-                        <Button variant="secondary" onClick={() =>
+                        <Button variant="secondary"
+                          says={`${signer.name} can no longer pay out of this account. Their earlier authorization stays in the history.`}
+                          onClick={() =>
                           record("/api/signers", {
                             bank_account_id: account.bank_account_id, staff_id: signer.staff_id,
                             role: "signer", granted: false, authorized_on: today,
@@ -135,7 +137,9 @@ function SignerForm({ accounts, members, admin, today, record }: {
         onChange={(e) => setExpires(e.target.value)} />
       <Field label="Authorized in writing on" id="signer-on" type="date" required value={on}
         onChange={(e) => setOn(e.target.value)} />
-      <Button type="submit">Record</Button>
+      <Button type="submit" says={role === "broker"
+        ? "Makes them this account's broker, replacing any on file. Only they and their signers may then pay out of it."
+        : "Lets them pay out of this account while licensed or bonded. Nothing is paid now."}>Record</Button>
     </Form>
   );
 }

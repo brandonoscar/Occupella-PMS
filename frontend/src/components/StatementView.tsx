@@ -1,4 +1,4 @@
-import { money, usDate } from "../money";
+import { money, usDate, usDatesIn } from "../money";
 import type { Grouped } from "../statement";
 import { describePosting, periodLabel } from "../statement";
 import { Wide } from "./Wide";
@@ -36,8 +36,8 @@ export function StatementView({ grouped }: { grouped: Grouped }) {
                 <tr key={n} className="border-t border-line">
                   <td className={`${CELL} whitespace-nowrap text-ink-muted`}>{usDate(posting.postedOn)}</td>
                   <td className={CELL}>
-                    {described.what}
-                    {described.with && <span className="text-ink-muted"> · {described.with}</span>}
+                    {usDatesIn(described.what)}
+                    {described.with && <span className="text-ink-muted"> · {usDatesIn(described.with)}</span>}
                   </td>
                   <td className={AMOUNT}>{money(posting.amount)}</td>
                   <td className={AMOUNT}>{money(posting.balance)}</td>
