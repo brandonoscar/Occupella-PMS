@@ -21,13 +21,15 @@ const VARIANTS: Record<Variant, string> = {
 const SIZES = { md: "h-9 px-3.5 text-base", sm: "h-8 px-3 text-sm" };
 
 // A button is busy while what it started runs: its form's save (<Form>), or the promise its own
-// click returned. Busy, it shows a spinner and can't be pressed again.
+// click returned. Busy, it shows a spinner and can't be pressed again. It submits its form only
+// when it says type="submit": a Cancel inside a form once made what it was cancelling.
 //
 // `says` is the one plain line under an action button (ADR 0010, rule 1): what pressing it does
 // and what it doesn't ("Records the payment. Nothing is sent to the tenant."). The button is
 // described by it, so a screen reader reads it too. buttonRules.test.ts holds every submit button
 // to having one.
 export function Button({
+  type = "button",
   variant = "primary",
   size = "md",
   className = "",
@@ -47,13 +49,14 @@ export function Button({
   const formBusy = useFormBusy();
   const [clicked, setClicked] = useState(false);
   const saysId = useId();
-  const working = busy ?? (clicked || (props.type === "submit" && formBusy));
+  const working = busy ?? (clicked || (type === "submit" && formBusy));
   const base =
     "inline-flex items-center justify-center gap-1.5 rounded-sm font-medium whitespace-nowrap" +
     " transition-colors duration-100 disabled:border-disabled-bg disabled:bg-disabled-bg" +
     " disabled:text-disabled-ink";
   const button = (
     <button
+      type={type}
       className={`${base} ${SIZES[size]} ${VARIANTS[variant]} ${className}`}
       disabled={disabled || working}
       aria-busy={working || undefined}
