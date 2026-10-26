@@ -705,10 +705,7 @@ def statement_of(
     ).fetchone()
     if found is None:
         raise HTTPException(404, "no such owner")
-    table = owner_portal.statement_table(conn, pmc_id, owner_id, start, end)
-    return exports.Table(
-        f"Owner statement, {start.isoformat()} to {end.isoformat()}", table.columns, table.rows
-    )
+    return owner_portal.titled_statement(conn, pmc_id, owner_id, start, end)
 
 
 @router.get("/owners/{owner_id}/statement/download")

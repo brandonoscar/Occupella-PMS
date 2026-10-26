@@ -13,7 +13,7 @@ from pathlib import Path
 from pypdf import PdfReader
 
 from pms import exports
-from pms.api import receipts, rent
+from pms.api import owner, receipts, rent
 from pms.payouts import checks, nacha
 from tools import golden
 
@@ -67,16 +67,9 @@ def test_an_owners_statement_as_they_download_it(conn, request):
     with conn.transaction(force_rollback=True):
         for statement in statements:
             conn.execute(statement.encode())
-        table = exports.run_report(
-            conn,
-            "trust_report_owner_statement",
-            [
-                PMC,
-                uuid.UUID("00000000-0000-4000-8000-000000000021"),
-                "2026-01-01 00:00:00+00",
-                "2026-02-01 00:00:00+00",
-            ],
-        )
+        owner_id = uuid.UUID("00000000-0000-4000-8000-000000000021")
+        start, end = date(2026, 1, 1), date(2026, 1, 31)
+        table = owner.titled_statement(conn, PMC, owner_id, start, end)
         actual = pdf_text(exports.to_pdf(table, GENERATED))
     matches(request, "owner_statement", actual)
 

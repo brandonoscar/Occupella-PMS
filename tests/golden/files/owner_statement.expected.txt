@@ -1,4 +1,4 @@
-owner statement (<uuid1>, <uuid2>, 2026-01-01 00:00:00+00, 2026-02-01 00:00:00+00)
+Owner statement, 2026-01-01 to 2026-01-31
 Generated 2026-02-01 09:30:00 UTC
 line property posted_on item detail amount balance
 1 PMC Golden PMC 
