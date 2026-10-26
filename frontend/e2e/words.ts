@@ -15,7 +15,7 @@ const INTERNAL: [string, RegExp][] = [
 
 // Each internal word on the page's main part (the whole page where it has none, as sign-in
 // doesn't), as "what: the line it is on".
-export async function internalWords(page: Page): Promise<string[]> {
+async function internalWords(page: Page): Promise<string[]> {
   const main = page.getByRole("main");
   const text = await ((await main.count()) > 0 ? main.first() : page.locator("body")).innerText();
   return text.split("\n").flatMap((line) =>
