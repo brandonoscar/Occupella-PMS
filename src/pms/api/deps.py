@@ -21,6 +21,8 @@ MEDIA = {
     "pdf": "application/pdf",
     # QuickBooks Desktop's import file: tab-separated Windows text.
     "iif": "text/plain; charset=windows-1252",
+    # An ACH file for the bank (NACHA): ASCII records of 94 characters.
+    "ach": "text/plain; charset=us-ascii",
 }
 
 
@@ -175,6 +177,10 @@ AREA_PATHS = (
     ("/api/payables/draws", "owners"),
     ("/api/payables/contributions", "owners"),
     ("/api/payables/company-fees", "owners"),
+    ("/api/payouts/draw-day", "owners"),  # the draw day, and how each owner is paid
+    ("/api/payouts/owners/", "owners"),
+    ("/api/payouts/vendors/", "setup"),  # a vendor's bank account, as their profile
+    ("/api/payouts/bank-accounts/", "setup"),  # what each bank asks in an ACH file
     ("/api/budgets", "budgets"),
     ("/api/journal", "journal"),
     ("/api/reconcile/", "month-end"),

@@ -3390,6 +3390,46 @@ $$;
 
 
 --
+-- Name: trust_check_payout_item(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_payout_item() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_run trust_payout_runs;
+    v_draw_owner uuid;
+    v_bill_vendor uuid;
+    v_bank uuid;
+BEGIN
+    SELECT r.* INTO v_run FROM trust_payout_runs AS r WHERE r.id = NEW.run_id;
+    SELECT a.owner_id, a.bank_account_id INTO v_draw_owner, v_bank
+    FROM trust_owner_draws AS d
+    JOIN trust_ledger_accounts AS a ON a.ledger_account_id = d.ledger_account_id
+    WHERE d.transfer_id = NEW.transfer_id;
+    IF v_draw_owner IS NULL THEN
+        SELECT b.vendor_id, a.bank_account_id INTO v_bill_vendor, v_bank
+        FROM trust_bill_payments AS p
+        JOIN trust_bills AS b ON b.id = p.bill_id
+        JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id
+        WHERE p.transfer_id = NEW.transfer_id AND p.step = 'paid';
+    END IF;
+    IF (v_run.kind = 'owners' AND v_draw_owner IS DISTINCT FROM NEW.owner_id)
+       OR (v_run.kind = 'bills' AND v_bill_vendor IS DISTINCT FROM NEW.vendor_id)
+       OR v_bank IS DISTINCT FROM v_run.bank_account_id
+       OR v_run.pmc_id <> NEW.pmc_id THEN
+        RAISE EXCEPTION 'trust: transfer % is not a % paid out of run %''s trust bank account',
+            NEW.transfer_id, CASE v_run.kind WHEN 'owners' THEN 'draw' ELSE 'bill' END,
+            NEW.run_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_payout_method(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6963,6 +7003,61 @@ BEGIN
     ) VALUES (p_pmc_id, p_bank_account_id, p_through, v_figures[1], v_figures[2], v_staff)
     RETURNING id INTO v_id;
     RETURN v_id;
+END;
+$$;
+
+
+--
+-- Name: trust_prepare_owner_draws(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_prepare_owner_draws(p_pmc_id uuid, p_day date) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_draw_day integer;
+    v_month date := date_trunc('month', p_day::timestamp)::date;
+    v_run uuid;
+BEGIN
+    IF p_day IS NULL THEN
+        RAISE EXCEPTION 'trust: draws are prepared on a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT s.draw_day INTO v_draw_day
+    FROM trust_owner_draw_settings AS s
+    WHERE s.pmc_id = p_pmc_id
+    ORDER BY s.created_at DESC, s.id DESC
+    LIMIT 1;
+    IF v_draw_day IS NULL OR extract(day FROM p_day) < v_draw_day THEN
+        RETURN NULL;
+    END IF;
+    -- Two nights at once prepare one run: the second waits, then finds the first's.
+    PERFORM pg_advisory_xact_lock(hashtextextended('trust_draw_runs:' || p_pmc_id::text, 0));
+    IF EXISTS (SELECT 1 FROM trust_draw_runs AS r
+               WHERE r.pmc_id = p_pmc_id AND r.month = v_month) THEN
+        RETURN NULL;
+    END IF;
+
+    INSERT INTO trust_draw_runs (pmc_id, month, prepared_on)
+    VALUES (p_pmc_id, v_month, p_day)
+    RETURNING id INTO v_run;
+    INSERT INTO trust_draw_run_lines (run_id, pmc_id, ledger_account_id, amount, method)
+    SELECT v_run, p_pmc_id, x.ledger_account_id, x.available, x.method
+    FROM (
+        SELECT a.ledger_account_id,
+               round(b.balance - coalesce((trust_agreement_on(a.ledger_account_id, p_day)).reserve,
+                                          0)
+                     - trust_unpaid_bills(a.ledger_account_id, p_day), 2) AS available,
+               coalesce((SELECT m.method FROM trust_owner_payout_methods AS m
+                         WHERE m.pmc_id = p_pmc_id AND m.owner_id = a.owner_id
+                         ORDER BY m.created_at DESC, m.id DESC LIMIT 1), 'check') AS method
+        FROM trust_ledger_accounts AS a
+        JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+        WHERE a.pmc_id = p_pmc_id AND a.kind = 'owner_property'
+    ) AS x
+    WHERE x.available > 0;
+    RETURN v_run;
 END;
 $$;
 
@@ -12570,6 +12665,24 @@ $$;
 
 
 --
+-- Name: trust_routing_number_ok(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_routing_number_ok(p_number text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $_$
+    SELECT p_number ~ '^[0-9]{9}$'
+       AND (3 * (substr(p_number, 1, 1)::int + substr(p_number, 4, 1)::int
+                 + substr(p_number, 7, 1)::int)
+            + 7 * (substr(p_number, 2, 1)::int + substr(p_number, 5, 1)::int
+                   + substr(p_number, 8, 1)::int)
+            + substr(p_number, 3, 1)::int + substr(p_number, 6, 1)::int
+            + substr(p_number, 9, 1)::int) % 10 = 0
+$_$;
+
+
+--
 -- Name: trust_run_rent(uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14116,6 +14229,34 @@ CREATE TABLE public.trust_bank_matches (
 
 
 --
+-- Name: trust_bank_payout_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bank_payout_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    bank_routing_number text,
+    bank_name text,
+    origin_id text,
+    origin_name text,
+    company_id text,
+    company_name text,
+    first_check_number bigint,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_bank_payout_settings_bank_name_check CHECK ((bank_name ~ '^[A-Za-z0-9 .,&''-]{1,23}$'::text)),
+    CONSTRAINT trust_bank_payout_settings_bank_routing_number_check CHECK (public.trust_routing_number_ok(bank_routing_number)),
+    CONSTRAINT trust_bank_payout_settings_check CHECK ((num_nonnulls(bank_routing_number, bank_name, origin_id, origin_name, company_id, company_name) = ANY (ARRAY[0, 6]))),
+    CONSTRAINT trust_bank_payout_settings_company_id_check CHECK ((company_id ~ '^[A-Za-z0-9 ]{10}$'::text)),
+    CONSTRAINT trust_bank_payout_settings_company_name_check CHECK ((company_name ~ '^[A-Za-z0-9 .,&''-]{1,16}$'::text)),
+    CONSTRAINT trust_bank_payout_settings_first_check_number_check CHECK (((first_check_number >= 1) AND (first_check_number <= '999999999999999'::bigint))),
+    CONSTRAINT trust_bank_payout_settings_origin_id_check CHECK ((origin_id ~ '^[A-Za-z0-9 ]{10}$'::text)),
+    CONSTRAINT trust_bank_payout_settings_origin_name_check CHECK ((origin_name ~ '^[A-Za-z0-9 .,&''-]{1,23}$'::text))
+);
+
+
+--
 -- Name: trust_bank_statement_lines; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14729,6 +14870,48 @@ CREATE TABLE public.trust_documents (
     CONSTRAINT trust_documents_sha256_check CHECK ((length(sha256) = 32)),
     CONSTRAINT trust_documents_size_check CHECK (((size >= 1) AND (size <= 5242880))),
     CONSTRAINT trust_documents_title_check CHECK (((title ~ '\S'::text) AND (length(title) <= 200)))
+);
+
+
+--
+-- Name: trust_draw_run_approvals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_draw_run_approvals (
+    run_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_draw_run_lines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_draw_run_lines (
+    run_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    ledger_account_id text NOT NULL,
+    amount numeric NOT NULL,
+    method text NOT NULL,
+    CONSTRAINT trust_draw_run_lines_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_draw_run_lines_method_check CHECK ((method = ANY (ARRAY['check'::text, 'EFT'::text])))
+);
+
+
+--
+-- Name: trust_draw_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_draw_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    month date NOT NULL,
+    prepared_on date NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_draw_runs_month_check CHECK ((EXTRACT(day FROM month) = (1)::numeric))
 );
 
 
@@ -15763,6 +15946,20 @@ CREATE TABLE public.trust_owner_contributions (
 
 
 --
+-- Name: trust_owner_draw_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_owner_draw_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    draw_day integer,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_owner_draw_settings_draw_day_check CHECK (((draw_day >= 1) AND (draw_day <= 28)))
+);
+
+
+--
 -- Name: trust_owner_draws; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15797,6 +15994,21 @@ CREATE TABLE public.trust_owner_fees (
     CONSTRAINT trust_owner_fees_kind_check CHECK ((kind = ANY (ARRAY['inspection'::text, 'lease_up'::text, 'other'::text]))),
     CONSTRAINT trust_owner_fees_memo_check CHECK (((btrim(memo) <> ''::text) AND (length(memo) <= 200))),
     CONSTRAINT trust_owner_fees_request_key_check CHECK (((length(request_key) >= 1) AND (length(request_key) <= 100)))
+);
+
+
+--
+-- Name: trust_owner_payout_methods; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_owner_payout_methods (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    method text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_owner_payout_methods_method_check CHECK ((method = ANY (ARRAY['check'::text, 'EFT'::text])))
 );
 
 
@@ -15838,6 +16050,31 @@ CREATE TABLE public.trust_ownership_shares (
     starts_on date NOT NULL,
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_payee_bank_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payee_bank_accounts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    owner_id uuid,
+    vendor_id uuid,
+    routing_number text NOT NULL,
+    account_type text NOT NULL,
+    account_sealed bytea NOT NULL,
+    account_last4 text NOT NULL,
+    holder_name text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_payee_bank_accounts_account_last4_check CHECK ((account_last4 ~ '^[0-9]{4}$'::text)),
+    CONSTRAINT trust_payee_bank_accounts_account_sealed_check CHECK (((octet_length(account_sealed) >= 30) AND (octet_length(account_sealed) <= 200))),
+    CONSTRAINT trust_payee_bank_accounts_account_type_check CHECK ((account_type = ANY (ARRAY['checking'::text, 'savings'::text]))),
+    CONSTRAINT trust_payee_bank_accounts_check CHECK ((num_nonnulls(owner_id, vendor_id) = 1)),
+    CONSTRAINT trust_payee_bank_accounts_holder_name_check CHECK (((btrim(holder_name) <> ''::text) AND (char_length(holder_name) <= 100))),
+    CONSTRAINT trust_payee_bank_accounts_routing_number_check CHECK (public.trust_routing_number_ok(routing_number))
 );
 
 
@@ -15990,6 +16227,21 @@ CREATE TABLE public.trust_payment_settings (
 
 
 --
+-- Name: trust_payout_file_downloads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payout_file_downloads (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    file text NOT NULL,
+    recorded_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_payout_file_downloads_file_check CHECK ((file = ANY (ARRAY['ach'::text, 'checks'::text])))
+);
+
+
+--
 -- Name: trust_payout_methods; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16003,6 +16255,39 @@ CREATE TABLE public.trust_payout_methods (
     check_number text,
     CONSTRAINT trust_payout_methods_check_number_check CHECK (((check_number IS NULL) OR ((method = 'check'::text) AND (check_number ~ '^[0-9]{1,15}$'::text)))),
     CONSTRAINT trust_payout_methods_method_check CHECK ((method = ANY (ARRAY['check'::text, 'EFT'::text])))
+);
+
+
+--
+-- Name: trust_payout_run_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payout_run_items (
+    run_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    transfer_id text NOT NULL,
+    owner_id uuid,
+    vendor_id uuid,
+    CONSTRAINT trust_payout_run_items_check CHECK ((num_nonnulls(owner_id, vendor_id) = 1))
+);
+
+
+--
+-- Name: trust_payout_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payout_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    kind text NOT NULL,
+    method text NOT NULL,
+    paid_on date NOT NULL,
+    request_id uuid NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_payout_runs_kind_check CHECK ((kind = ANY (ARRAY['owners'::text, 'bills'::text]))),
+    CONSTRAINT trust_payout_runs_method_check CHECK ((method = ANY (ARRAY['EFT'::text, 'check'::text])))
 );
 
 
@@ -17465,6 +17750,14 @@ ALTER TABLE ONLY public.trust_bank_matches
 
 
 --
+-- Name: trust_bank_payout_settings trust_bank_payout_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_payout_settings
+    ADD CONSTRAINT trust_bank_payout_settings_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_bank_statement_lines trust_bank_statement_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18022,6 +18315,46 @@ ALTER TABLE public.trust_documents
 
 ALTER TABLE public.trust_documents
     ADD CONSTRAINT trust_documents_work_order_check CHECK (((kind = 'work_order_photo'::text) = (work_order_id IS NOT NULL))) NOT VALID;
+
+
+--
+-- Name: trust_draw_run_approvals trust_draw_run_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draw_run_approvals
+    ADD CONSTRAINT trust_draw_run_approvals_pkey PRIMARY KEY (run_id);
+
+
+--
+-- Name: trust_draw_run_lines trust_draw_run_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draw_run_lines
+    ADD CONSTRAINT trust_draw_run_lines_pkey PRIMARY KEY (run_id, ledger_account_id);
+
+
+--
+-- Name: trust_draw_runs trust_draw_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draw_runs
+    ADD CONSTRAINT trust_draw_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_draw_runs trust_draw_runs_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draw_runs
+    ADD CONSTRAINT trust_draw_runs_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_draw_runs trust_draw_runs_pmc_id_month_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draw_runs
+    ADD CONSTRAINT trust_draw_runs_pmc_id_month_key UNIQUE (pmc_id, month);
 
 
 --
@@ -18955,6 +19288,14 @@ ALTER TABLE ONLY public.trust_owner_contributions
 
 
 --
+-- Name: trust_owner_draw_settings trust_owner_draw_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_draw_settings
+    ADD CONSTRAINT trust_owner_draw_settings_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_owner_draws trust_owner_draws_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18984,6 +19325,14 @@ ALTER TABLE ONLY public.trust_owner_fees
 
 ALTER TABLE ONLY public.trust_owner_fees
     ADD CONSTRAINT trust_owner_fees_transfer_id_key UNIQUE (transfer_id);
+
+
+--
+-- Name: trust_owner_payout_methods trust_owner_payout_methods_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_payout_methods
+    ADD CONSTRAINT trust_owner_payout_methods_pkey PRIMARY KEY (id);
 
 
 --
@@ -19024,6 +19373,14 @@ ALTER TABLE ONLY public.trust_ownership_shares
 
 ALTER TABLE ONLY public.trust_ownership_shares
     ADD CONSTRAINT trust_ownership_shares_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_payee_bank_accounts trust_payee_bank_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payee_bank_accounts
+    ADD CONSTRAINT trust_payee_bank_accounts_pkey PRIMARY KEY (id);
 
 
 --
@@ -19147,6 +19504,14 @@ ALTER TABLE ONLY public.trust_payment_settings
 
 
 --
+-- Name: trust_payout_file_downloads trust_payout_file_downloads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_file_downloads
+    ADD CONSTRAINT trust_payout_file_downloads_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_payout_methods trust_payout_methods_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19160,6 +19525,46 @@ ALTER TABLE ONLY public.trust_payout_methods
 
 ALTER TABLE ONLY public.trust_payout_methods
     ADD CONSTRAINT trust_payout_methods_transfer_id_key UNIQUE (transfer_id);
+
+
+--
+-- Name: trust_payout_run_items trust_payout_run_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_run_items
+    ADD CONSTRAINT trust_payout_run_items_pkey PRIMARY KEY (run_id, transfer_id);
+
+
+--
+-- Name: trust_payout_run_items trust_payout_run_items_transfer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_run_items
+    ADD CONSTRAINT trust_payout_run_items_transfer_id_key UNIQUE (transfer_id);
+
+
+--
+-- Name: trust_payout_runs trust_payout_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_runs
+    ADD CONSTRAINT trust_payout_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_payout_runs trust_payout_runs_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_runs
+    ADD CONSTRAINT trust_payout_runs_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_payout_runs trust_payout_runs_pmc_id_request_id_bank_account_id_method_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_runs
+    ADD CONSTRAINT trust_payout_runs_pmc_id_request_id_bank_account_id_method_key UNIQUE (pmc_id, request_id, bank_account_id, method);
 
 
 --
@@ -20281,6 +20686,20 @@ CREATE INDEX trust_bank_matches_bank_account_id ON public.trust_bank_matches USI
 
 
 --
+-- Name: trust_bank_payout_settings_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bank_payout_settings_account ON public.trust_bank_payout_settings USING btree (pmc_id, bank_account_id, created_at);
+
+
+--
+-- Name: trust_bank_payout_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bank_payout_settings_recorded_by ON public.trust_bank_payout_settings USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_bill_declines_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20628,6 +21047,20 @@ CREATE INDEX trust_documents_unit_id ON public.trust_documents USING btree (unit
 --
 
 CREATE INDEX trust_documents_work_order_id ON public.trust_documents USING btree (work_order_id);
+
+
+--
+-- Name: trust_draw_run_approvals_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_draw_run_approvals_recorded_by ON public.trust_draw_run_approvals USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_draw_run_lines_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_draw_run_lines_account ON public.trust_draw_run_lines USING btree (ledger_account_id);
 
 
 --
@@ -21331,6 +21764,20 @@ CREATE INDEX trust_online_payments_tenant ON public.trust_online_payments USING 
 
 
 --
+-- Name: trust_owner_draw_settings_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_draw_settings_pmc ON public.trust_owner_draw_settings USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_owner_draw_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_draw_settings_recorded_by ON public.trust_owner_draw_settings USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_owner_draws_ledger_account_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21359,6 +21806,20 @@ CREATE INDEX trust_owner_fees_recorded_by ON public.trust_owner_fees USING btree
 
 
 --
+-- Name: trust_owner_payout_methods_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_payout_methods_owner ON public.trust_owner_payout_methods USING btree (pmc_id, owner_id, created_at);
+
+
+--
+-- Name: trust_owner_payout_methods_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_payout_methods_recorded_by ON public.trust_owner_payout_methods USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_ownership_share_lines_account; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21384,6 +21845,27 @@ CREATE INDEX trust_ownership_shares_property ON public.trust_ownership_shares US
 --
 
 CREATE INDEX trust_ownership_shares_recorded_by ON public.trust_ownership_shares USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_payee_bank_accounts_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payee_bank_accounts_owner ON public.trust_payee_bank_accounts USING btree (pmc_id, owner_id, created_at);
+
+
+--
+-- Name: trust_payee_bank_accounts_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payee_bank_accounts_recorded_by ON public.trust_payee_bank_accounts USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_payee_bank_accounts_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payee_bank_accounts_vendor ON public.trust_payee_bank_accounts USING btree (pmc_id, vendor_id, created_at);
 
 
 --
@@ -21457,10 +21939,52 @@ CREATE INDEX trust_payment_settings_recorded_by ON public.trust_payment_settings
 
 
 --
+-- Name: trust_payout_file_downloads_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payout_file_downloads_recorded_by ON public.trust_payout_file_downloads USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_payout_file_downloads_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payout_file_downloads_run ON public.trust_payout_file_downloads USING btree (pmc_id, run_id);
+
+
+--
 -- Name: trust_payout_methods_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX trust_payout_methods_recorded_by ON public.trust_payout_methods USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_payout_run_items_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payout_run_items_owner ON public.trust_payout_run_items USING btree (pmc_id, owner_id);
+
+
+--
+-- Name: trust_payout_run_items_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payout_run_items_vendor ON public.trust_payout_run_items USING btree (pmc_id, vendor_id);
+
+
+--
+-- Name: trust_payout_runs_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payout_runs_account ON public.trust_payout_runs USING btree (pmc_id, bank_account_id, created_at);
+
+
+--
+-- Name: trust_payout_runs_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payout_runs_recorded_by ON public.trust_payout_runs USING btree (pmc_id, recorded_by);
 
 
 --
@@ -22360,6 +22884,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_bank_payout_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bank_payout_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_bank_statement_lines trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22588,6 +23119,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_documents FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_draw_run_approvals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_draw_run_approvals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_draw_run_lines trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_draw_run_lines FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_draw_runs trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_draw_runs FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -22983,6 +23535,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_owner_draw_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_owner_draw_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_owner_draws trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22997,6 +23556,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_owner_payout_methods trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_owner_payout_methods FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_ownership_share_lines trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23008,6 +23574,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_ownership_shares FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_payee_bank_accounts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payee_bank_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -23074,10 +23647,31 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_payout_file_downloads trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payout_file_downloads FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_payout_methods trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payout_methods FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_payout_run_items trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payout_run_items FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_payout_runs trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payout_runs FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -23732,6 +24326,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank
 
 
 --
+-- Name: trust_bank_payout_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank_payout_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_bank_statement_lines trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23953,6 +24554,27 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_docu
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_documents FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_draw_run_approvals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_draw_run_approvals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_draw_run_lines trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_draw_run_lines FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_draw_runs trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_draw_runs FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -24348,6 +24970,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owne
 
 
 --
+-- Name: trust_owner_draw_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owner_draw_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_owner_draws trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24359,6 +24988,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owne
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owner_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_owner_payout_methods trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owner_payout_methods FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -24380,6 +25016,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owne
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_ownership_shares FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_payee_bank_accounts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payee_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -24446,10 +25089,31 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_paym
 
 
 --
+-- Name: trust_payout_file_downloads trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payout_file_downloads FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_payout_methods trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payout_methods FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_payout_run_items trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payout_run_items FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_payout_runs trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payout_runs FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -25062,6 +25726,13 @@ CREATE TRIGGER trust_check_payment_hold BEFORE INSERT ON public.trust_payment_ho
 
 
 --
+-- Name: trust_payout_run_items trust_check_payout_item; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_payout_item BEFORE INSERT ON public.trust_payout_run_items FOR EACH ROW EXECUTE FUNCTION public.trust_check_payout_item();
+
+
+--
 -- Name: trust_recurring_bills trust_check_recurring_bill; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25461,6 +26132,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bank_deposits FOR
 
 
 --
+-- Name: trust_bank_payout_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bank_payout_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_bill_declines trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25535,6 +26213,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_deduction_receipt
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_deposit_interest_terms FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_draw_run_approvals trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_draw_run_approvals FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -25713,6 +26398,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_on_call_staff FOR
 
 
 --
+-- Name: trust_owner_draw_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_owner_draw_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_owner_fees trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25720,10 +26412,24 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_owner_fees FOR EA
 
 
 --
+-- Name: trust_owner_payout_methods trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_owner_payout_methods FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_ownership_shares trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_ownership_shares FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_payee_bank_accounts trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payee_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -25755,10 +26461,24 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_settings 
 
 
 --
+-- Name: trust_payout_file_downloads trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payout_file_downloads FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_payout_methods trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payout_methods FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_payout_runs trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payout_runs FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -26877,6 +27597,30 @@ ALTER TABLE ONLY public.trust_bank_matches
 
 
 --
+-- Name: trust_bank_payout_settings trust_bank_payout_settings_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_payout_settings
+    ADD CONSTRAINT trust_bank_payout_settings_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_bank_payout_settings trust_bank_payout_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_payout_settings
+    ADD CONSTRAINT trust_bank_payout_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bank_payout_settings trust_bank_payout_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_payout_settings
+    ADD CONSTRAINT trust_bank_payout_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_bank_statement_lines trust_bank_statement_lines_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27802,6 +28546,46 @@ ALTER TABLE ONLY public.trust_documents
 
 ALTER TABLE ONLY public.trust_documents
     ADD CONSTRAINT trust_documents_pmc_id_work_order_id_fkey FOREIGN KEY (pmc_id, work_order_id) REFERENCES public.trust_work_orders(pmc_id, id) NOT VALID;
+
+
+--
+-- Name: trust_draw_run_approvals trust_draw_run_approvals_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draw_run_approvals
+    ADD CONSTRAINT trust_draw_run_approvals_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_draw_run_approvals trust_draw_run_approvals_pmc_id_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draw_run_approvals
+    ADD CONSTRAINT trust_draw_run_approvals_pmc_id_run_id_fkey FOREIGN KEY (pmc_id, run_id) REFERENCES public.trust_draw_runs(pmc_id, id);
+
+
+--
+-- Name: trust_draw_run_lines trust_draw_run_lines_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draw_run_lines
+    ADD CONSTRAINT trust_draw_run_lines_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_draw_run_lines trust_draw_run_lines_pmc_id_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draw_run_lines
+    ADD CONSTRAINT trust_draw_run_lines_pmc_id_run_id_fkey FOREIGN KEY (pmc_id, run_id) REFERENCES public.trust_draw_runs(pmc_id, id);
+
+
+--
+-- Name: trust_draw_runs trust_draw_runs_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draw_runs
+    ADD CONSTRAINT trust_draw_runs_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
 
 
 --
@@ -29445,6 +30229,22 @@ ALTER TABLE ONLY public.trust_owner_contributions
 
 
 --
+-- Name: trust_owner_draw_settings trust_owner_draw_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_draw_settings
+    ADD CONSTRAINT trust_owner_draw_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_owner_draw_settings trust_owner_draw_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_draw_settings
+    ADD CONSTRAINT trust_owner_draw_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_owner_draws trust_owner_draws_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29501,6 +30301,30 @@ ALTER TABLE ONLY public.trust_owner_fees
 
 
 --
+-- Name: trust_owner_payout_methods trust_owner_payout_methods_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_payout_methods
+    ADD CONSTRAINT trust_owner_payout_methods_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_owner_payout_methods trust_owner_payout_methods_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_payout_methods
+    ADD CONSTRAINT trust_owner_payout_methods_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_owner_payout_methods trust_owner_payout_methods_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_payout_methods
+    ADD CONSTRAINT trust_owner_payout_methods_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_owners trust_owners_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29554,6 +30378,38 @@ ALTER TABLE ONLY public.trust_ownership_shares
 
 ALTER TABLE ONLY public.trust_ownership_shares
     ADD CONSTRAINT trust_ownership_shares_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_payee_bank_accounts trust_payee_bank_accounts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payee_bank_accounts
+    ADD CONSTRAINT trust_payee_bank_accounts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payee_bank_accounts trust_payee_bank_accounts_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payee_bank_accounts
+    ADD CONSTRAINT trust_payee_bank_accounts_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_payee_bank_accounts trust_payee_bank_accounts_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payee_bank_accounts
+    ADD CONSTRAINT trust_payee_bank_accounts_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_payee_bank_accounts trust_payee_bank_accounts_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payee_bank_accounts
+    ADD CONSTRAINT trust_payee_bank_accounts_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
 
 
 --
@@ -29757,6 +30613,22 @@ ALTER TABLE ONLY public.trust_payment_settings
 
 
 --
+-- Name: trust_payout_file_downloads trust_payout_file_downloads_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_file_downloads
+    ADD CONSTRAINT trust_payout_file_downloads_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_payout_file_downloads trust_payout_file_downloads_pmc_id_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_file_downloads
+    ADD CONSTRAINT trust_payout_file_downloads_pmc_id_run_id_fkey FOREIGN KEY (pmc_id, run_id) REFERENCES public.trust_payout_runs(pmc_id, id);
+
+
+--
 -- Name: trust_payout_methods trust_payout_methods_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29778,6 +30650,62 @@ ALTER TABLE ONLY public.trust_payout_methods
 
 ALTER TABLE ONLY public.trust_payout_methods
     ADD CONSTRAINT trust_payout_methods_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_payout_run_items trust_payout_run_items_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_run_items
+    ADD CONSTRAINT trust_payout_run_items_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_payout_run_items trust_payout_run_items_pmc_id_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_run_items
+    ADD CONSTRAINT trust_payout_run_items_pmc_id_run_id_fkey FOREIGN KEY (pmc_id, run_id) REFERENCES public.trust_payout_runs(pmc_id, id);
+
+
+--
+-- Name: trust_payout_run_items trust_payout_run_items_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_run_items
+    ADD CONSTRAINT trust_payout_run_items_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
+-- Name: trust_payout_run_items trust_payout_run_items_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_run_items
+    ADD CONSTRAINT trust_payout_run_items_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_payout_runs trust_payout_runs_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_runs
+    ADD CONSTRAINT trust_payout_runs_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_payout_runs trust_payout_runs_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_runs
+    ADD CONSTRAINT trust_payout_runs_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payout_runs trust_payout_runs_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_runs
+    ADD CONSTRAINT trust_payout_runs_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -31285,5 +32213,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261023000150'),
     ('20261023000151'),
     ('20261024000152'),
+    ('20261024000153'),
     ('20261025000200'),
     ('20261025000210');

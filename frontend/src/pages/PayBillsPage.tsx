@@ -19,8 +19,11 @@ import { day, money, sumMoney, usDate } from "../money";
 import type { Bill, BillPaid, OwnerMoney, PayoutMethod } from "../payables";
 import { billBadge, billsPaidSummary } from "../payables";
 import type { Paged } from "../rentals";
+import { requestId } from "../rent";
 import { scopeParams, useScope } from "../scope";
 import { GoLink } from "./NeedsAttention";
+import type { Output } from "./PayOwnersPage";
+import { PayoutFiles } from "./PayoutFiles";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
@@ -50,7 +53,8 @@ export function cashOf(bills: Bill[], chosen: Set<string>, owners: OwnerMoney[])
 // beside them what each property's owner account holds and what it would hold after; below them
 // the bills that can't be paid yet and why (short, or waiting for the owner). Staff say how and
 // when they were sent, with each check's number, and pay them all at once, every one or none. The
-// PMS records the payments; it sends no money and writes no bank file.
+// PMS records the payments and, when asked, writes their ACH file for the bank or prints their
+// checks, one to each vendor, numbered on from the account's next; it sends no money itself.
 export function PayBillsPage({ me }: { me: Me }) {
   const [scope, setScope] = useScope();
   const [bills, setBills] = useState<Bill[] | null>(null);
@@ -58,6 +62,8 @@ export function PayBillsPage({ me }: { me: Me }) {
   const [error, setError] = useState("");
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [method, setMethod] = useState<PayoutMethod>("check");
+  const [output, setOutput] = useState<Output>("record");
+  const [id, setId] = useState(requestId);
   const [on, setOn] = useState(day(new Date()));
   const [numbers, setNumbers] = useState<Record<string, string>>({});
   const [runs, setRuns] = useState(0);
@@ -114,14 +120,19 @@ export function PayBillsPage({ me }: { me: Me }) {
         <Form className="flex flex-col gap-4" onSubmit={(event) => {
           event.preventDefault();
           const ids = picked.map((b) => b.id);
-          const checks = method === "check"
-            ? Object.fromEntries(ids.filter((id) => numbers[id]).map((id) => [id, numbers[id]]))
+          const checks = method === "check" && output === "record"
+            ? Object.fromEntries(ids.filter((bill) => numbers[bill]).map((bill) => [bill, numbers[bill]]))
             : {};
-          ask(`Pay ${money(total)} for ${ids.length} bill${ids.length === 1 ? "" : "s"} by ${how} on ${usDate(on)}? It comes out of each property's money in trust.`, async () => {
-            if (await record<BillPaid[]>("/api/payables/bills/pay", { on, method, bill_ids: ids, check_numbers: checks },
-              (paid) => billsPaidSummary(paid, method))) {
+          const file = output === "file"
+            ? ` The PMS ${method === "EFT" ? "writes the ACH file" : "prints the checks"}; the bank moves the money.`
+            : "";
+          ask(`Pay ${money(total)} for ${ids.length} bill${ids.length === 1 ? "" : "s"} by ${how} on ${usDate(on)}? It comes out of each property's money in trust.${file}`, async () => {
+            const body = { on, method, bill_ids: ids, check_numbers: checks, output, request_id: id };
+            if (await record<BillPaid[]>("/api/payables/bills/pay", body,
+              (paid) => billsPaidSummary(paid, method) + (output === "file" ? " Their file is under Payout files below." : ""))) {
               setChosen(new Set());
               setNumbers({});
+              setId(requestId());
             }
           }, "Pay");
         }}>
@@ -139,7 +150,7 @@ export function PayBillsPage({ me }: { me: Me }) {
                   <th className="text-left">Ref #</th>
                   <th className="text-right">To pay</th>
                   <th className="text-left">Status</th>
-                  {method === "check" && <th className="text-left">Check #</th>}
+                  {method === "check" && output === "record" && <th className="text-left">Check #</th>}
                 </tr>
               </thead>
               <tbody>
@@ -162,7 +173,7 @@ export function PayBillsPage({ me }: { me: Me }) {
                         )}
                       </td>
                       <td><Badge tone={badge.tone}>{badge.word}</Badge></td>
-                      {method === "check" && (
+                      {method === "check" && output === "record" && (
                         <td>
                           <input aria-label={`Check number, ${bill.vendor} ${bill.reference}`} inputMode="numeric"
                             maxLength={15} pattern="[0-9]*" value={numbers[bill.id] ?? ""}
@@ -209,17 +220,23 @@ export function PayBillsPage({ me }: { me: Me }) {
               <option value="check">Check</option>
               <option value="EFT">ACH</option>
             </Select>
+            <Select label="Payout file" id="bills-output" value={output} onChange={(e) => setOutput(e.target.value as Output)}>
+              <option value="record">None: record payments made outside the PMS</option>
+              <option value="file">{method === "EFT" ? "ACH file" : "Checks to print"}</option>
+            </Select>
             <Field label="Paid on" id="bills-on" type="date" required value={on} onChange={(e) => setOn(e.target.value)} />
             <Button type="submit" disabled={picked.length === 0}>
               {picked.length === 0 ? "Choose bills to pay" : `Pay ${money(total)}`}
             </Button>
           </div>
           <p className="text-sm text-ink-subtle">
-            Records what the bank paid, all of them or none. The PMS sends no money and writes no bank file.
+            Records what was paid, all of them or none. With a payout file the PMS also writes the ACH file to upload
+            to the bank, or prints the checks, numbered on from the account's next; the bank moves the money.
           </p>
           <Blocked bills={blocked} />
         </Form>
       )}
+      <PayoutFiles query={{ kind: "bills" }} runs={runs} />
       {prompt}
     </Shell>
   );
