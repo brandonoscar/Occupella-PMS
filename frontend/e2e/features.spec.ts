@@ -321,8 +321,8 @@ test("staff charge this month's rent and its late fees, and the Dashboard shows 
   await expect(unitA).toContainText("$1,415.00 paid what is owed.");
   const open = unitA.getByRole("list", { name: "Open charges" });
   await expect(open).toContainText(`${us(lastMonthEnd)} Key replacement: $25.00 open`);
-  await expect(open).toContainText(`Pet rent due ${firstOfThisMonth()}: $15.00 open of $35.00`);
-  await expect(open).not.toContainText(`Rent due ${firstOfThisMonth()}`);
+  await expect(open).toContainText(`Pet rent due ${us(firstOfThisMonth())}: $15.00 open of $35.00`);
+  await expect(open).not.toContainText(`Rent due ${us(firstOfThisMonth())}`);
   await expect(open.getByRole("listitem")).toHaveCount(late ? 3 : 2);
 
   // Aspen Row Unit 1 pays the rest of what it owes, so the rent roll's Owing list leaves it out,
@@ -2526,7 +2526,7 @@ test("staff move a tenant in mid-month on a year's lease and the rent run charge
   await expect(run).toHaveCount(0);
   await expect(page.getByRole("main")).toContainText(/7 rents, 1 recurring charge and \d+ late fees? charged\./);
   const unitB = await openLease(page, "Birch Flats, Unit B");
-  const lateFee = `Late fee, rent due ${firstOfThisMonth()}`;
+  const lateFee = `Late fee, rent due ${us(firstOfThisMonth())}`;
   if (dayOfMonth() > 1) {
     await expect(unitB.getByRole("list", { name: "Open charges" })).toContainText(`${lateFee}: $60.00 open`);
   } else {
@@ -2538,7 +2538,7 @@ test("staff move a tenant in mid-month on a year's lease and the rent run charge
   const yearLease = page.getByRole("main");
   await expect(page.getByRole("heading", { level: 1, name: /^Aspen Row · Unit 2 · / })).toBeVisible();
   await expect(yearLease.getByRole("list", { name: "Open charges" })).toContainText(
-    `${us(starts)} Rent due ${starts}, ${starts} to ${year}-${month}-${days} (${days - 15} of ${days} days): ${firstPart} open`,
+    `${us(starts)} Rent due ${us(starts)}, ${us(starts)} to ${month}/${days}/${year} (${days - 15} of ${days} days): ${firstPart} open`,
   );
 
   // Mid-term, the rent changes only as the lease's own terms allow, which staff name with it.
@@ -3058,7 +3058,7 @@ test("staff pick the day of the month a lease's rent is due, the rent run charge
   const aspen = await openLease(page, "Aspen Row, Unit 2");
   await expect(page.getByTestId("rent-due-day")).toHaveText(`Due on the ${nth(due)}`);
   await expect(aspen.getByRole("list", { name: "Open charges" })).toContainText(
-    `${us(dueOn)} Rent due ${dueOn}: $1,240.00 open`,
+    `${us(dueOn)} Rent due ${us(dueOn)}: $1,240.00 open`,
   );
   // This month is charged: a new due day starts after it.
   change = await leasePanel(page, "Change rent due day");
@@ -5224,7 +5224,7 @@ test("staff receive a payment with a note and the check's photo, choose the char
     .getByLabel(`${us(lastMonthEnd)} Key replacement: $25.00 open`).check();
   await pay.getByLabel("Note (staff only)").fill("Dropped off at the office");
   await pay.getByLabel("Check photo or PDF").setInputFiles({ name: "check 7002.png", mimeType: "image/png", buffer: LOGO });
-  await expect(pay).toContainText("Each tenant on the lease is emailed its receipt.");
+  await expect(pay).toContainText("Each tenant with an email on file is emailed a receipt.");
   await pay.getByRole("button", { name: "Save and add another" }).click();
   await expect(unitA).toContainText("$25.00 paid what is owed.");
   await expect(pay.getByLabel("Payment received")).toHaveValue("");
@@ -5233,7 +5233,7 @@ test("staff receive a payment with a note and the check's photo, choose the char
   await expect(pay).toHaveCount(0);
   // The key fee is paid; the $10.00 went to the rent, as a payment's rest does.
   const open = unitA.getByRole("list", { name: "Open charges" });
-  await expect(open).toContainText(`Rent due ${firstOfThisMonth()}`);
+  await expect(open).toContainText(`Rent due ${us(firstOfThisMonth())}`);
   await expect(open).not.toContainText("Key replacement");
 
   // The Ledger tab: what staff wrote and the check's photo beside its receipt; Files lists it.

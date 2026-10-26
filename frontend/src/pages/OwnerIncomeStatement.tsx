@@ -6,7 +6,7 @@ import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
 import type { IncomeStatement, Line } from "../incomeStatement";
 import { groupIncomeStatement } from "../incomeStatement";
-import { money } from "../money";
+import { money, usDatesIn } from "../money";
 import type { YearEndData } from "../yearEnd";
 import { lastYear } from "../yearEnd";
 import { Form } from "../components/Form";
@@ -77,7 +77,7 @@ export function OwnerIncomeStatement() {
       <Notice tone="error">{error}</Notice>
       {shown && (
         <div className="flex flex-col gap-6">
-          <p className="text-sm text-ink-subtle">{shown.period}</p>
+          <p className="text-sm text-ink-subtle">{usDatesIn(shown.period).replace(" UTC,", ",")}</p>
           {shown.sections.map((section) => (
             <section key={section.name} aria-label={`Income statement, ${section.name}`}
               className="flex flex-col gap-3">

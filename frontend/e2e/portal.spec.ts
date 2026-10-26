@@ -865,7 +865,7 @@ test("staff bring a roster in, open an account with its old balances and a check
   // Carried by the opening match, the check waits for the bank line that clears it.
   await expect(page.getByLabel(`${us(before)} Check to Vendor E2E (2001), from before the cutover: ($150.00)`)).toBeVisible();
   const carried = page.getByRole("table", { name: "Reconciling items" }).getByRole("row", {
-    name: `outstanding withdrawal ${before} Check to Vendor E2E (2001), from before the cutover ($150.00)`,
+    name: `outstanding withdrawal ${us(before)} Check to Vendor E2E (2001), from before the cutover ($150.00)`,
   });
   await expect(carried).toBeVisible();
 });

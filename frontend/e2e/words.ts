@@ -13,9 +13,11 @@ const INTERNAL: [string, RegExp][] = [
   ["a day as YYYY-MM-DD", /(?<![\w-])\d{4}-\d{2}-\d{2}(?![\w-])/],
 ];
 
-// Each internal word on the page's main part, as "what: the line it is on".
+// Each internal word on the page's main part (the whole page where it has none, as sign-in
+// doesn't), as "what: the line it is on".
 export async function internalWords(page: Page): Promise<string[]> {
-  const text = await page.getByRole("main").first().innerText();
+  const main = page.getByRole("main");
+  const text = await ((await main.count()) > 0 ? main.first() : page.locator("body")).innerText();
   return text.split("\n").flatMap((line) =>
     INTERNAL.filter(([, pattern]) => pattern.test(line)).map(([what]) => `${what}: ${line.trim().slice(0, 120)}`),
   );
