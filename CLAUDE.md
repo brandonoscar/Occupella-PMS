@@ -199,7 +199,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `11/01/2025 – Month to month`. Money leaving trust (a draw, a bill paid, the company's fees
   taken out, a deposit returned) waits for staff to confirm a question naming the amount
   (`components/Confirm.tsx`), and a row's risky actions (It bounced, Archive...) sit in its ⋯ menu
-  (`components/RowMenu.tsx`), each confirmed. What a save did shows as a toast
+  (`components/RowMenu.tsx`), each confirmed. Every action button has one plain line under it
+  saying what it does and what it doesn't (`Button`'s `says`; `src/buttonRules.test.ts` fails a
+  submit button without one), an action that can't be taken back asks first (`AskFirst`), and a
+  page shows who an email goes to before it goes (ADR 0010, phase 4). What a save did shows as a toast
   (`components/Said.tsx`, which keeps an off-screen status line; `components/Toaster.tsx`), a
   refused change's reason too (`api.post`), and a form's submit button is busy while its save runs
   (`components/Form.tsx`). Side panels, confirm questions and ⋯ menus are React Aria's
@@ -874,7 +877,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the line's own id; one naming none or several, looking recorded already (that lease, day and
   amount) or refused by the books (a hold, a closed period, an owner's account to choose) waits
   with why (`trust_payment_file_lines.note`). Staff record a waiting line to a lease they find,
-  past a hold if they say, or set it aside with why: `trust_payment_file_postings` (checked at
+  past a hold if they say, or skip it with why (Skip): `trust_payment_file_postings` (checked at
   commit to be a tenant payment of the line's amount and day to its lease) or
   `trust_payment_file_skips`, once per line and never both. Append-only; area rent.
 - Bills and owners' money (`src/pms/api/payables.py`): staff enter, approve, pay (all or a part,
