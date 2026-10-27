@@ -20,6 +20,7 @@ import { RowMenu } from "../components/RowMenu";
 import { SidePanel } from "../components/SidePanel";
 import { CompanyFeesForm } from "./CompanyFeesForm";
 import { BreakdownTab, DepositsTab, RegisterTab } from "./BankAccountTabs";
+import { PayoutsTab } from "./PayoutFiles";
 import { Tabs } from "../components/Tabs";
 import type { BankBooks, BillSuggestion, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
 import { suggestionQuestion } from "../reconcile";
@@ -190,13 +191,14 @@ const KIND: Record<BankBooks["kind"], string> = {
   security_deposit: "Security deposits",
 };
 
-type AccountTab = "transactions" | "deposits" | "reconciliations" | "breakdown" | "statements";
+type AccountTab = "transactions" | "deposits" | "reconciliations" | "breakdown" | "statements" | "payouts";
 const ACCOUNT_TABS: { value: AccountTab; label: string }[] = [
   { value: "transactions", label: "Transactions" },
   { value: "deposits", label: "Deposits" },
   { value: "reconciliations", label: "Reconciliations" },
   { value: "breakdown", label: "Balance breakdown" },
   { value: "statements", label: "Statements" },
+  { value: "payouts", label: "Payouts" },
 ];
 
 // A trust bank account's own page (ADR 0006): Transactions (its register), Reconciliations (its
@@ -268,6 +270,7 @@ export function ReconcilePage({ me, id }: { me: Me; id: string }) {
               </div>
             )}
             {shown === "breakdown" && <BreakdownTab bankId={bank.id} />}
+            {shown === "payouts" && <PayoutsTab bankId={bank.id} />}
             {shown === "statements" && <StatementsCard bank={bank} refresh={refresh} />}
           </div>
         </>

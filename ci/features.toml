@@ -1052,3 +1052,25 @@ browser = [
   "features.spec.ts › a tenant sets up autopay, saves a bank account and turns it off, Run rent now starts a payment, the bank pays it, and staff turn it off",
 ]
 
+
+[[feature]]
+id = "payouts"
+statement = "Staff set the company's draw day (the nightly run prepares every owner's draw that night, and the Dashboard and Pay owners say they wait until staff pay them), how each owner is paid (ACH or check) and the bank account an owner's or vendor's ACH goes to (only its last four show), and a trust bank account's ACH details from its bank and first check number on its Payouts tab; Pay owners and Pay bills then record the payouts and, when asked, write their ACH file and print their checks, listed under Payout files to download. The PMS moves no money itself."
+operations = [
+  "GET /api/payouts/draw-day",
+  "POST /api/payouts/draw-day",
+  "GET /api/payouts/owners/{owner_id}",
+  "POST /api/payouts/owners/{owner_id}/method",
+  "POST /api/payouts/owners/{owner_id}/bank-account",
+  "GET /api/payouts/vendors/{vendor_id}",
+  "POST /api/payouts/vendors/{vendor_id}/bank-account",
+  "GET /api/payouts/bank-accounts/{bank_account_id}",
+  "POST /api/payouts/bank-accounts/{bank_account_id}",
+  "GET /api/payouts/runs",
+  "GET /api/payouts/runs/{run_id}/ach",
+  "GET /api/payouts/runs/{run_id}/checks",
+  "GET /api/payouts/draw-runs/waiting",
+]
+browser = [
+  "features.spec.ts › staff set the draw day and how owners and vendors are paid, keep the bank's ACH details, pay the draws the nightly run prepared with an ACH file and checks, and pay a bill by ACH file",
+]

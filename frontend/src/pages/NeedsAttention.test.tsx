@@ -110,6 +110,27 @@ describe("Dashboard", () => {
     expect(within(insurance).getByRole("link", { name: "Open Vendors" }).getAttribute("href")).toBe("/vendors");
   });
 
+  it("says when the owners' draws prepared on the draw day are ready to pay, and nothing once there are none", async () => {
+    server({ ...QUIET, owner_draws: {
+      id: "dr1", month: "2026-10-01", prepared_on: "2026-10-15", total: "1200.00",
+      lines: [
+        { account: "a1", owner_id: "o1", owner: "Owner 1", property: "Property 1", amount: "700.00", available_now: "700.00", method: "EFT" },
+        { account: "a2", owner_id: "o2", owner: "Owner 2", property: "Property 2", amount: "500.00", available_now: "500.00", method: "check" },
+      ],
+    } });
+    render(<DashboardPage me={ME} />);
+
+    const draws = await screen.findByRole("region", { name: "Owner draws ready" });
+    expect(within(draws).getByText("Prepared 10/15/2026 for 2 owner accounts, $1,200.00.")).toBeTruthy();
+    expect(within(draws).getByRole("link", { name: "Open Pay owners" }).getAttribute("href")).toBe("/owner-draws");
+    cleanup();
+
+    server({ ...QUIET, owner_draws: null });
+    render(<DashboardPage me={ME} />);
+    expect((await screen.findByTestId("empty-state")).textContent).toContain("owner draws ready to pay");
+    expect(screen.queryByRole("region", { name: "Owner draws ready" })).toBeNull();
+  });
+
   it("lists the company's fees left in trust, with the day to take them out by", async () => {
     server({ ...QUIET, company_fees: [
       { bank_account_id: "b1", bank_account: "Operating trust", held: "150.00", since: "2026-09-10",
