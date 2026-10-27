@@ -1,0 +1,35 @@
+line	property	item	amount
+1	Golden PMC	PMC	NULL
+2	Owner 1	owner	NULL
+3	2026, January 1 to December 31 UTC	year	NULL
+4	Property 1	opening balance	0.00
+5	Property 1	collected from tenants	0.00
+6	Property 1	management fees	0.00
+7	Property 1	leasing fees	0.00
+8	Property 1	bills paid	0.00
+9	Property 1	owner draws	0.00
+10	Property 1	owner contributions	500.00
+11	Property 1	security deposit interest	-8.94
+12	Property 1	other	0.00
+13	Property 1	closing balance	491.06
+14	Property 2	opening balance	0.00
+15	Property 2	collected from tenants	0.00
+16	Property 2	management fees	0.00
+17	Property 2	leasing fees	0.00
+18	Property 2	bills paid	0.00
+19	Property 2	owner draws	0.00
+20	Property 2	owner contributions	0.00
+21	Property 2	security deposit interest	0.00
+22	Property 2	other	0.00
+23	Property 2	closing balance	0.00
+24	NULL	all properties: opening balance	0.00
+25	NULL	all properties: collected from tenants	0.00
+26	NULL	all properties: management fees	0.00
+27	NULL	all properties: leasing fees	0.00
+28	NULL	all properties: bills paid	0.00
+29	NULL	all properties: owner draws	0.00
+30	NULL	all properties: owner contributions	500.00
+31	NULL	all properties: security deposit interest	-8.94
+32	NULL	all properties: other	0.00
+33	NULL	all properties: closing balance	491.06
+34	NULL	1099-MISC rents (box 1)	0.00

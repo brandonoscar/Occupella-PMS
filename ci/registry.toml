@@ -35,6 +35,7 @@ tests = [
   "tests/test_tie_out.py::test_held_money_cannot_change_trust_account_without_its_cash",
   "tests/test_tie_out.py::test_a_deposit_kept_for_damages_moves_with_its_cash",
   "tests/test_tie_out.py::test_the_check_runs_at_commit",
+  "tests/properties/test_tie_out_properties.py::test_the_tie_out_refuses_exactly_what_leaves_a_trust_bank_account_untied",
 ]
 
 [[invariant]]
@@ -1525,6 +1526,46 @@ tests = [
   "tests/test_autopay.py::test_a_stopped_autopays_payment_is_never_sent",
   "tests/test_payments.py::test_stripe_charges_a_saved_account_once_finding_the_payment_it_made_before",
   "tests/api/test_autopay_api.py::test_run_rent_now_starts_the_autopay_payment_which_goes_to_the_partner_and_the_books",
+]
+
+[[invariant]]
+id = "owner-draws-prepared-once-a-month-and-paid-only-by-staff"
+statement = "Owner draws (migration 0153, ADR 0010 phase 1b): on or after the company's draw day, the nightly run prepares each month's draws once: each owner's property account with money available that night (its balance less its reserve and every bill dated by then and neither paid nor declined, as a draw counts it), what it has, and how its owner is paid. Preparing moves no money and records nothing as paid; staff pay them on Pay owners, each at most what the account has then, and paying them marks the month's draws paid once. Append-only."
+tests = [
+  "tests/properties/test_payout_properties.py::test_draws_prepared_on_the_draw_day_are_what_each_owner_has_available",
+  "tests/test_draws_and_payouts.py::test_no_draw_day_prepares_nothing_and_a_day_not_come_yet_neither",
+  "tests/test_draws_and_payouts.py::test_the_draw_day_prepares_what_each_account_has_available_once_a_month",
+  "tests/test_draws_and_payouts.py::test_a_missed_draw_day_is_prepared_the_first_night_after_and_an_account_with_nothing_isnt",
+  "tests/test_draws_and_payouts.py::test_a_prepared_run_is_paid_once",
+  "tests/test_nightly.py::test_a_night_on_or_after_the_draw_day_prepares_the_owners_draws_once_and_pays_none",
+  "tests/api/test_payouts_api.py::test_the_draws_prepared_on_the_draw_day_wait_on_the_dashboard_until_paid_once",
+]
+
+[[invariant]]
+id = "payout-files-pay-what-was-recorded"
+statement = "Payout files (migration 0153, ADR 0010 phase 1b): a payout run's items are payouts already recorded, each in one run, owner draws in an owners' run and bills paid in a bills' run, to their own payee, out of the run's trust bank account. Its ACH file credits each payee once with what was recorded, to the bank account on file, and adds up as NACHA asks (94-character records in blocks of ten, batch and file counts, totals and entry hash); its checks are one to each payee, for what was recorded, numbered on from the account's next. Only staff holding disburse take a file, and each download is logged. The PMS moves no money: the company's bank does."
+tests = [
+  "tests/properties/test_payout_properties.py::test_an_ach_file_adds_up_as_nacha_asks",
+  "tests/test_payout_files.py::test_an_ach_file_lays_out_its_records_as_nacha_asks",
+  "tests/test_payout_files.py::test_an_ach_file_refuses_an_entry_a_bank_would",
+  "tests/test_payout_files.py::test_the_checks_print_one_a_page_with_the_payee_amount_and_stubs",
+  "tests/test_draws_and_payouts.py::test_a_runs_items_are_its_kinds_payouts_to_their_payee",
+  "tests/api/test_payouts_api.py::test_an_ach_run_needs_the_banks_details_and_every_payees_account",
+  "tests/api/test_payouts_api.py::test_owners_paid_by_ach_get_one_file_their_bank_takes",
+  "tests/api/test_payouts_api.py::test_owners_paid_by_check_get_their_checks_numbered_on",
+  "tests/api/test_payouts_api.py::test_vendors_paid_by_ach_from_pay_bills_get_a_company_batch",
+  "tests/api/test_payouts_api.py::test_only_staff_who_may_pay_out_take_a_payout_file",
+]
+
+[[invariant]]
+id = "payee-account-numbers-sealed"
+statement = "An owner's or vendor's bank account number (migration 0153) is kept only sealed with AES-GCM under the server's PMS_DATA_KEY, bound to its row: it opens only under that key and that row, only its last four come back to any screen, a server without a proper key keeps none, and the AI role reads no payee bank account, ACH detail or payout file download."
+tests = [
+  "tests/test_payout_files.py::test_a_sealed_number_opens_only_under_its_key_and_row",
+  "tests/test_payout_files.py::test_a_server_without_a_proper_key_keeps_no_numbers",
+  "tests/api/test_payouts_api.py::test_an_owners_bank_account_is_sealed_and_only_its_last_four_come_back",
+  "tests/api/test_payouts_api.py::test_a_server_without_a_key_keeps_no_account_numbers",
+  "tests/test_privileges.py::test_ai_role_reads_only_what_the_app_reads",
 ]
 
 [[retired]]

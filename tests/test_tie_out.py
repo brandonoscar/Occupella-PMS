@@ -1,10 +1,13 @@
 """Each trust bank account ties out: its book cash equals everything held for someone in it.
 
 Checked by trust_check_bank_tie_out at commit (migration 20261009000005), so money held in one
-trust bank account moves to another only together with its cash.
+trust bank account moves to another only together with its cash. Since migration 20261025000210
+it sums a trust bank account only for a transfer into, out of or across one: a transfer between
+two of one bank account's accounts can't untie it.
 """
 
 import shutil
+import time
 from decimal import Decimal
 from pathlib import Path
 
@@ -84,6 +87,37 @@ def test_the_check_runs_at_commit(conn, database_url, second_leg):
         assert bank_sums(conn, pmc.pmc_id) == {pmc.operating_bank_id: 0, pmc.deposit_bank_id: 0}
     else:
         assert snapshot(conn, pmc.accounts()) == before
+
+
+@pytest.mark.timing
+def test_many_transfers_within_one_trust_bank_account_commit_without_summing_it_each_time(conn):
+    # 4,000 tenants' deposits in one trust bank account, posted in one transaction as a switch
+    # opens them. Summing the bank account's accounts for each transfer took 25 minutes for
+    # 20,000; it is summed for none of these, as none crosses its edge.
+    pmc = make_pmc(conn)
+    accounts = [
+        r[0]
+        for r in conn.execute(
+            "WITH t AS (INSERT INTO trust_tenants (pmc_id, property_id, display_name)"
+            "  SELECT %(pmc)s, %(property)s, 'Tenant ' || n FROM generate_series(2, 4001) AS n"
+            "  RETURNING id)"
+            " SELECT trust_open_ledger_account(%(pmc)s, %(bank)s, 'tenant_deposit', NULL, NULL,"
+            "  t.id) FROM t",
+            {
+                "pmc": pmc.pmc_id,
+                "property": pmc.owners[0].property_id,
+                "bank": pmc.deposit_bank_id,
+            },
+        )
+    ]
+    assert len(accounts) == 4000
+
+    began = time.monotonic()
+    transfer_batch(conn, [(pmc.deposit_cash, a, DEPOSIT) for a in accounts])
+    took = time.monotonic() - began
+
+    assert bank_sums(conn, pmc.pmc_id) == {pmc.operating_bank_id: 0, pmc.deposit_bank_id: 0}
+    assert took < 10, f"4,000 transfers within one trust bank account took {took:.1f} s"
 
 
 @pytest.mark.parametrize(
