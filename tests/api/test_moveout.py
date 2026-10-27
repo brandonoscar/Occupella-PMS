@@ -131,6 +131,28 @@ def test_a_move_out_ends_the_lease_charges_damage_and_returns_the_rest(
     )
 
 
+def test_an_end_staff_give_is_a_notice_naming_them_and_never_goes_month_to_month(
+    client, conn, staff, pmc, lease
+):
+    # ADR 0010 phase 1c: a move-out or a tenant's notice ends the lease where staff say.
+    ends = TODAY + timedelta(days=3)
+    ok(client.post(f"/api/move-out/{lease}/end", json={"ends_on": str(ends)}), 204)
+
+    assert conn.execute(
+        "SELECT ends_on, recorded_by FROM trust_lease_end_notices WHERE lease_id = %s", (lease,)
+    ).fetchall() == [(ends, staff.person_id)]
+    assert (
+        conn.execute(
+            "SELECT trust_roll_over_leases(%s, %s)", (pmc.pmc_id, ends + timedelta(days=1))
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        conn.execute("SELECT ends_on FROM trust_leases WHERE id = %s", (lease,)).fetchone()[0]
+        == ends
+    )
+
+
 def test_a_deposit_goes_back_once_the_lease_has_ended_and_not_ahead_of_time(
     client, staff, pmc, lease
 ):

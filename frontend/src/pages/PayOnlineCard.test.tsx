@@ -36,7 +36,8 @@ describe("PayOnlineCard", () => {
     vi.stubGlobal("location", { ...window.location, assign });
     render(<PayOnlineCard leaseId="l1" />);
     expect(((await screen.findByLabelText("Amount")) as HTMLInputElement).value).toBe("1200.00");
-    expect((await screen.findByTestId("pay-fee")).textContent).toBe("$1,200.00 + $5.00 processing fee = $1,205.00");
+    // The fee line is there at once, blank until its quote comes back.
+    await vi.waitFor(() => expect(screen.getByTestId("pay-fee").textContent).toBe("$1,200.00 + $5.00 processing fee = $1,205.00"));
     expect(screen.getByText("Paid")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Pay online" }));
     await vi.waitFor(() => expect(assign).toHaveBeenCalledWith("/pay/fake#p2"));

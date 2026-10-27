@@ -11,16 +11,16 @@ import { useRecord } from "./useRecord";
 
 // The emails the PMS writes by itself (ADR 0007, its second step; src/pms/notices.py), each one
 // the company turns on: rent reminders, late fee notices, monthly owner statements (with the
-// statement's PDF), work orders to vendors, adverse action notices to applicants, payment
-// receipts to tenants (with the receipt's PDF) and, since 10/22 (q054), a note to an owner whose
-// account fell below its reserve. None is written while the server sends no email.
+// statement's PDF), work orders to vendors, adverse action notices to applicants and, since 10/22
+// (q054), a note to an owner whose account fell below its reserve. A tenant's payment receipt (with
+// the receipt's PDF) goes for every payment, no setting turning it off (ADR 0010 phase 1c). None is
+// written while the server sends no email.
 export type EmailSettings = {
   rent_reminder_days: number | null;
   late_notices: boolean;
   owner_statement_day: number | null;
   work_order_notices: boolean;
   adverse_action_notices: boolean;
-  payment_receipts: boolean;
   reserve_alerts: boolean;
   sending: boolean;
 };
@@ -43,7 +43,7 @@ export function emailSettingsLines(settings: EmailSettings): [string, string][] 
     ["Monthly statements to owners", day === null ? "Off" : `Last month's, from the ${ordinal(day)} of each month, the PDF attached`],
     ["Work orders to vendors", ON_OFF(settings.work_order_notices)],
     ["Adverse action notices to applicants", ON_OFF(settings.adverse_action_notices)],
-    ["Payment receipts to tenants", settings.payment_receipts ? "On, the PDF attached" : "Off"],
+    ["Payment receipts to tenants", "Every payment, the PDF attached"],
     ["Low balance alerts to owners", ON_OFF(settings.reserve_alerts)],
   ];
 }
@@ -110,7 +110,6 @@ function EmailSettingsForm({ settings, save }: { settings: EmailSettings; save: 
   const [day, setDay] = useState(settings.owner_statement_day ?? 5);
   const [workOrders, setWorkOrders] = useState(settings.work_order_notices);
   const [notices, setNotices] = useState(settings.adverse_action_notices);
-  const [receipts, setReceipts] = useState(settings.payment_receipts);
   const [reserves, setReserves] = useState(settings.reserve_alerts);
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
@@ -121,7 +120,6 @@ function EmailSettingsForm({ settings, save }: { settings: EmailSettings; save: 
         owner_statement_day: statements ? day : null,
         work_order_notices: workOrders,
         adverse_action_notices: notices,
-        payment_receipts: receipts,
         reserve_alerts: reserves,
       });
     }}>
@@ -140,11 +138,10 @@ function EmailSettingsForm({ settings, save }: { settings: EmailSettings; save: 
       )}
       <Check label="Work orders to vendors" checked={workOrders} onChange={setWorkOrders} />
       <Check label="Adverse action notices to applicants" checked={notices} onChange={setNotices} />
-      <Check label="Payment receipts to tenants" checked={receipts} onChange={setReceipts} />
       <Check label="Low balance alerts to owners" checked={reserves} onChange={setReserves} />
       <p className="text-sm text-ink-muted">
         A tenant or owner gets theirs at their contact email, else their portal login's; a vendor at their contact
-        email; an applicant at the email they applied with. A lease under a payment hold gets no reminder or notice.
+        email; an applicant at the email they applied with. Every payment's receipt goes to its tenants by itself. A lease under a payment hold gets no reminder or notice.
         An owner hears once each time one of their accounts falls below the reserve its management agreement keeps,
         as the nightly run finds it.
       </p>

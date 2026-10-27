@@ -154,3 +154,61 @@ Screens before and after: `docs/design-pass/1b/`.
   stock. The file follows the NACHA layout (tests check every record's length, counts, totals and
   entry hash) and the checks Letter-size three-part stock; a company's bank may ask for a test file
   first, and its stock may need the printing nudged.
+
+## Phase 1c: receive payment and the lease money rules (parts D and E)
+
+Screens before and after: `docs/design-pass/1c/`.
+
+**Receive payment (D)**
+
+- **One panel** from the rent roll, a lease's page and a housing authority's page. It takes a
+  tenant's payment or, as the founder asked, a **housing authority's check**: one check split
+  across the leases it pays, each lease's part paying what the authority owes there, oldest first,
+  as before. It replaced the authority page's Record payment; that page's button is now Receive
+  payment, opening the same panel with the authority chosen.
+- **A note** (staff only; `trust_payment_notes`, once per payment, naming who wrote it) and **the
+  check's photo or a PDF** (a document of kind `payment_attachment`, about the lease and the
+  payment, listed on the lease's Files tab). Both come in the payment's own request, all or
+  none: sent again, the payment keeps what it first came with, and a file that isn't what it says
+  refuses the payment too. A tenant never sees the note; the AI role reads neither.
+- **What it pays**: what is owed, rent first and oldest first (the existing order, unchanged), or
+  the open charges staff choose first, each all of it or a part; what is left of the payment pays
+  the rest in the usual order, and anything past what is owed is prepaid rent as before. A choice
+  that doesn't fit (not open on the lease, chosen twice, more than is open, more than the payment)
+  records nothing. *Forced by the code:* a lease whose tenants moved to it from another lease
+  pays what each lease owes, oldest lease first (migration 0091), so no choice is offered there.
+- **Save and add another** records the payment and keeps the panel open, cleared, for the next
+  one: on the rent roll, the next lease; on a lease's page, the same lease.
+- **A receipt for every payment.** Each tenant on the lease is emailed its receipt, the PDF
+  attached, for every payment: recorded by staff, from a payment file, online and autopay, while
+  the server sends email. The Automatic emails switch for receipts is gone and the card says
+  "Every payment". *Kept:* the `payment_receipts` column of `trust_email_settings` stays, unread;
+  a committed migration is never edited and dropping it gains nothing.
+
+**The lease money rules (E)**
+
+- **The rent due day stays independent of a lease's start and end.** Already so since migration
+  0081: a lease starting mid-month is charged its first part month on its first day, then on its
+  due day each month (`tests/test_rent_due_days.py` pins it). Unchanged.
+- **Moving an end date earlier charges the last month only for the days covered.** Already so
+  since migration 0051: `trust_end_lease` credits each rent and monthly charge that stood at the
+  run's amount for the days after the new end (`tests/test_lease_end_credits.py`). Unchanged.
+- **A fixed lease that passes its end with no renewal signed rolls to month to month at the same
+  rent through the nightly run** (`trust_roll_over_leases`, migration 0154; `trust_lease_holdovers`,
+  once per lease): on the first night after its last day, within a week, so a night the run missed
+  still rolls it. Its end is cleared through `trust_end_lease`, which charges back the days of its
+  last month credited when the term was set to end. An admin's Run rent now does the same first.
+  The Dashboard notes each one for 30 days ("Leases gone month to month") while it stays so.
+- **Which ends roll over: a decision the code forced.** A lease keeps one end date, so the PMS
+  couldn't tell a term that ran out from a move-out staff recorded. From now on every end staff
+  give (Move-out's end, and any lease's end from its ⋯ menu) is also an end notice naming them
+  (`trust_lease_end_notices`), and a lease with one never rolls over; ends staff changed before
+  this migration were found in the audit log and recorded as notices. Nor does a lease roll over
+  when another lease follows it at its unit (a renewal or the next tenant), its tenants moved from
+  it, its deposit was returned, or it was entered after its end had passed (a lease from the past,
+  brought over by the switch or added late).
+
+**Renamed labels (rule 2)**: on a housing authority's page, Record payment is now Receive
+payment; Automatic emails' "Payment receipts to tenants: On/Off" is now "Every payment, the PDF
+attached", with no switch. New: Receive payment's From, It pays, Note (staff only), Check photo or
+PDF, Save and add another; the Dashboard's Leases gone month to month.

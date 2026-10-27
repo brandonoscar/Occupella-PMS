@@ -53,7 +53,6 @@ class Settings:
     owner_statement_day: int | None = None
     work_order_notices: bool = False
     adverse_action_notices: bool = False
-    payment_receipts: bool = False
     # An owner hears when one of their property accounts falls below its reserve.
     reserve_alerts: bool = False
 
@@ -64,7 +63,6 @@ FIELDS = (
     "owner_statement_day",
     "work_order_notices",
     "adverse_action_notices",
-    "payment_receipts",
     "reserve_alerts",
 )
 
@@ -499,11 +497,9 @@ def write_payment_receipts(
     amount: Decimal,
     received_on: date,
 ) -> int:
-    """Sends each tenant of the lease the receipt of a payment recorded to it, as the company's
-    settings ask; in the caller's transaction, once per tenant and payment. The receipt's PDF is
-    made when the email is sent (src/pms/attachments.py)."""
-    if not settings_of(conn, pmc_id).payment_receipts:
-        return 0
+    """Sends each tenant of the lease the receipt of a payment recorded to it, every payment
+    (ADR 0010: no setting turns it off); in the caller's transaction, once per tenant and payment.
+    The receipt's PDF is made when the email is sent (src/pms/attachments.py)."""
     company = company_of(conn, pmc_id)
     written = 0
     rows = conn.execute(PAYERS, {"pmc": pmc_id, "lease": lease_id, "day": received_on})

@@ -155,8 +155,8 @@ def trusted(mailpit, monkeypatch):
 
 
 def turn_on_statements(conn, pmc_id):
-    """Monthly statements and payment receipts on."""
-    settings = {**dict.fromkeys(notices.FIELDS), "owner_statement_day": 5, "payment_receipts": True}
+    """Monthly statements on (payment receipts always go)."""
+    settings = {**dict.fromkeys(notices.FIELDS), "owner_statement_day": 5}
     for flag in ("late_notices", "work_order_notices", "adverse_action_notices", "reserve_alerts"):
         settings[flag] = bool(settings[flag])
     conn.execute(

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Button } from "../components/Button";
 import { Field } from "../components/Field";
@@ -6,6 +6,9 @@ import { Form } from "../components/Form";
 import { RowMenu } from "../components/RowMenu";
 import { Select } from "../components/Select";
 import { Badge } from "../components/Badge";
+import { Notice } from "../components/Notice";
+import type { ContentType } from "../documents";
+import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
 import { day, money, usDate } from "../money";
 import type { Bounce, DepositKind, Hold, OpenCharge, Payment, PaymentMethod, RecurringCharge, RentChange, RentLease } from "../rent";
 import {
@@ -13,13 +16,16 @@ import {
   PAYMENT_METHODS,
   bounceSummary,
   chargeLabel,
+  chosenCharges,
   earliestRentChange,
   methodLabel,
   nextMonthFirst,
   ordinal,
+  partsTotal,
   paymentSummary,
   recurringLabel,
   requestId,
+  withPart,
 } from "../rent";
 import { sharesLine } from "../rentals";
 import type { Named, Portfolio } from "../setup";
@@ -45,8 +51,15 @@ export function PaymentRow({ payment, record }: { payment: RentLease["payments"]
             {[payment.method && methodLabel(payment.method), payment.reference].filter(Boolean).join(" · ")}
           </span>
         )}
-        <a href={`/api/rent/payments/${encodeURIComponent(payment.transfer_id)}/receipt`}
-          className="text-sm text-iris hover:text-iris-hover hover:underline">Receipt (PDF)</a>
+        {payment.note && <span className="block text-sm text-ink-muted">{`Note: ${payment.note}`}</span>}
+        <span className="flex flex-wrap gap-3">
+          <a href={`/api/rent/payments/${encodeURIComponent(payment.transfer_id)}/receipt`}
+            className="text-sm text-iris hover:text-iris-hover hover:underline">Receipt (PDF)</a>
+          {(payment.attachments ?? []).map((file) => (
+            <a key={file} href={`/api/documents/${file}/file`}
+              className="text-sm text-iris hover:text-iris-hover hover:underline">Check photo or PDF</a>
+          ))}
+        </span>
       </td>
       <td className="text-right">{money(payment.amount)}</td>
       <td className="text-right">
@@ -79,13 +92,29 @@ export function PaymentRow({ payment, record }: { payment: RentLease["payments"]
   );
 }
 
-export function PaymentForm({ lease, record }: { lease: RentLease; record: Recorder }) {
+type PaymentFile = { title: string; type: ContentType | null; size: number; base64: string };
+
+// Receive payment (ADR 0010 phase 1c): what came, when and how; what staff write about it and its
+// file (a check's photo, a PDF), both kept with it; and what it pays: what is owed, oldest first
+// (rent first), or the open charges staff choose first, the rest of it as before. Save and add
+// another keeps the panel open for the next one (`onRecorded` says which was pressed).
+export function PaymentForm({ lease, record, onRecorded }: {
+  lease: RentLease;
+  record: Recorder;
+  onRecorded?: (another: boolean) => void;
+}) {
   const [id, setId] = useState(requestId);
   const [amount, setAmount] = useState("");
   const [on, setOn] = useState(day(new Date()));
   const [reference, setReference] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("check");
   const [pastHold, setPastHold] = useState(false);
+  const [note, setNote] = useState("");
+  const [file, setFile] = useState<PaymentFile | null>(null);
+  const [picker, setPicker] = useState(0);
+  const [choosing, setChoosing] = useState(false);
+  const [picked, setPicked] = useState<Record<string, string>>({});
+  const another = useRef(false);
   const hasPrepaid = lease.tenants.some((t) => Number(t.prepaid) > 0);
   // Its property's owners split each payment by their shares (migration 0094); without shares,
   // staff choose the account when there are several.
@@ -93,62 +122,153 @@ export function PaymentForm({ lease, record }: { lease: RentLease; record: Recor
   const choose = shares.length === 0 && lease.owners.length > 1;
   const [account, setAccount] = useState(lease.owners[0]?.account ?? "");
   const chosen = choose ? { account } : {};
+  // A lease its tenants moved to pays what each lease owes, oldest lease first: no choosing.
+  const canChoose = lease.open_charges.length > 0 && lease.moved_from === null;
+  const charges = choosing ? chosenCharges(picked) : [];
+  const problem = file === null ? "" : file.type === null
+    ? "A file is a PDF, a JPEG or a PNG." : file.size > MAX_BYTES ? "A file is at most 5 MB." : "";
   return (
-    <div className="flex flex-wrap items-end gap-3">
+    <div className="flex flex-col gap-4">
       <Form
-        className="flex flex-wrap items-end gap-3"
+        className="flex flex-col gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
+          if (problem) return;
           const body = {
             request_id: id, amount, received_on: on, method, reference: reference || null, ...chosen,
             ...(lease.on_hold && pastHold ? { past_hold: true } : {}),
+            ...(note.trim() ? { note: note.trim() } : {}),
+            ...(file ? { attachment: { title: file.title, content_type: file.type, content_base64: file.base64 } } : {}),
+            ...(charges.length > 0 ? { charges } : {}),
           };
           if (await record<Payment>(`/api/rent/leases/${lease.id}/payments`, body, paymentSummary)) {
             setId(requestId());
             setAmount("");
             setReference("");
+            setNote("");
+            setFile(null);
+            setPicker((n) => n + 1);
+            setPicked({});
+            setChoosing(false);
+            onRecorded?.(another.current);
           }
         }}
       >
-        <Field label="Payment received" id={`pay-${lease.id}`} inputMode="decimal" required
-          value={amount} onChange={(e) => setAmount(e.target.value)} />
-        <Field label="Received on" id={`pay-on-${lease.id}`} type="date" required value={on}
-          onChange={(e) => setOn(e.target.value)} />
-        <Select label="Method" id={`pay-method-${lease.id}`} value={method}
-          onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
-          {PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-        </Select>
-        <Field label="Check or reference" id={`pay-ref-${lease.id}`} maxLength={200}
-          value={reference} onChange={(e) => setReference(e.target.value)} />
-        {choose && (
-          <Select label="Owner's account" id={`pay-account-${lease.id}`} value={account}
-            onChange={(e) => setAccount(e.target.value)}>
-            {lease.owners.map((o) => <option key={o.account} value={o.account}>{o.owner}</option>)}
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="Payment received" id={`pay-${lease.id}`} inputMode="decimal" required
+            value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <Field label="Received on" id={`pay-on-${lease.id}`} type="date" required value={on}
+            onChange={(e) => setOn(e.target.value)} />
+          <Select label="Method" id={`pay-method-${lease.id}`} value={method}
+            onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
+            {PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
           </Select>
-        )}
+          <Field label="Check or reference" id={`pay-ref-${lease.id}`} maxLength={200}
+            value={reference} onChange={(e) => setReference(e.target.value)} />
+          {choose && (
+            <Select label="Owner's account" id={`pay-account-${lease.id}`} value={account}
+              onChange={(e) => setAccount(e.target.value)}>
+              {lease.owners.map((o) => <option key={o.account} value={o.account}>{o.owner}</option>)}
+            </Select>
+          )}
+        </div>
         {shares.length > 0 && (
-          <p className="basis-full text-sm text-ink-muted" data-testid="split-by-ownership">
+          <p className="text-sm text-ink-muted" data-testid="split-by-ownership">
             Split by ownership: {sharesLine(shares)}
           </p>
         )}
+        {canChoose && (
+          <Select label="It pays" id={`pay-pays-${lease.id}`} value={choosing ? "chosen" : "oldest"}
+            onChange={(e) => setChoosing(e.target.value === "chosen")}>
+            <option value="oldest">What is owed, rent first, oldest first</option>
+            <option value="chosen">The charges I choose first</option>
+          </Select>
+        )}
+        {choosing && (
+          <fieldset className="flex flex-col gap-2" aria-label="Charges it pays first">
+            {lease.open_charges.map((charge) => (
+              <ChargeChoice key={charge.id} charge={charge} amount={picked[charge.id]}
+                onChange={(part) => setPicked((was) => withPart(was, charge.id, part))} />
+            ))}
+            <p className="text-sm text-ink-muted">
+              {charges.length === 0
+                ? "Choose the charges it pays first. What is left of it pays the rest as usual."
+                : `${money(partsTotal(charges))} to the charges chosen; what is left of it pays the rest as usual.`}
+            </p>
+          </fieldset>
+        )}
+        <label htmlFor={`pay-note-${lease.id}`} className="flex flex-col gap-1.5 text-sm text-ink-muted">
+          Note (staff only)
+          <textarea id={`pay-note-${lease.id}`} maxLength={2000} rows={2} value={note}
+            onChange={(e) => setNote(e.target.value)}
+            className="rounded-sm border border-line-strong bg-sunken px-2 py-1.5 text-base text-ink" />
+        </label>
+        <label htmlFor={`pay-file-${lease.id}`} className="flex flex-col gap-1.5 text-sm text-ink-muted">
+          Check photo or PDF
+          <input key={picker} id={`pay-file-${lease.id}`} type="file" accept=".pdf,.jpg,.jpeg,.png"
+            className="text-sm text-ink"
+            onChange={async (e) => {
+              const chosenFile = e.target.files?.[0];
+              if (!chosenFile) return setFile(null);
+              const bytes = new Uint8Array(await chosenFile.arrayBuffer());
+              setFile({ title: titleOf(chosenFile.name), type: typeOf(chosenFile), size: chosenFile.size, base64: toBase64(bytes) });
+            }} />
+        </label>
+        <Notice tone="error">{problem}</Notice>
         {lease.on_hold && (
-          <label className="flex basis-full items-center gap-2 text-sm text-ink">
+          <label className="flex items-center gap-2 text-sm text-ink">
             <input type="checkbox" checked={pastHold} onChange={(e) => setPastHold(e.target.checked)} />
             Accept this payment past the payment hold
           </label>
         )}
-        <Button type="submit">Record payment</Button>
+        <p className="text-sm text-ink-muted">Each tenant on the lease is emailed its receipt.</p>
+        <div className="flex flex-wrap gap-2">
+          <Button type="submit" disabled={problem !== ""} onClick={() => { another.current = false; }}>
+            Record payment
+          </Button>
+          {onRecorded && (
+            <Button type="submit" variant="secondary" disabled={problem !== ""}
+              onClick={() => { another.current = true; }}>
+              Save and add another
+            </Button>
+          )}
+        </div>
       </Form>
       {hasPrepaid && (
-        <Button
-          variant="secondary"
-          onClick={() =>
-            record<Payment>(`/api/rent/leases/${lease.id}/use-prepaid`,
-              { request_id: requestId(), on: day(new Date()), ...chosen }, paymentSummary)
-          }
-        >
-          Use prepaid rent
-        </Button>
+        <div>
+          <Button
+            variant="secondary"
+            onClick={async () => {
+              if (await record<Payment>(`/api/rent/leases/${lease.id}/use-prepaid`,
+                { request_id: requestId(), on: day(new Date()), ...chosen }, paymentSummary)) onRecorded?.(false);
+            }}
+          >
+            Use prepaid rent
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// One open charge to pay first: ticked, it pays what is open of it unless staff type less.
+function ChargeChoice({ charge, amount, onChange }: {
+  charge: OpenCharge;
+  amount: string | undefined;
+  onChange: (part: string | undefined) => void;
+}) {
+  const label = chargeLabel(charge);
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <label className="flex items-center gap-2 text-sm text-ink">
+        <input type="checkbox" checked={amount !== undefined}
+          onChange={(e) => onChange(e.target.checked ? charge.open : undefined)} />
+        {label}
+      </label>
+      {amount !== undefined && (
+        <input aria-label={`Pays of ${label}`} inputMode="decimal" value={amount}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-8 w-28 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink" />
       )}
     </div>
   );
