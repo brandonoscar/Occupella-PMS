@@ -1732,6 +1732,9 @@ class RentRollMachine(RuleBasedStateMachine):
             ("bills paid", Decimal(0)),
             ("owner draws", moved(self.draw_transfers)),
             ("owner contributions", moved(contributed, 1)),
+            # This machine adds no interest to a deposit (tests/properties/
+            # test_deposit_interest_properties.py does).
+            ("security deposit interest", Decimal(0)),
         ]
         moved_total = sum((a for _, a in parts[1:]), Decimal(0))
         parts += [("other", closing - opening - moved_total), ("closing balance", closing)]

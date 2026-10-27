@@ -9,15 +9,17 @@ line	property	item	amount
 8	Property 1	bills paid	0.00
 9	Property 1	owner draws	0.00
 10	Property 1	owner contributions	0.00
-11	Property 1	other	0.00
-12	Property 1	closing balance	1000.00
-13	NULL	all properties: opening balance	0.00
-14	NULL	all properties: collected from tenants	1000.00
-15	NULL	all properties: management fees	0.00
-16	NULL	all properties: leasing fees	0.00
-17	NULL	all properties: bills paid	0.00
-18	NULL	all properties: owner draws	0.00
-19	NULL	all properties: owner contributions	0.00
-20	NULL	all properties: other	0.00
-21	NULL	all properties: closing balance	1000.00
-22	NULL	1099-MISC rents (box 1)	1000.00
+11	Property 1	security deposit interest	0.00
+12	Property 1	other	0.00
+13	Property 1	closing balance	1000.00
+14	NULL	all properties: opening balance	0.00
+15	NULL	all properties: collected from tenants	1000.00
+16	NULL	all properties: management fees	0.00
+17	NULL	all properties: leasing fees	0.00
+18	NULL	all properties: bills paid	0.00
+19	NULL	all properties: owner draws	0.00
+20	NULL	all properties: owner contributions	0.00
+21	NULL	all properties: security deposit interest	0.00
+22	NULL	all properties: other	0.00
+23	NULL	all properties: closing balance	1000.00
+24	NULL	1099-MISC rents (box 1)	1000.00

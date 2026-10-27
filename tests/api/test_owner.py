@@ -94,7 +94,7 @@ def test_the_year_end_package_is_the_owners_report_for_the_year(client, conn, ap
     assert package["columns"] == ["line", "property", "item", "amount"]
     assert len(package["rows"]) == len(direct)
     closing = [row for row in package["rows"] if row[2] == "all properties: closing balance"]
-    assert closing == [["21", None, "all properties: closing balance", "1500.00"]]
+    assert closing == [["23", None, "all properties: closing balance", "1500.00"]]
     flat = [cell for row in package["rows"] for cell in row]
     assert "999.00" not in flat and "Owner 1" in flat
 
