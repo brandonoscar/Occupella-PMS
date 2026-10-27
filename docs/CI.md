@@ -34,7 +34,7 @@ B's id in each id it takes and searching for B's names, shows nothing of B's: no
 id of any row of its, or a name of its, with CSV, PDF, workbook and zip opened. A path parameter,
 body field, query parameter or report argument the sweep doesn't know fails it, saying what to
 add; the few routes no company's staff, owner or tenant calls (the fake payments partner's pages,
-the public vacancy page, a calendar feed) are listed with why. About 430 cases in 45 seconds.
+the public vacancy page, a calendar feed) are listed with why. About 445 cases in a minute.
 
 The synthetic-data scan (`tools/check_synthetic_data.py`) reads every tracked file for values
 shaped like real records: routing numbers that pass the ABA checksum with a real Fed prefix,
