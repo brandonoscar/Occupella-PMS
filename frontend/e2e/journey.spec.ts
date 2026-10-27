@@ -15,6 +15,7 @@
 // ci/features.toml's "a-month" names it.
 import { readFileSync } from "node:fs";
 import { type Browser, expect, type Locator, type Page, test } from "@playwright/test";
+import { fillApplicant } from "./apply";
 import { expectAccessible } from "./a11y";
 import { totp } from "./totp";
 
@@ -303,8 +304,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await expect(applicant.getByRole("heading", { name: "Apply for Aspen Row, Unit 2" })).toBeVisible();
     await applicant.getByLabel("Move-in day").fill(nextMonth);
     await applicant.getByLabel("Monthly income of everyone applying, together").fill("5200");
-    await applicant.getByLabel("Full name").fill("Applicant Journey");
-    await applicant.getByLabel("Email").fill("applicant.journey@example.com");
+    await fillApplicant(applicant, 0, "Applicant Journey", "applicant.journey@example.com");
     await applicant.getByRole("button", { name: "Send application" }).click();
     const status = new URL((await applicant.getByTestId("status-url").textContent()) ?? "");
 
@@ -660,7 +660,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await page.getByRole("button", { name: "Pay $440.00" }).click();
     const confirm = page.getByRole("alertdialog");
     await expect(confirm).toContainText("Pay $440.00 to 1 owner account by check on ");
-    await confirm.getByRole("button", { name: "Confirm" }).click();
+    await confirm.getByRole("button", { name: "Pay", exact: true }).click();
     await expect(page.getByRole("main")).toContainText("1 payout of $440.00 recorded, by check.");
     expect(await ownerAccount(page, "Demo Owner A, Cedar House")).toEqual({
       holds: 37_000, reserve: 25_000, bills: 12_000, available: 0,
