@@ -41,6 +41,17 @@ export type Today = {
   deposits_to_return: DepositBack[];
   // The owners' draws the nightly run prepared on the draw day, until staff pay them.
   owner_draws?: DrawRun | null;
+  // Fixed-term leases the nightly run rolled to month to month in the last 30 days, their term
+  // run out with no renewal signed (ADR 0010 phase 1c), while they still are.
+  month_to_month?: Holdover[];
+};
+export type Holdover = {
+  lease_id: string;
+  property: string;
+  unit: string;
+  tenants: string[];
+  term_ended_on: string;
+  rolled_on: string;
 };
 export type DepositBack = {
   lease_id: string;
@@ -174,6 +185,14 @@ export function depositBackLine(back: DepositBack): string {
 
 // "Unit 1, Property 1 (Tenant A): $500.00 of the $1,500.00 security deposit the signed lease asked
 // still to receive".
+// "Unit 4, Elm Court (Tenant 1): its term ended 10/31/2026 with no renewal signed; month to month
+// at the same rent since 11/01/2026".
+export function holdoverLine(lease: Holdover): string {
+  const who = lease.tenants.length ? ` (${lease.tenants.join(", ")})` : "";
+  return `${lease.unit}, ${lease.property}${who}: its term ended ${usDate(lease.term_ended_on)} with no renewal signed;`
+    + ` month to month at the same rent since ${usDate(lease.rolled_on)}`;
+}
+
 export function depositDueLine(due: DepositDue): string {
   const who = due.tenants.length ? ` (${due.tenants.join(", ")})` : "";
   return `${due.unit}, ${due.property}${who}: ${money(due.to_receive)} of the ${money(due.asked)} security deposit the signed lease asked still to receive`;

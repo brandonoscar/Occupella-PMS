@@ -24,6 +24,7 @@ import { FilesCard } from "./FilesCard";
 import { PortalCard } from "./PortalCard";
 import { HistoryCard } from "./HistoryCard";
 import { SamePersonCard, SignsInElsewhere } from "./SamePersonCard";
+import { TenantApplicationCards } from "./TenantApplicationCards";
 import { Tabs } from "../components/Tabs";
 import { navigate } from "../router";
 import { ListBar } from "../components/ListBar";
@@ -158,6 +159,7 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
                     loginEmail={tenant.login_email} email={tenant.contact.email} refresh={refresh} />
                 )}
                 <SamePersonCard tenant={tenant} refresh={refresh} say={setSaid} />
+                <TenantApplicationCards id={id} name={tenant.name} />
               </div>
             )}
             {tab === "files" && <FilesCard kind="tenant_document" aboutId={id} name={tenant.name} />}

@@ -175,10 +175,28 @@ def main() -> None:
                 today.date() + timedelta(days=30),
             ),
         )
-        conn.execute(
+        mover = one(
             "INSERT INTO trust_applicants (pmc_id, application_id, position, display_name, email)"
-            " VALUES (%s, %s, 1, 'Mover E2E', %s)",
+            " VALUES (%s, %s, 1, 'Mover E2E', %s) RETURNING id",
             (pmc, approved, f"mover.{tag}@example.com"),
+        )
+        # What they gave with the application (ADR 0010, part G), which their lease carries over.
+        conn.execute(
+            "INSERT INTO trust_applicant_details (applicant_id, pmc_id, phone, address_line_1,"
+            " city, state, postal_code, employer)"
+            " VALUES (%s, %s, '555-555-0120', '20 Sample Street', 'Sampleton', 'ST', '00001',"
+            " 'Mover Employer')",
+            (mover, pmc),
+        )
+        conn.execute(
+            "INSERT INTO trust_emergency_contacts (pmc_id, applicant_id, display_name, phone)"
+            " VALUES (%s, %s, 'Mover Contact', '555-555-0121')",
+            (pmc, mover),
+        )
+        conn.execute(
+            "INSERT INTO trust_application_pets (pmc_id, application_id, display_name, kind)"
+            " VALUES (%s, %s, 'Pepper', 'Cat')",
+            (pmc, approved),
         )
         conn.execute(
             "INSERT INTO trust_application_decisions"
@@ -595,6 +613,8 @@ FEATURES = (
     "online-payments",
     "autopay",
     "payouts",
+    "receive-payment",
+    "tax-ids",
 )
 
 

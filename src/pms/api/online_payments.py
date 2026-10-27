@@ -35,7 +35,7 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from pms import payments
+from pms import notices, payments
 from pms.api import outbox, rent, tenant
 from pms.api.deps import Conn, Staff, Tenant, refusal
 
@@ -408,7 +408,7 @@ def record_payment(
         ).fetchone()
     ):
         raise HTTPException(409, "the lease is on a payment hold: staff accept it past the hold")
-    rent.record_payment(
+    recorded = rent.record_payment(
         conn,
         row.pmc_id,
         row.lease_id,
@@ -419,6 +419,11 @@ def record_payment(
         method="online",
         past_hold_by=past_hold_by,
     )
+    # Every payment's receipt, online and autopay ones too (ADR 0010), once per payment.
+    if outbox.SENDING.get():
+        notices.write_payment_receipts(
+            conn, row.pmc_id, row.lease_id, recorded.transfers[0], row.amount, day
+        )
     if row.tenant_fee > 0:
         bank = bank_of(conn, row, day)
         rent.post(

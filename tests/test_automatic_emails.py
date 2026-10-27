@@ -41,7 +41,6 @@ ALL_ON = {
     "owner_statement_day": 5,
     "work_order_notices": True,
     "adverse_action_notices": True,
-    "payment_receipts": True,
 }
 
 
@@ -56,7 +55,6 @@ def turn_on(conn, pmc_id, by=None, **wanted):
         "late_notices",
         "work_order_notices",
         "adverse_action_notices",
-        "payment_receipts",
         "reserve_alerts",
     )
     for flag in flags:
@@ -432,8 +430,8 @@ def receipts(conn, pmc_id):
     ).fetchall()
 
 
-def test_each_tenant_gets_the_receipt_of_a_payment_once(conn, app_conn, pmc):
-    turn_on(conn, pmc.pmc_id, payment_receipts=True)
+def test_each_tenant_gets_the_receipt_of_every_payment_once(conn, app_conn, pmc):
+    # No setting: every payment's receipt goes (ADR 0010).
     first = tenant_of(conn, pmc)
     second = add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, "Tenant 2")
     lease = lease_of(conn, pmc, tenants=[first, second])
@@ -459,7 +457,7 @@ def test_each_tenant_gets_the_receipt_of_a_payment_once(conn, app_conn, pmc):
     assert "tenant portal" not in body  # no portal login
 
 
-def test_no_receipt_when_off_without_an_email_or_to_a_tenant_who_left(conn, app_conn, pmc):
+def test_no_receipt_without_an_email_or_to_a_tenant_who_left(conn, app_conn, pmc):
     first = tenant_of(conn, pmc)
     second = add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, "Tenant 2")
     third = add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, "Tenant 3")
@@ -468,10 +466,6 @@ def test_no_receipt_when_off_without_an_email_or_to_a_tenant_who_left(conn, app_
     contact(conn, pmc.pmc_id, "tenant_id", second, "tenant.two@example.com")
     payment = paid(conn, pmc.pmc_id, lease)
     on, amount = date(2026, 10, 3), Decimal("125.00")
-    # Off: none.
-    assert notices.write_payment_receipts(app_conn, pmc.pmc_id, lease, payment, amount, on) == 0
-
-    turn_on(conn, pmc.pmc_id, payment_receipts=True)
     # Tenant 1 left on October 1, before the payment came; Tenant 3 has no email on file.
     conn.execute(
         "SELECT trust_remove_lease_tenant(%s, %s, %s, %s, NULL)",
