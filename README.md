@@ -89,6 +89,32 @@ Without Docker: on a migrated database (`dbmate up`), `PYTHONPATH=src python -m 
 the demo and prints its links; serve it with `python -m pms.api`, with `PMS_STATIC_DIR=frontend/dist`
 and `PMS_PUBLIC_URL` set to where it's served.
 
+## Simulate people using it
+
+The browser tests (`frontend/e2e`) sign in as staff, an owner, a tenant and an applicant and use
+every feature. CI runs them in Chromium, in UTC, on Linux. `scripts/simulate.ps1` runs them where
+people are: in Edge, Firefox and Chromium, each in UTC, Los Angeles and Kiritimati time (a day
+that starts 14 hours before UTC's), every run on fresh synthetic books in Docker
+(`compose.e2e.yaml`), and ends with a table of what passed and failed. With Docker Desktop
+running and Node 22, from the repository's folder in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\simulate.ps1 -Quick   # Edge, your time zone: one run
+powershell -ExecutionPolicy Bypass -File scripts\simulate.ps1          # all nine runs: a few hours
+scripts\simulate.ps1 -Browsers firefox -TimeZones America/New_York -Grep owner
+scripts\simulate.ps1 -Plan                                              # list the runs, run nothing
+```
+
+Edge and Chrome are used as installed; Chromium, Firefox and WebKit are downloaded by Playwright
+the first time. Each failure has a report with every step, the page and a trace:
+`cd frontend; npx playwright show-report playwright-report\simulate\<run>`. A failure is a lead
+to look at, not yet a bug. It never touches a company's books, and `-KeepRunning` leaves the last
+run's PMS up at http://127.0.0.1:8123. CI's simulate workflow runs the same script (Run workflow,
+with any browsers and time zones).
+
+What it can't do for you: Excel opening an export, a screen reader, QuickBooks importing its
+file, a printer and check stock, an authenticator app on your phone. Those still need a person.
+
 ## Working here
 
 Read [CLAUDE.md](CLAUDE.md) first: the hard rules, the standing rule that tests come with the

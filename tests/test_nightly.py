@@ -129,6 +129,29 @@ def test_a_lease_starting_later_in_the_month_is_charged_its_part_month(conn, app
     assert charges(conn, lease) == [(date(2026, 10, 20), "rent", "1200.00")]  # 12 of 31 days
 
 
+def test_a_night_takes_a_fixed_term_that_ran_out_month_to_month_once(conn, app_conn, pmc):
+    # ADR 0010 phase 1c: no renewal signed and no move-out recorded, it goes on at the same rent.
+    today = datetime.now(UTC).date()
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id)
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (pmc.prepaid_rent,),
+    ).fetchone()[0]
+    lease = open_lease(
+        conn, pmc.pmc_id, unit, today - 60 * DAY, today + 2 * DAY, "1000.00", [tenant]
+    )
+
+    assert nightly.run_pmc(app_conn, pmc.pmc_id, today + 2 * DAY, URL).leases_rolled_over == 0
+    assert nightly.run_pmc(app_conn, pmc.pmc_id, today + 3 * DAY, URL).leases_rolled_over == 1
+    assert nightly.run_pmc(app_conn, pmc.pmc_id, today + 4 * DAY, URL).leases_rolled_over == 0
+
+    assert conn.execute(
+        "SELECT l.ends_on, l.monthly_rent::text, h.term_ended_on FROM trust_leases AS l"
+        " JOIN trust_lease_holdovers AS h ON h.lease_id = l.id WHERE l.id = %s",
+        (lease,),
+    ).fetchone() == (None, "1000.00", today + 2 * DAY)
+
+
 def test_one_company_that_fails_leaves_the_others_to_run(conn, app_conn, pmc, caplog):
     lease = lease_since(conn, pmc, date(2026, 9, 1))
     other = make_pmc(conn).pmc_id

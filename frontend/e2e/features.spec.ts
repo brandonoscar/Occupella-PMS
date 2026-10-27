@@ -5,6 +5,7 @@
 import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import { fillApplicant } from "./apply";
 import { expectAccessible } from "./a11y";
 import { totp } from "./totp";
 
@@ -1483,8 +1484,20 @@ test("staff list a vacant unit on the public page; someone applies from it, staf
   await expect(visitor.getByRole("heading", { name: "Apply for Aspen Row, Unit 2" })).toBeVisible();
   await visitor.getByLabel("Move-in day").fill(new Date(Date.now() + 20 * 86_400_000).toISOString().slice(0, 10));
   await visitor.getByLabel("Monthly income of everyone applying, together").fill("5200");
-  await visitor.getByLabel("Full name").fill("Applicant Listing");
-  await visitor.getByLabel("Email").fill("applicant.listing@example.com");
+  await fillApplicant(visitor, 0, "Applicant Listing", "applicant.listing@example.com");
+  // Their previous landlord, employer and proof of income, and an assistance animal (ADR 0010,
+  // part G): no pet rent, fee or deposit for it.
+  await visitor.getByLabel("Previous landlord's name").fill("Sample Rentals");
+  await visitor.getByLabel("Rented from").fill("2023-06-01");
+  await visitor.getByLabel("Rented to").fill("2025-05-31");
+  await visitor.getByLabel("Employer, if you have one").fill("Sample Employer");
+  await visitor.getByLabel(/^Proof of income/).setInputFiles({
+    name: "pay stub.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 a synthetic pay stub"),
+  });
+  await visitor.getByRole("button", { name: "Add an animal" }).click();
+  await visitor.getByLabel("Animal's name").fill("Juniper");
+  await visitor.getByLabel("Kind (dog, cat...)").fill("Dog");
+  await visitor.getByLabel(/^An assistance animal/).check();
   await visitor.getByRole("button", { name: "Send application" }).click();
   const statusUrl = new URL((await visitor.getByTestId("status-url").textContent()) ?? "");
   await page.reload();
@@ -1499,6 +1512,14 @@ test("staff list a vacant unit on the public page; someone applies from it, staf
   await expect(row.getByRole("cell").last()).toHaveText("4.1x");
   await row.click();
   await expect(page.getByRole("heading", { level: 1, name: "Applicant Listing" })).toBeVisible();
+  // What they gave, and their household, for staff only.
+  const gave = page.getByLabel("What Applicant Listing gave");
+  await expect(gave).toContainText("1 Sample Street, Sampleton, ST 00001");
+  await expect(gave).toContainText("Sample Rentals, 06/01/2023 – 05/31/2025");
+  await expect(gave).toContainText("Sample Employer");
+  await expect(gave).toContainText("Contact of Applicant Listing, 555-555-0160");
+  await downloads(page, "Proof of income", "application/pdf");
+  await expect(page.getByLabel("Household")).toContainText("Juniper, Dog (assistance animal: no pet rent, fee or deposit)");
   await page.getByRole("button", { name: "Screen" }).click();
   await expect(page.getByRole("list", { name: "Screenings" })).toContainText("Recommends approval");
   await expect(page.getByTestId("status")).toHaveText("Screening");
@@ -2673,14 +2694,14 @@ test("staff turn on the emails the PMS writes by itself, and a run of rent sends
   await editing.getByLabel("Day of the month they go").selectOption("1");
   await editing.getByLabel("Work orders to vendors").check();
   await editing.getByLabel("Low balance alerts to owners").check();
-  await editing.getByLabel("Payment receipts to tenants").check();
   await editing.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Saved the automatic emails.")).toBeVisible();
   await expect(editing).toHaveCount(0);
   await expect(shown).toContainText("Last month's, from the 1st of each month");
   await expect(shown).toContainText("Work orders to vendorsOn");
   await expect(shown).toContainText("Low balance alerts to ownersOn");
-  await expect(shown).toContainText("Payment receipts to tenantsOn, the PDF attached");
+  // A receipt goes for every payment (ADR 0010 phase 1c): nothing to turn on.
+  await expect(shown).toContainText("Payment receipts to tenantsEvery payment, the PDF attached");
 
   // Elm Court's reserve raised to $400.00 from today: its $250.00 is now below it (q054).
   await openProperty(page, "Elm Court");
@@ -3292,9 +3313,11 @@ test("staff add a housing authority, set a lease's assistance, charge and credit
   await expect(page.getByRole("row", { name: "Demo Housing Authority" }).getByRole("cell")).toHaveText([
     "Demo Housing Authority", "0", "$750.00",
   ]);
+  // Its page opens Receive payment, the rent roll's panel, with its check chosen (ADR 0010).
   await page.getByRole("row", { name: "Demo Housing Authority" }).click();
-  await page.getByRole("button", { name: "Record payment" }).click();
-  const pay = page.getByRole("dialog", { name: "Record payment" });
+  await page.getByRole("button", { name: "Receive payment" }).click();
+  const pay = page.getByRole("dialog", { name: "Receive payment" });
+  await expect(pay.getByLabel("From")).toHaveValue("authority");
   await pay.getByRole("button", { name: "Fill in what it owes" }).click();
   await expect(pay.getByTestId("authority-pay-total")).toHaveText("Total $750.00");
   await pay.getByLabel("Check or reference").fill("HAP 0001");
@@ -3342,8 +3365,8 @@ test("staff add a housing authority, set a lease's assistance, charge and credit
   await expect(page.getByRole("table", { name: "Leases" })).toContainText(
     `On a payment hold since ${us(firstOfThisMonth())}`,
   );
-  await page.getByRole("button", { name: "Record payment" }).click();
-  const past = page.getByRole("dialog", { name: "Record payment" });
+  await page.getByRole("button", { name: "Receive payment" }).click();
+  const past = page.getByRole("dialog", { name: "Receive payment" });
   await past.getByRole("button", { name: "Fill in what it owes" }).click();
   await past.getByLabel("Accept this payment past the payment hold").check();
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
@@ -3899,8 +3922,7 @@ test("staff set the screening criteria; an applicant reads them, is screened by 
   await expect(visitor.getByTestId("screening-criteria")).toContainText("Household income of 2.5 times the rent.");
   await visitor.getByLabel("Move-in day").fill(daysFromToday(20));
   await visitor.getByLabel("Monthly income of everyone applying, together").fill("2600");
-  await visitor.getByLabel("Full name").fill("Applicant Criteria");
-  await visitor.getByLabel("Email").fill("applicant.criteria@example.com");
+  await fillApplicant(visitor, 0, "Applicant Criteria", "applicant.criteria@example.com");
   await visitor.getByRole("button", { name: "Send application" }).click();
   const statusUrl = new URL((await visitor.getByTestId("status-url").textContent()) ?? "");
 
@@ -5078,4 +5100,127 @@ test("staff set the draw day and how owners and vendors are paid, keep the bank'
   const billRecords = (await billFile.text()).split(/\r?\n/).filter(Boolean);
   expect(billRecords.find((record) => record.startsWith("5"))).toContain("CCD");
   expect(billRecords.find((record) => record.startsWith("6"))?.slice(1, 3)).toBe("32");
+});
+
+test("staff receive a payment with a note and the check's photo, choose the charges it pays first, and save and add another", async ({
+  page,
+}) => {
+  const people = seed.features["receive-payment"]!;
+  await joinAsStaff(page, people.manager);
+  const lastMonthEnd = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)) - 1, 0))
+    .toISOString()
+    .slice(0, 10);
+  // The rent roll's Receive payment takes a tenant's payment or a housing authority's check
+  // (this company has no authority yet).
+  await section(page, "Rent roll");
+  await page.getByRole("button", { name: "Receive payment", exact: true }).click();
+  const receive = page.getByRole("dialog", { name: "Receive payment" });
+  await receive.getByLabel("From").selectOption({ label: "A housing authority's check" });
+  await expect(receive).toContainText("No housing authority yet: add one under Rentals, Housing authorities.");
+  await receive.getByRole("button", { name: "Close" }).click();
+
+  // This month's rent charged (Run rent now), and Birch Flats Unit A owes a key fee from last
+  // month besides.
+  await page.getByRole("button", { name: "Actions for the rent roll" }).click();
+  await page.getByRole("menuitem", { name: "Run rent now" }).click();
+  const run = page.getByRole("dialog", { name: "Run rent now" });
+  await run.getByRole("button", { name: "Run rent now" }).click();
+  await expect(run).toHaveCount(0);
+  const unitA = await openLease(page, "Birch Flats, Unit A");
+  const fee = await leasePanel(page, "Enter charge");
+  await fee.getByLabel("Add a").selectOption("fee");
+  await fee.getByLabel("Amount", { exact: true }).fill("25.00");
+  await fee.getByLabel("Due on").fill(lastMonthEnd);
+  await fee.getByLabel("What for").fill("Key replacement");
+  await fee.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(unitA).toContainText("Fee of $25.00 added.");
+
+  // Rent comes first as a rule; staff choose the key fee instead, with a note and the check's
+  // photo, and Save and add another keeps the panel open for the next payment.
+  const pay = await leasePanel(page, "Receive payment");
+  await pay.getByLabel("Payment received").fill("25.00");
+  await pay.getByLabel("Check or reference").fill("Check 7002");
+  await pay.getByLabel("It pays").selectOption({ label: "The charges I choose first" });
+  await pay.getByRole("group", { name: "Charges it pays first" })
+    .getByLabel(`${us(lastMonthEnd)} Key replacement: $25.00 open`).check();
+  await pay.getByLabel("Note (staff only)").fill("Dropped off at the office");
+  await pay.getByLabel("Check photo or PDF").setInputFiles({ name: "check 7002.png", mimeType: "image/png", buffer: LOGO });
+  await expect(pay).toContainText("Each tenant on the lease is emailed its receipt.");
+  await pay.getByRole("button", { name: "Save and add another" }).click();
+  await expect(unitA).toContainText("$25.00 paid what is owed.");
+  await expect(pay.getByLabel("Payment received")).toHaveValue("");
+  await pay.getByLabel("Payment received").fill("10.00");
+  await pay.getByRole("button", { name: "Record payment" }).click();
+  await expect(pay).toHaveCount(0);
+  // The key fee is paid; the $10.00 went to the rent, as a payment's rest does.
+  const open = unitA.getByRole("list", { name: "Open charges" });
+  await expect(open).toContainText(`Rent due ${firstOfThisMonth()}`);
+  await expect(open).not.toContainText("Key replacement");
+
+  // The Ledger tab: what staff wrote and the check's photo beside its receipt; Files lists it.
+  await leaseTab(page, "Ledger");
+  const received = page.getByRole("table", { name: "Payments received" });
+  await expect(received).toContainText("Note: Dropped off at the office");
+  await downloads(page, "Check photo or PDF", "image/png");
+  await leaseTab(page, "Files");
+  await expect(page.getByRole("list", { name: /^Files, / })).toContainText("check 7002");
+});
+
+test("staff keep an owner's and a vendor's tax ID by its last four, an admin reveals one whole and takes the 1099 export, and staff who aren't admins see the last four only", async ({
+  page,
+  browser,
+}) => {
+  const people = seed.features["tax-ids"]!;
+  await joinAsStaff(page, people.manager);
+
+  // An owner's tax ID, sealed by the server: the page shows its last four (synthetic SSN form).
+  await openOwner(page, "Demo Owner A");
+  const card = page.locator("section", { has: page.getByRole("heading", { name: "Tax ID", exact: true }) });
+  await expect(card.getByTestId("tax-id")).toHaveText("None on file");
+  await card.getByRole("button", { name: "Add tax ID" }).click();
+  const adding = page.getByRole("dialog", { name: "Tax ID, Demo Owner A" });
+  await adding.getByLabel("Kind").selectOption("SSN");
+  await adding.getByLabel("Number").fill("000-12-3456");
+  await adding.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved Demo Owner A's tax ID.")).toBeVisible();
+  await expect(card.getByTestId("tax-id")).toHaveText("SSN •••-••-3456");
+  // The manager is an admin: Reveal shows it whole, and each time is recorded with their name.
+  await card.getByRole("button", { name: "Reveal" }).click();
+  await expect(card.getByTestId("tax-id")).toHaveText("SSN 000-12-3456");
+  await expect(card).toContainText("Shown to you whole, and recorded with your name.");
+  await card.getByRole("button", { name: "Hide" }).click();
+  await expect(card.getByTestId("tax-id")).toHaveText("SSN •••-••-3456");
+
+  // A vendor's EIN (synthetic 00- form).
+  await section(page, "Vendors");
+  await page.getByRole("row", { name: "Demo Plumbing Co", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Plumbing Co" })).toBeVisible();
+  const vendorCard = page.locator("section", { has: page.getByRole("heading", { name: "Tax ID", exact: true }) });
+  await vendorCard.getByRole("button", { name: "Add tax ID" }).click();
+  const vendorAdding = page.getByRole("dialog", { name: "Tax ID, Demo Plumbing Co" });
+  await vendorAdding.getByLabel("Number").fill("00-1234567");
+  await vendorAdding.getByRole("button", { name: "Save" }).click();
+  await expect(vendorCard.getByTestId("tax-id")).toHaveText("EIN ••-•••4567");
+
+  // The 1099 summary offers an admin the 1099 export, tax IDs whole.
+  await section(page, "Reports");
+  await page.getByRole("link", { name: "1099 summary" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "1099 summary" })).toBeVisible();
+  const href = (await page.getByRole("link", { name: "1099 export, with tax IDs" }).getAttribute("href")) ?? "";
+  const exported = await page.request.get(href);
+  expect(exported.status()).toBe(200);
+  expect(exported.headers()["content-type"]).toContain("text/csv");
+  expect((await exported.text()).split("\r\n")[0]).toBe("payee_type,payee,form,amount,tin_type,tin,note");
+
+  // The bookkeeper holds no admin role: the last four, and nothing whole.
+  const bookkeeper = await (await browser.newContext()).newPage();
+  await joinAsStaff(bookkeeper, people.bookkeeper);
+  await openOwner(bookkeeper, "Demo Owner A");
+  const seen = bookkeeper.locator("section", { has: bookkeeper.getByRole("heading", { name: "Tax ID", exact: true }) });
+  await expect(seen.getByTestId("tax-id")).toHaveText("SSN •••-••-3456");
+  await expect(seen).toContainText("Only an admin sees a tax ID whole.");
+  await expect(seen.getByRole("button", { name: "Reveal" })).toHaveCount(0);
+  await section(bookkeeper, "Reports");
+  await bookkeeper.getByRole("link", { name: "1099 summary" }).click();
+  await expect(bookkeeper.getByRole("link", { name: "1099 export, with tax IDs" })).toHaveCount(0);
 });

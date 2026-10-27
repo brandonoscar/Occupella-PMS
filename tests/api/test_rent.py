@@ -104,6 +104,7 @@ def test_the_rent_run_charges_each_lease_once_a_due_date(client, staff, home):
             "authority_late_fees": 0,
             "prepaid_used": 0,
             "autopay": 0,
+            "leases_rolled_over": 0,
         },
         {
             "rents": 0,
@@ -113,6 +114,7 @@ def test_the_rent_run_charges_each_lease_once_a_due_date(client, staff, home):
             "authority_late_fees": 0,
             "prepaid_used": 0,
             "autopay": 0,
+            "leases_rolled_over": 0,
         },
     )
     assert row["owed"] == "1500.00"
@@ -140,6 +142,7 @@ def test_the_rent_run_charges_a_lease_starting_later_that_month_its_part_month(
         "authority_late_fees": 0,
         "prepaid_used": 0,
         "autopay": 0,
+        "leases_rolled_over": 0,
     }
     assert row["owed"] == "822.58"  # 1500.00 x 17 / 31
     assert [(c["due_on"], c["memo"], c["open"]) for c in row["open_charges"]] == [
@@ -191,6 +194,7 @@ def test_the_rent_run_charges_a_lease_starting_later_that_month_its_part_month_o
         "authority_late_fees": 0,
         "prepaid_used": 0,
         "autopay": 0,
+        "leases_rolled_over": 0,
     }
     assert row["owed"] == "841.77"  # 1500.00 and 35.00, each x 17 / 31
     assert sorted((c["due_on"], c["memo"], c["open"]) for c in row["open_charges"]) == [
@@ -224,6 +228,7 @@ def test_the_rent_run_charges_a_recurring_charge_with_the_rent_until_it_stops(cl
             "authority_late_fees": 0,
             "prepaid_used": 0,
             "autopay": 0,
+            "leases_rolled_over": 0,
         },
         {
             "rents": 0,
@@ -233,6 +238,7 @@ def test_the_rent_run_charges_a_recurring_charge_with_the_rent_until_it_stops(cl
             "authority_late_fees": 0,
             "prepaid_used": 0,
             "autopay": 0,
+            "leases_rolled_over": 0,
         },
     )
     assert row["owed"] == "1435.00"
@@ -260,6 +266,7 @@ def test_the_rent_run_charges_a_recurring_charge_with_the_rent_until_it_stops(cl
         "authority_late_fees": 0,
         "prepaid_used": 0,
         "autopay": 0,
+        "leases_rolled_over": 0,
     }
     refused(
         call(client, f"recurring-charges/{pet_rent}/stop", ends_on=TODAY),
@@ -282,6 +289,7 @@ def test_a_stopped_recurring_charge_is_no_longer_listed(client, staff, home):
         "authority_late_fees": 0,
         "prepaid_used": 0,
         "autopay": 0,
+        "leases_rolled_over": 0,
     }
 
 
@@ -592,6 +600,7 @@ def test_late_fees_are_assessed_up_to_today(client, conn, staff, home, pmc):
         "authority_late_fees": 0,
         "prepaid_used": 0,
         "autopay": 0,
+        "leases_rolled_over": 0,
     }
     assert lease_row(client, home)["owed"] == "1550.00"
     # Run again, it charges nothing new.
@@ -603,6 +612,7 @@ def test_late_fees_are_assessed_up_to_today(client, conn, staff, home, pmc):
         "authority_late_fees": 0,
         "prepaid_used": 0,
         "autopay": 0,
+        "leases_rolled_over": 0,
     }
 
 
