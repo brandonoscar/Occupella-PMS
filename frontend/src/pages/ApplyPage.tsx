@@ -8,10 +8,11 @@ import type { Listing } from "../leasing";
 import { applyVia } from "../leasing";
 import { money } from "../money";
 import { Form } from "../components/Form";
+import type { ApplicantDraft } from "../applying";
+import { applicantBody, blankApplicant, blankHousehold, householdBody } from "../applying";
+import { ApplicantFields, HouseholdFields } from "./ApplyDetails";
 
 const MAX_APPLICANTS = 6;
-
-type Person = { name: string; email: string };
 
 // The public application page: /apply#<token>, from a link the property manager posted, or
 // /apply?listing=<id> from their public vacancy page. No login; the answer is a status link the
@@ -21,7 +22,8 @@ export function ApplyPage() {
   const [listing, setListing] = useState<Listing | null>(null);
   const [moveIn, setMoveIn] = useState("");
   const [income, setIncome] = useState("");
-  const [people, setPeople] = useState<Person[]>([{ name: "", email: "" }]);
+  const [people, setPeople] = useState<ApplicantDraft[]>([blankApplicant()]);
+  const [household, setHousehold] = useState(blankHousehold);
   const [statusUrl, setStatusUrl] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -33,8 +35,8 @@ export function ApplyPage() {
       .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
   }, [via]);
 
-  function change(n: number, key: keyof Person, value: string) {
-    setPeople(people.map((person, i) => (i === n ? { ...person, [key]: value } : person)));
+  function change(n: number, part: Partial<ApplicantDraft>) {
+    setPeople((now) => now.map((person, i) => (i === n ? { ...person, ...part } : person)));
   }
 
   async function submit(event: React.FormEvent) {
@@ -46,7 +48,8 @@ export function ApplyPage() {
         ...via,
         move_in_on: moveIn,
         monthly_income: income,
-        applicants: people,
+        applicants: people.map(applicantBody),
+        household: householdBody(household),
       });
       setStatusUrl(done.status_url);
     } catch (failed) {
@@ -74,8 +77,8 @@ export function ApplyPage() {
         <Card title={`Apply for ${listing.property}, ${listing.unit}`}>
           <p className="mb-6 text-ink-muted">
             {listing.pmc} offers it at {money(listing.monthly_rent)} a month. The screening
-            company may ask each of you for more by email; this form asks only for what is
-            below.
+            company may ask each of you for more by email, such as a Social Security number; this
+            form asks only for what is below.
           </p>
           {listing.criteria && (
             <div className="mb-6 rounded-sm border border-line px-4 py-3" data-testid="screening-criteria">
@@ -95,19 +98,21 @@ export function ApplyPage() {
                   {n === 0 ? "You" : `Applicant ${n + 1}`}
                 </legend>
                 <Field label="Full name" id={`name-${n}`} required value={person.name}
-                  onChange={(e) => change(n, "name", e.target.value)} />
+                  onChange={(e) => change(n, { name: e.target.value })} />
                 <Field label="Email" id={`email-${n}`} type="email" required value={person.email}
-                  onChange={(e) => change(n, "email", e.target.value)} />
+                  onChange={(e) => change(n, { email: e.target.value })} />
+                <ApplicantFields n={n} applicant={person} change={(part) => change(n, part)} />
               </fieldset>
             ))}
             {people.length < MAX_APPLICANTS && (
               <div>
                 <Button type="button" variant="ghost"
-                  onClick={() => setPeople([...people, { name: "", email: "" }])}>
+                  onClick={() => setPeople([...people, blankApplicant()])}>
                   Add someone else applying
                 </Button>
               </div>
             )}
+            <HouseholdFields household={household} setHousehold={setHousehold} />
             <Notice tone="error">{error}</Notice>
             <div>
               <Button type="submit" disabled={busy}>

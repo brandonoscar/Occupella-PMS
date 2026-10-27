@@ -318,6 +318,16 @@ TABLES = {
     "trust_payment_notes": {"SELECT", "INSERT"},
     "trust_lease_end_notices": {"SELECT", "INSERT"},
     "trust_lease_holdovers": {"SELECT"},
+    # Tax IDs and who saw one whole (migration 0155), and what an application collects with the
+    # tenant it became, each an insert.
+    "trust_tax_ids": {"SELECT", "INSERT"},
+    "trust_tax_id_reveals": {"SELECT", "INSERT"},
+    "trust_applicant_details": {"SELECT", "INSERT"},
+    "trust_application_occupants": {"SELECT", "INSERT"},
+    "trust_application_pets": {"SELECT", "INSERT"},
+    "trust_application_vehicles": {"SELECT", "INSERT"},
+    "trust_emergency_contacts": {"SELECT", "INSERT"},
+    "trust_tenant_applicants": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -356,6 +366,17 @@ AI_NEVER_READS = {
     "trust_payout_file_downloads",
     # What staff wrote about a tenant's payment, as notes are (migration 0154).
     "trust_payment_notes",
+    # Owners' and vendors' tax IDs, sealed, and who saw one whole (migration 0155).
+    "trust_tax_ids",
+    "trust_tax_id_reveals",
+    # What an application collects (phone, address, landlord, employer, household) and the
+    # emergency contacts of tenants and applicants (migration 0155), as an application is.
+    "trust_applicant_details",
+    "trust_application_occupants",
+    "trust_application_pets",
+    "trust_application_vehicles",
+    "trust_emergency_contacts",
+    "trust_tenant_applicants",
     "trust_vendor_link_revocations",
     "trust_logins",
     "trust_invites",
@@ -568,6 +589,8 @@ FUNCTIONS = {
     "trust_check_history_line()": set(),
     "trust_check_reserve_event()": set(),
     "trust_check_assistance_record()": set(),
+    "trust_check_tax_id_reveal()": set(),
+    "trust_check_tenant_applicant()": set(),
     "trust_check_decision_override()": set(),
     "trust_fill_bill_markup()": set(),
     "trust_check_payment_file_line()": set(),

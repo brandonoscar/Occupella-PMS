@@ -33,6 +33,7 @@ import { group } from "../statement";
 import { EmailsCard } from "../components/EmailsCard";
 import { FilesCard } from "./FilesCard";
 import { PayeeCard } from "./PayeeCard";
+import { TaxIdCard } from "./TaxIdCard";
 import { PortalCard } from "./PortalCard";
 import { TermsPanel } from "./SetupPanels";
 import { GoLink } from "./NeedsAttention";
@@ -219,6 +220,7 @@ function OwnerSummary({ owner, refresh }: { owner: Owner; refresh: () => void })
       <PortalCard kind="owner" personId={owner.id} name={owner.name} portal={owner.portal}
         loginEmail={owner.login_email} email={owner.contact.email} refresh={refresh} />
       <PayeeCard kind="owner" id={owner.id} name={owner.name} />
+      <TaxIdCard kind="owner" id={owner.id} name={owner.name} />
       <Card title="Management agreements">
         {owner.agreements.length === 0 ? (
           <p className="text-sm text-ink-subtle">None: no reserve is kept and no fee is taken.</p>
