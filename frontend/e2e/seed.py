@@ -453,6 +453,7 @@ def main() -> None:
         }
         seeded["features"] = {name: feature_pmc(app, tag, name) for name in FEATURES}
         autopay_saved_before(app, seeded["features"]["autopay"]["pmc_id"])
+        draws_prepared(app, seeded["features"]["payouts"]["pmc_id"])
         # Year close: books as of this year's first day, so last year's November is approved and
         # its December waits for approval in each trust bank account, whatever the day today.
         seeded["features"]["year-close"] = feature_pmc(
@@ -491,6 +492,33 @@ def autopay_saved_before(app: psycopg.Connection[Any], pmc_id: str) -> None:
         " 'Test bank ••••0000', 'fake_saved_seed', %s)",
         (pmc_id, autopay, datetime.now(UTC) - timedelta(days=40)),
     )
+
+
+def draws_prepared(app: psycopg.Connection[Any], pmc_id: str) -> None:
+    """The payouts feature's PMC: Demo Owner A sent $400.00 for Birch Flats and Demo Owner B
+    $300.00 for Aspen Row, its draw day came this month (today, or the 28th), and the nightly
+    run prepared the owners' draws, which wait for staff on Pay owners."""
+    today = datetime.now(UTC).date()
+    for owner, place, amount in (
+        ("Demo Owner A", "Birch Flats", "400.00"),
+        ("Demo Owner B", "Aspen Row", "300.00"),
+    ):
+        account = app.execute(
+            "SELECT a.ledger_account_id FROM trust_ledger_accounts AS a"
+            " JOIN trust_owners AS o ON o.id = a.owner_id"
+            " JOIN trust_properties AS p ON p.id = a.property_id"
+            " WHERE a.pmc_id = %s AND o.display_name = %s AND p.display_name = %s",
+            (pmc_id, owner, place),
+        ).fetchone()[0]
+        app.execute(
+            "SELECT trust_record_owner_contribution(%s, %s, %s, %s, %s, %s)",
+            (pmc_id, account, f"seed-{place}", amount, datetime.now(UTC), "For the draw"),
+        )
+    app.execute(
+        "INSERT INTO trust_owner_draw_settings (pmc_id, draw_day) VALUES (%s, %s)",
+        (pmc_id, min(today.day, 28)),
+    )
+    app.execute("SELECT trust_prepare_owner_draws(%s, %s)", (pmc_id, today))
 
 
 # The feature tests (frontend/e2e/features.spec.ts), each on a demo PMC of its own.
@@ -566,6 +594,7 @@ FEATURES = (
     "unit-details",
     "online-payments",
     "autopay",
+    "payouts",
 )
 
 

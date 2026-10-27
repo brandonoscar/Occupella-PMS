@@ -9,7 +9,7 @@ from typing import Annotated, Any
 
 import psycopg
 from fastapi import Depends, HTTPException, Request, Response
-from psycopg_pool import ConnectionPool
+from psycopg_pool import ConnectionPool, PoolTimeout
 from pydantic import BaseModel
 
 from pms import accounts, exports
@@ -21,6 +21,8 @@ MEDIA = {
     "pdf": "application/pdf",
     # QuickBooks Desktop's import file: tab-separated Windows text.
     "iif": "text/plain; charset=windows-1252",
+    # An ACH file for the bank (NACHA): ASCII records of 94 characters.
+    "ach": "text/plain; charset=us-ascii",
 }
 
 
@@ -113,11 +115,21 @@ def refusal(error: psycopg.Error) -> str:
     return text
 
 
+# How long a request waits for one of the pool's connections while every one is busy, and
+# what it is told then: a 503 in words, never a server error (the enterprise test, 2026-10-25:
+# fifty staff on slow pages filled the pool, and the wait ran out as a 500).
+BUSY_AFTER = 30.0
+BUSY = "the PMS is busy just now: try again in a moment"
+
+
 def connection(request: Request) -> Iterator[psycopg.Connection[Any]]:
     # Committed when the request succeeds, rolled back when it raises.
     pool: ConnectionPool[Any] = request.app.state.pool
-    with pool.connection() as conn:
-        yield conn
+    try:
+        with pool.connection(timeout=BUSY_AFTER) as conn:
+            yield conn
+    except PoolTimeout:
+        raise HTTPException(503, BUSY, headers={"Retry-After": "5"}) from None
 
 
 # scope="function": the commit happens before the answer is sent, so a client never acts on a
@@ -175,6 +187,10 @@ AREA_PATHS = (
     ("/api/payables/draws", "owners"),
     ("/api/payables/contributions", "owners"),
     ("/api/payables/company-fees", "owners"),
+    ("/api/payouts/draw-day", "owners"),  # the draw day, and how each owner is paid
+    ("/api/payouts/owners/", "owners"),
+    ("/api/payouts/vendors/", "setup"),  # a vendor's bank account, as their profile
+    ("/api/payouts/bank-accounts/", "setup"),  # what each bank asks in an ACH file
     ("/api/budgets", "budgets"),
     ("/api/journal", "journal"),
     ("/api/reconcile/", "month-end"),

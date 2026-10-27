@@ -102,3 +102,55 @@ Decisions, and what the code made of them:
   bills and markups. Pay bills pays many vendors at once; a bill that is Short or waiting for its
   owner can't be picked, and says why.
 - **The company's own bills** are refused, as the founder decided above.
+
+## Phase 1b: owner draws and payout files (parts B and C)
+
+Screens before and after: `docs/design-pass/1b/`.
+
+- **The draw day** (Settings, Company setup, Owner draws; `trust_owner_draw_settings`,
+  append-only, the latest row holding, naming who changed it): a day of the month, 1 to 28, or
+  none. That night, or the first night after if the run missed it, the nightly run prepares every
+  owner's draw, once a month (`trust_prepare_owner_draws`; `trust_draw_runs` and their lines):
+  what each owner's property account has available then, as a draw counts it, and how its owner
+  is paid. The Dashboard shows one "Owner draws ready" line and Pay owners lists them at the top;
+  Use these draws chooses them, each at most what the account has now. **Nothing is recorded as
+  paid until staff pay them**, and paying them marks the month's draws paid, once
+  (`trust_draw_run_approvals`).
+- **Bills due on or before the draw day are held before the draw is worked out.** *Forced by the
+  code, and safer than asked:* draws already hold back every bill dated by the day of the draw and
+  neither paid nor declined (`trust_unpaid_bills`, since migration 0017), whatever its due date.
+  That holds every bill due by the draw day, as asked, and one due after it too; holding less would
+  let a draw pay out money an entered bill needs. No separate rule was added.
+- **Each owner has a payout method** (`trust_owner_payout_methods`): ACH or check, a check until
+  staff change it on the owner's Summary tab. Pay owners pays each owner their own way unless
+  staff pick one way for all. Screens say ACH; the database keeps the word EFT, as payout methods
+  have since migration 0068.
+- **Payee bank accounts** (`trust_payee_bank_accounts`, an owner's or a vendor's, on their
+  page's Payouts card): the routing number (its check digit checked), checking or savings, the
+  name on the account, and the account number sealed with AES-GCM under the server's
+  `PMS_DATA_KEY` (`src/pms/sealed.py`; the row's id is bound in, so a sealed number can't be moved
+  to another row). Only its last four come back to a screen; the whole number is opened only to
+  write an ACH file. A server without the key keeps no account numbers and writes no ACH file, and
+  says so. The key lives only in the server's environment, never in the repo or a workflow
+  (ADR 0009); the browser run makes a throwaway one for itself. The AI role reads none of it.
+- **Payout files** (part C). Pay owners and Pay bills take a Payout file: none (the record-only
+  option, for payouts made outside the PMS, as before) or the ACH file and checks. With a file,
+  each trust bank account and way paid becomes a payout run (`trust_payout_runs` and their items):
+  - **A NACHA file** for the company to upload to its own bank: PPD credits to owners, CCD to
+    vendors, service class 220, one entry per payee per run, with the trust bank account's ACH
+    details from its bank (Banking, the account's Payouts tab: the bank's routing number and name,
+    the origin and company ids and names, all of them or none).
+  - **Checks to print** on the account's pre-printed stock, as the founder decided: payee, amount
+    in figures and words, date, memo, the payee's mailing address when on file, and two stubs; one
+    check to each payee per run, numbered on from the account's next check number (its first check
+    number, or one past the highest it recorded).
+  - Each run's file is listed under Payout files (Pay owners, Pay bills and the account's Payouts
+    tab) and downloads again as often as needed. Only staff holding disburse take one, and each
+    download is logged (`trust_payout_file_downloads`).
+- **The PMS still never moves money itself.** It records payouts and writes their files; the
+  company uploads the ACH file to its bank and mails the checks, and the bank moves the money.
+  Nothing here calls a bank, and the AI role can neither record nor download a payout.
+- **NOT VERIFIED:** no ACH file has been uploaded to a real bank and no check printed on real
+  stock. The file follows the NACHA layout (tests check every record's length, counts, totals and
+  entry hash) and the checks Letter-size three-part stock; a company's bank may ask for a test file
+  first, and its stock may need the printing nudged.

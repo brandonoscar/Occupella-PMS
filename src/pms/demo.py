@@ -68,6 +68,7 @@ from pms.api import (
     maintenance,
     offers,
     payables,
+    payouts,
     reconcile,
     rent,
     setup,
@@ -1097,7 +1098,8 @@ def leasing_pipeline(
 def bills_of_every_status(b: Builder, demo: Demo, today: date, public_url: str) -> None:
     """Bills of every status this month: two due this week, one overdue, one over Demo Owner A's
     $500.00 limit waiting for them, one paid, with the two paid before; and the landscaper's
-    monthly bill at Harbor Tower, entered by the nightly run (with this month's late fees)."""
+    monthly bill at Harbor Tower, entered by the nightly run (with this month's late fees and the
+    owners' draws, prepared on the company's draw day)."""
     conn = b.conn
     this_month = demo.months[2]
     entered = on_or_before(this_month + DAY, today)
@@ -1235,8 +1237,15 @@ def bills_of_every_status(b: Builder, demo: Demo, today: date, public_url: str) 
         payables.approve(
             s, conn, roof, payables.Approval(approved_on=today, approved_by="Demo Owner, by phone")
         )
+        # The company's draw day came this month, so tonight's run prepares the owners' draws
+        # for staff to pay (ADR 0010 phase 1b); Demo Owner C is paid by ACH. No bank account is
+        # kept: the demo's server may keep no account numbers (no PMS_DATA_KEY).
+        payouts.set_draw_day(s, conn, payouts.DrawDay(draw_day=min(today.day, 28)))
+        payouts.set_owner_method(
+            s, conn, demo.owners["Demo Owner C"], payouts.MethodIn(method="EFT")
+        )
     # Tonight's run, as the manager runs it by hand: late fees on rent still open past its
-    # grace, and this month's recurring bills.
+    # grace, this month's recurring bills and the owners' draws.
     with b.as_staff(demo.manager):
         nightly.run_pmc(conn, demo.pmc_id, today, public_url)
 

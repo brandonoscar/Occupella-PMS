@@ -27,7 +27,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, StringConstraints
 
 from pms import email, exports, notices
-from pms.api import documents, outbox, scope
+from pms.api import documents, outbox, payouts, scope
 from pms.api.deps import Conn, Staff, refusal
 from pms.api.rentals import Page, Paged, PerPage
 
@@ -1325,11 +1325,16 @@ def ask_owner(session: Staff, conn: Conn, bill_id: UUID) -> Asked:
 
 class PayBills(BaseModel):
     on: date
-    # How they were sent; recorded, nothing sent (the PMS writes no bank file).
+    # How they were sent.
     method: PayoutMethod
     bill_ids: Annotated[list[UUID], Field(min_length=1, max_length=200)]
-    # Each check's number, by bill, when they went by check.
+    # Each check's number, by bill, when they went by check and the PMS prints no checks.
     check_numbers: dict[UUID, CheckNumber] = {}
+    # "file": the PMS writes the ACH file, or prints the checks (one to each vendor, numbered on
+    # from the account's next); it takes the page's request id, so sending it again makes none
+    # anew.
+    output: Output = "record"
+    request_id: UUID | None = None
 
 
 class BillPaid(BaseModel):
@@ -1338,6 +1343,8 @@ class BillPaid(BaseModel):
     reference: str
     amount: str
     transfer_id: str
+    # The payout run whose file it is in, when the PMS writes one.
+    run_id: UUID | None = None
 
 
 @router.post("/bills/pay", status_code=201)
@@ -1348,28 +1355,56 @@ def pay_bills(session: Staff, conn: Conn, run: PayBills) -> list[BillPaid]:
     not_after_today(run.on)
     if len(set(run.bill_ids)) != len(run.bill_ids):
         raise HTTPException(422, "pay each bill once")
-    paid = []
+    if run.output == "file" and run.request_id is None:
+        raise HTTPException(422, "a payout file takes the page's request id")
+    bills = []
     for bill_id in run.bill_ids:
         found, _ = find_bills(conn, session.pmc_id, bill=bill_id)
         if not found:
             raise HTTPException(404, "no such bill")
-        bill = found[0]
-        payable(bill)
+        payable(found[0])
+        bills.append(found[0])
+    banks = dict(
+        conn.execute(
+            "SELECT ledger_account_id, bank_account_id FROM trust_ledger_accounts"
+            " WHERE ledger_account_id = ANY(%s)",
+            ([bill.account for bill in bills],),
+        ).fetchall()
+    )
+    planned = {
+        bill.id: payouts.Payout(
+            bank=banks[bill.account],
+            method=run.method,
+            owner_id=None,
+            vendor_id=bill.vendor_id,
+            name=bill.vendor,
+        )
+        for bill in bills
+    }
+    numbers: dict[Any, str] = {}
+    if run.output == "file":
+        payouts.ready(conn, session.pmc_id, list(planned.values()))
+        numbers = payouts.checks_for(conn, session.pmc_id, list(planned.values()))
+    paid = []
+    for bill in bills:
+        plan = planned[bill.id]
         try:
             moved = pay_one(
                 conn,
                 session.pmc_id,
-                bill_id,
+                bill.id,
                 run.on,
                 run.method,
-                run.check_numbers.get(bill_id),
+                numbers.get((plan.bank, bill.vendor_id))
+                if run.output == "file"
+                else run.check_numbers.get(bill.id),
             )
         except PAY_REFUSALS as refused:
             why = refusal(refused)
             raise HTTPException(409, f"{bill.vendor} {bill.reference}: {why}") from None
         paid.append(
             BillPaid(
-                bill_id=bill_id,
+                bill_id=bill.id,
                 vendor=bill.vendor,
                 reference=bill.reference,
                 # What its payment paid: the same when sent again, which pays nothing twice.
@@ -1377,6 +1412,13 @@ def pay_bills(session: Staff, conn: Conn, run: PayBills) -> list[BillPaid]:
                     one(conn, "SELECT amount FROM pgledger_transfers WHERE id = %s", (moved,))
                 ),
                 transfer_id=moved,
+                run_id=(
+                    payouts.record(
+                        conn, session.pmc_id, "bills", run.request_id, run.on, plan, moved
+                    )
+                    if run.output == "file" and run.request_id is not None
+                    else None
+                ),
             )
         )
     return paid
@@ -1637,6 +1679,10 @@ class OwnerMoney(BaseModel):
     # What a draw may take today: the balance less the reserve and unpaid bills, at least 0.
     available: str
     has_agreement: bool
+    # How the owner is paid (a check unless they chose ACH; src/pms/api/payouts.py), and whether
+    # an ACH file has a bank account of theirs to pay into.
+    payout_method: PayoutMethod = "check"
+    bank_on_file: bool = False
 
 
 OWNERS = """
@@ -1655,7 +1701,12 @@ SELECT a.ledger_account_id, o.id, o.display_name, p.id, p.display_name, b.displa
                    AND NOT EXISTS (
                        SELECT 1 FROM trust_bill_declines AS d
                        WHERE d.bill_id = x.id AND d.declined_on <= %(today)s)), 0),
-       g.id IS NOT NULL
+       g.id IS NOT NULL,
+       coalesce((SELECT m.method FROM trust_owner_payout_methods AS m
+                 WHERE m.pmc_id = a.pmc_id AND m.owner_id = o.id
+                 ORDER BY m.created_at DESC, m.id DESC LIMIT 1), 'check'),
+       EXISTS (SELECT 1 FROM trust_payee_bank_accounts AS k
+               WHERE k.pmc_id = a.pmc_id AND k.owner_id = o.id)
 FROM trust_ledger_accounts AS a
 JOIN trust_owners AS o ON o.id = a.owner_id
 JOIN trust_properties AS p ON p.id = a.property_id
@@ -1709,19 +1760,21 @@ def owner_money(
     ).fetchall()
     return [
         OwnerMoney(
-            account=account,
-            owner_id=owner_id,
-            owner=name,
-            property_id=property_id,
-            property=prop,
-            bank_account=bank,
-            balance=cents(held),
-            reserve=cents(reserve),
-            unpaid_bills=cents(bills_),
-            available=cents(max(held - reserve - bills_, Decimal(0))),
-            has_agreement=agreed,
+            account=row[0],
+            owner_id=row[1],
+            owner=row[2],
+            property_id=row[3],
+            property=row[4],
+            bank_account=row[5],
+            balance=cents(row[6]),
+            reserve=cents(row[7]),
+            unpaid_bills=cents(row[8]),
+            available=cents(max(row[6] - row[7] - row[8], Decimal(0))),
+            has_agreement=row[9],
+            payout_method=row[10],
+            bank_on_file=row[11],
         )
-        for account, owner_id, name, property_id, prop, bank, held, reserve, bills_, agreed in rows
+        for row in rows
     ]
 
 
@@ -1980,15 +2033,26 @@ class Payout(BaseModel):
     account: Account
     # Leave out to pay everything available.
     amount: Amount | None = None
+    # How this one is paid; leave out for the run's.
+    method: PayoutMethod | None = None
+
+
+# "record": the payouts were made outside the PMS, which records them; "file": the PMS writes
+# their file too, an ACH file for those paid by ACH and checks to print for those paid by check
+# (src/pms/api/payouts.py).
+Output = Literal["record", "file"]
 
 
 class PayOwners(BaseModel):
     # Made by the page once per payout run, so sending it again pays nothing twice.
     request_id: UUID
     on: date
-    # How the payouts were sent; recorded, nothing sent (the PMS writes no bank file).
+    # How the payouts were sent, unless a payout says.
     method: PayoutMethod
     payouts: Annotated[list[Payout], Field(min_length=1, max_length=500)]
+    output: Output = "record"
+    # The draws the nightly run prepared on the draw day, when these approve them.
+    draw_run_id: UUID | None = None
 
 
 class OwnerPaid(BaseModel):
@@ -1997,6 +2061,8 @@ class OwnerPaid(BaseModel):
     property: str
     amount: str
     transfer_id: str
+    # The payout run whose file it is in, when the PMS writes one.
+    run_id: UUID | None = None
 
 
 @router.post("/draws/batch", status_code=201)
@@ -2004,26 +2070,46 @@ def pay_owners(session: Staff, conn: Conn, run: PayOwners) -> list[OwnerPaid]:
     """Pay owners (Buildium's owner draw): a draw from each property account chosen, each at
     most what it has available (the balance less the reserve and unpaid bills), all of them or
     none, each recorded with how it was sent. Sent again, it pays nothing twice. A refusal
-    names the owner and property it is about."""
+    names the owner and property it is about. With output "file", the PMS writes their files
+    too: an ACH file for those paid by ACH, checks for those paid by check (one to each owner,
+    numbered on from the account's next). Paying the draws prepared on the draw day approves
+    them."""
     not_after_today(run.on)
     chosen = [payout.account for payout in run.payouts]
     if len(set(chosen)) != len(chosen):
         raise HTTPException(422, "pay each owner's property account once")
     names = {
-        account: (owner, prop)
-        for account, owner, prop in conn.execute(
-            "SELECT a.ledger_account_id, o.display_name, p.display_name"
+        account: (owner, prop, owner_id, bank)
+        for account, owner, prop, owner_id, bank in conn.execute(
+            "SELECT a.ledger_account_id, o.display_name, p.display_name, o.id, a.bank_account_id"
             " FROM trust_ledger_accounts AS a JOIN trust_owners AS o ON o.id = a.owner_id"
             " JOIN trust_properties AS p ON p.id = a.property_id"
             " WHERE a.pmc_id = %s AND a.kind = 'owner_property' AND a.ledger_account_id = ANY(%s)",
             (session.pmc_id, chosen),
         ).fetchall()
     }
+    if any(payout.account not in names for payout in run.payouts):
+        raise HTTPException(404, "no such owner account")
+    if run.draw_run_id is not None:
+        approve_draws(conn, session.pmc_id, run.draw_run_id, run.request_id)
+    planned = {
+        payout.account: payouts.Payout(
+            bank=names[payout.account][3],
+            method=payout.method or run.method,
+            owner_id=names[payout.account][2],
+            vendor_id=None,
+            name=names[payout.account][0],
+        )
+        for payout in run.payouts
+    }
+    numbers: dict[Any, str] = {}
+    if run.output == "file":
+        payouts.ready(conn, session.pmc_id, list(planned.values()))
+        numbers = payouts.checks_for(conn, session.pmc_id, list(planned.values()))
     paid = []
     for payout in run.payouts:
-        if payout.account not in names:
-            raise HTTPException(404, "no such owner account")
-        owner, prop = names[payout.account]
+        owner, prop, owner_id, bank = names[payout.account]
+        plan = planned[payout.account]
         key = f"draw/{run.request_id}/{payout.account}"
         try:
             drawn = one(
@@ -2039,11 +2125,7 @@ def pay_owners(session: Staff, conn: Conn, run: PayOwners) -> list[OwnerPaid]:
             (session.pmc_id, key),
         )
         # Sent again, the payout keeps the way it was first recorded as sent.
-        conn.execute(
-            "INSERT INTO trust_payout_methods (pmc_id, transfer_id, method) VALUES (%s, %s, %s)"
-            " ON CONFLICT (transfer_id) DO NOTHING",
-            (session.pmc_id, transfer, run.method),
-        )
+        record_method(conn, session.pmc_id, transfer, plan.method, numbers.get((bank, owner_id)))
         paid.append(
             OwnerPaid(
                 account=payout.account,
@@ -2051,9 +2133,37 @@ def pay_owners(session: Staff, conn: Conn, run: PayOwners) -> list[OwnerPaid]:
                 property=prop,
                 amount=cents(drawn),
                 transfer_id=transfer,
+                run_id=(
+                    payouts.record(
+                        conn, session.pmc_id, "owners", run.request_id, run.on, plan, transfer
+                    )
+                    if run.output == "file"
+                    else None
+                ),
             )
         )
     return paid
+
+
+def approve_draws(
+    conn: psycopg.Connection[Any], pmc_id: UUID, draw_run: UUID, request: UUID
+) -> None:
+    """Records that this request pays the draws prepared on the draw day, once: paying them
+    again under another request is refused."""
+    if not conn.execute(
+        "SELECT 1 FROM trust_draw_runs WHERE pmc_id = %s AND id = %s", (pmc_id, draw_run)
+    ).fetchone():
+        raise HTTPException(404, "no such prepared draws")
+    conn.execute(
+        "INSERT INTO trust_draw_run_approvals (run_id, pmc_id, request_id) VALUES (%s, %s, %s)"
+        " ON CONFLICT (run_id) DO NOTHING",
+        (draw_run, pmc_id, request),
+    )
+    approved = one(
+        conn, "SELECT request_id FROM trust_draw_run_approvals WHERE run_id = %s", (draw_run,)
+    )
+    if approved != request:
+        raise HTTPException(409, "these prepared draws were paid already")
 
 
 class Contribution(BaseModel):

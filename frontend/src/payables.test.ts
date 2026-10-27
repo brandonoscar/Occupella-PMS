@@ -68,7 +68,7 @@ describe("payables", () => {
     const owner: OwnerMoney = {
       account: "a1", owner_id: "o1", owner: "Owner 1", property_id: "pr1", property: "Property 1", bank_account: "Operating",
       balance: "1200.00", reserve: "100.00", unpaid_bills: "300.00", available: "800.00",
-      has_agreement: true,
+      has_agreement: true, payout_method: "check",
     };
     expect(heldLabel(owner)).toBe(
       "$1,200.00 held, less a $100.00 reserve and $300.00 of unpaid bills",
@@ -198,8 +198,12 @@ describe("billsPaidSummary and linesNote", () => {
 describe("paidSummary", () => {
   it("says how many payouts, their total and how they were sent", () => {
     const paid = (amount: string) => ({ account: "a", owner: "O", property: "P", amount, transfer_id: "t" });
-    expect(paidSummary([paid("0.10"), paid("0.20")], "EFT")).toBe("2 payouts of $0.30 recorded, by EFT.");
+    expect(paidSummary([paid("0.10"), paid("0.20")], "EFT")).toBe("2 payouts of $0.30 recorded, by ACH.");
     expect(paidSummary([paid("900.00")], "check")).toBe("1 payout of $900.00 recorded, by check.");
+    // Each owner's way: both ways named, ACH first, whatever order the payouts came in.
+    expect(paidSummary([paid("1.00"), paid("2.00")], ["check", "EFT", "check"])).toBe(
+      "2 payouts of $3.00 recorded, by ACH and check.",
+    );
   });
 });
 
