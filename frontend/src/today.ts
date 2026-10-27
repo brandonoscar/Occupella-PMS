@@ -6,6 +6,7 @@ import { money, usDate } from "./money";
 import type { Offer } from "./offers";
 import type { Bill, CompanyFees } from "./payables";
 import { companyFeesLabel } from "./payables";
+import type { DrawRun } from "./payouts";
 
 export type LateLease = {
   lease_id: string;
@@ -38,6 +39,8 @@ export type Today = {
   deposits_to_receive: DepositDue[];
   // Leases past their last day whose deposits are still held, and when they are due back.
   deposits_to_return: DepositBack[];
+  // The owners' draws the nightly run prepared on the draw day, until staff pay them.
+  owner_draws?: DrawRun | null;
 };
 export type DepositBack = {
   lease_id: string;

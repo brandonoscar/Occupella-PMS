@@ -195,7 +195,7 @@ async function payOwner(page: Page, owner: string, property: string, amount = ""
   await row.getByLabel(`Pay ${owner}, ${property}`).check();
   if (amount) await row.getByLabel(`Amount to pay ${owner}, ${property}`).fill(amount);
   await page.getByRole("button", { name: /^Pay \$/ }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
   return row;
 }
 
@@ -908,12 +908,31 @@ test("a bill over the owner's limit emails them; they decline one and approve an
   await recordBill(page, "Demo Plumbing Co", "Demo Owner A, Birch Flats", "PLB-2001", "800.00", "Water heater");
   await recordBill(page, "Demo Plumbing Co", "Demo Owner A, Birch Flats", "PLB-2002", "650.00", "Shower valve");
   const bill = (reference: string) => billRow(page, "Demo Plumbing Co", reference);
-  await expect(bill("PLB-2001").getByTestId("status")).toHaveText("Awaiting owner approval");
+  await expect(bill("PLB-2001").getByTestId("status")).toHaveText("Waiting for owner");
   // The bill's own page says the owner was emailed.
   await bill("PLB-2001").getByRole("cell").first().click();
   await expect(page.getByRole("heading", { level: 1, name: "Demo Plumbing Co PLB-2001" })).toBeVisible();
   await expect(page.getByRole("main")).toContainText("Emailed the owner to approve or decline it in their portal.");
-  await expect(page.getByTestId("bill-email")).toContainText("sent.");
+  await expect(page.getByTestId("bill-email")).toContainText("sent");
+
+  // Entered twice by mistake: Record bill warns, and the second is voided from its ⋯ menu.
+  await section(page, "Bills");
+  await page.getByRole("button", { name: "Record bill" }).click();
+  const again = page.getByRole("dialog", { name: "Record bill" });
+  await again.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Plumbing Co" });
+  await again.getByLabel("Ref #").fill("plb 2002");
+  await expect(again.getByTestId("similar-bills")).toContainText("Demo Plumbing Co has bill PLB-2002 ($650.00, dated");
+  await again.getByRole("combobox", { name: "Owner and property", exact: true }).selectOption({ label: "Demo Owner A, Birch Flats" });
+  await again.getByLabel("Amount", { exact: true }).fill("650.00");
+  await again.getByLabel("Memo").fill("Shower valve");
+  await again.getByRole("button", { name: "Record bill" }).click();
+  await expect(page.getByText("Bill plb 2002 recorded.")).toBeVisible();
+  const twice = await billStep(page, "Demo Plumbing Co", "plb 2002", "Void");
+  await expect(twice).toContainText("Nothing was paid; the hold goes back to Demo Owner A's balance.");
+  await twice.getByLabel("Why").fill("Entered twice: it is PLB-2002");
+  await twice.getByRole("button", { name: "Void" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Void" }).click();
+  await expect(page.getByText("plb 2002 is void.")).toBeVisible();
 
   // The owner decides both in the portal.
   await owner.reload();
@@ -927,45 +946,115 @@ test("a bill over the owner's limit emails them; they decline one and approve an
   await expect(owner.getByText("Approved Demo Plumbing Co's PLB-2002.")).toBeVisible();
   const decided = owner.getByRole("list", { name: "Decided" });
   await expect(decided.getByRole("listitem").filter({ hasText: "PLB-2001" })).toContainText("declined");
-  await expect(decided.getByRole("listitem").filter({ hasText: "PLB-2002" })).toContainText("approved");
+  await expect(decided.getByRole("listitem").filter({ hasText: "Demo Plumbing Co, PLB-2002" })).toContainText("approved");
   await expect(owner.getByText("No bill waits for your approval.")).toBeVisible();
 
-  // Staff see both decisions: the declined bill is closed, the approved one is to pay.
-  await section(page, "Bills");
-  await expect(bill("PLB-2002").getByTestId("status")).toHaveText("Approved");
+  // Staff see both decisions: the declined bill is void; Birch Flats holds only its $250.00
+  // reserve, so the approved one is short and staff ask the owner for the rest. (Staff are on
+  // Bills still: the list reads the owner's decisions when the page loads again.)
+  await page.reload();
+  await expect(bill("PLB-2002").getByTestId("status")).toHaveText("Short");
   await expect(bill("PLB-2001")).toHaveCount(0); // nothing left to pay on it
-  // Birch Flats holds only its $250.00 reserve: setting $650.00 aside is refused, in words.
-  const aside = await billStep(page, "Demo Plumbing Co", "PLB-2002", "Set aside");
-  await aside.getByRole("button", { name: "Set aside" }).click();
-  await expect(aside.getByRole("alert")).toHaveText("not enough money: the owner's account would be $400.00 short");
-  await aside.getByRole("button", { name: "Close" }).click();
+  await bill("PLB-2002").getByRole("cell").first().click();
+  await expect(page.getByTestId("hold")).toHaveText(
+    "$250.00 held from Demo Owner A's balance for this bill. Demo Owner A needs to send $400.00.",
+  );
+  await page.getByRole("button", { name: "Ask Demo Owner A for $400.00" }).click();
+  const asking = page.getByRole("alertdialog");
+  await expect(asking).toContainText(`Email Demo Owner A at ${people.emails.owner_a} asking them to send $400.00?`);
+  await asking.getByRole("button", { name: "Send email" }).click();
+  await expect(page.getByText("Demo Owner A is asked to send $400.00.")).toBeVisible();
+  await expect(page.getByText("Demo Owner A was asked for it today; you can ask again tomorrow.")).toBeVisible();
+  // The owner sees what to send in the portal.
+  await owner.reload();
+  await expect(owner.getByTestId("short-bill")).toContainText("your balance is $400.00 short of it. Please send $400.00");
   // The owner sends the money; it covers the approved bill, so nothing more is available to draw.
   await recordContribution(page, "Demo Owner A", "Birch Flats", "650.00", "Shower valve");
   const birch = await ownerProperty(page, "Demo Owner A", "Birch Flats");
   await expect(birch.getByRole("cell").last()).toHaveText("$0.00");
 
-  // Pay bills sets it aside and pays it at once, showing Birch Flats' cash first.
+  // Pay bills pays it, showing Birch Flats' cash first.
   await section(page, "Bills");
   await page.getByRole("link", { name: "Pay bills" }).click();
   await page.getByLabel("Pay Demo Plumbing Co PLB-2002").check();
   const cash = page.getByRole("table", { name: "Each property's cash" }).getByRole("row", { name: "Demo Owner A, Birch Flats" });
   await expect(cash.getByRole("cell")).toHaveText(["Demo Owner A, Birch Flats", "$900.00", "$650.00", "$250.00", ""]);
-  await page.getByRole("combobox", { name: "Sent by" }).selectOption({ label: "EFT" });
+  await page.getByRole("combobox", { name: "Sent by" }).selectOption({ label: "ACH" });
   await page.getByRole("button", { name: "Pay $650.00" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
-  await expect(page.getByText("1 bill of $650.00 paid, by EFT.")).toBeVisible();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
+  await expect(page.getByText("1 bill of $650.00 paid, by ACH.")).toBeVisible();
   await expect(page.getByText("No bill is ready to pay.")).toBeVisible();
 
   await section(page, "Bills");
   await page.getByRole("tab", { name: "Paid", exact: true }).click();
   await expect(bill("PLB-2002").getByTestId("status")).toHaveText("Paid");
   await bill("PLB-2002").getByRole("cell").first().click();
-  await expect(page.getByRole("list", { name: "History" })).toContainText("Paid by EFT");
+  await expect(page.getByRole("list", { name: "History" })).toContainText("Paid $650.00 by ACH");
   await section(page, "Bills");
-  await page.getByRole("tab", { name: "Declined", exact: true }).click();
-  await expect(bill("PLB-2001").getByTestId("status")).toHaveText("Declined");
+  await page.getByRole("tab", { name: "Void", exact: true }).click();
+  await expect(bill("PLB-2001").getByTestId("status")).toHaveText("Void");
+  await expect(bill("plb 2002").getByTestId("status")).toHaveText("Void");
   await bill("PLB-2001").getByRole("cell").first().click();
   await expect(page.getByRole("main")).toContainText("Get a second quote");
+});
+
+test("staff pay part of a bill by check with its number, the statement matches the check by itself, and a line that looks like another bill is recorded paid once staff confirm", async ({
+  page,
+}) => {
+  const people = seed.features["bill-payments"]!;
+  await joinAsStaff(page, people.manager);
+  // Cedar House's owner sends enough for both bills on top of its reserve.
+  await recordContribution(page, "Demo Owner A", "Cedar House", "500.00", "Gutters");
+  await section(page, "Bills");
+  await recordBill(page, "Demo Roofing Co", "Demo Owner A, Cedar House", "RF-4001", "300.00", "Gutter cleaning");
+  await recordBill(page, "Demo Roofing Co", "Demo Owner A, Cedar House", "RF-4002", "125.00", "Downspout");
+  const bill = (reference: string) => billRow(page, "Demo Roofing Co", reference);
+  await expect(bill("RF-4001").getByTestId("status")).toHaveText("Ready to pay");
+
+  // Part of RF-4001 by check 4411, from its page.
+  await bill("RF-4001").getByRole("cell").first().click();
+  await expect(page.getByTestId("hold")).toHaveText("$300.00 held from Demo Owner A's balance for this bill.");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  const paying = page.getByRole("dialog", { name: "Record payment" });
+  await paying.getByLabel("Amount").fill("100.00");
+  await paying.getByLabel("Check number").fill("4411");
+  await expect(paying).toContainText("$200.00 stays left to pay");
+  await paying.getByRole("button", { name: "Pay $100.00" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("Pay $100.00 to Demo Roofing Co for RF-4001 by check 4411 on");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
+  await expect(page.getByText("$100.00 of RF-4001 is paid.")).toBeVisible();
+  await expect(page.getByTestId("status")).toHaveText("Partly paid");
+  await expect(page.getByRole("table", { name: "Payments" }).getByRole("row").nth(1)).toContainText("Check 4411");
+
+  // The bank's statement: check 4411 clears, and a check of $125.00 the books don't have.
+  const today = new Date().toISOString().slice(0, 10);
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Banking", exact: true }).click();
+  await page.getByRole("row", { name: /Demo operating trust/ }).getByRole("link").first().click();
+  await page.getByRole("tab", { name: "Statements" }).click();
+  const csv = ["Date,Description,Amount,Reference", `${today},CHECK,-100.00,4411`, `${today},CHECK 4412,-125.00,`].join("\n");
+  await page
+    .getByLabel("Statement file (CSV or OFX)")
+    .setInputFiles({ name: "statement.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await page.getByRole("button", { name: "Import statement" }).click();
+  await expect(page.getByText("1 check matched to bill payments by number and amount.")).toBeVisible();
+
+  // The other line looks like RF-4002, not paid yet: staff confirm, and it is recorded paid.
+  await page.getByRole("tab", { name: "Reconciliations" }).click();
+  const looks = page.getByRole("table", { name: "Bank lines that look like bills" });
+  const row = looks.getByRole("row").filter({ hasText: "RF-4002" });
+  await expect(row).toContainText("(not paid yet)");
+  await row.getByRole("button", { name: "Record paid" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    "Record Demo Roofing Co RF-4002 paid $125.00 by check 4412 on",
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: "Record paid" }).click();
+  await expect(page.getByText("Demo Roofing Co RF-4002 is paid and matched.")).toBeVisible();
+
+  await section(page, "Bills");
+  await page.getByRole("tab", { name: "Paid", exact: true }).click();
+  await bill("RF-4002").getByRole("cell").first().click();
+  await expect(page.getByRole("table", { name: "Payments" }).getByRole("row").nth(1)).toContainText("Check 4412");
+  await expect(page.getByRole("table", { name: "Payments" }).getByRole("row").nth(1)).toContainText("Cleared");
 });
 
 test("staff add a recurring bill and stop it, and record the decline of an owner with no login", async ({
@@ -1024,7 +1113,7 @@ test("staff add a recurring bill and stop it, and record the decline of an owner
   await declining.getByLabel("Why").fill("Not this year");
   await declining.getByRole("button", { name: "Record decline" }).click();
   await expect(page.getByText("The owner's decline of RF-3001 is recorded.")).toBeVisible();
-  await expect(page.getByTestId("status")).toHaveText("Declined");
+  await expect(page.getByTestId("status")).toHaveText("Void");
   await expect(page.getByRole("main")).toContainText("Declined by Demo Owner A, by phone: Not this year.");
 });
 
@@ -1079,16 +1168,16 @@ test("staff take the month's management fees once, find no leasing fee due, and 
       + " $350.00 is more than that",
   );
   await expect(aspen.getByRole("cell").nth(6)).toHaveText("$300.00");
-  // Part of it by EFT, then the rest.
+  // Part of it by ACH, then the rest.
   await aspen.getByLabel("Amount to pay Demo Owner B, Aspen Row").fill("100.00");
   await page.getByLabel("Sent by").selectOption("EFT");
   await page.getByRole("button", { name: "Pay $100.00" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
-  await expect(page.getByRole("main")).toContainText("1 payout of $100.00 recorded, by EFT.");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
+  await expect(page.getByRole("main")).toContainText("1 payout of $100.00 recorded, by ACH.");
   await expect(aspen.getByRole("cell").nth(6)).toHaveText("$200.00");
   // How they were sent stays chosen for the next payout.
   await payOwner(page, "Demo Owner B", "Aspen Row");
-  await expect(page.getByRole("main")).toContainText("1 payout of $200.00 recorded, by EFT.");
+  await expect(page.getByRole("main")).toContainText("1 payout of $200.00 recorded, by ACH.");
   await expect(aspen.getByRole("cell").nth(6)).toHaveText("$0.00");
 
   // Several owners at once: money comes in for Aspen Row and Elm Court, the box at the top chooses
@@ -1107,7 +1196,7 @@ test("staff take the month's management fees once, find no leasing fee due, and 
   await elm.getByLabel("Amount to pay Demo Owner A, Elm Court").fill("300.00");
   await page.getByLabel("Sent by").selectOption({ label: "Check" });
   await page.getByRole("button", { name: "Pay $450.00" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
   await expect(page.getByRole("main")).toContainText("2 payouts of $450.00 recorded, by check.");
   await expect(aspen.getByRole("cell").nth(6)).toHaveText("$0.00");
   await expect(elm.getByRole("cell").nth(6)).toHaveText(DOLLARS.format(elmAvailable - 300));
@@ -1122,12 +1211,11 @@ test("only staff holding a role do its work: an admin grants pay-out and adds st
   await section(page, "Bills");
   await recordBill(page, "Demo Plumbing Co", "Demo Owner B, Aspen Row", "PLB-3001", "100.00", "Faucet washer");
   const bill = billRow(page, "Demo Plumbing Co", "PLB-3001");
-  await (await billStep(page, "Demo Plumbing Co", "PLB-3001", "Set aside")).getByRole("button", { name: "Set aside" }).click();
-  await expect(bill.getByTestId("status")).toHaveText("Set aside");
+  await expect(bill.getByTestId("status")).toHaveText("Ready to pay");
   // The bookkeeper holds no role: paying out is refused.
-  const paying = await billStep(page, "Demo Plumbing Co", "PLB-3001", "Pay");
+  const paying = await billStep(page, "Demo Plumbing Co", "PLB-3001", "Record payment");
   await paying.getByRole("button", { name: "Pay $100.00" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
   await expect(paying.getByRole("alert")).toHaveText("Demo Bookkeeper may not pay out money (the disburse role)");
   await paying.getByRole("button", { name: "Close" }).click();
 
@@ -1162,9 +1250,9 @@ test("only staff holding a role do its work: an admin grants pay-out and adds st
   // Now the bookkeeper pays it, from its own page.
   await page.reload();
   await bill.getByRole("cell").first().click();
-  await page.getByRole("button", { name: "Pay", exact: true }).click();
-  await page.getByRole("dialog", { name: "Pay" }).getByRole("button", { name: "Pay $100.00" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await page.getByRole("dialog", { name: "Record payment" }).getByRole("button", { name: "Pay $100.00" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
   await expect(page.getByText("PLB-3001 is paid.")).toBeVisible();
   await expect(page.getByTestId("status")).toHaveText("Paid");
 
@@ -1787,7 +1875,7 @@ test("staff put bills in expense accounts on Schedule E lines, and the owner rea
   await expect(accounts.getByRole("row", { name: "Insurance" })).toContainText("9: Insurance");
 
   // A water bill entered in Water; a hose in none, then put in Water; a repair split across
-  // Repairs and Water. All set aside.
+  // Repairs and Water. All paid.
   await section(page, "Bills");
   const aspenRow = "Demo Owner B, Aspen Row";
   await recordBill(page, "Demo Plumbing Co", aspenRow, "WTR-1", "45.00", "Water, last month", async (panel) => {
@@ -1819,8 +1907,11 @@ test("staff put bills in expense accounts on Schedule E lines, and the owner rea
   await expect(page.getByRole("table", { name: "Lines" })).toContainText("Water$12.00");
   await section(page, "Bills");
   for (const reference of ["WTR-1", "HOSE-1", "FIX-1"]) {
-    await (await billStep(page, "Demo Plumbing Co", reference, "Set aside")).getByRole("button", { name: "Set aside" }).click();
-    await expect(bill(reference).getByTestId("status")).toHaveText("Set aside");
+    const paying = await billStep(page, "Demo Plumbing Co", reference, "Record payment");
+    await paying.getByRole("button", { name: /^Pay \$/ }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
+    await expect(page.getByText(`${reference} is paid.`)).toBeVisible();
+    await expect(bill(reference)).toHaveCount(0); // paid bills leave the Unpaid tab
   }
 
   // A lawn service every month, in Landscaping, then moved to Repairs.
@@ -2260,7 +2351,7 @@ test("an admin names the broker of a trust account, who authorizes a signer; the
   await expect(card).toContainText("Demo Bookkeeper signs Demo operating trust account.");
   await expect(operating).toContainText("bond runs out in 20 days");
   await bookkeeper.getByRole("button", { name: "Pay $10.00" }).click();
-  await bookkeeper.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await bookkeeper.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
   await expect(bookkeeper.getByRole("main")).toContainText("1 payout of $10.00 recorded, by check.");
   await bookkeeper.close();
 });
@@ -3054,7 +3145,7 @@ test("staff share a roofer's invoice across two owners' properties with the mark
     "Demo Owner A, Birch Flats", "$250.00", "$165.00", "$85.00", "",
   ]);
   await page.getByRole("button", { name: "Pay $300.00" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
   await expect(page.getByText("2 bills of $300.00 paid, by check.")).toBeVisible();
   await expect((await ownerProperty(page, "Demo Owner A", "Birch Flats")).getByRole("cell").nth(2)).toHaveText("$85.00");
   await expect((await ownerProperty(page, "Demo Owner B", "Aspen Row")).getByRole("cell").nth(2)).toHaveText("$50.00");
@@ -4283,7 +4374,7 @@ test("staff name the operating trust account's cash for QuickBooks and download 
   await expect(names.getByRole("row", { name: "Trust checking" })).toBeVisible();
 
   await page.getByLabel("From").fill(firstOfMonthsAgo(2));
-  await page.getByLabel("To").fill(today());
+  await page.getByLabel("To", { exact: true }).fill(today());
   const desktop = await page.request.get(
     (await page.getByRole("link", { name: "For QuickBooks Desktop (IIF)" }).getAttribute("href")) ?? "",
   );
@@ -4859,4 +4950,132 @@ test("a tenant sets up autopay, saves a bank account and turns it off, Run rent 
   await page.getByRole("alertdialog").getByRole("button", { name: "Turn it off" }).click();
   await expect(page.getByRole("main")).toContainText("Turned off Drew Sample's autopay.");
   await expect(autopay).toContainText("Drew Sample: Turned off by the manager");
+});
+
+test("staff set the draw day and how owners and vendors are paid, keep the bank's ACH details, pay the draws the nightly run prepared with an ACH file and checks, and pay a bill by ACH file", async ({
+  page,
+}) => {
+  const people = seed.features.payouts!;
+  await joinAsStaff(page, people.manager);
+
+  // The nightly run prepared the owners' draws on the draw day: the Dashboard says they wait.
+  const ready = page.getByRole("region", { name: "Owner draws ready" });
+  await expect(ready).toContainText(`Prepared ${us(today())} for 2 owner accounts, $700.00.`);
+
+  // Company setup: the draw day, from next month the 15th.
+  await settings(page, "Company setup");
+  await expect(page.getByTestId("draw-day")).toContainText("of each month, every owner's draw is prepared for staff to pay.");
+  await page.getByRole("button", { name: "Edit draw day" }).click();
+  const drawDay = page.getByRole("dialog", { name: "Owner draws" });
+  await drawDay.getByLabel("Draw day").selectOption({ label: "15th of each month" });
+  await drawDay.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("draw-day")).toHaveText(
+    "The night of the 15th of each month, every owner's draw is prepared for staff to pay.",
+  );
+
+  // Demo Owner A is paid by ACH into their bank account; only its last four ever show.
+  await openOwner(page, "Demo Owner A");
+  const ownerPayouts = part(page, "Payouts");
+  await expect(ownerPayouts.getByTestId("payout-method")).toHaveText("Check");
+  await ownerPayouts.getByLabel("Paid by").selectOption({ label: "ACH" });
+  await expect(ownerPayouts.getByTestId("payout-method")).toHaveText("ACH");
+  await expect(ownerPayouts).toContainText("an ACH file can't pay Demo Owner A yet");
+  await ownerPayouts.getByRole("button", { name: "Add bank account" }).click();
+  const ownerBank = page.getByRole("dialog", { name: "Bank account, Demo Owner A" });
+  await ownerBank.getByLabel("Routing number").fill("001234561");
+  await ownerBank.getByLabel("Account number").fill("123456789");
+  await ownerBank.getByLabel("Name on the account").fill("Demo Owner A");
+  await ownerBank.getByRole("button", { name: "Save" }).click();
+  await expect(ownerPayouts.getByTestId("payout-bank")).toHaveText("Checking ····6789, routing 001234561, Demo Owner A");
+
+  // The plumber is paid by ACH too.
+  await section(page, "Vendors");
+  await page.getByRole("row", { name: "Demo Plumbing Co", exact: true }).click();
+  const vendorPayouts = part(page, "Payouts");
+  await expect(vendorPayouts.getByTestId("payout-bank")).toHaveText("None on file");
+  await vendorPayouts.getByRole("button", { name: "Add bank account" }).click();
+  const vendorBank = page.getByRole("dialog", { name: "Bank account, Demo Plumbing Co" });
+  await vendorBank.getByLabel("Routing number").fill("009876549");
+  await vendorBank.getByLabel("Account number").fill("55501234");
+  await vendorBank.getByLabel("Account type").selectOption({ label: "Savings" });
+  await vendorBank.getByLabel("Name on the account").fill("Demo Plumbing Co");
+  await vendorBank.getByRole("button", { name: "Save" }).click();
+  await expect(vendorPayouts.getByTestId("payout-bank")).toHaveText("Savings ····1234, routing 009876549, Demo Plumbing Co");
+
+  // The operating trust account's bank gave the company its ACH details; its checks start at 5001.
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Banking", exact: true }).click();
+  await page.getByRole("row", { name: /Demo operating trust/ }).getByRole("link").first().click();
+  await page.getByRole("tab", { name: "Payouts" }).click();
+  await expect(page.getByTestId("ach-details")).toHaveText("Not set: ACH files can't be made from this account yet.");
+  await page.getByRole("button", { name: "Edit ACH and checks" }).click();
+  const ach = page.getByRole("dialog", { name: "ACH and checks" });
+  await ach.getByLabel("Bank's routing number").fill("001111118");
+  await ach.getByLabel("Bank's name").fill("Synthetic Bank");
+  await ach.getByLabel("Origin ID").fill("1000000000");
+  await ach.getByLabel("Origin name").fill("Demo PMC");
+  await ach.getByLabel("Company ID").fill("1000000000");
+  await ach.getByLabel("Company name").fill("Demo PMC");
+  await ach.getByLabel("First check number").fill("5001");
+  await ach.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("ach-details")).toHaveText(
+    "Synthetic Bank, routing 001111118; origin 1000000000 Demo PMC; company 1000000000 Demo PMC",
+  );
+  await expect(page.getByTestId("next-check")).toHaveText("Number 5001");
+  await expect(part(page, "Payout files")).toContainText("No payout file made yet.");
+
+  // Pay owners: the prepared draws, each the way its owner is paid now (Demo Owner A's by ACH, Demo
+  // Owner B's by check), with their files.
+  await section(page, "Pay owners");
+  await expect(page.getByRole("list", { name: "Owner draws ready" })).toHaveText([
+    "Demo Owner A, Birch Flats: $400.00 by ACH",
+    "Demo Owner B, Aspen Row: $300.00 by Check",
+  ].join(""));
+  await page.getByRole("button", { name: "Use these draws" }).click();
+  await page.getByLabel("Payout file").selectOption({ label: "ACH file and checks to print" });
+  await page.getByRole("button", { name: "Pay $700.00" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    "by ACH and check on " + us(today()) + "? The PMS writes the ACH file and prints the checks; the bank moves the money.",
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
+  await expect(page.getByRole("main")).toContainText(
+    "2 payouts of $700.00 recorded, by ACH and check. Their files are under Payout files below.",
+  );
+  await expect(page.getByRole("list", { name: "Owner draws ready" })).toHaveCount(0);
+  const ownerFiles = page.getByRole("table", { name: "Payout files" });
+  const achLink = ownerFiles.getByRole("link", { name: "Download the ACH file" });
+  const achFile = await page.request.get((await achLink.getAttribute("href")) ?? "");
+  expect(achFile.status()).toBe(200);
+  const records = (await achFile.text()).split(/\r?\n/).filter(Boolean);
+  expect(records.every((record) => record.length === 94)).toBe(true);
+  expect(records.find((record) => record.startsWith("5"))).toContain("PPD");
+  expect(records.find((record) => record.startsWith("6"))).toContain("0000040000");
+  const checks = await page.request.get(
+    (await ownerFiles.getByRole("link", { name: "Print the checks" }).getAttribute("href")) ?? "",
+  );
+  expect([checks.status(), checks.headers()["content-type"]]).toEqual([200, "application/pdf"]);
+  expect(pdfText(await checks.body())).toContain("Demo Owner B");
+
+  // The Dashboard no longer says draws wait.
+  await section(page, "Dashboard");
+  await expect(page.getByRole("region", { name: "Owner draws ready" })).toHaveCount(0);
+
+  // A plumbing bill paid by ACH file.
+  await recordContribution(page, "Demo Owner A", "Cedar House", "500.00", "Faucet");
+  await section(page, "Bills");
+  await recordBill(page, "Demo Plumbing Co", "Demo Owner A, Cedar House", "PLB-5001", "120.00", "Kitchen faucet");
+  await page.getByRole("link", { name: "Pay bills" }).click();
+  await page.getByLabel("Pay Demo Plumbing Co PLB-5001").check();
+  await page.getByRole("combobox", { name: "Sent by" }).selectOption({ label: "ACH" });
+  await page.getByLabel("Payout file").selectOption({ label: "ACH file" });
+  await page.getByRole("button", { name: "Pay $120.00" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("The PMS writes the ACH file; the bank moves the money.");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
+  await expect(page.getByText("1 bill of $120.00 paid, by ACH. Their file is under Payout files below.")).toBeVisible();
+  const billFile = await page.request.get(
+    (await page.getByRole("table", { name: "Payout files" }).getByRole("link", { name: "Download the ACH file" }).getAttribute("href")) ?? "",
+  );
+  expect(billFile.status()).toBe(200);
+  const billRecords = (await billFile.text()).split(/\r?\n/).filter(Boolean);
+  expect(billRecords.find((record) => record.startsWith("5"))).toContain("CCD");
+  expect(billRecords.find((record) => record.startsWith("6"))?.slice(1, 3)).toBe("32");
 });

@@ -57,6 +57,22 @@ describe("RecordBillForm", () => {
     expect(record).not.toHaveBeenCalled();
   });
 
+  it("warns, before recording, of the vendor's bill with nearly the same reference", async () => {
+    const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(
+      path.includes("reference=INV-9") ? [{ id: "b9", reference: "inv 9", bill_date: "2026-09-30", amount: "75.00", status: "ready to pay" }] : [],
+    ), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    render(<RecordBillForm books={BOOKS} record={vi.fn(async () => true)} />);
+    fill();
+    expect((await screen.findByTestId("similar-bills")).textContent).toBe(
+      "Vendor 1 has bill inv 9 ($75.00, dated 09/30/2026, ready to pay) already. Check this isn't the same bill.",
+    );
+    expect(fetch.mock.calls.map(([path]) => path)).toEqual(["/api/payables/similar-bills?vendor_id=v1&reference=INV-9"]);
+    // It warns; it doesn't refuse.
+    expect(screen.getByRole("button", { name: "Record bill" })).toHaveProperty("disabled", false);
+    vi.unstubAllGlobals();
+  });
+
   it("asks for a vendor and an owner's property first", () => {
     render(<RecordBillForm books={{ ...BOOKS, vendors: [] }} record={vi.fn()} />);
     expect(screen.getByText("Add a vendor from Vendors and a property with an owner from Properties first.")).toBeTruthy();

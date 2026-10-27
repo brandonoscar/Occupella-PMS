@@ -338,8 +338,10 @@ def vendor_page(session: Staff, conn: Conn, vendor_id: UUID) -> VendorPage:
         )
         for i, ref, o, p, on, amt, paid in conn.execute(
             "SELECT b.id, b.reference, o.display_name, p.display_name, b.bill_date, b.amount,"
-            " EXISTS (SELECT 1 FROM trust_bill_payments AS x WHERE x.bill_id = b.id"
-            "         AND x.step = 'paid')"
+            # Paid in full: a bill may be paid in parts (ADR 0010).
+            " (SELECT coalesce(sum(t.amount), 0) FROM trust_bill_payments AS x"
+            "  JOIN pgledger_transfers AS t ON t.id = x.transfer_id"
+            "  WHERE x.bill_id = b.id AND x.step = 'paid') >= b.amount"
             " FROM trust_bills AS b"
             " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id"
             " JOIN trust_owners AS o ON o.id = a.owner_id"

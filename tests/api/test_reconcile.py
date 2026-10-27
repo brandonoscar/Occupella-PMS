@@ -108,6 +108,8 @@ def test_a_first_csv_statement_brings_its_opening_balance_in_as_a_line(client, c
         "last_day": "2026-01-31",
         "lines": 3,
         "closing_balance": "1710.00",
+        # No bill was paid by check 7, so no line matched one by itself (ADR 0010).
+        "checks_matched": 0,
     }
     (listed,) = bank(client, pmc)["statements"]
     assert (listed["opening_balance"], listed["closing_balance"], listed["source"]) == (

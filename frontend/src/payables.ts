@@ -2,13 +2,17 @@
 // they read.
 import { day, lastMonth, money, sumMoney, usDate } from "./money";
 
-export type BillStatus = "needs approval" | "declined" | "to set aside" | "set aside" | "paid";
+// A bill's status (ADR 0010): entered (dated after today: nothing held yet), waiting for its owner,
+// ready to pay (held from the owner's balance), short (the balance can't cover it), partly paid,
+// paid, or void (declined by its owner or voided by staff).
+export type BillStatus = "entered" | "waiting for owner" | "ready to pay" | "short" | "partly paid" | "paid" | "void";
 export type Bill = {
   id: string;
   vendor_id: string;
   vendor: string;
   reference: string;
   account: string;
+  owner_id: string;
   owner: string;
   property_id: string;
   property: string;
@@ -24,19 +28,31 @@ export type Bill = {
   split: boolean;
   approval_limit: string;
   approved_by: string | null;
-  // Who declined it for the owner (in the portal, or as staff recorded it), and why.
+  // Who declined it for the owner (in the portal, or as staff recorded it), and why; for a void,
+  // the staff member who voided it and why.
   declined_by: string | null;
   decline_reason: string | null;
+  voided: boolean;
   // The email asking the owner to decide it: null when none was written.
   owner_email: EmailStatus | null;
   status: BillStatus;
-  // Neither paid nor declined, and due before today.
+  // Neither paid nor void, and due before today.
   overdue: boolean;
   // The company's markup on it, at the percent the owner's terms set; null: none.
   markup: string | null;
   markup_percent: string | null;
   // The invoice shared across properties it is a share of, if it is one.
   shared_bill_id: string | null;
+  // What was paid of it and what is left to pay the vendor.
+  paid: string;
+  left: string;
+  // While it is open: what it holds of the owner's balance (its markup included), since when once
+  // its money left the owner's account, what the balance is short of it, and what the owner must
+  // send for it and the bills due before it.
+  held: string | null;
+  held_since: string | null;
+  short: string | null;
+  needed: string | null;
 };
 export type EmailStatus = "sent" | "waiting" | "failed";
 // A bill's expense account lines: its lines when split, else the whole bill in its account.
@@ -45,6 +61,7 @@ export type BillEmail = {
   to: string;
   subject: string;
   written_at: string;
+  sent_at: string | null;
   status: EmailStatus;
   attempts: number;
   error: string | null;
@@ -60,32 +77,97 @@ export type SharedPart = {
   status: BillStatus;
 };
 export type SharedBill = { id: string; reference: string; amount: string; parts: SharedPart[] };
+// A payment of a bill (whole or a part), how it went and when the bank statement showed it.
+export type BillPayment = {
+  part: number;
+  on: string;
+  amount: string;
+  method: PayoutMethod | null;
+  check_number: string | null;
+  transfer_id: string;
+  cleared_on: string | null;
+};
+// Whom the email asking the owner for what their balance is short of goes to: null when they
+// have no email on file.
+export type AskOwner = { owner: string; to: string | null; amount: string; asked_today: boolean };
 export type BillPageData = {
   bill: Bill;
   shared: SharedBill | null;
   lines: BillLine[];
   files: { id: string; title: string; content_type: string; size: number; uploaded_at: string }[];
   email: BillEmail | null;
+  asks: BillEmail[];
+  payments: BillPayment[];
+  ask: AskOwner | null;
   history: { on: string; what: string }[];
 };
 // One bill of Pay bills, as recorded.
-export type BillPaid = { bill_id: string; vendor: string; reference: string; amount: string; transfer_id: string };
+export type BillPaid = {
+  bill_id: string;
+  vendor: string;
+  reference: string;
+  amount: string;
+  transfer_id: string;
+  // The payout run whose file it is in, when the PMS writes one.
+  run_id?: string | null;
+};
+// A bill already entered for the vendor under the same reference but for case and punctuation.
+export type SimilarBill = { id: string; reference: string; bill_date: string; amount: string; status: BillStatus };
 
-// A bill's status as staff read it in the list (Buildium's words): awaiting the owner, approved
-// (to set aside or pay), set aside, overdue, paid or declined.
-export function billBadge(bill: Bill): { word: string; tone: "caution" | "info" | "positive" | "neutral" | "danger" } {
-  if (bill.status === "paid") return { word: "Paid", tone: "positive" };
-  if (bill.status === "declined") return { word: "Declined", tone: "neutral" };
-  if (bill.overdue) return { word: "Overdue", tone: "danger" };
-  if (bill.status === "needs approval") return { word: "Awaiting owner approval", tone: "caution" };
-  if (bill.status === "set aside") return { word: "Set aside", tone: "info" };
-  return { word: "Approved", tone: "info" };
+// Record bill's warning: "Vendor 1 has bill INV-100 already ($200.00, dated 10/01/2026, Ready to
+// pay). Check this isn't the same bill."
+export function similarNote(vendor: string, similar: SimilarBill[]): string {
+  const each = similar.map((b) => `${b.reference} (${money(b.amount)}, dated ${usDate(b.bill_date)}, ${BADGES[b.status].word.toLowerCase()})`);
+  const which = similar.length === 1 ? "this isn't the same bill" : "this isn't one of them";
+  return `${vendor} has ${similar.length === 1 ? "bill" : "bills"} ${each.join(", ")} already. Check ${which}.`;
+}
+
+type Tone = "caution" | "info" | "positive" | "neutral" | "danger";
+const BADGES: Record<BillStatus, { word: string; tone: Tone }> = {
+  entered: { word: "Entered", tone: "neutral" },
+  "waiting for owner": { word: "Waiting for owner", tone: "caution" },
+  "ready to pay": { word: "Ready to pay", tone: "info" },
+  short: { word: "Short", tone: "danger" },
+  "partly paid": { word: "Partly paid", tone: "info" },
+  paid: { word: "Paid", tone: "positive" },
+  void: { word: "Void", tone: "neutral" },
+};
+
+// A bill's status in plain words (ADR 0010).
+export function billBadge(bill: Pick<Bill, "status">): { word: string; tone: Tone } {
+  return BADGES[bill.status];
+}
+
+// What a bill holds of its owner's balance, in a sentence: "$240.00 held from Owner A's balance
+// for this bill."; what the owner needs to send while it is short; what paid or void means.
+export function holdLine(bill: Bill): string {
+  const markup = bill.markup !== null ? ` and its ${money(bill.markup)} markup` : "";
+  switch (bill.status) {
+    case "paid":
+      return `Paid in full: ${money(bill.paid)}.`;
+    case "void":
+      return `Nothing was paid; the hold went back to ${bill.owner}'s balance.`;
+    case "entered":
+      return `Nothing is held for it until its date, ${usDate(bill.bill_date)}.`;
+    default:
+      break;
+  }
+  if (bill.held_since !== null) {
+    const paid = bill.status === "partly paid" ? `${money(bill.paid)} paid. ` : "";
+    return `${paid}${money(bill.held ?? bill.left)} held for this bill since ${usDate(bill.held_since)}, when it left ${bill.owner}'s balance.`;
+  }
+  const until = bill.status === "waiting for owner" ? ` until ${bill.owner} decides` : "";
+  const held = Number(bill.held ?? "0") > 0
+    ? `${money(bill.held ?? "0")} held from ${bill.owner}'s balance for this bill${markup}${until}.`
+    : `Nothing of ${bill.owner}'s balance is left to hold for this bill${until}.`;
+  if (bill.needed === null) return held;
+  return `${held} ${bill.owner} needs to send ${money(bill.needed)}.`;
 }
 
 // What Pay bills did, in a line.
 export function billsPaidSummary(paid: BillPaid[], method: PayoutMethod): string {
   const total = sumMoney(paid.map((p) => p.amount));
-  return `${paid.length} bill${paid.length === 1 ? "" : "s"} of ${money(total)} paid, by ${method}.`;
+  return `${paid.length} bill${paid.length === 1 ? "" : "s"} of ${money(total)} paid, by ${method === "EFT" ? "ACH" : method}.`;
 }
 
 // "$25.00 (10% in the owner's terms)", or null for a bill with no markup.
@@ -118,7 +200,7 @@ export function linesNote(amounts: string[], amount: string): string {
 
 // What staff are told about the email to a bill's owner, while the bill waits for them.
 export function emailNote(bill: Bill): string | null {
-  if (bill.status !== "needs approval") return null;
+  if (bill.status !== "waiting for owner") return null;
   if (bill.owner_email === "sent") return "Emailed the owner to approve or decline it in their portal.";
   if (bill.owner_email === "waiting") return "An email to the owner waits to be sent.";
   if (bill.owner_email === "failed") return "The email to the owner could not be sent; its page says why.";
@@ -151,6 +233,10 @@ export type OwnerMoney = {
   unpaid_bills: string;
   available: string;
   has_agreement: boolean;
+  // How the owner is paid: a check unless they chose ACH; and whether an ACH file has a bank
+  // account of theirs to pay into.
+  payout_method: PayoutMethod;
+  bank_on_file?: boolean;
 };
 export type Fee = {
   account: string;
@@ -162,23 +248,40 @@ export type Fee = {
 // A management fee for a period: taken already, or what Collect fees would take, or why not.
 export type FeeDue = Fee & { taken: boolean };
 // One payout of Pay owners, as recorded.
-export type OwnerPaid = { account: string; owner: string; property: string; amount: string; transfer_id: string };
+export type OwnerPaid = {
+  account: string;
+  owner: string;
+  property: string;
+  amount: string;
+  transfer_id: string;
+  run_id?: string | null;
+};
 export type PayoutMethod = "check" | "EFT";
 
-// What Pay owners did, in a line.
-export function paidSummary(paid: OwnerPaid[], method: PayoutMethod): string {
+// What Pay owners did, in a line: how many payouts, their total and how they went (ACH, check,
+// or both when each went its owner's way).
+export function paidSummary(paid: OwnerPaid[], method: PayoutMethod | PayoutMethod[]): string {
   const total = sumMoney(paid.map((p) => p.amount));
   const owners = `${paid.length} payout${paid.length === 1 ? "" : "s"}`;
-  return `${owners} of ${money(total)} recorded, by ${method}.`;
+  const ways = [...new Set(Array.isArray(method) ? method : [method])].sort();
+  const how = ways.map((m) => (m === "EFT" ? "ACH" : "check")).join(" and ");
+  return `${owners} of ${money(total)} recorded, by ${how}.`;
 }
 
 
-// What staff do next with a bill, as its button says; nothing once it is paid.
+// What staff do next with a bill, as its button says; nothing once it is paid or void.
 export function nextStep(status: BillStatus): string | null {
-  if (status === "needs approval") return "Record approval";
-  if (status === "to set aside") return "Set aside";
-  if (status === "set aside") return "Pay";
+  if (status === "waiting for owner") return "Record approval";
+  if (status === "ready to pay" || status === "partly paid") return "Record payment";
+  if (status === "short") return "Ask owner";
   return null;
+}
+
+// "How it went", as a payment's line reads: "Check 1042", "ACH", or nothing recorded.
+export function paymentHow(payment: Pick<BillPayment, "method" | "check_number">): string {
+  if (payment.method === "check") return payment.check_number ? `Check ${payment.check_number}` : "Check";
+  if (payment.method === "EFT") return "ACH";
+  return "Not recorded";
 }
 
 export function recurringLabel(bill: Recurring): string {

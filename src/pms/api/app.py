@@ -81,6 +81,7 @@ from pms.api import (
     owner,
     payables,
     payment_files,
+    payouts,
     people,
     quickbooks,
     receipts,
@@ -576,6 +577,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(work_orders.router)
     app.include_router(renewals.router)
     app.include_router(payables.router)
+    app.include_router(payouts.router)
     app.include_router(reconcile.router)
     app.include_router(year_close.router)
     app.include_router(banking.router)

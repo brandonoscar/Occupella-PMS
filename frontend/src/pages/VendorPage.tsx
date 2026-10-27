@@ -30,6 +30,7 @@ import { useRecord } from "./useRecord";
 import type { ProfileDraft } from "./VendorsPage";
 import { ProfileFields, profileBody } from "./VendorsPage";
 import { HistoryCard } from "./HistoryCard";
+import { PayeeCard } from "./PayeeCard";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -108,6 +109,7 @@ export function VendorPage({ me, id }: { me: Me; id: string }) {
             </dl>
           </Card>
           <ContactCard path={`/api/vendors/${id}`} contact={vendor.contact} refresh={refresh} name={vendor.name} />
+          <PayeeCard kind="vendor" id={id} name={vendor.name} />
         </>
       )}
       {tab === "insurance" && (

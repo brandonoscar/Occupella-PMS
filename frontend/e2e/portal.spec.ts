@@ -493,7 +493,7 @@ test("staff record a tenant's payment, the rest held as prepaid rent, and then i
   await expect(lease.getByTestId("prepaid")).toHaveText("$0.00");
 });
 
-test("staff record a vendor's bill with its invoice, record the owner's approval, set it aside and pay it on its page, then draw the rest", async ({
+test("staff record a vendor's bill with its invoice, record the owner's approval, record its payment on its page, then draw the rest", async ({
   page,
 }) => {
   await page.goto(`/invite#${seed.bills_invite}`);
@@ -522,22 +522,20 @@ test("staff record a vendor's bill with its invoice, record the owner's approval
 
   // No agreement: every bill needs the owner's approval first. Its own page takes each step.
   const bill = page.getByRole("row", { name: "Vendor E2E E2E-INV-1", exact: true });
-  await expect(bill.getByTestId("status")).toHaveText("Awaiting owner approval");
+  await expect(bill.getByTestId("status")).toHaveText("Waiting for owner");
   await bill.getByRole("cell").first().click();
   await expect(page.getByRole("heading", { level: 1, name: "Vendor E2E E2E-INV-1" })).toBeVisible();
   await expect(page.getByRole("list", { name: "Files, Vendor E2E E2E-INV-1" })).toContainText("invoice-e2e");
   await page.getByRole("button", { name: "Record approval" }).click();
   await page.getByRole("dialog", { name: "Record approval" }).getByLabel("Approved by").fill("Payee E2E");
   await page.getByRole("dialog", { name: "Record approval" }).getByRole("button", { name: "Record approval" }).click();
-  await expect(page.getByTestId("status")).toHaveText("Approved");
-  await page.getByRole("button", { name: "Set aside" }).click();
-  await page.getByRole("dialog", { name: "Set aside" }).getByRole("button", { name: "Set aside" }).click();
-  await expect(page.getByTestId("status")).toHaveText("Set aside");
-  await page.getByRole("button", { name: "Pay", exact: true }).click();
-  await page.getByRole("dialog", { name: "Pay" }).getByRole("button", { name: "Pay $300.00" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByTestId("status")).toHaveText("Ready to pay");
+  await expect(page.getByTestId("hold")).toHaveText("$300.00 held from Payee E2E's balance for this bill.");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await page.getByRole("dialog", { name: "Record payment" }).getByRole("button", { name: "Pay $300.00" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
   await expect(page.getByTestId("status")).toHaveText("Paid");
-  await expect(page.getByRole("list", { name: "History" })).toContainText("Paid by check");
+  await expect(page.getByRole("list", { name: "History" })).toContainText("Paid $300.00 by check");
 
   // Pay owners pays the rest out: everything available, by check.
   await sections.getByRole("link", { name: "Pay owners" }).click();
@@ -545,7 +543,7 @@ test("staff record a vendor's bill with its invoice, record the owner's approval
   await expect(payee.getByRole("cell").nth(6)).toHaveText("$700.00");
   await payee.getByLabel("Pay Payee E2E, E2E Property 7").check();
   await page.getByRole("button", { name: "Pay $700.00" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
   await expect(page.getByRole("main")).toContainText("1 payout of $700.00 recorded, by check.");
   await expect(payee.getByRole("cell").nth(6)).toHaveText("$0.00");
 });
