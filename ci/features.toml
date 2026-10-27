@@ -953,7 +953,7 @@ operations = [
   "POST /api/rent/payment-files/lines/{line_id}/set-aside",
 ]
 browser = [
-  "features.spec.ts › staff bring in a lockbox's payment file once: lines naming one lease are recorded to it, and staff record or set aside the ones that wait",
+  "features.spec.ts › staff bring in a lockbox's payment file once: lines naming one lease are recorded to it, and staff record or skip the ones that wait",
 ]
 
 [[feature]]
