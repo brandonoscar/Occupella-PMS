@@ -1614,6 +1614,7 @@ tests = [
   "tests/api/test_tax_ids_api.py::test_staff_who_are_not_admins_see_the_last_four_only",
   "tests/api/test_tax_ids_api.py::test_the_database_shows_a_whole_tax_id_only_to_an_admin",
   "tests/api/test_tax_ids_api.py::test_the_1099_export_gives_each_payee_their_tax_id_whole_and_records_it",
+  "tests/properties/test_tax_id_properties.py::test_only_an_admin_sees_a_tax_id_whole_and_it_stays_sealed",
 ]
 
 [[invariant]]
