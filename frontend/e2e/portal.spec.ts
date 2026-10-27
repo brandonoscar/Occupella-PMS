@@ -1,6 +1,7 @@
 // The portal in a real browser, against the API and a database seeded by e2e/seed.py.
 import { readFileSync } from "node:fs";
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import { fillApplicant } from "./apply";
 import { expectAccessible } from "./a11y";
 import { totp } from "./totp";
 
@@ -162,8 +163,7 @@ test("an applicant applies; staff screen, decline with a notice, and the applica
   const moveIn = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
   await page.getByLabel("Move-in day").fill(moveIn);
   await page.getByLabel("Monthly income of everyone applying, together").fill("1500");
-  await page.getByLabel("Full name").fill("Applicant E2E");
-  await page.getByLabel("Email").fill("applicant.e2e@example.com");
+  await fillApplicant(page, 0, "Applicant E2E", "applicant.e2e@example.com");
   await page.getByRole("button", { name: "Send application" }).click();
   const statusUrl = (await page.getByTestId("status-url").textContent()) ?? "";
   expect(statusUrl).toContain("/application#");
@@ -301,6 +301,20 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
   await expect(received.getByLabel("Deposit received", { exact: true })).toHaveValue("1000.00");
   await received.getByRole("button", { name: "Record deposit" }).click();
   await expect(asked).toContainText("The signed lease asked $1,000.00: all held");
+  // What Mover E2E gave with their application came with them (ADR 0010, part G): their cat on
+  // the lease, and on their own page their phone, emergency contact and application.
+  await page.getByRole("tab", { name: "Tenants", exact: true }).click();
+  await expect(page.getByRole("main")).toContainText("Pepper");
+  await page.getByRole("link", { name: "Mover E2E", exact: true }).first().click();
+  await expect(page.getByRole("heading", { level: 1, name: "Mover E2E" })).toBeVisible();
+  await expect(page.getByTestId("emergency-contact")).toHaveText("Mover Contact, 555-555-0121");
+  await expect(page.getByLabel("What Mover E2E gave when applying")).toContainText("Mover Employer");
+  await page.getByRole("button", { name: "Change emergency contact" }).click();
+  const contact = page.getByRole("dialog", { name: "Emergency contact, Mover E2E" });
+  await contact.getByLabel("Name").fill("Mover Contact Two");
+  await contact.getByLabel("Phone").fill("555-555-0122");
+  await contact.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("emergency-contact")).toHaveText("Mover Contact Two, 555-555-0122");
 
   // A renewal kept as a draft, then voided: it is never sent.
   panel = await newDraft("E2E Property 3, E2E Unit 3: Renewer E2E");

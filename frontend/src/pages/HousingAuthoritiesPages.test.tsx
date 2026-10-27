@@ -137,16 +137,19 @@ describe("HousingAuthorityPage", () => {
     expect(screen.queryByRole("heading", { level: 1, name: "Synthetic Housing Authority" })).toBeNull();
   });
 
-  it("records one payment for several leases, each no more than it owes", async () => {
-    const fetch = server({ "/api/assistance/authorities/h1": PAGE });
+  it("receives its check in the rent roll's Receive payment panel, one payment for several leases (ADR 0010)", async () => {
+    const fetch = server({ "/api/assistance/authorities/h1": PAGE, "/api/assistance/authorities": ROWS });
     render(<HousingAuthorityPage me={ME} id="h1" />);
     await screen.findByRole("heading", { level: 1, name: "Synthetic Housing Authority" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Record payment" }));
-    const form = screen.getByRole("dialog", { name: "Record payment" });
+    fireEvent.click(screen.getByRole("button", { name: "Receive payment" }));
+    const form = screen.getByRole("dialog", { name: "Receive payment" });
+    // The same panel as the rent roll's, this authority's check chosen.
+    expect((within(form).getByLabelText("From") as HTMLSelectElement).value).toBe("authority");
+    const submit = await within(form).findByRole("button", { name: "Record payment" }) as HTMLButtonElement;
+    expect((within(form).getByLabelText("Housing authority") as HTMLSelectElement).value).toBe("h1");
     // Only the leases it owes on take a part.
     expect(within(form).queryByLabelText(/Tenant 3/)).toBeNull();
-    const submit = within(form).getByRole("button", { name: "Record payment" }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
     fireEvent.click(within(form).getByRole("button", { name: "Fill in what it owes" }));
     expect(within(form).getByTestId("authority-pay-total").textContent).toBe("Total $1,200.50");
@@ -165,22 +168,23 @@ describe("HousingAuthorityPage", () => {
   });
 
   it("shows a refused payment in the panel, and says when nothing is owed", async () => {
-    server({ "/api/assistance/authorities/h1": PAGE }, "800.01 is more than Synthetic Housing Authority owes");
+    server({ "/api/assistance/authorities/h1": PAGE, "/api/assistance/authorities": ROWS },
+      "800.01 is more than Synthetic Housing Authority owes");
     render(<HousingAuthorityPage me={ME} id="h1" />);
     await screen.findByRole("heading", { level: 1, name: "Synthetic Housing Authority" });
-    fireEvent.click(screen.getByRole("button", { name: "Record payment" }));
-    const form = screen.getByRole("dialog", { name: "Record payment" });
-    fireEvent.change(within(form).getByLabelText("Tenant 1, Birch Flats Unit A (owes $800.00)"), { target: { value: "800.01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Receive payment" }));
+    const form = screen.getByRole("dialog", { name: "Receive payment" });
+    fireEvent.change(await within(form).findByLabelText("Tenant 1, Birch Flats Unit A (owes $800.00)"), { target: { value: "800.01" } });
     fireEvent.click(within(form).getByRole("button", { name: "Record payment" }));
     expect(await within(form).findByText("800.01 is more than Synthetic Housing Authority owes")).toBeTruthy();
 
     cleanup();
     const paid = { ...PAGE, owed: "0.00", leases: [PAGE.leases[2]] };
-    server({ "/api/assistance/authorities/h1": paid });
+    server({ "/api/assistance/authorities/h1": paid, "/api/assistance/authorities": ROWS });
     render(<HousingAuthorityPage me={ME} id="h1" />);
     await screen.findByRole("heading", { level: 1, name: "Synthetic Housing Authority" });
-    fireEvent.click(screen.getByRole("button", { name: "Record payment" }));
-    expect(screen.getByText("The authority owes nothing on its leases.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Receive payment" }));
+    expect(await screen.findByText("The authority owes nothing on its leases.")).toBeTruthy();
   });
 
   it("sets the authority's late payment fee in a side panel and says it (q034)", async () => {
@@ -234,14 +238,14 @@ describe("HousingAuthorityPage", () => {
 
   it("marks a lease on a payment hold and takes a payment past it only when asked", async () => {
     const held = { ...PAGE, leases: [{ ...PAGE.leases[0]!, hold_since: "2026-10-02", hold_reason: "Eviction filed" }] };
-    const fetch = server({ "/api/assistance/authorities/h1": held });
+    const fetch = server({ "/api/assistance/authorities/h1": held, "/api/assistance/authorities": ROWS });
     render(<HousingAuthorityPage me={ME} id="h1" />);
     const row = await screen.findByRole("row", { name: "Tenant 1, Birch Flats Unit A" });
     expect(row.textContent).toContain("On a payment hold since 10/02/2026: Eviction filed");
 
-    fireEvent.click(screen.getByRole("button", { name: "Record payment" }));
-    const form = screen.getByRole("dialog", { name: "Record payment" });
-    fireEvent.click(within(form).getByRole("button", { name: "Fill in what it owes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Receive payment" }));
+    const form = screen.getByRole("dialog", { name: "Receive payment" });
+    fireEvent.click(await within(form).findByRole("button", { name: "Fill in what it owes" }));
     fireEvent.click(within(form).getByLabelText("Accept this payment past the payment hold"));
     fireEvent.click(within(form).getByRole("button", { name: "Record payment" }));
 
@@ -253,7 +257,7 @@ describe("HousingAuthorityPage", () => {
     server({ "/api/assistance/authorities/h1": { ...PAGE, owed: "0.00", leases: [] } });
     render(<HousingAuthorityPage me={ME} id="h1" />);
     expect(await screen.findByText("No leases yet")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Record payment" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Receive payment" }) as HTMLButtonElement).disabled).toBe(true);
 
     cleanup();
     server();

@@ -4067,6 +4067,21 @@ $$;
 
 
 --
+-- Name: trust_check_tax_id_reveal(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_tax_id_reveal() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM trust_require_role(NEW.pmc_id, NEW.recorded_by, 'admin', 'see a whole tax ID');
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_template_use(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4084,6 +4099,33 @@ BEGIN
     IF v_use <> TG_ARGV[0] THEN
         RAISE EXCEPTION 'trust: a % is made from a % template, not a % one',
             TG_ARGV[0], TG_ARGV[0], v_use
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_tenant_applicant(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_tenant_applicant() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM trust_applicants AS a
+        JOIN trust_lease_offers AS o ON o.application_id = a.application_id
+        JOIN trust_lease_offer_completions AS c ON c.offer_id = o.id
+        JOIN trust_lease_tenants AS t ON t.lease_id = c.lease_id
+        WHERE a.id = NEW.applicant_id AND c.lease_id = NEW.lease_id
+          AND t.tenant_id = NEW.tenant_id
+    ) THEN
+        RAISE EXCEPTION 'trust: tenant % is not on the lease applicant % applied for',
+            NEW.tenant_id, NEW.applicant_id
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
@@ -12665,6 +12707,50 @@ $$;
 
 
 --
+-- Name: trust_roll_over_leases(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_roll_over_leases(p_pmc_id uuid, p_day date) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_lease record;
+    v_rolled integer := 0;
+BEGIN
+    IF p_day IS NULL THEN
+        RAISE EXCEPTION 'trust: leases roll over on a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Two runs at once roll each lease once: the second waits, then finds the first's.
+    PERFORM pg_advisory_xact_lock(hashtextextended('trust_lease_holdovers:' || p_pmc_id::text, 0));
+    FOR v_lease IN
+        SELECT l.id, l.ends_on
+        FROM trust_leases AS l
+        WHERE l.pmc_id = p_pmc_id
+          AND l.ends_on < p_day AND l.ends_on >= p_day - 7
+          -- Entered while its term still ran: a lease from the past stays as it was.
+          AND l.created_at::date <= l.ends_on
+          AND NOT EXISTS (SELECT 1 FROM trust_lease_holdovers AS h WHERE h.lease_id = l.id)
+          AND NOT EXISTS (SELECT 1 FROM trust_lease_end_notices AS n WHERE n.lease_id = l.id)
+          AND NOT EXISTS (SELECT 1 FROM trust_leases AS later
+                          WHERE later.unit_id = l.unit_id AND later.id <> l.id
+                            AND later.starts_on > l.starts_on)
+          AND NOT EXISTS (SELECT 1 FROM trust_lease_transfers AS t WHERE t.from_lease_id = l.id)
+          AND NOT EXISTS (SELECT 1 FROM trust_deposit_returns AS r WHERE r.lease_id = l.id)
+        ORDER BY l.ends_on, l.id
+    LOOP
+        PERFORM trust_end_lease(p_pmc_id, v_lease.id, NULL);
+        INSERT INTO trust_lease_holdovers (lease_id, pmc_id, term_ended_on, rolled_on)
+        VALUES (v_lease.id, p_pmc_id, v_lease.ends_on, p_day);
+        v_rolled := v_rolled + 1;
+    END LOOP;
+    RETURN v_rolled;
+END;
+$$;
+
+
+--
 -- Name: trust_routing_number_ok(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13822,6 +13908,39 @@ CREATE TABLE public.trust_adverse_actions (
 
 
 --
+-- Name: trust_applicant_details; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_applicant_details (
+    applicant_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    phone text NOT NULL,
+    address_line_1 text NOT NULL,
+    address_line_2 text,
+    city text NOT NULL,
+    state text NOT NULL,
+    postal_code text NOT NULL,
+    previous_landlord text,
+    previous_landlord_phone text,
+    previous_from date,
+    previous_to date,
+    employer text,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_applicant_details_address_line_1_check CHECK (((char_length(address_line_1) >= 1) AND (char_length(address_line_1) <= 200))),
+    CONSTRAINT trust_applicant_details_address_line_2_check CHECK (((char_length(address_line_2) >= 1) AND (char_length(address_line_2) <= 200))),
+    CONSTRAINT trust_applicant_details_check CHECK (((previous_landlord IS NOT NULL) OR (num_nulls(previous_landlord_phone, previous_from, previous_to) = 3))),
+    CONSTRAINT trust_applicant_details_check1 CHECK (((previous_from IS NULL) OR (previous_to IS NULL) OR (previous_from <= previous_to))),
+    CONSTRAINT trust_applicant_details_city_check CHECK (((char_length(city) >= 1) AND (char_length(city) <= 100))),
+    CONSTRAINT trust_applicant_details_employer_check CHECK (((employer ~ '\S'::text) AND (length(employer) <= 200))),
+    CONSTRAINT trust_applicant_details_phone_check CHECK ((phone ~ '^[+]?[0-9 ().-]{7,30}$'::text)),
+    CONSTRAINT trust_applicant_details_postal_code_check CHECK (((char_length(postal_code) >= 1) AND (char_length(postal_code) <= 20))),
+    CONSTRAINT trust_applicant_details_previous_landlord_check CHECK (((previous_landlord ~ '\S'::text) AND (length(previous_landlord) <= 200))),
+    CONSTRAINT trust_applicant_details_previous_landlord_phone_check CHECK ((previous_landlord_phone ~ '^[+]?[0-9 ().-]{7,30}$'::text)),
+    CONSTRAINT trust_applicant_details_state_check CHECK (((char_length(state) >= 1) AND (char_length(state) <= 50)))
+);
+
+
+--
 -- Name: trust_applicants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13883,6 +14002,63 @@ CREATE TABLE public.trust_application_links (
     opened_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_application_links_monthly_rent_check CHECK ((monthly_rent > (0)::numeric)),
     CONSTRAINT trust_application_links_token_sha256_check CHECK ((length(token_sha256) = 32))
+);
+
+
+--
+-- Name: trust_application_occupants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_application_occupants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    application_id uuid NOT NULL,
+    display_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_application_occupants_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 200)))
+);
+
+
+--
+-- Name: trust_application_pets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_application_pets (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    application_id uuid NOT NULL,
+    display_name text NOT NULL,
+    kind text NOT NULL,
+    breed text,
+    weight_lbs numeric,
+    assistance_animal boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_application_pets_breed_check CHECK (((breed ~ '\S'::text) AND (length(breed) <= 100))),
+    CONSTRAINT trust_application_pets_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 100))),
+    CONSTRAINT trust_application_pets_kind_check CHECK (((kind ~ '\S'::text) AND (length(kind) <= 50))),
+    CONSTRAINT trust_application_pets_weight_lbs_check CHECK (((weight_lbs > (0)::numeric) AND (weight_lbs <= (500)::numeric) AND (weight_lbs = round(weight_lbs, 1))))
+);
+
+
+--
+-- Name: trust_application_vehicles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_application_vehicles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    application_id uuid NOT NULL,
+    make text NOT NULL,
+    model text,
+    color text,
+    plate text NOT NULL,
+    plate_state text,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_application_vehicles_color_check CHECK (((color ~ '\S'::text) AND (length(color) <= 30))),
+    CONSTRAINT trust_application_vehicles_make_check CHECK (((make ~ '\S'::text) AND (length(make) <= 50))),
+    CONSTRAINT trust_application_vehicles_model_check CHECK (((model ~ '\S'::text) AND (length(model) <= 50))),
+    CONSTRAINT trust_application_vehicles_plate_check CHECK (((plate ~ '\S'::text) AND (length(plate) <= 15))),
+    CONSTRAINT trust_application_vehicles_plate_state_check CHECK (((plate_state ~ '\S'::text) AND (length(plate_state) <= 30)))
 );
 
 
@@ -14864,6 +15040,8 @@ CREATE TABLE public.trust_documents (
     unit_id uuid,
     tenant_id uuid,
     request_id uuid,
+    transfer_id text,
+    applicant_id uuid,
     CONSTRAINT trust_documents_check1 CHECK (((kind = 'receipt'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_documents_check3 CHECK (((kind = 'owner_document'::text) = (owner_id IS NOT NULL))),
     CONSTRAINT trust_documents_content_type_check CHECK ((content_type = ANY (ARRAY['application/pdf'::text, 'image/jpeg'::text, 'image/png'::text]))),
@@ -14986,6 +15164,25 @@ CREATE TABLE public.trust_emails (
     CONSTRAINT trust_emails_body_check CHECK (((body <> ''::text) AND (length(body) <= 10000))),
     CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
     CONSTRAINT trust_emails_to_address_check CHECK (((to_address <> ''::text) AND (length(to_address) <= 320)))
+);
+
+
+--
+-- Name: trust_emergency_contacts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_emergency_contacts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    tenant_id uuid,
+    applicant_id uuid,
+    display_name text NOT NULL,
+    phone text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_emergency_contacts_check CHECK ((num_nonnulls(tenant_id, applicant_id) = 1)),
+    CONSTRAINT trust_emergency_contacts_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 200))),
+    CONSTRAINT trust_emergency_contacts_phone_check CHECK ((phone ~ '^[+]?[0-9 ().-]{7,30}$'::text))
 );
 
 
@@ -15324,6 +15521,20 @@ CREATE TABLE public.trust_lease_end_adjustments (
 
 
 --
+-- Name: trust_lease_end_notices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_end_notices (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    ends_on date NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
 -- Name: trust_lease_guarantors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15340,6 +15551,20 @@ CREATE TABLE public.trust_lease_guarantors (
     CONSTRAINT trust_lease_guarantors_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 200))),
     CONSTRAINT trust_lease_guarantors_email_check CHECK (((email = lower(email)) AND (email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'::text) AND (length(email) <= 254))),
     CONSTRAINT trust_lease_guarantors_phone_check CHECK (((phone ~ '\S'::text) AND (length(phone) <= 30)))
+);
+
+
+--
+-- Name: trust_lease_holdovers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_holdovers (
+    lease_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    term_ended_on date NOT NULL,
+    rolled_on date NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_lease_holdovers_check CHECK ((rolled_on > term_ended_on))
 );
 
 
@@ -16197,6 +16422,20 @@ CREATE TABLE public.trust_payment_holds (
 
 
 --
+-- Name: trust_payment_notes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_notes (
+    transfer_id text NOT NULL,
+    pmc_id uuid NOT NULL,
+    note text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_payment_notes_note_check CHECK (((note ~ '\S'::text) AND (length(note) <= 2000)))
+);
+
+
+--
 -- Name: trust_payment_reversals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17000,6 +17239,55 @@ CREATE TABLE public.trust_tax_credit_units (
 
 
 --
+-- Name: trust_tax_id_reveals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_tax_id_reveals (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    tax_id uuid NOT NULL,
+    purpose text NOT NULL,
+    recorded_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_tax_id_reveals_purpose_check CHECK ((purpose = ANY (ARRAY['reveal'::text, '1099 export'::text])))
+);
+
+
+--
+-- Name: trust_tax_ids; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_tax_ids (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    owner_id uuid,
+    vendor_id uuid,
+    kind text NOT NULL,
+    tax_id_sealed bytea NOT NULL,
+    last4 text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_tax_ids_check CHECK ((num_nonnulls(owner_id, vendor_id) = 1)),
+    CONSTRAINT trust_tax_ids_kind_check CHECK ((kind = ANY (ARRAY['EIN'::text, 'SSN'::text]))),
+    CONSTRAINT trust_tax_ids_last4_check CHECK ((last4 ~ '^[0-9]{4}$'::text)),
+    CONSTRAINT trust_tax_ids_tax_id_sealed_check CHECK (((octet_length(tax_id_sealed) >= 30) AND (octet_length(tax_id_sealed) <= 200)))
+);
+
+
+--
+-- Name: trust_tenant_applicants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_tenant_applicants (
+    tenant_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    applicant_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
 -- Name: trust_tenant_links; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17374,6 +17662,14 @@ ALTER TABLE ONLY public.trust_adverse_actions
 
 
 --
+-- Name: trust_applicant_details trust_applicant_details_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applicant_details
+    ADD CONSTRAINT trust_applicant_details_pkey PRIMARY KEY (applicant_id);
+
+
+--
 -- Name: trust_applicants trust_applicants_application_id_email_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17395,6 +17691,14 @@ ALTER TABLE ONLY public.trust_applicants
 
 ALTER TABLE ONLY public.trust_applicants
     ADD CONSTRAINT trust_applicants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_applicants trust_applicants_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applicants
+    ADD CONSTRAINT trust_applicants_pmc_id_id_key UNIQUE (pmc_id, id);
 
 
 --
@@ -17451,6 +17755,30 @@ ALTER TABLE ONLY public.trust_application_links
 
 ALTER TABLE ONLY public.trust_application_links
     ADD CONSTRAINT trust_application_links_token_sha256_key UNIQUE (token_sha256);
+
+
+--
+-- Name: trust_application_occupants trust_application_occupants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_occupants
+    ADD CONSTRAINT trust_application_occupants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_application_pets trust_application_pets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_pets
+    ADD CONSTRAINT trust_application_pets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_application_vehicles trust_application_vehicles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_vehicles
+    ADD CONSTRAINT trust_application_vehicles_pkey PRIMARY KEY (id);
 
 
 --
@@ -18222,11 +18550,19 @@ ALTER TABLE ONLY public.trust_document_removals
 
 
 --
+-- Name: trust_documents trust_documents_applicant_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_documents
+    ADD CONSTRAINT trust_documents_applicant_check CHECK (((kind = 'income_proof'::text) = (applicant_id IS NOT NULL))) NOT VALID;
+
+
+--
 -- Name: trust_documents trust_documents_kind_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE public.trust_documents
-    ADD CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text, 'work_order_photo'::text, 'property_document'::text, 'unit_document'::text, 'tenant_document'::text, 'lease_document'::text, 'vendor_document'::text, 'company_logo'::text, 'request_photo'::text, 'listing_photo'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text, 'work_order_photo'::text, 'property_document'::text, 'unit_document'::text, 'tenant_document'::text, 'lease_document'::text, 'vendor_document'::text, 'company_logo'::text, 'request_photo'::text, 'listing_photo'::text, 'payment_attachment'::text, 'income_proof'::text]))) NOT VALID;
 
 
 --
@@ -18234,7 +18570,7 @@ ALTER TABLE public.trust_documents
 --
 
 ALTER TABLE public.trust_documents
-    ADD CONSTRAINT trust_documents_lease_check CHECK (((kind = ANY (ARRAY['move_out_photo'::text, 'lease_document'::text])) = (lease_id IS NOT NULL))) NOT VALID;
+    ADD CONSTRAINT trust_documents_lease_check CHECK (((kind = ANY (ARRAY['move_out_photo'::text, 'lease_document'::text, 'payment_attachment'::text])) = (lease_id IS NOT NULL))) NOT VALID;
 
 
 --
@@ -18291,6 +18627,14 @@ ALTER TABLE public.trust_documents
 
 ALTER TABLE public.trust_documents
     ADD CONSTRAINT trust_documents_tenant_check CHECK (((kind = 'tenant_document'::text) = (tenant_id IS NOT NULL))) NOT VALID;
+
+
+--
+-- Name: trust_documents trust_documents_transfer_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_documents
+    ADD CONSTRAINT trust_documents_transfer_check CHECK (((kind = 'payment_attachment'::text) = (transfer_id IS NOT NULL))) NOT VALID;
 
 
 --
@@ -18437,6 +18781,14 @@ CASE kind
     WHEN 'autopay_stopped'::text THEN ((tenant_id IS NOT NULL) AND (lease_id IS NOT NULL) AND (autopay_id IS NOT NULL) AND (num_nonnulls(owner_id, vendor_id, staff_id) = 0))
     ELSE ((tenant_id IS NULL) AND (vendor_id IS NULL) AND (staff_id IS NULL))
 END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text, 'signing_request'::text])) = needs_link) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'late_notice'::text, 'payment_receipt'::text, 'deposit_statement'::text, 'autopay_payment'::text, 'autopay_stopped'::text, 'autopay_not_sent'::text])) = (lease_id IS NOT NULL)) AND ((kind = 'late_notice'::text) = (charge_id IS NOT NULL)) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'owner_statement'::text, 'autopay_payment'::text, 'autopay_not_sent'::text])) = (period IS NOT NULL)) AND ((kind = 'owner_statement'::text) <= (period = (date_trunc('month'::text, (period)::timestamp with time zone))::date)) AND ((kind = 'work_order'::text) = (work_order_step_id IS NOT NULL)) AND ((kind = 'adverse_action'::text) = ((application_id IS NOT NULL) AND (applicant_id IS NOT NULL))) AND ((kind = 'emergency_request'::text) = (request_id IS NOT NULL)) AND ((kind = 'signing_request'::text) = ((offer_id IS NOT NULL) OR (signer_position IS NOT NULL))) AND ((kind = 'payment_receipt'::text) = (transfer_id IS NOT NULL)) AND ((kind = ANY (ARRAY['autopay_payment'::text, 'autopay_stopped'::text, 'autopay_not_sent'::text])) = (autopay_id IS NOT NULL)))) NOT VALID;
+
+
+--
+-- Name: trust_emergency_contacts trust_emergency_contacts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emergency_contacts
+    ADD CONSTRAINT trust_emergency_contacts_pkey PRIMARY KEY (id);
 
 
 --
@@ -18704,6 +19056,14 @@ ALTER TABLE ONLY public.trust_lease_end_adjustments
 
 
 --
+-- Name: trust_lease_end_notices trust_lease_end_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_end_notices
+    ADD CONSTRAINT trust_lease_end_notices_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_lease_guarantors trust_lease_guarantors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18717,6 +19077,14 @@ ALTER TABLE ONLY public.trust_lease_guarantors
 
 ALTER TABLE ONLY public.trust_lease_guarantors
     ADD CONSTRAINT trust_lease_guarantors_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_lease_holdovers trust_lease_holdovers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_holdovers
+    ADD CONSTRAINT trust_lease_holdovers_pkey PRIMARY KEY (lease_id);
 
 
 --
@@ -19488,6 +19856,14 @@ ALTER TABLE ONLY public.trust_payment_holds
 
 
 --
+-- Name: trust_payment_notes trust_payment_notes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_notes
+    ADD CONSTRAINT trust_payment_notes_pkey PRIMARY KEY (transfer_id);
+
+
+--
 -- Name: trust_payment_reversals trust_payment_reversals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20128,6 +20504,46 @@ ALTER TABLE ONLY public.trust_tax_credit_units
 
 
 --
+-- Name: trust_tax_id_reveals trust_tax_id_reveals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_id_reveals
+    ADD CONSTRAINT trust_tax_id_reveals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_tax_ids trust_tax_ids_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_ids
+    ADD CONSTRAINT trust_tax_ids_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_tax_ids trust_tax_ids_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_ids
+    ADD CONSTRAINT trust_tax_ids_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_tenant_applicants trust_tenant_applicants_applicant_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_applicants
+    ADD CONSTRAINT trust_tenant_applicants_applicant_id_key UNIQUE (applicant_id);
+
+
+--
+-- Name: trust_tenant_applicants trust_tenant_applicants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_applicants
+    ADD CONSTRAINT trust_tenant_applicants_pkey PRIMARY KEY (tenant_id);
+
+
+--
 -- Name: trust_tenant_links trust_tenant_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20452,6 +20868,27 @@ CREATE INDEX trust_account_signers_staff ON public.trust_account_signers USING b
 --
 
 CREATE INDEX trust_application_links_unit_id ON public.trust_application_links USING btree (unit_id);
+
+
+--
+-- Name: trust_application_occupants_application; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_application_occupants_application ON public.trust_application_occupants USING btree (pmc_id, application_id);
+
+
+--
+-- Name: trust_application_pets_application; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_application_pets_application ON public.trust_application_pets USING btree (pmc_id, application_id);
+
+
+--
+-- Name: trust_application_vehicles_application; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_application_vehicles_application ON public.trust_application_vehicles USING btree (pmc_id, application_id);
 
 
 --
@@ -21029,6 +21466,13 @@ CREATE INDEX trust_deposit_interest_terms_recorded_by ON public.trust_deposit_in
 
 
 --
+-- Name: trust_documents_applicant_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_documents_applicant_id ON public.trust_documents USING btree (applicant_id);
+
+
+--
 -- Name: trust_documents_pmc_id_kind; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21054,6 +21498,13 @@ CREATE INDEX trust_documents_request_id ON public.trust_documents USING btree (r
 --
 
 CREATE INDEX trust_documents_tenant_id ON public.trust_documents USING btree (tenant_id);
+
+
+--
+-- Name: trust_documents_transfer_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_documents_transfer_id ON public.trust_documents USING btree (transfer_id);
 
 
 --
@@ -21232,6 +21683,27 @@ CREATE INDEX trust_emails_vendor_id ON public.trust_emails USING btree (vendor_i
 
 
 --
+-- Name: trust_emergency_contacts_applicant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_emergency_contacts_applicant ON public.trust_emergency_contacts USING btree (pmc_id, applicant_id);
+
+
+--
+-- Name: trust_emergency_contacts_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_emergency_contacts_recorded_by ON public.trust_emergency_contacts USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_emergency_contacts_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_emergency_contacts_tenant ON public.trust_emergency_contacts USING btree (pmc_id, tenant_id, created_at);
+
+
+--
 -- Name: trust_history_files_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21379,6 +21851,20 @@ CREATE INDEX trust_lease_end_adjustments_charge_id ON public.trust_lease_end_adj
 
 
 --
+-- Name: trust_lease_end_notices_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_end_notices_lease ON public.trust_lease_end_notices USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_lease_end_notices_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_end_notices_recorded_by ON public.trust_lease_end_notices USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_lease_guarantors_lease; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21397,6 +21883,13 @@ CREATE INDEX trust_lease_guarantors_offer ON public.trust_lease_guarantors USING
 --
 
 CREATE INDEX trust_lease_guarantors_recorded_by ON public.trust_lease_guarantors USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_lease_holdovers_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_holdovers_pmc ON public.trust_lease_holdovers USING btree (pmc_id, rolled_on);
 
 
 --
@@ -21939,6 +22432,13 @@ CREATE INDEX trust_payment_holds_lease_id ON public.trust_payment_holds USING bt
 
 
 --
+-- Name: trust_payment_notes_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_notes_recorded_by ON public.trust_payment_notes USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_payment_reversals_reversal_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22443,6 +22943,48 @@ CREATE INDEX trust_tax_credit_units_recorded_by ON public.trust_tax_credit_units
 
 
 --
+-- Name: trust_tax_id_reveals_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_tax_id_reveals_recorded_by ON public.trust_tax_id_reveals USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_tax_id_reveals_tax_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_tax_id_reveals_tax_id ON public.trust_tax_id_reveals USING btree (pmc_id, tax_id, created_at);
+
+
+--
+-- Name: trust_tax_ids_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_tax_ids_owner ON public.trust_tax_ids USING btree (pmc_id, owner_id, created_at);
+
+
+--
+-- Name: trust_tax_ids_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_tax_ids_recorded_by ON public.trust_tax_ids USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_tax_ids_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_tax_ids_vendor ON public.trust_tax_ids USING btree (pmc_id, vendor_id, created_at);
+
+
+--
+-- Name: trust_tenant_applicants_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_tenant_applicants_lease ON public.trust_tenant_applicants USING btree (pmc_id, lease_id);
+
+
+--
 -- Name: trust_tenant_links_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22737,6 +23279,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_applicant_details trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_applicant_details FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_applicants trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22762,6 +23311,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_application_links FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_application_occupants trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_application_occupants FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_application_pets trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_application_pets FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_application_vehicles trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_application_vehicles FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -23185,6 +23755,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_emergency_contacts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_emergency_contacts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_expense_accounts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23311,10 +23888,24 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_lease_end_notices trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_end_notices FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_lease_guarantors trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_guarantors FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_lease_holdovers trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_holdovers FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -23654,6 +24245,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_payment_notes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_notes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_payment_reversals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23955,6 +24553,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_tax_id_reveals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_tax_id_reveals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_tax_ids trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_tax_ids FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_tenant_applicants trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_tenant_applicants FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_tenant_links trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24179,6 +24798,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_adve
 
 
 --
+-- Name: trust_applicant_details trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_applicant_details FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_applicants trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24204,6 +24830,27 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_appl
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_links FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_application_occupants trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_occupants FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_application_pets trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_pets FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_application_vehicles trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_vehicles FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -24606,6 +25253,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_emai
 
 
 --
+-- Name: trust_emergency_contacts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_emergency_contacts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_expense_accounts trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24732,10 +25386,24 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_leas
 
 
 --
+-- Name: trust_lease_end_notices trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_end_notices FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_lease_guarantors trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_guarantors FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_holdovers trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_holdovers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -25096,6 +25764,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_paym
 
 
 --
+-- Name: trust_payment_notes trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_notes FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_payment_reversals trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25432,6 +26107,27 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tax_
 
 
 --
+-- Name: trust_tax_id_reveals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tax_id_reveals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_tax_ids trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tax_ids FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_tenant_applicants trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tenant_applicants FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_tenant_links trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25765,6 +26461,13 @@ CREATE TRIGGER trust_check_recurring_bill BEFORE INSERT ON public.trust_recurrin
 --
 
 CREATE TRIGGER trust_check_reserve_event BEFORE INSERT ON public.trust_reserve_events FOR EACH ROW EXECUTE FUNCTION public.trust_check_reserve_event();
+
+
+--
+-- Name: trust_tenant_applicants trust_check_tenant_applicant; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_tenant_applicant BEFORE INSERT ON public.trust_tenant_applicants FOR EACH ROW EXECUTE FUNCTION public.trust_check_tenant_applicant();
 
 
 --
@@ -26251,6 +26954,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_email_settings FO
 
 
 --
+-- Name: trust_emergency_contacts trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_emergency_contacts FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_history_files trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26304,6 +27014,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_break_fees 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_departures FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_lease_end_notices trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_end_notices FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -26475,6 +27192,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_files FOR
 
 
 --
+-- Name: trust_payment_notes trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_notes FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_payment_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26643,6 +27367,20 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tax_credit_units 
 
 
 --
+-- Name: trust_tax_id_reveals trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tax_id_reveals FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_tax_ids trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tax_ids FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_tenant_links trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26752,6 +27490,13 @@ CREATE TRIGGER trust_rent_due_day_in_time BEFORE INSERT ON public.trust_rent_due
 --
 
 CREATE TRIGGER trust_request_work_order_unit BEFORE INSERT ON public.trust_maintenance_request_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_check_request_work_order();
+
+
+--
+-- Name: trust_tax_id_reveals trust_reveal_by_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_reveal_by_admin BEFORE INSERT ON public.trust_tax_id_reveals FOR EACH ROW EXECUTE FUNCTION public.trust_check_tax_id_reveal();
 
 
 --
@@ -27034,6 +27779,22 @@ ALTER TABLE ONLY public.trust_adverse_actions
 
 
 --
+-- Name: trust_applicant_details trust_applicant_details_pmc_id_applicant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applicant_details
+    ADD CONSTRAINT trust_applicant_details_pmc_id_applicant_id_fkey FOREIGN KEY (pmc_id, applicant_id) REFERENCES public.trust_applicants(pmc_id, id);
+
+
+--
+-- Name: trust_applicant_details trust_applicant_details_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applicant_details
+    ADD CONSTRAINT trust_applicant_details_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
 -- Name: trust_applicants trust_applicants_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27127,6 +27888,54 @@ ALTER TABLE ONLY public.trust_application_links
 
 ALTER TABLE ONLY public.trust_application_links
     ADD CONSTRAINT trust_application_links_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
+
+
+--
+-- Name: trust_application_occupants trust_application_occupants_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_occupants
+    ADD CONSTRAINT trust_application_occupants_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id);
+
+
+--
+-- Name: trust_application_occupants trust_application_occupants_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_occupants
+    ADD CONSTRAINT trust_application_occupants_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_application_pets trust_application_pets_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_pets
+    ADD CONSTRAINT trust_application_pets_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id);
+
+
+--
+-- Name: trust_application_pets trust_application_pets_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_pets
+    ADD CONSTRAINT trust_application_pets_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_application_vehicles trust_application_vehicles_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_vehicles
+    ADD CONSTRAINT trust_application_vehicles_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id);
+
+
+--
+-- Name: trust_application_vehicles trust_application_vehicles_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_vehicles
+    ADD CONSTRAINT trust_application_vehicles_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
 
 
 --
@@ -28482,6 +29291,14 @@ ALTER TABLE ONLY public.trust_document_removals
 
 
 --
+-- Name: trust_documents trust_documents_applicant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_applicant_id_fkey FOREIGN KEY (pmc_id, applicant_id) REFERENCES public.trust_applicants(pmc_id, id) NOT VALID;
+
+
+--
 -- Name: trust_documents trust_documents_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28567,6 +29384,14 @@ ALTER TABLE ONLY public.trust_documents
 
 ALTER TABLE ONLY public.trust_documents
     ADD CONSTRAINT trust_documents_pmc_id_work_order_id_fkey FOREIGN KEY (pmc_id, work_order_id) REFERENCES public.trust_work_orders(pmc_id, id) NOT VALID;
+
+
+--
+-- Name: trust_documents trust_documents_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id) NOT VALID;
 
 
 --
@@ -28791,6 +29616,38 @@ ALTER TABLE ONLY public.trust_emails
 
 ALTER TABLE ONLY public.trust_emails
     ADD CONSTRAINT trust_emails_work_order_step_id_fkey FOREIGN KEY (work_order_step_id) REFERENCES public.trust_work_order_steps(id) NOT VALID;
+
+
+--
+-- Name: trust_emergency_contacts trust_emergency_contacts_pmc_id_applicant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emergency_contacts
+    ADD CONSTRAINT trust_emergency_contacts_pmc_id_applicant_id_fkey FOREIGN KEY (pmc_id, applicant_id) REFERENCES public.trust_applicants(pmc_id, id);
+
+
+--
+-- Name: trust_emergency_contacts trust_emergency_contacts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emergency_contacts
+    ADD CONSTRAINT trust_emergency_contacts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_emergency_contacts trust_emergency_contacts_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emergency_contacts
+    ADD CONSTRAINT trust_emergency_contacts_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_emergency_contacts trust_emergency_contacts_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emergency_contacts
+    ADD CONSTRAINT trust_emergency_contacts_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
 
 
 --
@@ -29226,6 +30083,30 @@ ALTER TABLE ONLY public.trust_lease_end_adjustments
 
 
 --
+-- Name: trust_lease_end_notices trust_lease_end_notices_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_end_notices
+    ADD CONSTRAINT trust_lease_end_notices_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_end_notices trust_lease_end_notices_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_end_notices
+    ADD CONSTRAINT trust_lease_end_notices_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_lease_end_notices trust_lease_end_notices_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_end_notices
+    ADD CONSTRAINT trust_lease_end_notices_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_lease_guarantors trust_lease_guarantors_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29255,6 +30136,22 @@ ALTER TABLE ONLY public.trust_lease_guarantors
 
 ALTER TABLE ONLY public.trust_lease_guarantors
     ADD CONSTRAINT trust_lease_guarantors_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_lease_holdovers trust_lease_holdovers_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_holdovers
+    ADD CONSTRAINT trust_lease_holdovers_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_holdovers trust_lease_holdovers_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_holdovers
+    ADD CONSTRAINT trust_lease_holdovers_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
 
 
 --
@@ -30586,6 +31483,30 @@ ALTER TABLE ONLY public.trust_payment_holds
 
 
 --
+-- Name: trust_payment_notes trust_payment_notes_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_notes
+    ADD CONSTRAINT trust_payment_notes_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payment_notes trust_payment_notes_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_notes
+    ADD CONSTRAINT trust_payment_notes_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_payment_notes trust_payment_notes_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_notes
+    ADD CONSTRAINT trust_payment_notes_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
 -- Name: trust_payment_reversals trust_payment_reversals_charge_id_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31658,6 +32579,94 @@ ALTER TABLE ONLY public.trust_tax_credit_units
 
 
 --
+-- Name: trust_tax_id_reveals trust_tax_id_reveals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_id_reveals
+    ADD CONSTRAINT trust_tax_id_reveals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_tax_id_reveals trust_tax_id_reveals_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_id_reveals
+    ADD CONSTRAINT trust_tax_id_reveals_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_tax_id_reveals trust_tax_id_reveals_pmc_id_tax_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_id_reveals
+    ADD CONSTRAINT trust_tax_id_reveals_pmc_id_tax_id_fkey FOREIGN KEY (pmc_id, tax_id) REFERENCES public.trust_tax_ids(pmc_id, id);
+
+
+--
+-- Name: trust_tax_ids trust_tax_ids_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_ids
+    ADD CONSTRAINT trust_tax_ids_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_tax_ids trust_tax_ids_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_ids
+    ADD CONSTRAINT trust_tax_ids_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_tax_ids trust_tax_ids_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_ids
+    ADD CONSTRAINT trust_tax_ids_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_tax_ids trust_tax_ids_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_ids
+    ADD CONSTRAINT trust_tax_ids_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
+-- Name: trust_tenant_applicants trust_tenant_applicants_pmc_id_applicant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_applicants
+    ADD CONSTRAINT trust_tenant_applicants_pmc_id_applicant_id_fkey FOREIGN KEY (pmc_id, applicant_id) REFERENCES public.trust_applicants(pmc_id, id);
+
+
+--
+-- Name: trust_tenant_applicants trust_tenant_applicants_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_applicants
+    ADD CONSTRAINT trust_tenant_applicants_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_tenant_applicants trust_tenant_applicants_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_applicants
+    ADD CONSTRAINT trust_tenant_applicants_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_tenant_applicants trust_tenant_applicants_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_applicants
+    ADD CONSTRAINT trust_tenant_applicants_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
 -- Name: trust_tenant_links trust_tenant_links_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -32235,6 +33244,8 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261023000151'),
     ('20261024000152'),
     ('20261024000153'),
+    ('20261024000154'),
     ('20261025000200'),
     ('20261025000210'),
-    ('20261025000220');
+    ('20261025000220'),
+    ('20261027000155');

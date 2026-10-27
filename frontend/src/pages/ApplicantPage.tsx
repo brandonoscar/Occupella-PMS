@@ -18,6 +18,7 @@ import type { Application, Decision } from "../leasing";
 import { againstScreening, applicantNames, applicationBadge, incomeMultiple, needsNotice, recommendationLabel } from "../leasing";
 import { when } from "../maintenance";
 import { day, money, usDate } from "../money";
+import { DetailsList, HouseholdList } from "./ApplicantDetails";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
@@ -37,8 +38,9 @@ const DECIDED: Record<Decision["decision"], string> = {
 // An application's own page (ADR 0006): who applied for which unit, their household income
 // against the rent, each screening the partner reported, and the decision with its adverse action
 // notice. Staff screen it, approve or reject it beside its title, and make an approved one a draft
-// lease; its ⋯ menu records that the applicants withdrew it. The PMS keeps names, emails and
-// income only; the screening partner keeps the rest (ADR 0002).
+// lease; its ⋯ menu records that the applicants withdrew it. Since ADR 0010 (part G) each
+// applicant's phone, address, previous landlord, employer, emergency contact and proof of income
+// show too, and the household; the screening partner keeps the rest (ADR 0002).
 export function ApplicantPage({ me, id }: { me: Me; id: string }) {
   const [found, setFound] = useState<Application | null>(null);
   const [error, setError] = useState("");
@@ -113,12 +115,28 @@ export function ApplicantPage({ me, id }: { me: Me; id: string }) {
         </dl>
       </Card>
       <Card title="Applicants">
-        <ul className="flex flex-col gap-1 text-base" aria-label="Applicants">
+        <ul className="flex flex-col gap-4 text-base" aria-label="Applicants">
           {found.applicants.map((person) => (
-            <li key={person.email}>{person.name}, {person.email}</li>
+            <li key={person.email} className="flex flex-col gap-2">
+              <p>
+                <span className="font-medium text-ink">{person.name}</span>, {person.email}
+                {person.tenant_id && (
+                  <>
+                    {" · "}
+                    <GoLink href={`/tenants/${person.tenant_id}`} className={LINK}>Now a tenant</GoLink>
+                  </>
+                )}
+              </p>
+              {person.details && <DetailsList details={person.details} label={`What ${person.name} gave`} />}
+            </li>
           ))}
         </ul>
       </Card>
+      {found.household && (
+        <Card title="Household">
+          <HouseholdList household={found.household} />
+        </Card>
+      )}
       <Card title="Screening">
         {found.screenings.length === 0 ? (
           <p className="text-base text-ink-muted">Not screened yet.</p>

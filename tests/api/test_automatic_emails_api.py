@@ -29,7 +29,6 @@ OFF = {
     "owner_statement_day": None,
     "work_order_notices": False,
     "adverse_action_notices": False,
-    "payment_receipts": False,
     "reserve_alerts": False,
 }
 ON = {
@@ -38,7 +37,6 @@ ON = {
     "owner_statement_day": 1,
     "work_order_notices": True,
     "adverse_action_notices": True,
-    "payment_receipts": True,
     "reserve_alerts": True,
 }
 
@@ -217,7 +215,10 @@ def test_assigning_and_scheduling_a_work_order_emails_its_vendor(client, conn, s
 # --- a payment's receipt ----------------------------------------------------------------------
 
 
-def test_a_payment_recorded_emails_its_receipt_while_receipts_are_on(client, conn, staff, pmc):
+def test_every_payment_recorded_emails_its_receipt_while_the_server_sends_email(
+    client, conn, staff, pmc
+):
+    # ADR 0010 phase 1c: a receipt for every payment; no setting turns them off.
     tenant = tenant_of(conn, pmc)
     unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, name="Unit 4")
     lease = open_lease(conn, pmc.pmc_id, unit, TODAY - timedelta(30), None, "900.00", [tenant])
@@ -228,11 +229,9 @@ def test_a_payment_recorded_emails_its_receipt_while_receipts_are_on(client, con
         return ok(client.post(f"/api/rent/leases/{lease}/payments", json=body), 201)
 
     pay("100.00")  # the server sends no email: none
-    client.app.state.email = email.FakeSender()
-    pay("110.00")  # receipts are off: none
     assert kinds(conn, pmc.pmc_id) == []
-    ok(client.post("/api/emails/settings", json=ON))
-    paid = pay("125.00")
+    client.app.state.email = email.FakeSender()
+    paid = pay("125.00")  # every other email still off: the receipt goes all the same
 
     tab = ok(client.get("/api/emails", params={"about": "tenant", "about_id": str(tenant)}))
     assert [(line["kind"], line["to"], line["status"]) for line in tab] == [
