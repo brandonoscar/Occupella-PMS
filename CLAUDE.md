@@ -100,7 +100,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and SameSite=Strict, and every answer forbids being framed or opened by another site (COOP),
   the camera and the like, and over https anything but https (HSTS). A refusal from the database
   reaches people in words, without internal ids (`deps.refusal`: an account short of money, a
-  draw over what is available, the last admin).
+  draw over what is available, the last admin), and a request that finds every database connection
+  busy for 30 s is told so (503, `deps.BUSY`), never a server error.
 - Logins (`src/pms/accounts.py`, migration 0028): staff invite a staff member, owner or tenant
   by email; the link carries a token kept only as its SHA-256, in the URL fragment. Accepting
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
@@ -222,7 +223,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   Pay owners and Add owner. Staff keep a tenant's, owner's or vendor's contact details there, rename a tenant or owner
   and archive one. A search in the bar finds a property, unit, tenant, owner or vendor (by name, or by the email, phone or
   street on file), a bill, a work order, an applicant, a lead or a file (`/api/search`).
-  Lists come a page at a time (`Paged`: 50 by default, at most 200); move-outs at `/move-out` (`src/pms/api/moveout.py`). Leasing:
+  Lists come a page at a time (`Paged`: 50 by default, at most 200; the rent roll and Tenants pick
+  the page first and work out each row for it alone); move-outs at `/move-out` (`src/pms/api/moveout.py`). Leasing:
   Listings at `/rental-listings` (`GET /api/leasing/vacancies`: each unit coming free within 90
   days or with an open link, its rent and available day, days listed and photos; List opens its
   link if it has none and puts it on the public page, Unlist takes it off, Photos keeps the unit's
