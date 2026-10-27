@@ -3,6 +3,7 @@
 # 127.0.0.1:8123 as .github/workflows/e2e.yml serves it: the test partners (no email, screening,
 # address lookup or payment reaches anyone) and no nightly run (the tests charge rent when they
 # mean to). tests/tools/test_simulate.py keeps its settings the same as e2e.yml's.
+#   export PMS_DATA_KEY="$(openssl rand -base64 32)"     # throwaway: seals synthetic bank numbers
 #   docker compose -f compose.e2e.yaml up -d --wait app
 #   docker compose -f compose.e2e.yaml run --rm seed     # frontend/e2e/.seed.json
 #   cd frontend; npx playwright test
@@ -36,6 +37,9 @@ services:
       PMS_GEOCODER: fake
       PMS_PAYMENTS: fake
       PMS_NIGHTLY: "off"
+      # A throwaway key the script makes for each simulation, never a stored one, seals the
+      # synthetic payees' account numbers, as e2e.yml's does. Without one the PMS keeps none.
+      PMS_DATA_KEY: ${PMS_DATA_KEY:-}
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -161,9 +161,17 @@ if ($lineEndings) { Write-Warning $lineEndings }
 
 $saved = @{}
 foreach ($name in @('E2E_BASE_URL', 'PW_CHANNEL', 'PW_TIMEZONE', 'TZ', 'PLAYWRIGHT_HTML_OUTPUT_DIR',
-        'PLAYWRIGHT_HTML_OPEN', 'PLAYWRIGHT_JSON_OUTPUT_FILE')) {
+        'PLAYWRIGHT_HTML_OPEN', 'PLAYWRIGHT_JSON_OUTPUT_FILE', 'PMS_DATA_KEY')) {
     $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
+
+# A throwaway key, made here for this simulation, seals the synthetic payees' account numbers
+# (compose.e2e.yaml passes it to the PMS), as e2e.yml's does. It is never printed or kept.
+$keyBytes = New-Object 'byte[]' 32
+$random = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$random.GetBytes($keyBytes)
+$random.Dispose()
+$env:PMS_DATA_KEY = [Convert]::ToBase64String($keyBytes)
 
 $Results = @()
 $started = Get-Date

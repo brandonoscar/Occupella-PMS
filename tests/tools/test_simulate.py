@@ -46,6 +46,15 @@ def test_the_api_runs_with_the_settings_the_browser_tests_get_in_ci():
     merged = {**base, **here}
     for name in ("PMS_PORT", "PMS_STATIC_DIR"):
         ci.pop(name)
+    # The key that seals payees' account numbers is made for each run, here as in CI: 32 random
+    # bytes, base64, from the environment the script sets, never a stored one.
+    assert ci.pop("PMS_DATA_KEY") == '"$(python'
+    assert "base64.b64encode(os.urandom(32))" in serve
+    assert merged.pop("PMS_DATA_KEY") == "${PMS_DATA_KEY:-}"
+    assert "$keyBytes = New-Object 'byte[]' 32" in SCRIPT
+    assert "[System.Security.Cryptography.RandomNumberGenerator]::Create()" in SCRIPT
+    assert "$env:PMS_DATA_KEY = [Convert]::ToBase64String($keyBytes)" in SCRIPT
+    assert not [line for line in SCRIPT.splitlines() if "Write-" in line and "KEY" in line.upper()]
     assert {name: merged.get(name) for name in ci} == ci
 
 
@@ -98,6 +107,8 @@ def test_the_browsers_are_playwrights_and_edge_and_chrome_are_never_reinstalled(
 
 
 def test_what_the_script_sets_is_what_the_config_reads():
+    for name in ("E2E_BASE_URL", "PW_CHANNEL", "PW_TIMEZONE", "PMS_DATA_KEY"):
+        assert f"'{name}'" in SCRIPT[SCRIPT.index("$saved = @{}") :]  # put back as it was
     for name in ("E2E_BASE_URL", "PW_CHANNEL", "PW_TIMEZONE"):
         assert f"$env:{name} =" in SCRIPT
         assert f"process.env.{name}" in CONFIG
