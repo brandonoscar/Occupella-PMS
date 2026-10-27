@@ -2,10 +2,12 @@
 13 months, people paying, bouncing, being paid and paying bills by their habits, and its books
 checked after each night. A failing night names its day and the seed that replays it."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from tools import fast_forward
 
@@ -71,6 +73,113 @@ def test_a_delinquency_report_that_disagrees_with_the_leases_fails_the_night(app
     monkeypatch.setattr(fast_forward, "owed", lambda *a: real(*a) + Decimal("1.00"))
     with pytest.raises(fast_forward.NightFailed, match="delinquency report"):
         fast_forward.check_night(app_conn, life, day, datetime.now(UTC))
+
+
+def found_by(monkeypatch, fragment, found):
+    """The night's queries, but the one containing `fragment` finds `found`: what the database
+    would hold if a bug its own rules refuse had got past them."""
+    real = fast_forward.rows
+    monkeypatch.setattr(
+        fast_forward, "rows", lambda conn, q, p=(): found if fragment in q else real(conn, q, p)
+    )
+
+
+@pytest.mark.parametrize(
+    ("fragment", "found", "named"),
+    [
+        ("HAVING count(*) > 1", [("a lease", "a day", 2)], "rent charged twice"),
+        ("trust_report_trial_balance", [(Decimal("10.00"), Decimal("9.00"))], "trial balance"),
+        ("trust_report_balance_sheet", [("a bank", Decimal("1.00"))], "book cash"),
+    ],
+)
+def test_what_the_database_refuses_still_fails_the_night(
+    app_conn, monkeypatch, fragment, found, named
+):
+    life, day = few_nights(app_conn)
+    found_by(monkeypatch, fragment, found)
+    with pytest.raises(fast_forward.NightFailed, match=named):
+        fast_forward.check_night(app_conn, life, day, datetime.now(UTC))
+
+
+def test_an_owner_statement_that_disagrees_with_the_ledger_fails_the_month(app_conn, monkeypatch):
+    life, _ = few_nights(app_conn)
+    found_by(monkeypatch, "trust_report_owner_statement", [(Decimal("123456.78"),)])
+    with pytest.raises(fast_forward.NightFailed, match="statement for"):
+        fast_forward.check_month(app_conn, life, life.first)
+
+
+def test_a_month_whose_management_fee_was_never_taken_fails_its_last_night(app_conn):
+    # Five nights in, the fee day (the 5th) of the month after has not come: on that month's
+    # last night this month's fee is still not taken.
+    life, _ = few_nights(app_conn)
+    next_month = (life.first + timedelta(days=32)).replace(day=1)
+    last_night = (next_month + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    with pytest.raises(fast_forward.NightFailed, match="management fee"):
+        fast_forward.check_fees(app_conn, life, last_night)
+
+
+def a_bill(app_conn, life, day):
+    """A plumber's bill dated `day`, open, as staff enter one."""
+    with fast_forward.as_manager(app_conn, life) as s:
+        fast_forward.payables.enter_bill(
+            s,
+            app_conn,
+            fast_forward.payables.NewBill(
+                vendor_id=sorted(life.built.vendors.values())[0],
+                account=sorted(life.built.accounts.values())[0],
+                reference=f"FF-{day:%Y%m%d}",
+                bill_date=day,
+                due_on=day,
+                amount=Decimal("12.00"),
+                memo="A test bill",
+            ),
+        )
+
+
+def test_nobody_pays_or_is_paid_before_their_lease_or_bill(app_conn):
+    life, day = few_nights(app_conn)
+    a_bill(app_conn, life, day)
+    before = dict(life.totals)
+    long_ago = date(2000, 1, 3)
+    fast_forward.tenants_pay(app_conn, life, long_ago)
+    fast_forward.bills_paid(app_conn, life, long_ago)
+    assert life.totals == {**before, "bills paid": before.get("bills paid", 0)}
+
+
+def test_a_refusal_in_words_is_passed_over_and_anything_else_stops_the_run(app_conn, monkeypatch):
+    life, day = few_nights(app_conn)
+    a_bill(app_conn, life, day)
+
+    def refused(*a):
+        raise HTTPException(409, "not enough available")
+
+    def broken(*a):
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr(fast_forward.payables, "pay_bills", refused)
+    fast_forward.bills_paid(app_conn, life, date(2100, 1, 1))
+
+    monkeypatch.setattr(fast_forward.payables, "pay_bills", broken)
+    with pytest.raises(RuntimeError, match="a bug"):
+        fast_forward.bills_paid(app_conn, life, date(2100, 1, 1))
+    monkeypatch.setattr(fast_forward.payables, "pay_owners", broken)
+    with pytest.raises(RuntimeError, match="a bug"):
+        fast_forward.owners_paid(app_conn, life, day)
+
+
+def test_the_command_says_so_when_the_migrations_fail(database_url, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    class Refusing:
+        def __init__(self, *args):
+            pass
+
+        def run(self, *args):
+            return SimpleNamespace(returncode=1, stderr="a migration that failed")
+
+    monkeypatch.setattr(fast_forward, "Dbmate", Refusing)
+    assert fast_forward.main(["--months", "1"]) == 1
+    assert "dbmate up failed:\na migration that failed" in capsys.readouterr().out
 
 
 def test_the_command_lives_on_a_database_of_its_own(database_url, monkeypatch, capsys):

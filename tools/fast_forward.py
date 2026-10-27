@@ -310,14 +310,15 @@ def check_night(conn: psycopg.Connection[Any], life: Life, day: date, since: dat
             f"the delinquency report says {report[0]} is owed,"
             f" the leases' open charges {open_total}"
         )
-    balance = conn.execute(
+    unbalanced = rows(
+        conn,
         "SELECT coalesce(sum(debit), 0), coalesce(sum(credit), 0)"
-        " FROM trust_report_trial_balance(%s, %s)",
+        " FROM trust_report_trial_balance(%s, %s)"
+        " HAVING coalesce(sum(debit), 0) <> coalesce(sum(credit), 0)",
         (pmc, day),
-    ).fetchone()
-    assert balance is not None
-    if balance[0] != balance[1]:
-        fail(f"the trial balance has debits {balance[0]} and credits {balance[1]}")
+    )
+    if unbalanced:
+        fail(f"the trial balance has debits {unbalanced[0][0]} and credits {unbalanced[0][1]}")
     differences = rows(
         conn,
         "SELECT bank, amount FROM trust_report_balance_sheet(%s, %s)"
