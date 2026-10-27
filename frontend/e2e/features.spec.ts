@@ -708,7 +708,22 @@ test("staff find a tenant and an owner, keep their contact details and a vendor'
   // On a lease in effect, Archive isn't offered at all (ADR 0010 phase 3, part I; rule 4). The
   // API still refuses it in words should anything ask (tests/api).
   await expect(page.getByRole("button", { name: "Actions for Drew Q. Sample" })).toHaveCount(0);
+  // Someone who never had a lease (added in a lease's panel, then left off it) is offered
+  // Archive, and leaves the list.
+  await openProperty(page, "Aspen Row");
+  await page.getByRole("row", { name: "Unit 2" }).getByRole("link", { name: "Unit 2" }).click();
+  const adding = await setupPanel(page, "Add lease in place", "Add lease");
+  await adding.getByLabel("Tenant's name").fill("Emery Sample");
+  await adding.getByRole("button", { name: "Add tenant" }).click();
+  await expect(adding.getByLabel("Emery Sample")).toBeChecked();
+  await adding.getByRole("button", { name: "Close" }).click();
   await section(page, "Tenants");
+  await page.getByRole("row", { name: "Emery Sample", exact: true }).getByRole("link", { name: "Emery Sample" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Emery Sample" })).toBeVisible();
+  await chooseAction(page, "Emery Sample", "Archive");
+  await expect(page.getByText("Emery Sample is archived.")).toBeVisible();
+  await section(page, "Tenants");
+  await expect(page.getByRole("row", { name: "Emery Sample", exact: true })).toHaveCount(0);
   await expect(page.getByRole("row", { name: "Drew Q. Sample", exact: true })).toContainText(
     "drew.sample@example.com",
   );
