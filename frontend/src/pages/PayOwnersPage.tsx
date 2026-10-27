@@ -18,7 +18,7 @@ import { day, money, sumMoney, usDate } from "../money";
 import type { OwnerMoney, OwnerPaid, PayoutMethod } from "../payables";
 import { paidSummary } from "../payables";
 import type { DrawRun } from "../payouts";
-import { drawRunLine, methodWord } from "../payouts";
+import { drawChoices, drawRunLine, methodWord } from "../payouts";
 import { requestId } from "../rent";
 import { scopeParams, useScope } from "../scope";
 import { GoLink } from "./NeedsAttention";
@@ -33,17 +33,6 @@ export type SentBy = PayoutMethod | "each";
 // Whether the PMS writes the payouts' files (an ACH file for the bank, checks to print) or only
 // records payouts made outside it.
 export type Output = "record" | "file";
-
-// The draws prepared on the draw day, as Pay owners chooses them: what each had available then,
-// or less if it has less now; one with nothing available now is left out.
-export function drawChoices(run: DrawRun): Record<string, string> {
-  const chosen: Record<string, string> = {};
-  for (const line of run.lines) {
-    const now = Number(line.available_now) < Number(line.amount) ? line.available_now : line.amount;
-    if (Number(now) > 0) chosen[line.account] = now;
-  }
-  return chosen;
-}
 
 // Accounting → Pay owners (ADR 0006, Buildium's owner draw; ADR 0010 phase 1b): every owner's
 // property account, maybe of one group or property, with what it holds, keeps back and may pay

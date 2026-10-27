@@ -4,7 +4,6 @@ import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
-import { WriteEmail } from "../components/EmailsCard";
 import { EmptyState } from "../components/EmptyState";
 import { Notice } from "../components/Notice";
 import { Pager } from "../components/Pager";
@@ -21,6 +20,8 @@ import type { Paged, Property, PropertyRow, Unit } from "../rentals";
 import { LEASE_STATUS, OWNERSHIP_STATE, occupancy, ownershipStates, sharesLine, termLabel, unitState } from "../rentals";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
+import type { EmailedTenants } from "./EmailTenantsPanel";
+import { EmailTenantsPanel } from "./EmailTenantsPanel";
 import { Said } from "../components/Said";
 import { AddressCard } from "./AddressCard";
 import { FilesCard } from "./FilesCard";
@@ -43,6 +44,10 @@ import {
   OwnershipPanel,
   TermsPanel,
 } from "./SetupPanels";
+
+// A link to another page that looks like a secondary button, as LinkButton does for a download.
+const SECONDARY =
+  "inline-flex h-9 items-center rounded-sm border border-line-strong bg-canvas px-3.5 text-base font-medium text-ink hover:bg-raised";
 
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
@@ -126,7 +131,6 @@ export function PropertiesPage({ me }: { me: Me }) {
 }
 
 // A property: what its owners' accounts hold, and its units with each one's lease.
-type EmailedTenants = { emailed: { name: string; to: string }[]; without_email: string[] };
 
 // What emailing a property's tenants did: how many were written to, and who has no email.
 export function tenantsEmailed(sent: EmailedTenants): string {
@@ -163,6 +167,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
           <PageHeader title={property.name} actions={
             <div className="flex flex-wrap items-center gap-2">
               <Button variant="secondary" onClick={() => setOpen("email")}>Email tenants</Button>
+              <GoLink href={`/properties/${id}/utilities`} className={SECONDARY}>Utilities</GoLink>
               <RecordActions path={`/api/properties/${id}`} name={property.name} archived={property.archived}
                 onChange={(done) => { setSaid(done); refresh(); }} />
             </div>
@@ -294,17 +299,8 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
           {open === "break" && <LeaseBreakFeePanel panel={panel} propertyId={id} />}
           {open === "interest" && <DepositInterestPanel panel={panel} propertyId={id} />}
           {open === "email" && (
-            <WriteEmail title={`Email tenants of ${property.name}`} onClose={panel.close}
-              note="Everyone on a lease in effect today gets their own copy, kept on their Email tab."
-              onSend={async (subject, body) => {
-                try {
-                  const sent = await api.post<EmailedTenants>("/api/emails/property", { property_id: id, subject, body });
-                  setSaid(tenantsEmailed(sent));
-                  return "";
-                } catch (failed) {
-                  return detail(failed);
-                }
-              }} />
+            <EmailTenantsPanel propertyId={id} name={property.name} onClose={panel.close}
+              onSent={(sent) => setSaid(tenantsEmailed(sent))} />
           )}
           {open === "terms" && (
             <TermsPanel panel={panel} accounts={property.owners

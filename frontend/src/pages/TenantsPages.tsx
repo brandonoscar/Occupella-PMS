@@ -30,6 +30,9 @@ import { navigate } from "../router";
 import { ListBar } from "../components/ListBar";
 import { scopeParams, useScope } from "../scope";
 import { Said } from "../components/Said";
+import { PhoneLink } from "../components/PhoneLink";
+import { HouseholdCards } from "./LeasePeople";
+import { leaseShown, NoLeaseCard, TenantLeaseCard } from "./TenantLeaseCard";
 
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
@@ -114,13 +117,23 @@ const TENANT_TABS: { value: TenantTab; label: string }[] = [
   { value: "notes", label: "Notes" },
 ];
 
-// A tenant: their contact details, what is held for them and whether they can sign in (Summary),
-// every lease they have been on (Leases), their Files and Notes.
+// Whether a tenant may be archived (ADR 0010 phase 3, rule 4): once they have moved out (every
+// lease of theirs ended) or never had a lease (a duplicate, a no-show).
+export function archivable(tenant: Pick<Tenant, "leases">): boolean {
+  return tenant.leases.every((lease) => lease.status === "ended");
+}
+
+// A tenant (ADR 0010 phase 3, part I): under their name their home, phone and email; on Summary
+// their lease (rent, due day, term, deposit held, autopay, balance, with Receive payment, Change
+// end date and Renew lease), contact details, portal login (one click to invite), household,
+// emergency contact and application. Every lease they have been on (Leases), their Email, Files
+// and Notes. Archive shows only once they have moved out or never had a lease.
 export function TenantPage({ me, id }: { me: Me; id: string }) {
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
   const [tab, setTab] = useState<TenantTab>("summary");
+  const [editContact, setEditContact] = useState(0);
 
   function refresh(keep: Keep = keepAll) {
     api.get<Tenant>(`/api/tenants/${id}`).then(keep(setTenant)).catch(keep((failed) => setError(detail(failed))));
@@ -131,6 +144,7 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
     return run.stop;
   }, [id]);
 
+  const home = tenant === null ? null : leaseShown(tenant.leases);
   return (
     <Shell me={me} nav={STAFF_NAV}>
       {tenant === null ? (
@@ -139,10 +153,18 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
         <>
           <PageHeader title={tenant.name} actions={
             <RecordActions path={`/api/tenants/${id}`} name={tenant.name} archived={tenant.archived}
-              onChange={(done) => { setSaid(done); refresh(); }} />
+              archivable={archivable(tenant)} onChange={(done) => { setSaid(done); refresh(); }} />
           } />
-          <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-muted">
-            <GoLink href={`/properties/${tenant.property.id}`} className={LINK}>{tenant.property.name}</GoLink>
+          <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-muted" data-testid="tenant-header">
+            {home ? (
+              <GoLink href={`/units/${home.unit.id}`} className={LINK}>{home.unit.name}, {home.property.name}</GoLink>
+            ) : (
+              <GoLink href={`/properties/${tenant.property.id}`} className={LINK}>{tenant.property.name}</GoLink>
+            )}
+            {tenant.contact.phone ? <PhoneLink phone={tenant.contact.phone} /> : <span>No phone on file</span>}
+            {tenant.contact.email ? (
+              <a className={LINK} href={`mailto:${tenant.contact.email}`}>{tenant.contact.email}</a>
+            ) : <span>No email on file</span>}
             <span data-testid="held">Prepaid rent {money(tenant.prepaid)} · Deposit held {money(tenant.deposit)}</span>
           </p>
           <Said>{said}</Said>
@@ -150,14 +172,19 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
             <Tabs label="Tenant" tabs={TENANT_TABS} value={tab} onChange={setTab} />
             {tab === "summary" && (
               <div className="flex flex-col gap-6">
+                {home ? (
+                  <TenantLeaseCard line={home} tenant={tenant.name} deposit={tenant.deposit} refresh={refresh} />
+                ) : <NoLeaseCard />}
                 <ContactCard path={`/api/tenants/${id}`} contact={tenant.contact} refresh={refresh} name={tenant.name}
-                  byTenantAt={tenant.contact_by_tenant_at} />
+                  byTenantAt={tenant.contact_by_tenant_at} editRequest={editContact} />
                 {tenant.same_person.some((other) => other.first) ? (
                   <SignsInElsewhere tenant={tenant} />
                 ) : (
                   <PortalCard kind="tenant" personId={id} name={tenant.name} portal={tenant.portal}
-                    loginEmail={tenant.login_email} email={tenant.contact.email} refresh={refresh} />
+                    loginEmail={tenant.login_email} contactEmail={tenant.contact.email} refresh={refresh}
+                    onEditContact={() => setEditContact((n) => n + 1)} />
                 )}
+                {home && home.status !== "ended" && <HouseholdCards leaseId={home.id} />}
                 <SamePersonCard tenant={tenant} refresh={refresh} say={setSaid} />
                 <TenantApplicationCards id={id} name={tenant.name} />
               </div>

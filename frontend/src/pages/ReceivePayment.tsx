@@ -98,7 +98,7 @@ function AuthorityCheckForm({ record, authority, onRecorded }: {
 
   if (authorities === null) return <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>;
   if (authorities.length === 0) {
-    return <Notice tone="info">No housing authority yet: add one under Rentals, Housing authorities.</Notice>;
+    return <Notice tone="info">No housing authority yet: one is added when a lease's housing assistance is set, on the lease's page.</Notice>;
   }
   return (
     <div className="flex flex-col gap-3">

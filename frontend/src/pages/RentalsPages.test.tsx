@@ -403,16 +403,23 @@ describe("PropertyPage", () => {
     expect(screen.getByText(/Staff choose which owner's account each payment goes to/)).toBeTruthy();
   });
 
-  it("emails every tenant living there in a side panel and says who has no email", async () => {
+  it("shows who an email to the tenants goes to before it goes, and sends to those ticked", async () => {
     const fetch = vi.fn(async (path: string, init?: RequestInit) => {
       if (init?.method === "POST") {
         const body = JSON.parse(String(init.body));
         return body.subject === "Refused"
           ? new Response(JSON.stringify({ detail: "no tenant lives there today" }), { status: 422 })
           : new Response(JSON.stringify({
-            emailed: [{ name: "Tenant A", to: "a@example.com" }, { name: "Tenant C", to: "c@example.com" }],
-            without_email: ["Tenant B"],
+            emailed: [{ name: "Tenant C", to: "c@example.com" }],
+            without_email: [],
           }), { status: 201 });
+      }
+      if (path === "/api/emails/property/p1") {
+        return new Response(JSON.stringify({ property_id: "p1", tenants: [
+          { tenant_id: "ta", name: "Tenant A", to: "a@example.com" },
+          { tenant_id: "tb", name: "Tenant B", to: null },
+          { tenant_id: "tc", name: "Tenant C", to: "c@example.com" },
+        ] }), { status: 200 });
       }
       if (path === "/api/properties/p1") return new Response(JSON.stringify(PROPERTY), { status: 200 });
       return new Response(JSON.stringify(NO_FILES), { status: 200 });
@@ -420,27 +427,55 @@ describe("PropertyPage", () => {
     vi.stubGlobal("fetch", fetch);
     render(<PropertyPage me={ME} id="p1" />);
     await screen.findByRole("heading", { name: "Property 1" });
+    // Its utilities are a page of its own (ADR 0010 phase 3, part N).
+    expect(screen.getByRole("link", { name: "Utilities" }).getAttribute("href")).toBe("/properties/p1/utilities");
 
     fireEvent.click(screen.getByRole("button", { name: "Email tenants" }));
     let panel = screen.getByRole("dialog", { name: "Email tenants of Property 1" });
-    expect(within(panel).getByText(/Everyone on a lease in effect today/)).toBeTruthy();
+    expect(await within(panel).findByText("Current tenants only, not past or future.")).toBeTruthy();
+    // Everyone with an email is ticked; the count says how many of them; who has none is named.
+    const boxes = within(panel).getAllByRole("checkbox") as HTMLInputElement[];
+    expect(boxes.map((box) => [box.parentElement?.textContent, box.checked])).toEqual([
+      ["Tenant A, a@example.com", true],
+      ["Tenant C, c@example.com", true],
+    ]);
+    expect(within(panel).getByText("To 2 tenants of 2 tenants with an email")).toBeTruthy();
+    expect(within(panel).getByTestId("no-email").textContent).toBe("No email on file, so not written to: Tenant B.");
+    fireEvent.click(boxes[0]!);
+    expect(within(panel).getByText("To 1 tenant of 2 tenants with an email")).toBeTruthy();
+
     fireEvent.change(within(panel).getByLabelText("Subject"), { target: { value: "Refused" } });
     fireEvent.change(within(panel).getByLabelText("Message"), { target: { value: "x" } });
-    fireEvent.click(within(panel).getByRole("button", { name: "Send email" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Send to 1 tenant" }));
     expect((await within(panel).findByRole("alert")).textContent).toBe("no tenant lives there today");
 
     fireEvent.change(within(panel).getByLabelText("Subject"), { target: { value: "Water shutoff" } });
     fireEvent.change(within(panel).getByLabelText("Message"), { target: { value: "Off Tuesday 9 to 11." } });
-    fireEvent.click(within(panel).getByRole("button", { name: "Send email" }));
-    expect(await screen.findByText("Emailed 2 tenants. No email on file: Tenant B.")).toBeTruthy();
+    fireEvent.click(within(panel).getByRole("button", { name: "Send to 1 tenant" }));
+    expect(await screen.findByText("Emailed 1 tenant.")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
     const posts = fetch.mock.calls.filter(([, init]) => init?.method === "POST");
     expect(posts.at(-1)?.[0]).toBe("/api/emails/property");
     expect(JSON.parse(String(posts.at(-1)?.[1]?.body))).toEqual({
-      property_id: "p1", subject: "Water shutoff", body: "Off Tuesday 9 to 11.",
+      property_id: "p1", subject: "Water shutoff", body: "Off Tuesday 9 to 11.", tenant_ids: ["tc"],
     });
     panel = screen.queryByRole("dialog") as HTMLElement;
     expect(panel).toBeNull();
+  });
+
+  it("sends nothing until someone is ticked", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => {
+      if (path === "/api/emails/property/p1") {
+        return new Response(JSON.stringify({ property_id: "p1", tenants: [{ tenant_id: "tb", name: "Tenant B", to: null }] }));
+      }
+      if (path === "/api/properties/p1") return new Response(JSON.stringify(PROPERTY));
+      return new Response(JSON.stringify(NO_FILES));
+    }));
+    render(<PropertyPage me={ME} id="p1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Email tenants" }));
+    const panel = screen.getByRole("dialog", { name: "Email tenants of Property 1" });
+    expect(await within(panel).findByText("No one living there has an email on file.")).toBeTruthy();
+    expect((within(panel).getByRole("button", { name: "Choose who gets it" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("words what emailing the tenants did", () => {

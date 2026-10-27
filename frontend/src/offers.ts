@@ -136,3 +136,43 @@ export function base64Of(bytes: Uint8Array): string {
   }
   return btoa(text);
 }
+
+// What renewing a lease starts from (ADR 0010 phase 3, part L; GET /api/leasing/renewals/<id>/plan):
+// its rent today, the new term's first day, the tenants who sign and the written notice the
+// property's state asks before the new rent, with what to say when it starts too soon.
+export type RenewalNotice = {
+  state: string;
+  days: number;
+  law: string;
+  increase_percent: string;
+  earliest: string;
+  warning: string | null;
+};
+
+export type RenewalPlan = {
+  lease_id: string;
+  property: string;
+  unit: string;
+  starts_on: string;
+  ends_on: string | null;
+  monthly_rent: string;
+  new_rent: string;
+  new_starts_on: string;
+  signers: { tenant_id: string; name: string; email: string | null }[];
+  notice: RenewalNotice | null;
+};
+
+// A renewal's default last day: a year after it starts, the day before ("2027-07-01" ->
+// "2028-06-30"), in UTC like the server's dates.
+export function yearFrom(isoDay: string): string {
+  const last = new Date(`${isoDay}T00:00:00Z`);
+  last.setUTCFullYear(last.getUTCFullYear() + 1);
+  last.setUTCDate(last.getUTCDate() - 1);
+  return last.toISOString().slice(0, 10);
+}
+
+// "Tenant A (a@example.com) and Tenant B (b@example.com)": whom a renewal goes to.
+export function whoSigns(signers: { name: string; email: string | null }[]): string {
+  const each = signers.map((s) => `${s.name} (${s.email})`);
+  return each.length < 2 ? each.join("") : `${each.slice(0, -1).join(", ")} and ${each.at(-1)}`;
+}

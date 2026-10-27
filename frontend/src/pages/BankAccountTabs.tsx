@@ -9,13 +9,15 @@ import { Wide } from "../components/Wide";
 import { Landmark } from "lucide-react";
 import type { BankDeposit, Breakdown, RegisterLine, Undeposited } from "../banking";
 import { Badge } from "../components/Badge";
-import { Button } from "../components/Button";
+import { Button, LinkButton } from "../components/Button";
 import { Form } from "../components/Form";
 import { Said } from "../components/Said";
+import { UpdatedStamp, useAgainOnFocus } from "../components/Updated";
 import { useRecord } from "./useRecord";
 import { latest } from "../latest";
 import { day, money, usDate } from "../money";
 import type { Paged } from "../rentals";
+import { navigate } from "../router";
 import { GoLink } from "./NeedsAttention";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
@@ -26,7 +28,9 @@ function detail(failed: unknown): string {
 
 // Transactions: the account's register over days (the last ninety at first), newest first, a page
 // at a time; each move of its cash with what it was, who paid or was paid, its memo, the property
-// and the balance after it.
+// and the balance after it, opening its lease, bill, owner or tenant (ADR 0010 phase 3, part M).
+// Export CSV downloads every move of the days, oldest first. It is read again when the browser tab
+// comes back into view, and says when it was.
 export function RegisterTab({ bankId }: { bankId: string }) {
   const today = new Date();
   const [start, setStart] = useState(day(new Date(today.getTime() - 90 * 86_400_000)));
@@ -34,16 +38,18 @@ export function RegisterTab({ bankId }: { bankId: string }) {
   const [number, setNumber] = useState(1);
   const [page, setPage] = useState<Paged<RegisterLine> | null>(null);
   const [error, setError] = useState("");
+  const [at, setAt] = useState<Date | null>(null);
+  const again = useAgainOnFocus();
 
   useEffect(() => {
     const run = latest();
     setError("");
     const query = new URLSearchParams({ start, end, page: String(number) });
     api.get<Paged<RegisterLine>>(`/api/bank-accounts/${bankId}/register?${query}`)
-      .then(run.keep(setPage))
+      .then(run.keep((found: Paged<RegisterLine>) => { setPage(found); setAt(new Date()); }))
       .catch(run.keep((why) => { setPage(null); setError(detail(why)); }));
     return run.stop;
-  }, [bankId, start, end, number]);
+  }, [bankId, start, end, number, again]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -52,6 +58,10 @@ export function RegisterTab({ bankId }: { bankId: string }) {
           onChange={(event) => { setStart(event.target.value); setNumber(1); }} />
         <Field label="To" id="register-end" type="date" required value={end}
           onChange={(event) => { setEnd(event.target.value); setNumber(1); }} />
+        <LinkButton href={`/api/bank-accounts/${bankId}/register?${new URLSearchParams({ start, end, format: "csv" })}`}>
+          Export CSV
+        </LinkButton>
+        <UpdatedStamp at={at} />
       </div>
       {page === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
@@ -75,9 +85,13 @@ export function RegisterTab({ bankId }: { bankId: string }) {
               </thead>
               <tbody>
                 {page.items.map((line) => (
-                  <tr key={line.transfer_id}>
+                  <tr key={line.transfer_id} className={line.opens ? "cursor-pointer hover:bg-raised" : undefined}
+                    onClick={(event) => {
+                      // A click on the type's own link is the link's.
+                      if (line.opens && !(event.target as HTMLElement).closest("a")) navigate(line.opens);
+                    }}>
                     <td className="whitespace-nowrap">{usDate(line.on)}</td>
-                    <td>{line.type}</td>
+                    <td>{line.opens ? <GoLink href={line.opens} className={LINK}>{line.type}</GoLink> : line.type}</td>
                     <td>{line.party}</td>
                     <td className="text-ink-muted">{line.memo}</td>
                     <td className="text-ink-muted">{line.property}</td>
