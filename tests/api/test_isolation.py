@@ -27,6 +27,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 import re
 import types
 import typing
@@ -193,6 +194,8 @@ RECORDS = {
     + ")",
     "online payment": _ONLY.format("trust_online_payments"),
     "autopay": _ONLY.format("trust_autopay"),
+    # Made by fill_in: a bill paid with its check printed.
+    "payout run": _ONLY.format("trust_payout_runs"),
 }
 
 # A path parameter's record, by its name; then where one name means another record on a route.
@@ -235,6 +238,7 @@ PATH_IDS = {
     "item_id": "occupant",
     "payment_id": "online payment",
     "autopay_id": "autopay",
+    "run_id": "payout run",
     "pmc_id": "company",
 }
 ROUTE_PATH_IDS = {
@@ -330,6 +334,7 @@ QUERY_IDS = {
     "application": "application",
     "account": "owner account",
     "about_id": "property",
+    "bank_account_id": "bank",
 }
 ROUTE_QUERY_IDS = {
     ("/api/emails", "about_id"): "tenant",
@@ -515,6 +520,9 @@ TEXT = {
     "drawing_base64": base64.b64encode(PNG).decode(),
     "file_name": "isolation.csv",
     "visit_window": "8-10 am",
+    # Its last digit checks, and 00 starts no bank's (tools/check_synthetic_data.py).
+    "routing_number": "001234561",
+    "account_number": "12345678",
 }
 MONEY = re.compile(
     r"amount|rent|fee|price|balance|cash|deposit|limit|income|maximum|minimum|reserve|markup"
@@ -957,6 +965,30 @@ def fill_in(client: TestClient, company: Company, conn: psycopg.Connection[Any])
     tenant("POST", f"/api/payments/leases/{lease}/checkout", {"amount": "10.00"})
     tenant("POST", f"/api/payments/leases/{lease}/autopay", {"rule": "fixed", "amount": "10.00"})
     company.vendor_token = staff("POST", f"/api/vendors/{vendor}/link")["url"].split("#", 1)[1]
+    printed = staff(
+        "POST",
+        "/api/payables/bills",
+        {
+            "vendor_id": str(vendor),
+            "account": str(one("owner account")),
+            "reference": "ISO-1",
+            "bill_date": str(TODAY),
+            "due_on": str(TODAY),
+            "amount": "5.00",
+            "memo": "Isolation",
+        },
+    )["id"]
+    staff(
+        "POST",
+        "/api/payables/bills/pay",
+        {
+            "on": str(TODAY),
+            "method": "check",
+            "bill_ids": [str(printed)],
+            "output": "file",
+            "request_id": str(uuid.uuid4()),
+        },
+    )
     ended = conn.execute(RECORDS["returned lease"], {"pmc": company.pmc_id}).fetchone()[0]
     staff(
         "POST", f"/api/move-out/{ended}/return", {"request_id": str(uuid.uuid4()), "on": str(TODAY)}
@@ -1068,11 +1100,14 @@ def world(database_url) -> Iterator[World]:
     dry_app = create_app(settings)
     dry_app.dependency_overrides[deps.connection] = rolled_back
     with (
+        # A throwaway key, so a payee's bank account is kept and B's own request is answered.
+        pytest.MonkeyPatch.context() as env,
         psycopg.connect(database_url, autocommit=True) as conn,
         psycopg.connect(database_url, autocommit=True) as app_conn,
         TestClient(create_app(settings)) as live,
         TestClient(dry_app) as dry,
     ):
+        env.setenv("PMS_DATA_KEY", base64.b64encode(os.urandom(32)).decode())
         app_conn.execute("SET ROLE trust_app")
         a, b, c = (Company(n, demo.build(app_conn, public_url=PUBLIC_URL)) for n in "ABC")
         for company in (a, b):
