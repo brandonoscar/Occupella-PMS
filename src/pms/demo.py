@@ -820,7 +820,6 @@ def company_profile(b: Builder, demo: Demo) -> None:
                 work_order_notices=True,
                 adverse_action_notices=True,
                 reserve_alerts=True,
-                payment_receipts=True,
             ),
         )
 

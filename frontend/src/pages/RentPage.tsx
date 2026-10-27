@@ -20,13 +20,12 @@ import { latest } from "../latest";
 import { day, money, usDate } from "../money";
 import type { RentRun, RentRunLine } from "../rent";
 import { rentRunSummary } from "../rent";
-import type { LeaseDetail, Paged, RentRollRow } from "../rentals";
+import type { Paged, RentRollRow } from "../rentals";
 import { navigate } from "../router";
 import { scopeParams, useScope } from "../scope";
 import type { Recorder } from "./LeaseForms";
-import { LeaseFinder } from "./LeaseFinder";
 import { GoLink } from "./NeedsAttention";
-import { PaymentForm } from "./LeaseForms";
+import { ReceivePayment } from "./ReceivePayment";
 import { STAFF_NAV } from "./staffNav";
 import { MarketRent, UnitSize } from "./UnitDetailsCard";
 import { useRecord } from "./useRecord";
@@ -155,7 +154,7 @@ export function RentPage({ me }: { me: Me }) {
       )}
       {panel === "payment" && (
         <SidePanel title="Receive payment" onClose={() => setPanel(null)}>
-          <ReceivePayment record={recordThenClose} />
+          <ReceivePayment record={record} close={() => setPanel(null)} />
           <Notice tone="error">{refused}</Notice>
         </SidePanel>
       )}
@@ -167,25 +166,6 @@ export function RentPage({ me }: { me: Me }) {
       )}
     </Shell>
   );
-}
-
-// Receive payment: find the lease by its tenant, unit or property, then the payment.
-function ReceivePayment({ record }: { record: Recorder }) {
-  const [lease, setLease] = useState<LeaseDetail | null>(null);
-
-  if (lease !== null) {
-    return (
-      <div className="flex flex-col gap-4">
-        <p className="flex flex-wrap items-center justify-between gap-2 text-base">
-          <span>{lease.property} · {lease.unit} · {lease.tenants.map((t) => t.name).join(", ")}</span>
-          <Button variant="ghost" size="sm" onClick={() => setLease(null)}>Another lease</Button>
-        </p>
-        <p className="text-sm text-ink-muted">Balance due {money(lease.owed)}</p>
-        <PaymentForm lease={lease} record={record} />
-      </div>
-    );
-  }
-  return <LeaseFinder id="pay-find-lease" onLease={setLease} />;
 }
 
 // Run rent now (admins): what the nightly run does, for a due date and a day of late fees, and

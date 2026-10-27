@@ -173,7 +173,7 @@ browser = [
 
 [[feature]]
 id = "rent-work"
-statement = "On a lease's own page (its balance due at the top, then Summary, Ledger, Tenants, Files and Notes), staff add a fee, a credit or a monthly charge to it and stop one; record a tenant's payment (what the lease owes to the owner, the rest prepaid rent), use prepaid rent, take a security, pet or key deposit (each held apart, the lease showing each kind; migration 0092), and record a bounce, which undoes the payment and charges the NSF fee; and read its ledger, each charge, payment and bounce with the balance after it."
+statement = "On a lease's own page (its balance due at the top, then Summary, Ledger, Tenants, Files and Notes), staff add a fee, a credit or a monthly charge to it and stop one; record a tenant's payment (what the lease owes to the owner, the rest prepaid rent; since ADR 0010 with what staff write about it and the check's photo or PDF, paying the open charges staff choose first, and Save and add another), use prepaid rent, take a security, pet or key deposit (each held apart, the lease showing each kind; migration 0092), and record a bounce, which undoes the payment and charges the NSF fee; and read its ledger, each charge, payment and bounce with the balance after it."
 operations = [
   "GET /api/leases/{lease_id}",
   "GET /api/leases/{lease_id}/ledger",
@@ -188,6 +188,7 @@ operations = [
 browser = [
   "features.spec.ts › staff add a fee, a credit and a monthly charge to a lease, take a deposit and a pet deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee",
   "portal.spec.ts › staff record a tenant's payment, the rest held as prepaid rent, and then its bounce",
+  "features.spec.ts › staff receive a payment with a note and the check's photo, choose the charges it pays first, and save and add another",
 ]
 
 [[feature]]
@@ -256,7 +257,7 @@ browser = [
 
 [[feature]]
 id = "housing-assistance"
-statement = "Staff keep the company's housing authorities and set a lease's housing assistance from the first of a month; as each month's rent is charged the authority's part becomes its own charge and the tenant owes the rest, so the tenant's late fees, deposit and balance are their part alone; staff charge or credit the authority by hand, and record its payment for many leases, each lease's part paying what it owes there oldest first into the owners' accounts, counted as rent collected. Since migration 0116 (q034) an authority's late payment fee from a day, charged on the authority by the run once its part is still open after the grace days; a payment the bank returned, marked bounced so the authority owes it again; and a payment for a lease on a payment hold taken only past the hold."
+statement = "Staff keep the company's housing authorities and set a lease's housing assistance from the first of a month; as each month's rent is charged the authority's part becomes its own charge and the tenant owes the rest, so the tenant's late fees, deposit and balance are their part alone; staff charge or credit the authority by hand, and record its payment for many leases (one check; since ADR 0010 from Receive payment, on the rent roll or the authority's page), each lease's part paying what it owes there oldest first into the owners' accounts, counted as rent collected. Since migration 0116 (q034) an authority's late payment fee from a day, charged on the authority by the run once its part is still open after the grace days; a payment the bank returned, marked bounced so the authority owes it again; and a payment for a lease on a payment hold taken only past the hold."
 operations = [
   "GET /api/assistance/authorities",
   "POST /api/assistance/authorities",

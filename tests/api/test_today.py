@@ -194,7 +194,38 @@ def test_a_quiet_day_shows_nothing(client, conn, staff, pmc):
         "deposits_to_receive": [],
         "deposits_to_return": [],
         "owner_draws": None,
+        "month_to_month": [],
     }
+
+
+def test_a_lease_gone_month_to_month_is_noted_for_thirty_days_while_it_is(client, conn, staff, pmc):
+    # ADR 0010 phase 1c: the nightly run took its term month to month with no renewal signed.
+    prop = pmc.owners[0].property_id
+    tenant = add_tenant(conn, pmc.pmc_id, prop, "Tenant 4")
+    unit = add_unit(conn, pmc.pmc_id, prop, "Unit 4")
+    term_end = TODAY + 2 * DAY
+    lease = open_lease(conn, pmc.pmc_id, unit, START, term_end, "1500.00", [tenant])
+    conn.execute("SELECT trust_roll_over_leases(%s, %s)", (pmc.pmc_id, term_end + DAY))
+
+    def noted(on):
+        return client.get("/api/today", params={"on": str(on)}).json()["month_to_month"]
+
+    assert noted(term_end + DAY) == [
+        {
+            "lease_id": str(lease),
+            "property": "Property 1",
+            "unit": "Unit 4",
+            "tenants": ["Tenant 4"],
+            "term_ended_on": str(term_end),
+            "rolled_on": str(term_end + DAY),
+        }
+    ]
+    assert noted(term_end) == []  # not yet
+    assert len(noted(term_end + 30 * DAY)) == 1
+    assert noted(term_end + 31 * DAY) == []  # a month on, it's a month-to-month lease like any
+    # Once it ends after all (a notice), it isn't month to month any more.
+    conn.execute("SELECT trust_end_lease(%s, %s, %s)", (pmc.pmc_id, lease, term_end + 40 * DAY))
+    assert noted(term_end + DAY) == []
 
 
 def test_the_day_is_the_sessions_pmc(client, conn, staff, pmc):

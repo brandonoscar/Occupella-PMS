@@ -201,6 +201,20 @@ describe("Dashboard", () => {
     expect(within(deposits).getByRole("link", { name: "Open Move-outs" }).getAttribute("href")).toBe("/move-out");
   });
 
+  it("notes each lease the nightly run took month to month, its term run out with no renewal (ADR 0010)", async () => {
+    server({ ...QUIET, month_to_month: [
+      { lease_id: "l1", property: "Property 1", unit: "Unit 4", tenants: ["Tenant 1"], term_ended_on: "2026-10-10",
+        rolled_on: "2026-10-11" },
+    ] });
+    render(<DashboardPage me={ME} />);
+
+    const rolled = await screen.findByRole("region", { name: "Leases gone month to month" });
+    expect(within(rolled).getByText(
+      "Unit 4, Property 1 (Tenant 1): its term ended 10/10/2026 with no renewal signed; month to month at the same rent since 10/11/2026",
+    )).toBeTruthy();
+    expect(within(rolled).getByRole("link", { name: "Open Renewals" }).getAttribute("href")).toBe("/renewals");
+  });
+
   it("shows the company's figures, each opening the page where that work is done", async () => {
     window.history.pushState(null, "", "/");
     server(QUIET);
