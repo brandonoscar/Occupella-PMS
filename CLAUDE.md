@@ -1236,4 +1236,7 @@ python -m tools.check_synthetic_data                 # no real-looking personal 
 (cd frontend && npm ci && npm run typecheck && npm run lint && npm run knip && npm test && npm run build)   # the portal
 ```
 
-Mutation testing and the rest: `docs/CI.md`.
+Mutation testing and the rest: `docs/CI.md`. On Windows (or anywhere with Docker and Node),
+`scripts/simulate.ps1` plays every browser test against a fresh synthetic company in Edge, Firefox
+and Chromium, in UTC, Los Angeles and Kiritimati time, and says what failed (README, "Simulate
+people using it").
