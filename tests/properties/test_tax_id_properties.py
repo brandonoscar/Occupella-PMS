@@ -1,4 +1,4 @@
-"""Property-based tests for tax IDs (ADR 0010 phase 2, part F; migration 20261025000155).
+"""Property-based tests for tax IDs (ADR 0010 phase 2, part F; migration 20261027000155).
 
 Hypothesis has three staff members of one PMC keep owners' and a vendor's tax IDs, try to see
 them whole, and give and take the admin role among themselves, in random order, as the app
