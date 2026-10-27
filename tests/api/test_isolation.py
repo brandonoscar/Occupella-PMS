@@ -196,6 +196,8 @@ RECORDS = {
     "autopay": _ONLY.format("trust_autopay"),
     # Made by fill_in: a bill paid with its check printed.
     "payout run": _ONLY.format("trust_payout_runs"),
+    # Made by fill_in: the vendor's EIN, sealed.
+    "tax id": _ONLY.format("trust_tax_ids"),
 }
 
 # A path parameter's record, by its name; then where one name means another record on a route.
@@ -239,6 +241,7 @@ PATH_IDS = {
     "payment_id": "online payment",
     "autopay_id": "autopay",
     "run_id": "payout run",
+    "tax_id": "tax id",
     "pmc_id": "company",
 }
 ROUTE_PATH_IDS = {
@@ -562,6 +565,9 @@ BODIES: dict[str, dict[str, Any]] = {
     "POST /api/apply": {"token": "x" * 43},
     "POST /api/signing/consent": {"disclosure_sha256": "0" * 64},
     "POST /api/signing/sign": {"document_sha256": "0" * 64},
+    # A tax ID in a form never issued: 00 starts no EIN (tools/check_synthetic_data.py).
+    "POST /api/tax-ids/owners/{owner_id}": {"kind": "EIN", "number": "00-1234567"},
+    "POST /api/tax-ids/vendors/{vendor_id}": {"kind": "EIN", "number": "00-1234567"},
     "POST /api/budgets": {
         "lines": [
             {
@@ -965,6 +971,7 @@ def fill_in(client: TestClient, company: Company, conn: psycopg.Connection[Any])
     tenant("POST", f"/api/payments/leases/{lease}/checkout", {"amount": "10.00"})
     tenant("POST", f"/api/payments/leases/{lease}/autopay", {"rule": "fixed", "amount": "10.00"})
     company.vendor_token = staff("POST", f"/api/vendors/{vendor}/link")["url"].split("#", 1)[1]
+    staff("POST", f"/api/tax-ids/vendors/{vendor}", {"kind": "EIN", "number": "00-7654321"})
     printed = staff(
         "POST",
         "/api/payables/bills",
