@@ -501,7 +501,8 @@ def test_the_books_alone_leave_every_other_page_for_the_feature_tests(conn, app_
 def test_every_write_but_the_first_staff_member_and_their_role_names_a_staff_member(conn, built):
     assert conn.execute(
         "SELECT table_name, count(*) FROM trust_audit_log"
-        " WHERE pmc_id = %s AND staff_id IS NULL GROUP BY table_name ORDER BY table_name",
+        " WHERE pmc_id = %s AND staff_id IS NULL GROUP BY table_name"
+        ' ORDER BY table_name COLLATE "C"',
         (built.pmc_id,),
     ).fetchall() == [
         # Applicants apply themselves, through a link: they have no login to name. With what they
