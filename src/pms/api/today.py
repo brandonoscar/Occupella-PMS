@@ -1,8 +1,8 @@
 """Staff's day at a glance (/today): late rent, bills due, months not reconciled, applications
 waiting for a decision, lease offers waiting for signatures, journal entries waiting to be
 posted, vendor insurance expired or running out, the company's earned fees still in trust,
-trust bank accounts with no broker on file or a signer's bond running out, and security deposits a
-signed lease asked that are not all held yet.
+trust bank accounts with no broker on file or a signer's bond running out, security deposits a
+signed lease asked that are not all held yet, and the owner draws prepared on the draw day.
 
 Read only. Each part comes from the route of the page that does that work (rent, bills,
 month-end, leasing, the journal, vendors), so the two never disagree; this only picks out what needs
@@ -25,6 +25,7 @@ from pms.api import (
     moveout,
     offers,
     payables,
+    payouts,
     reconcile,
     rent,
     signers,
@@ -109,6 +110,9 @@ class Today(BaseModel):
     # Leases past their last day whose deposits are still held, with the day they are due back
     # by the strictest deadline found (migration 0120, docs/law.md).
     deposits_to_return: list[moveout.DueBack]
+    # The owner draws the nightly run prepared on the draw day, waiting for staff to pay them
+    # (migration 0153).
+    owner_draws: payouts.DrawRun | None = None
 
 
 # The leases named as the rent page names them: property, unit and every tenant on it.
@@ -225,6 +229,7 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
         ],
         deposits_to_receive=deposits,
         deposits_to_return=moveout.due_back(conn, session.pmc_id, day),
+        owner_draws=payouts.waiting_draws_of(conn, session.pmc_id),
         renters_insurance=[
             Uninsured(
                 lease_id=lease,

@@ -21,7 +21,7 @@ const ME: Me = {
 const owner = (n: number, property = n): OwnerMoney => ({
   account: `a${n}`, owner_id: `o${n}`, owner: `Owner ${n}`, property_id: `pr${property}`, property: `Property ${property}`,
   bank_account: "Operating", balance: "0.00", reserve: "0.00", unpaid_bills: "0.00",
-  available: "0.00", has_agreement: true,
+  available: "0.00", has_agreement: true, payout_method: "check",
 });
 
 const budgetOf = (account: string, year: number, property = `Property ${account.slice(1)}`): Budget => ({

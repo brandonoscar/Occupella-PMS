@@ -200,12 +200,8 @@ LEFT JOIN LATERAL (
 ) AS c ON true
 """
 
-TENANTS = f"""
-SELECT t.id, t.display_name, p.id, p.display_name, l.id, u.id, u.display_name, l.starts_on,
-       l.ends_on, c.email, c.phone, trust_is_archived(NULL, NULL, t.id), {rent.OWED},
-       {PORTAL_STATUS}, count(*) OVER ()
-FROM trust_tenants AS t
-JOIN trust_properties AS p ON p.id = t.property_id
+# A tenant's lease in effect today, else their latest (the one the list shows).
+TENANT_LEASE = """
 LEFT JOIN LATERAL (
     SELECT x.id, x.unit_id, x.starts_on, x.ends_on FROM trust_lease_tenants AS lt
     JOIN trust_leases AS x ON x.id = lt.lease_id
@@ -215,14 +211,33 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) AS l ON true
 LEFT JOIN trust_units AS u ON u.id = l.unit_id
+"""
+
+# The page of tenants first, by what they are found and sorted by; then what each shows (their
+# contact details, portal login and what their lease owes) for that page alone.
+TENANTS = f"""
+WITH paged AS (
+    SELECT t.id, count(*) OVER () AS total
+    FROM trust_tenants AS t
+    JOIN trust_properties AS p ON p.id = t.property_id
+    {TENANT_LEASE}
+    WHERE t.pmc_id = %(pmc)s AND trust_is_archived(NULL, NULL, t.id) = %(archived)s
+      AND {scope.within("t.property_id")}
+      AND (%(like)s::text IS NULL OR t.display_name ILIKE %(like)s
+           OR p.display_name ILIKE %(like)s OR u.display_name ILIKE %(like)s)
+    ORDER BY t.display_name COLLATE "C", t.id
+    LIMIT %(per_page)s OFFSET %(offset)s
+)
+SELECT t.id, t.display_name, p.id, p.display_name, l.id, u.id, u.display_name, l.starts_on,
+       l.ends_on, c.email, c.phone, trust_is_archived(NULL, NULL, t.id), {rent.OWED},
+       {PORTAL_STATUS}, paged.total
+FROM paged
+JOIN trust_tenants AS t ON t.id = paged.id
+JOIN trust_properties AS p ON p.id = t.property_id
+{TENANT_LEASE}
 {LATEST_CONTACT.format(person="tenant_id", key="t.id")}
 {PORTAL}
-WHERE t.pmc_id = %(pmc)s AND trust_is_archived(NULL, NULL, t.id) = %(archived)s
-  AND {scope.within("t.property_id")}
-  AND (%(like)s::text IS NULL OR t.display_name ILIKE %(like)s OR p.display_name ILIKE %(like)s
-       OR u.display_name ILIKE %(like)s)
 ORDER BY t.display_name COLLATE "C", t.id
-LIMIT %(per_page)s OFFSET %(offset)s
 """  # noqa: S608
 
 

@@ -20,12 +20,14 @@ from helpers import (
     approve_bill,
     charge,
     contribute,
+    deposit_interest_terms,
     draw_owner,
     enter_bill,
     language_sorted_database,
     make_pmc,
     open_account,
     open_lease,
+    pay_deposit_interest,
     post_leasing_fee,
     post_management_fee,
     reverse_payment,
@@ -41,6 +43,7 @@ PARTS = [
     "bills paid",
     "owner draws",
     "owner contributions",
+    "security deposit interest",
     "other",
     "closing balance",
 ]
@@ -122,6 +125,7 @@ def test_each_part_of_the_year_shows_under_its_property(conn, app_conn, pmc):
                 Decimal("-250.00"),
                 Decimal("-100.00"),
                 Decimal("400.00"),
+                Decimal("0.00"),
                 Decimal("-20.00"),
                 Decimal("950.00"),
             ],
@@ -179,6 +183,31 @@ def test_money_with_no_part_of_its_own_is_other(conn, pmc):
     )
 
 
+def test_interest_added_to_a_deposit_is_a_part_of_its_own_not_other(conn, app_conn, pmc):
+    """Interest added to a tenant's deposit (migration 0122) leaves the owner's account: its own
+    part of the year (migration 20261025000200). Interest credited against the rent moves no
+    money."""
+    lease = lease_of(conn, pmc)
+    transfer_batch(conn, [(pmc.deposit_cash, pmc.tenant_deposit, "1200.00")], at(1, 1, 2025))
+    deposit_interest_terms(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2025, 1, 1), 1)
+    transfer_batch(conn, [(pmc.operating_cash, pmc.owners[0].account, "100.00")], at(1, 1, 2025))
+
+    added = pay_deposit_interest(
+        app_conn, pmc.pmc_id, lease, date(2025, 12, 31), "deposit", "interest-2025", at(1, 5)
+    )
+    credited = pay_deposit_interest(
+        app_conn, pmc.pmc_id, lease, date(2026, 6, 30), "rent_credit", "interest-june", at(7, 1)
+    )
+
+    # 1200.00 at 1% through 2025 is 12.00, out of the 100.00 the account held from 2025.
+    assert (added, credited > 0) == (Decimal("12.00"), True)
+    got = parts(conn, pmc)
+    assert (got["opening balance"], got["closing balance"]) == (Decimal("100.00"), Decimal("88.00"))
+    assert got["security deposit interest"] == Decimal("-12.00")
+    assert got["other"] == Decimal("0.00")
+    assert parts(conn, pmc, 2025)["security deposit interest"] == Decimal("0.00")
+
+
 def test_every_property_of_the_owner_and_the_totals_across_them(conn, pmc):
     second = conn.execute(
         "INSERT INTO trust_properties (pmc_id, display_name) VALUES (%s, 'Property 0')"
@@ -199,12 +228,12 @@ def test_every_property_of_the_owner_and_the_totals_across_them(conn, pmc):
         ("Owner 1", "owner"),
         ("2026, January 1 to December 31 UTC", "year"),
     ]
-    assert [r[1] for r in rows[3:21]] == ["Property 0"] * 9 + ["Property 1"] * 9
-    totals = {item: amount for _, p, item, amount in rows[21:30]}
+    assert [r[1] for r in rows[3:23]] == ["Property 0"] * 10 + ["Property 1"] * 10
+    totals = {item: amount for _, p, item, amount in rows[23:33]}
     assert totals["all properties: other"] == Decimal("130.00")
     assert totals["all properties: closing balance"] == Decimal("130.00")
-    assert rows[30][2:] == ("1099-MISC rents (box 1)", Decimal("0.00"))
-    assert len(rows) == 31
+    assert rows[33][2:] == ("1099-MISC rents (box 1)", Decimal("0.00"))
+    assert len(rows) == 34
 
 
 def test_another_owners_money_is_not_in_the_package(conn, pmc):

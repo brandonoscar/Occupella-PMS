@@ -1,6 +1,7 @@
 import { CircleCheck } from "lucide-react";
 import { EmptyState } from "../components/EmptyState";
 import { navigate } from "../router";
+import { drawRunLine } from "../payouts";
 import type { Today } from "../today";
 import {
   applicationLine,
@@ -28,6 +29,8 @@ function attentionGroups(today: Today): Group[] {
       lines: today.late_rent.map((lease) => lateLine(lease, today.on)) },
     { title: "Bills due this week", go: "/bills", goLabel: "Bills",
       lines: today.bills_due.map((bill) => billLine(bill, today.on)) },
+    { title: "Owner draws ready", go: "/owner-draws", goLabel: "Pay owners",
+      lines: today.owner_draws && today.owner_draws.lines.length > 0 ? [drawRunLine(today.owner_draws)] : [] },
     { title: "Month-end", go: "/banking", goLabel: "Banking",
       lines: today.unreconciled.map(monthEndLine) },
     { title: "Applications waiting", go: "/applicants", goLabel: "Applicants",
@@ -56,7 +59,7 @@ export function NeedsAttention({ today }: { today: Today }) {
   if (groups.length === 0) {
     return (
       <EmptyState icon={CircleCheck} title="Nothing is late or waiting."
-        body="Late rent, bills due this week, month-end, applications, unsigned offers, journal entries waiting, vendor insurance running out, the company's fees left in trust, trust accounts' signers, renters insurance, security deposits still to receive and deposits due back show here." />
+        body="Late rent, bills due this week, owner draws ready to pay, month-end, applications, unsigned offers, journal entries waiting, vendor insurance running out, the company's fees left in trust, trust accounts' signers, renters insurance, security deposits still to receive and deposits due back show here." />
     );
   }
   return (

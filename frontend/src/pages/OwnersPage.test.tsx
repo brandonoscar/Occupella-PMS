@@ -28,12 +28,12 @@ const ACCOUNTS: OwnerMoney[] = [
   {
     account: "a1", owner_id: "o1", owner: "Owner 1", property_id: "pr1", property: "Property 1",
     bank_account: "Operating", balance: "1200.00", reserve: "100.00", unpaid_bills: "300.00", available: "800.00",
-    has_agreement: true,
+    has_agreement: true, payout_method: "check",
   },
   {
     account: "a2", owner_id: "o1", owner: "Owner 1", property_id: "pr2", property: "Property 2",
     bank_account: "Operating", balance: "0.00", reserve: "0.00", unpaid_bills: "0.00", available: "0.00",
-    has_agreement: false,
+    has_agreement: false, payout_method: "check",
   },
 ];
 const NO_CONTACT = {
