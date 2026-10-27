@@ -179,6 +179,7 @@ else
 fi
 skip "CodeQL and dependency review" "GitHub-only; CI's security workflow runs them"
 skip "self-host image" "needs Docker; CI's selfhost job runs it when the build changes"
+skip "the browser tests in other browsers and time zones" "takes hours in Docker; scripts/simulate.ps1 runs them on your machine, CI's simulate workflow by hand"
 
 printf '\n== summary (base %s)\n' "$(git rev-parse --short "$base")"
 for item in "${not_run[@]}"; do echo "NOT RUN  $item"; done

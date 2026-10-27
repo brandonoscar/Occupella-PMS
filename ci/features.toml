@@ -1075,3 +1075,30 @@ operations = [
 browser = [
   "features.spec.ts › staff set the draw day and how owners and vendors are paid, keep the bank's ACH details, pay the draws the nightly run prepared with an ACH file and checks, and pay a bill by ACH file",
 ]
+
+[[feature]]
+id = "tax-ids"
+statement = "Staff keep an owner's or a vendor's tax ID (an EIN or an SSN), sealed by the server and shown by its last four; an admin reveals one whole and takes the year's 1099 export from the 1099 summary with each payee's tax ID, each time recorded with their name; staff who aren't admins see the last four only (ADR 0010, part F)."
+operations = [
+  "GET /api/tax-ids/owners/{owner_id}",
+  "POST /api/tax-ids/owners/{owner_id}",
+  "GET /api/tax-ids/vendors/{vendor_id}",
+  "POST /api/tax-ids/vendors/{vendor_id}",
+  "GET /api/tax-ids/{tax_id}/whole",
+  "GET /api/tax-ids/1099",
+]
+browser = [
+  "features.spec.ts › staff keep an owner's and a vendor's tax ID by its last four, an admin reveals one whole and takes the 1099 export, and staff who aren't admins see the last four only",
+]
+
+[[feature]]
+id = "applicant-details"
+statement = "An applicant gives a phone, their current address, a previous landlord, an employer, an emergency contact and a proof of income, and the household's others, animals (an assistance animal marked) and vehicles; staff see them on the application's page; once its offer is the lease, the tenant's page shows their emergency contact, which staff change, and their application, and the lease its household (ADR 0010, part G)."
+operations = [
+  "GET /api/tenants/{tenant_id}/application",
+  "POST /api/tenants/{tenant_id}/emergency-contact",
+]
+browser = [
+  "portal.spec.ts › staff draft a lease with a deposit and a monthly charge and send it, void a renewal, send another; the signers sign on the PMS's own page; both become leases",
+  "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff screen and approve it and record its withdrawal, take it off the page and close the link",
+]

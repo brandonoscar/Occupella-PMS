@@ -212,3 +212,57 @@ Screens before and after: `docs/design-pass/1c/`.
 payment; Automatic emails' "Payment receipts to tenants: On/Off" is now "Every payment, the PDF
 attached", with no switch. New: Receive payment's From, It pays, Note (staff only), Check photo or
 PDF, Save and add another; the Dashboard's Leases gone month to month.
+
+## Phase 2: tax IDs and what an application collects (parts F and G)
+
+Screens before and after: `docs/design-pass/2/`. Migration 0155.
+
+**Tax IDs (F)**
+
+- **An owner's or a vendor's tax ID** (an EIN or an SSN) is sealed by the app with the server's
+  key before it is kept (`trust_tax_ids`; `src/pms/sealed.py`, the same AES-GCM sealing as bank
+  account numbers, with the row's id bound in so a sealed value copied onto another row doesn't
+  open). Only its last four are kept in the clear. A server without `PMS_DATA_KEY` keeps none and
+  says so. A new one replaces the one before from then on; the same again writes nothing.
+- **Everyone sees the last four**: the owner's and the vendor's page carry a Tax ID card.
+- **An admin reveals one whole** (Reveal, until they hide it or leave the page) and takes the
+  year's **1099 export** from the 1099 summary report: each vendor marked for a 1099 and paid the
+  year's threshold or more, and each owner whose rents collected came to it (1099-MISC box 1),
+  with their tax ID whole, or "no tax ID on file: ask them for a W-9". The amounts are the vendor
+  payments report's and the owner year-end package's, a test reading both. **Each time a tax ID
+  is seen whole is a row naming the admin** (`trust_tax_id_reveals`), audit-logged, and the
+  database refuses it for anyone else.
+- **Never in logs**: the number travels only in a request's body and an admin's answer (no path,
+  no-store), a refusal never repeats it, the audit log holds only the sealed bytes, and no other
+  export holds it (the everything export keeps the sealed bytes, as it does bank account numbers).
+  The AI role reads none of it.
+- **Never from tenants or applicants**: the application asks for no Social Security number and no
+  date of birth; the screening company asks for those itself, and the form says so.
+
+**What an application collects (G)**
+
+- **Each applicant**: a phone and their current address (asked of everyone), their previous
+  landlord (a name, a phone and the days they rented) and employer if they have them, an emergency
+  contact, and a proof of income (a PDF, JPEG or PNG). **The household**: others who would live
+  there (names only), animals with the assistance animal flag kept (never charged pet rent, a fee
+  or a deposit), and vehicles. Nothing else: no question about anything fair housing protects (a
+  test reads the form's every label for it), and no field beyond the founder's list.
+- **All or none**: a detail that doesn't fit refuses the whole application. The API still takes
+  an application without them, as it did before; the form asks for them.
+- **Staff see them** on the application's page, the proof of income opened from there; it is in
+  no list of files and no search.
+- **When an applicant becomes a tenant** (their application's offer is the lease), each tenant who
+  was an applicant (the signer with the applicant's email and the tenant's name) is linked to them
+  once (`trust_tenant_applicants`, checked by the database): their email and phone become the
+  tenant's contact details, their emergency contact the tenant's, and the household the lease's
+  occupants, animals and vehicles. The rest (the address they left, their previous landlord,
+  employer and proof of income) stays with the application and shows on the tenant's page.
+  *Forced by the code:* tenants have no columns for a previous landlord or employer, and copying
+  them would make a second record of what the applicant gave; the link keeps one.
+- **An emergency contact table**, as the founder asked: `trust_emergency_contacts`, a tenant's or
+  an applicant's, the latest holding; staff change a tenant's on their page.
+
+**Renamed labels (rule 2)**: none. New: the Tax ID card (Add tax ID, Change tax ID, Reveal, Hide);
+the 1099 summary's "1099 export, with tax IDs"; the application's Phone, Where you live now, Your
+previous landlord, Employer, Emergency contact, Proof of income and Your household; the tenant
+page's Emergency contact and From their application; the application page's Household.
