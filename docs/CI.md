@@ -244,7 +244,8 @@ statement for the month before ends at their accounts' balances; by a month's en
 under an agreement has had the month before's management fee taken. Every choice comes from one
 seed (a new one each night), and a failure prints the command that replays it. Every PR runs 13
 months of it with the other tests (about a minute), and three tests that break one thing each the
-way a bug would and expect the night's check to name it.
+way a bug would and expect the night's check to name it; `scripts/check.sh` runs two months (about
+30 s).
 Measured 10/25 here, 4 cores shared with other work: five years (1,912 nights from 2021-08-01,
 seed 1) in 12 minutes, every check passing: 378 rents, 409 payments, 149 late fees, 22 bounces,
 248 management fees, 251 owner payouts, 63 bills entered by the nightly run and paid, and 772

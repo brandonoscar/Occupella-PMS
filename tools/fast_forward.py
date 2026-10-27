@@ -125,7 +125,6 @@ def start(conn: psycopg.Connection[Any], first: date, seed: int) -> Life:
                 owner_statement_day=3,
                 work_order_notices=True,
                 reserve_alerts=True,
-                payment_receipts=True,
             ),
         )
     # Somewhere for the emails to go (the reserved example.com: they go nowhere), and a bill
