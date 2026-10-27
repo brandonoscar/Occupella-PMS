@@ -338,7 +338,7 @@ browser = [
 
 [[feature]]
 id = "bills"
-statement = "Staff list bills a page at a time (Unpaid, Paid, Declined; by property group, vendor and due day; each awaiting the owner, approved, set aside, overdue or paid) and record one in a side panel, maybe with its invoice; one over the owner's limit emails the owner, who approves or declines it in their portal (or staff record their answer); a bill's own page has its expense account lines, files, the email and its history, and sets it aside and pays it by check or EFT; Pay bills sets aside and pays several at once, all or none, showing each property's cash first; a declined bill is never paid."
+statement = "Staff list bills a page at a time (Unpaid, Paid, Recurring, Void; by property group, vendor and due day; each Entered, Waiting for owner, Ready to pay, Short, Partly paid, Paid or Void, and overdue) and record one in a side panel, maybe with its invoice, warned of a vendor's bill with nearly the same reference; one over the owner's limit emails the owner, who approves or declines it in their portal (or staff record their answer); a bill not paid holds its amount from the owner's balance, and a Short one says what the owner must send and emails them for it after staff see who gets it; a bill's own page has its expense account lines, files, emails, payments and history, records a payment (all of it or a part, by check with its number or ACH, with a receipt) and voids one entered by mistake; Pay bills pays several at once, all or none, showing each property's cash first; a void bill is never paid."
 operations = [
   "GET /api/payables/bills",
   "GET /api/payables/bills/{bill_id}",
@@ -346,15 +346,28 @@ operations = [
   "POST /api/payables/bills/pay",
   "POST /api/payables/bills/{bill_id}/approval",
   "POST /api/payables/bills/{bill_id}/decline",
-  "POST /api/payables/bills/{bill_id}/set-aside",
   "POST /api/payables/bills/{bill_id}/pay",
+  "POST /api/payables/bills/{bill_id}/void",
+  "POST /api/payables/bills/{bill_id}/ask-owner",
+  "GET /api/payables/similar-bills",
   "GET /api/owner/bills",
   "POST /api/owner/bills/{bill_id}/approval",
   "POST /api/owner/bills/{bill_id}/decline",
 ]
 browser = [
   "features.spec.ts › a bill over the owner's limit emails them; they decline one and approve another in the portal, and staff pay it",
-  "portal.spec.ts › staff record a vendor's bill with its invoice, record the owner's approval, set it aside and pay it on its page, then draw the rest",
+  "portal.spec.ts › staff record a vendor's bill with its invoice, record the owner's approval, record its payment on its page, then draw the rest",
+]
+
+[[feature]]
+id = "bill-payments"
+statement = "Staff pay part of a bill by check with its number; a bank statement line with that check number and amount is matched to the payment by itself when the statement comes in (or by Match the sure ones), and the month-end tab suggests bank lines that look like a bill payment or a bill not yet paid, which staff confirm to match it or record the bill paid on the line's day."
+operations = [
+  "GET /api/reconcile/{bank_account_id}/bill-suggestions",
+  "POST /api/reconcile/{bank_account_id}/bill-suggestions",
+]
+browser = [
+  "features.spec.ts › staff pay part of a bill by check with its number, the statement matches the check by itself, and a line that looks like another bill is recorded paid once staff confirm",
 ]
 
 [[feature]]
@@ -385,7 +398,7 @@ operations = [
 browser = [
   "features.spec.ts › staff take the month's management fees once, find no leasing fee due, and pay owners only what is available",
   "features.spec.ts › staff set management terms with a leasing fee, late fees, a bank account and a vendor, and a new lease takes its leasing fee",
-  "portal.spec.ts › staff record a vendor's bill with its invoice, record the owner's approval, set it aside and pay it on its page, then draw the rest",
+  "portal.spec.ts › staff record a vendor's bill with its invoice, record the owner's approval, record its payment on its page, then draw the rest",
 ]
 
 [[feature]]
@@ -1039,3 +1052,25 @@ browser = [
   "features.spec.ts › a tenant sets up autopay, saves a bank account and turns it off, Run rent now starts a payment, the bank pays it, and staff turn it off",
 ]
 
+
+[[feature]]
+id = "payouts"
+statement = "Staff set the company's draw day (the nightly run prepares every owner's draw that night, and the Dashboard and Pay owners say they wait until staff pay them), how each owner is paid (ACH or check) and the bank account an owner's or vendor's ACH goes to (only its last four show), and a trust bank account's ACH details from its bank and first check number on its Payouts tab; Pay owners and Pay bills then record the payouts and, when asked, write their ACH file and print their checks, listed under Payout files to download. The PMS moves no money itself."
+operations = [
+  "GET /api/payouts/draw-day",
+  "POST /api/payouts/draw-day",
+  "GET /api/payouts/owners/{owner_id}",
+  "POST /api/payouts/owners/{owner_id}/method",
+  "POST /api/payouts/owners/{owner_id}/bank-account",
+  "GET /api/payouts/vendors/{vendor_id}",
+  "POST /api/payouts/vendors/{vendor_id}/bank-account",
+  "GET /api/payouts/bank-accounts/{bank_account_id}",
+  "POST /api/payouts/bank-accounts/{bank_account_id}",
+  "GET /api/payouts/runs",
+  "GET /api/payouts/runs/{run_id}/ach",
+  "GET /api/payouts/runs/{run_id}/checks",
+  "GET /api/payouts/draw-runs/waiting",
+]
+browser = [
+  "features.spec.ts › staff set the draw day and how owners and vendors are paid, keep the bank's ACH details, pay the draws the nightly run prepared with an ACH file and checks, and pay a bill by ACH file",
+]

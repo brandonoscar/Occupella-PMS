@@ -1,9 +1,12 @@
 """A database refusal as the API says it (pms.api.deps.refusal): the trust_* refusal's own
-words, and the ledger's below-zero refusal naming whose money is short, not an account id."""
+words, and the ledger's below-zero refusal naming whose money is short, not an account id; and a
+request that finds every database connection busy, told so in words."""
 
 import psycopg
 import pytest
+from people import join_as_staff
 
+from pms.api import deps
 from pms.api.deps import refusal
 
 
@@ -98,3 +101,25 @@ def test_a_closed_period_refusal_says_to_date_it_later():
     assert refusal(error) == (
         "that day is in a period already reconciled and closed: date it in the next open one"
     )
+
+
+@pytest.mark.timing
+def test_a_request_that_finds_every_connection_busy_is_told_so_in_words(
+    client, conn, app_conn, pmc, monkeypatch
+):
+    # Every one of the pool's connections taken, as fifty staff on slow pages took them.
+    join_as_staff(client, conn, app_conn, pmc)
+    monkeypatch.setattr(deps, "BUSY_AFTER", 0.2)
+    pool = client.app.state.pool
+    held = [pool.getconn(timeout=10) for _ in range(pool.max_size)]
+    try:
+        busy = client.get("/api/dashboard")
+    finally:
+        for taken in held:
+            pool.putconn(taken)
+
+    assert busy.status_code == 503
+    assert busy.json() == {"detail": "the PMS is busy just now: try again in a moment"}
+    assert busy.headers["Retry-After"] == "5"
+    # Once one is free again, the same request is answered.
+    assert client.get("/api/dashboard").status_code == 200

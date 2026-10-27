@@ -166,7 +166,10 @@ JOIN trust_vendors AS v ON v.id = b.vendor_id
 JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id
 JOIN props AS pr ON pr.property_id = a.property_id
 WHERE b.pmc_id = %(pmc)s AND b.due_on BETWEEN %(from)s AND %(to)s
-  AND NOT EXISTS (SELECT 1 FROM trust_bill_payments AS p WHERE p.bill_id = b.id AND p.step = 'paid')
+  -- Not paid in full: a bill may be paid in parts (ADR 0010).
+  AND (SELECT coalesce(sum(t.amount), 0) FROM trust_bill_payments AS p
+         JOIN pgledger_transfers AS t ON t.id = p.transfer_id
+         WHERE p.bill_id = b.id AND p.step = 'paid') < b.amount
   AND NOT EXISTS (SELECT 1 FROM trust_bill_declines AS x WHERE x.bill_id = b.id)
 UNION ALL
 SELECT 'rent-change-' || c.id, c.effective_on,

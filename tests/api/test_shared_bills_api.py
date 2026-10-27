@@ -4,7 +4,7 @@
 Staff enter one vendor invoice shared across properties: a bill for each owner's property
 account's share, under the invoice's reference with /1, /2..., each following every bill rule on
 its own. Staff add the company's markup to a bill, at the percent the owner's agreement sets; it
-is taken with the bill's money when the bill is set aside, and the owner sees it before then.
+is taken with the bill's money when the bill is first paid, and the owner sees it before then.
 Always the session's PMC."""
 
 import base64
@@ -131,8 +131,8 @@ def test_staff_share_one_invoice_across_two_properties(client, conn, staff, pmc)
     assert [
         (p["part"], p["property"], p["amount"], p["status"]) for p in one["shared"]["parts"]
     ] == [
-        (1, "Property 1", "400.00", "to set aside"),
-        (2, "Property 2", "500.00", "to set aside"),
+        (1, "Property 1", "400.00", "ready to pay"),
+        (2, "Property 2", "500.00", "ready to pay"),
     ]
     assert [line["expense_account"] for line in one["lines"] + two["lines"]] == ["Repairs"] * 2
     # The invoice is kept with the first share.
@@ -161,8 +161,8 @@ def test_each_share_waits_for_its_own_owners_approval_and_email(client, conn, st
     first, second = ok(shared(client, pmc))["bills"]
 
     assert (page(client, first)["bill"]["status"], page(client, second)["bill"]["status"]) == (
-        "to set aside",
-        "needs approval",
+        "short",  # its owner's account holds nothing yet
+        "waiting for owner",
     )
     assert page(client, first)["email"] is None
     assert page(client, second)["email"]["to"] == address
@@ -176,18 +176,18 @@ def test_a_bill_takes_the_markup_its_owners_agreement_sets(client, conn, staff, 
 
     marked = page(client, made)["bill"]
     assert (marked["markup"], marked["markup_percent"]) == ("25.00", "10")
-    # Draws hold the bill back with its markup until it is set aside.
+    # Draws hold the bill back with its markup until it is paid.
     [money] = [
         m
         for m in ok(client.get("/api/payables/owners"), 200)
         if m["account"] == pmc.owners[0].account
     ]
     assert (money["unpaid_bills"], money["available"]) == ("275.00", "725.00")
-    ok(call(client, f"bills/{made}/set-aside", on=TODAY))
+    ok(call(client, f"bills/{made}/pay", on=TODAY))
     assert balance(conn, pmc.owners[0].account) == Decimal("725.00")
     assert [e["what"] for e in page(client, made)["history"]][-2:] == [
-        "$250.00 set aside from the owner's money",
         "Markup of $25.00 (10%) taken into the company's fees",
+        "Paid $250.00 by check",
     ]
     # The owner's statement shows it on a line of its own.
     statement = ok(

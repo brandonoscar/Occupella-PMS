@@ -51,6 +51,31 @@ export type OpenLine = {
   description: string;
   reference: string | null;
 };
+// What a money-out line no match holds may be (ADR 0010): a bill payment recorded already of its
+// amount ("match"), or a bill ready to pay with exactly that much left ("record": confirming
+// records it paid on the line's day and matches the two).
+export type BillSuggestion = {
+  line: OpenLine;
+  bill_id: string;
+  vendor: string;
+  reference: string;
+  owner: string;
+  property: string;
+  kind: "match" | "record";
+  transfer_id: string | null;
+  amount: string;
+  check_number: string | null;
+};
+
+// What confirming a suggestion does, as its question asks it.
+export function suggestionQuestion(s: BillSuggestion): string {
+  if (s.kind === "match") {
+    return `Match the ${money(s.amount)} bank line of ${usDate(s.line.posted_on)} to the payment of ${s.vendor} ${s.reference}? No money moves.`;
+  }
+  const how = s.check_number ? `check ${s.check_number}` : "ACH";
+  return `Record ${s.vendor} ${s.reference} paid ${money(s.amount)} by ${how} on ${usDate(s.line.posted_on)}, and match it to this bank line? It comes out of ${s.owner}'s money in trust for ${s.property}.`;
+}
+
 // A transfer in a bank deposit names it and its day: its one bank line matches the whole deposit.
 export type OpenTransfer = {
   id: string; on: string; amount: string; memo: string | null;

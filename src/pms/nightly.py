@@ -5,8 +5,9 @@ the late fees of rents still open after their grace days (and housing authoritie
 fees, migration 0116), each lease's tenants' prepaid rent for what it owes for a company that
 turned that on (migration 0117), the recurring bills due by today, each
 with its email to an owner whose approval it waits for, for a company that turned it on, last
-month's management fees from its day of the month, and the recurring work orders due by today
-(trust_open_recurring_work_orders, migration 0085). Rent and late fees go through
+month's management fees from its day of the month, the recurring work orders due by today
+(trust_open_recurring_work_orders, migration 0085), and on its draw day every owner's draw,
+prepared for staff to pay (trust_prepare_owner_draws, migration 0153). Rent and late fees go through
 trust_run_rent, which records the run; bills through trust_enter_recurring_bills; fees through
 trust_take_monthly_management_fees. Then, for a company that turned them on, the emails of the
 day (src/pms/notices.py), owners' accounts fallen below their reserve among them. A PMC whose run
@@ -17,7 +18,7 @@ Rent roll, Run rent now). Each part charges or enters once per date, so a run ag
 this command, an admin's catch-up) charges nothing new. Only the management fees move trust
 money, inside trust, from each owner's account to the company's fee account, once per account and
 month (the founder's answer of 2026-10-18 to q049); charges are what tenants owe, and bills wait
-to be set aside and paid.
+for staff to pay them.
 
 The API runs it when it starts and then every day at 06:00 UTC, unless PMS_NIGHTLY is "off".
 `python -m pms.nightly` runs it once, for a server that schedules it itself. One run at a time,
@@ -78,6 +79,8 @@ class Ran:
     prepaid_used: int = 0
     # Autopay payments started (migration 0151).
     autopay: int = 0
+    # Whether the month's owner draws were prepared, on the company's draw day (migration 0153).
+    draws_prepared: int = 0
 
 
 def run_pmc(
@@ -113,6 +116,10 @@ def run_pmc(
         ).fetchone()
         assert run is not None and fees is not None and opened is not None
         assert authority is not None
+        # On the draw day, every owner's draw, after the fees and bills above; nothing is paid
+        # until staff pay them on Pay owners.
+        draws = conn.execute("SELECT trust_prepare_owner_draws(%s, %s)", (pmc_id, day)).fetchone()
+        assert draws is not None
         prepaid = rent.use_prepaid_by_itself(conn, pmc_id, day)
         started = autopay.start_due(conn, pmc_id, day, partner, sending, public_url)
         written = notices.write_scheduled(conn, pmc_id, day, public_url) if sending else None
@@ -129,6 +136,7 @@ def run_pmc(
         authority[0],
         prepaid,
         started.payments,
+        int(draws[0] is not None),
     )
 
 

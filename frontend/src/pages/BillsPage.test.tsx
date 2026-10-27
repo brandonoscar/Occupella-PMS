@@ -40,16 +40,17 @@ const BOOKS: Portfolio = {
 };
 
 const BILL: Bill = {
-  id: "b1", vendor_id: "v1", vendor: "Vendor 1", reference: "INV-1", account: "a1", owner: "Owner 1",
+  id: "b1", vendor_id: "v1", vendor: "Vendor 1", reference: "INV-1", account: "a1", owner_id: "o1", owner: "Owner 1",
   property_id: "pr1", property: "Property 1", bill_date: "2026-10-01", due_on: "2026-10-15", amount: "750.00",
   memo: "Roof repair", work_order_id: null, expense_account_id: null, expense_account: null, split: false,
-  approval_limit: "500.00", approved_by: null, declined_by: null, decline_reason: null, owner_email: "sent",
-  status: "needs approval", overdue: false, markup: null, markup_percent: null, shared_bill_id: null,
+  approval_limit: "500.00", approved_by: null, declined_by: null, decline_reason: null, voided: false, owner_email: "sent",
+  status: "waiting for owner", overdue: false, markup: null, markup_percent: null, shared_bill_id: null,
+  paid: "0.00", left: "750.00", held: "750.00", held_since: null, short: null, needed: null,
 };
 const BILLS: Bill[] = [
   BILL,
-  { ...BILL, id: "b2", reference: "INV-2", amount: "200.00", status: "to set aside", overdue: true },
-  { ...BILL, id: "b3", reference: "INV-3", amount: "900.00", status: "set aside", approved_by: "Owner 1" },
+  { ...BILL, id: "b2", reference: "INV-2", amount: "200.00", left: "200.00", status: "short", overdue: true, held: "50.00", short: "150.00", needed: "150.00" },
+  { ...BILL, id: "b3", reference: "INV-3", amount: "900.00", status: "partly paid", approved_by: "Owner 1", paid: "300.00", left: "600.00", held: "600.00", held_since: "2026-10-02" },
 ];
 const RECURRING: Recurring[] = [
   {
@@ -89,10 +90,13 @@ describe("BillsPage", () => {
 
     const row = await screen.findByRole("row", { name: "Vendor 1 INV-1" });
     expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "10/15/2026", "Vendor 1", "Property 1", "Roof repair", "INV-1", "$750.00", "Awaiting owner approval", "",
+      "10/15/2026", "Vendor 1", "Property 1", "Roof repair", "INV-1", "$750.00", "Waiting for owner", "",
     ]);
-    expect(within(screen.getByRole("row", { name: "Vendor 1 INV-2" })).getByTestId("status").textContent).toBe("Overdue");
-    expect(within(screen.getByRole("row", { name: "Vendor 1 INV-3" })).getByTestId("status").textContent).toBe("Set aside");
+    const short = screen.getByRole("row", { name: "Vendor 1 INV-2" });
+    expect(within(short).getByTestId("status").textContent).toBe("Short");
+    expect(within(short).getAllByRole("cell")[6]?.textContent).toBe("ShortOverdueneeds $150.00");
+    const part = screen.getByRole("row", { name: "Vendor 1 INV-3" });
+    expect(within(part).getAllByRole("cell")[6]?.textContent).toBe("Partly paid$600.00 left");
     fireEvent.click(within(row).getByText("Roof repair"));
     expect(window.location.pathname).toBe("/bills/b1");
     expect(screen.getByRole("link", { name: "Pay bills" }).getAttribute("href")).toBe("/pay-bills");
@@ -126,27 +130,37 @@ describe("BillsPage", () => {
     await closed();
     expect(screen.getByText("The owner's approval of INV-1 is recorded.")).toBeTruthy();
 
+    // Short: nothing to pay yet, but it can be voided (nothing was taken for it).
     fireEvent.click(screen.getByRole("button", { name: "Actions for Vendor 1 INV-2" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Set aside" }));
-    fireEvent.change(within(screen.getByRole("dialog", { name: "Set aside" })).getByLabelText("Set aside on"), { target: { value: "2026-10-03" } });
-    fireEvent.click(within(screen.getByRole("dialog", { name: "Set aside" })).getByRole("button", { name: "Set aside" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Void"]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Void" }));
+    const voiding = screen.getByRole("dialog", { name: "Void" });
+    fireEvent.change(within(voiding).getByLabelText("Why"), { target: { value: "Entered twice" } });
+    fireEvent.click(within(voiding).getByRole("button", { name: "Void" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Void" }));
     await closed();
 
+    // Partly paid: pay what is left; money was taken for it, so no void.
     fireEvent.click(screen.getByRole("button", { name: "Actions for Vendor 1 INV-3" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Pay" }));
-    const pay = screen.getByRole("dialog", { name: "Pay" });
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Record payment"]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Record payment" }));
+    const pay = screen.getByRole("dialog", { name: "Record payment" });
     fireEvent.change(within(pay).getByLabelText("Sent by"), { target: { value: "EFT" } });
     fireEvent.change(within(pay).getByLabelText("Paid on"), { target: { value: "2026-10-04" } });
-    fireEvent.click(within(pay).getByRole("button", { name: "Pay $900.00" }));
+    fireEvent.click(within(pay).getByRole("button", { name: "Pay $600.00" }));
     const confirm = screen.getByRole("alertdialog");
-    expect(confirm.textContent).toContain("Pay $900.00 to Vendor 1 for INV-3 by EFT on 10/04/2026?");
-    fireEvent.click(within(confirm).getByRole("button", { name: "Confirm" }));
+    expect(confirm.textContent).toContain("Pay $600.00 to Vendor 1 for INV-3 by ACH on 10/04/2026?");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Pay" }));
     await closed();
 
-    expect(posted(fetch)).toEqual([
+    const sent = posted(fetch);
+    expect(sent.slice(0, 2)).toEqual([
       ["/api/payables/bills/b1/approval", { approved_on: "2026-10-02", approved_by: "Owner 1, by phone" }],
-      ["/api/payables/bills/b2/set-aside", { on: "2026-10-03" }],
-      ["/api/payables/bills/b3/pay", { on: "2026-10-04", method: "EFT" }],
+      ["/api/payables/bills/b2/void", { reason: "Entered twice" }],
+    ]);
+    const [path, body] = sent[2] as [string, Record<string, unknown>];
+    expect([path, { ...body, request_id: typeof body.request_id }]).toEqual([
+      "/api/payables/bills/b3/pay", { on: "2026-10-04", method: "EFT", amount: "600.00", request_id: "string" },
     ]);
   });
 
@@ -245,8 +259,8 @@ describe("BillsPage", () => {
     server({}, {}, []);
     render(<BillsPage me={ME} />);
     expect((await screen.findByTestId("empty-state")).textContent).toContain("Nothing left to pay.");
-    fireEvent.click(screen.getByRole("tab", { name: "Declined" }));
-    expect((await screen.findByTestId("empty-state")).textContent).toContain("No bill was declined.");
+    fireEvent.click(screen.getByRole("tab", { name: "Void" }));
+    expect((await screen.findByTestId("empty-state")).textContent).toContain("No bill is void.");
     cleanup();
 
     server({ "/api/payables/recurring": [] });

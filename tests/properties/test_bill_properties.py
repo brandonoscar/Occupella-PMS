@@ -11,8 +11,9 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
   - the bills, decisions and payment steps are the model's: a vendor's reference is entered
     once; a bill takes one decision, an approval or a decline, and a decline only before it is
     set aside; a bill is set aside at most once, never once declined, and only with the owner's
-    approval when it is over the limit in force on its date; it is paid at most once, after it
-    was set aside and never dated before that;
+    approval when it is over the limit in force on its date; it is paid at most once, never
+    dated before it was set aside, and paying one not set aside sets it aside first (ADR 0010),
+    opening the vendor's account if they have none;
   - each vendor's account holds exactly what was set aside for its bills and not yet paid, and
     every balance is the model's;
   - a draw never pays out more than the balance above the reserve and the unpaid bills (a bill
@@ -315,7 +316,10 @@ class BillMachine(RuleBasedStateMachine):
             with pytest.raises(psycopg.errors.UniqueViolation, match="decision already"):
                 send()
         elif bill_id in self.set_aside:
-            with pytest.raises(psycopg.errors.CheckViolation, match="set aside already"):
+            with pytest.raises(
+                psycopg.errors.CheckViolation,
+                match="taken from the owner.s account for bill .* already",
+            ):
                 send()
         else:
             send()
@@ -345,10 +349,24 @@ class BillMachine(RuleBasedStateMachine):
             self.approved.add(bill_id)
         self.attempt_set_aside(role, bill_id, day, second)
 
+    def set_aside_refusal(self, bill_id, opens=False):
+        """Why the bill's money can't be taken from its owner now, or None: declined, over the
+        limit without approval, no vendor's account (which paying opens, ADR 0010), or the
+        owner's account short of it."""
+        bill = self.bills[bill_id]
+        terms = self.agreement_on(bill.account, bill.bill_date)
+        if bill_id in self.declined:
+            return (psycopg.errors.CheckViolation, "declined")
+        if bill.amount > (terms.limit if terms else 0) and bill_id not in self.approved:
+            return (psycopg.errors.CheckViolation, "approval limit")
+        if self.vendors[bill.vendor][1] is None and not opens:
+            return (psycopg.errors.InvalidParameterValue, "open the vendor's account")
+        if bill.amount > self.balance.get(bill.account, Decimal(0)):
+            return (psycopg.errors.CheckViolation, "below zero")
+        return None
+
     def attempt_set_aside(self, role, bill_id, day, second):
         bill, when = self.bills[bill_id], moment(day, second)
-        terms = self.agreement_on(bill.account, bill.bill_date)
-        payable = self.vendors[bill.vendor][1]
 
         def send():
             return set_aside_bill(self.conns[role], self.pmc_id, bill_id, when)
@@ -356,17 +374,10 @@ class BillMachine(RuleBasedStateMachine):
         if bill_id in self.set_aside:
             assert send() == self.set_aside[bill_id][0]  # a retry: nothing moves again
             return
-        if bill_id in self.declined:
-            refusal = (psycopg.errors.CheckViolation, "declined")
-        elif bill.amount > (terms.limit if terms else 0) and bill_id not in self.approved:
-            refusal = (psycopg.errors.CheckViolation, "approval limit")
-        elif payable is None:
-            refusal = (psycopg.errors.InvalidParameterValue, "open the vendor's account")
-        elif bill.amount > self.balance.get(bill.account, Decimal(0)):
-            refusal = (psycopg.errors.CheckViolation, "below zero")
-        else:
+        refusal = self.set_aside_refusal(bill_id)
+        if refusal is None:
             self.set_aside[bill_id] = (send(), when)
-            self.record(bill.account, payable, bill.amount, when)
+            self.record(bill.account, self.vendors[bill.vendor][1], bill.amount, when)
             return
         with pytest.raises(refusal[0], match=refusal[1]):
             send()
@@ -415,7 +426,28 @@ class BillMachine(RuleBasedStateMachine):
             assert send() == self.paid[bill_id][0]  # a retry
             return
         if bill_id not in self.set_aside:
-            refusal = (psycopg.errors.InvalidParameterValue, "not set aside")
+            # ADR 0010: paying takes the bill from its owner first, as setting it aside did,
+            # opening the vendor's account if they have none.
+            refusal = self.set_aside_refusal(bill_id, opens=True)
+            if refusal is None:
+                self.paid[bill_id] = (send(), when)
+                vendor_id, payable = self.vendors[bill.vendor]
+                if payable is None:
+                    (payable,) = self.conn.execute(
+                        "SELECT ledger_account_id FROM trust_ledger_accounts"
+                        " WHERE vendor_id = %s AND kind = 'vendor_payable'",
+                        (vendor_id,),
+                    ).fetchone()
+                    self.vendors[bill.vendor] = (vendor_id, payable)
+                (aside,) = self.conn.execute(
+                    "SELECT transfer_id FROM trust_bill_payments"
+                    " WHERE bill_id = %s AND step = 'set_aside'",
+                    (bill_id,),
+                ).fetchone()
+                self.set_aside[bill_id] = (aside, when)
+                self.record(bill.account, payable, bill.amount, when)
+                self.record(payable, self.pmc.operating_cash, bill.amount, when)
+                return
         elif when < self.set_aside[bill_id][1]:
             refusal = (psycopg.errors.InvalidParameterValue, "paid before that")
         else:

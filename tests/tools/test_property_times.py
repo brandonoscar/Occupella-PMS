@@ -65,6 +65,26 @@ def test_the_nightly_job_runs_the_shards_and_minutes_the_times_plan_for():
     assert TIMES["job_minutes"] + 10 <= 360  # GitHub stops any job at six hours
 
 
+def pr_job() -> str:
+    """The PR's property job of ledger-invariants.yml, up to the next job."""
+    match = re.search(r"^  properties:\n(.*?)(?=^  \S)", WORKFLOW, re.M | re.S)
+    assert match, "ledger-invariants.yml has no properties job"
+    return match.group(1)
+
+
+def test_the_pr_job_runs_the_property_tests_in_two_halves_dealt_by_time():
+    """Both halves run at once, so the job takes about its longer half: each half's PR seconds,
+    plus setup, well inside the job's minutes."""
+    job, seconds = pr_job(), TIMES["seconds"]
+    assert 'PMS_TEST_SHARD="$half/2"' in job and "for half in 1 2; do" in job
+    assert "PMS_TEST_SHARD_TIMES: ci/property-times.toml" in job
+    limit = re.search(r"^    timeout-minutes: ([0-9]+)$", job, re.M)
+    assert limit
+    halves = [sum(seconds[name] for name in part_of(seconds, f"{k}/2")) for k in (1, 2)]
+    assert sum(halves) == pytest.approx(sum(seconds.values()))
+    assert max(halves) <= int(limit.group(1)) * 60 * 0.75
+
+
 def test_the_coverage_shards_deal_the_property_tests_by_their_times():
     coverage = (ROOT / ".github/workflows/coverage.yml").read_text()
     assert "PMS_TEST_SHARD: ${{ matrix.shard }}/2" in coverage

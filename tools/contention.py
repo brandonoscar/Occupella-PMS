@@ -4,7 +4,7 @@ pair of transactions, don't reach.
 `python -m tools.contention` builds the demo PMC's books (pms.demo, synthetic) in a throwaway
 database on the server in $DATABASE_URL, then has each worker, on a connection of its own as
 trust_app, call the API's own route functions as the manager, at random, on the same few leases
-and owners' accounts: take a payment, bounce one, enter a bill and set it aside and pay it, pay
+and owners' accounts: take a payment, bounce one, enter a bill and pay it, pay
 an owner, record a contribution, take the company's fees out of trust and run rent. A refusal
 in words (an owner short of money, nothing to draw) is part of the load. A deadlock, a
 serialization failure or any other error, the kind the API would answer with a 500, fails the
@@ -123,9 +123,9 @@ class Worker:
         with self.request() as s:
             bill = payables.enter_bill(s, self.conn, new).id
         with self.request() as s:
-            payables.set_aside(s, self.conn, bill, payables.Day(on=self.today))
-        with self.request() as s:
-            payables.pay(s, self.conn, bill, payables.Paying(on=self.today))
+            payables.pay(
+                s, self.conn, bill, payables.Paying(on=self.today, request_id=uuid.uuid4())
+            )
 
     def draw(self) -> None:
         payout = payables.Payout(

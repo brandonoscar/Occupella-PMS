@@ -100,7 +100,7 @@ const BREAKDOWN: Breakdown = {
     {
       account: "a1", owner_id: "o1", owner: "Owner 1", property_id: "pr1", property: "Property 1",
       bank_account: "Operating", balance: "700.00", reserve: "100.00", unpaid_bills: "50.00", available: "550.00",
-      has_agreement: true,
+      has_agreement: true, payout_method: "check",
     },
   ],
 };

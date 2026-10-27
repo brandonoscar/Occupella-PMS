@@ -33,7 +33,7 @@ PARENTS = {
     "owner_property": "Owner funds",
     "prepaid_rent": "Prepaid rent",
     "tenant_deposit": "Tenant deposits",
-    "vendor_payable": "Vendor bills set aside",
+    "vendor_payable": "Vendor bills to pay",
     "pmc_income": "Fees earned in trust",
 }
 

@@ -298,6 +298,20 @@ TABLES = {
     "trust_autopay_stops": {"SELECT", "INSERT"},
     "trust_autopay_runs": {"SELECT", "INSERT"},
     "trust_autopay_submissions": {"SELECT", "INSERT"},
+    # Owner draws and payout files (migration 0153): the draw day, how each owner is paid, payees'
+    # bank accounts, what each bank asks in an ACH file, runs of payouts and their files' downloads,
+    # each an insert by staff; the draws prepared on the draw day are written only by
+    # trust_prepare_owner_draws, and staff approve them with an insert.
+    "trust_owner_draw_settings": {"SELECT", "INSERT"},
+    "trust_owner_payout_methods": {"SELECT", "INSERT"},
+    "trust_payee_bank_accounts": {"SELECT", "INSERT"},
+    "trust_bank_payout_settings": {"SELECT", "INSERT"},
+    "trust_payout_runs": {"SELECT", "INSERT"},
+    "trust_payout_run_items": {"SELECT", "INSERT"},
+    "trust_payout_file_downloads": {"SELECT", "INSERT"},
+    "trust_draw_runs": {"SELECT"},
+    "trust_draw_run_lines": {"SELECT"},
+    "trust_draw_run_approvals": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -329,6 +343,11 @@ AI_NEVER_READS = {
     "trust_vendor_links",
     # A tenant's saved bank account at the payments partner: its references are what charges it.
     "trust_autopay_accounts",
+    # Owners' and vendors' bank accounts (ADR 0009, rule 5), what each bank asks in an ACH file
+    # (its company id is often the company's EIN), and who took a file holding account numbers.
+    "trust_payee_bank_accounts",
+    "trust_bank_payout_settings",
+    "trust_payout_file_downloads",
     "trust_vendor_link_revocations",
     "trust_logins",
     "trust_invites",
@@ -411,6 +430,12 @@ FUNCTIONS = {
     "trust_take_monthly_management_fees(uuid,date)": {"trust_app"},
     "trust_set_aside_bill(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_pay_bill(uuid,uuid,timestamptz)": {"trust_app"},
+    # A payment of a bill or a part of it, once per request key (ADR 0010).
+    "trust_pay_bill_part(uuid,uuid,numeric,text,timestamptz)": {"trust_app"},
+    "trust_prepare_owner_draws(uuid,date)": {"trust_app"},
+    "trust_routing_number_ok(text)": {"trust_app"},
+    # What each open bill holds of its owner's balance: the app's, for the bills pages.
+    "trust_bill_holds(uuid)": {"trust_app"},
     "trust_charge_rent_due(uuid,date)": {"trust_app"},
     "trust_rent_for_month(date,date,numeric,date)": {"trust_app"},
     "trust_rent_on(uuid,date)": {"trust_app"},
@@ -492,6 +517,7 @@ FUNCTIONS = {
     "trust_management_fee_collected(text,timestamptz,timestamptz)": set(),
     "trust_post_fee(trust_ledger_accounts,numeric,timestamptz,text)": set(),
     "trust_lock_bill(uuid,uuid)": set(),
+    "trust_pay_bill_amount(trust_bills,numeric,text,timestamptz)": set(),
     "trust_lock_journal_entry(uuid,uuid)": set(),
     "trust_unpaid_bills(text,date)": set(),
     # Helpers the bank matching functions call as the owner: nobody else.
@@ -503,6 +529,7 @@ FUNCTIONS = {
     # Checks a payment hold as the owner, to take its lease's lock: no role calls it on its own.
     "trust_check_payment_hold()": set(),
     "trust_check_bill_decision()": set(),
+    "trust_check_payout_item()": set(),
     "trust_check_bank_deposit_item()": set(),  # a trigger's: no one calls it
     "trust_check_charge_waiver()": set(),
     "trust_check_rent_due_day()": set(),
@@ -700,6 +727,9 @@ SECURITY_DEFINER = {
     "trust_take_owner_fee(uuid,text,text,numeric,text,text,timestamptz)",
     "trust_set_aside_bill(uuid,uuid,timestamptz)",
     "trust_pay_bill(uuid,uuid,timestamptz)",
+    "trust_pay_bill_part(uuid,uuid,numeric,text,timestamptz)",
+    "trust_prepare_owner_draws(uuid,date)",
+    "trust_pay_bill_amount(trust_bills,numeric,text,timestamptz)",
     "trust_assess_late_fees(uuid,date)",
     "trust_charge_nsf_fee(uuid,text)",
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",

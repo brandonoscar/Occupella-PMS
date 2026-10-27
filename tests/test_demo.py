@@ -202,6 +202,18 @@ def test_today_lists_what_waits_on_staff(conn, app_conn, built):
     ]
     # Each trust bank account has its broker, and the bookkeeper's bond runs a while yet.
     assert waiting.signers == []
+    # The draw day came this month: tonight's run prepared the owners' draws, which wait for staff,
+    # each the way its owner is paid (Demo Owner C by ACH).
+    assert waiting.owner_draws is not None
+    assert waiting.owner_draws.prepared_on == waiting.on
+    assert all(Decimal(line.amount) > 0 for line in waiting.owner_draws.lines)
+    assert {line.method for line in waiting.owner_draws.lines if line.owner == "Demo Owner C"} <= {
+        "EFT"
+    }
+    # Nobody paid them yet.
+    assert not conn.execute(
+        "SELECT 1 FROM trust_draw_run_approvals WHERE run_id = %s", (waiting.owner_draws.id,)
+    ).fetchone()
 
 
 def test_the_company_took_the_month_before_lasts_fees_out_of_trust(conn, built):
@@ -384,19 +396,22 @@ def test_the_founders_seed_puts_something_on_every_list(conn, app_conn, built):
         ("Harbor Tower", "sent", f"{demo.harbor_rent(demo.APPLICANTS[2][0]):.2f}"),
         ("Oak Terrace", "partially signed", None),
     ]
-    # Eight bills: two due this week, one overdue, one waiting for its owner, three paid and
-    # this month's landscaping, entered by the nightly run.
+    # Ten bills: two due this week, one overdue and paid in part, one waiting for its owner, one
+    # its owner approved that their balance is short of, one voided, three paid and this month's
+    # landscaping, entered by the nightly run (ADR 0010's words for each).
     with demo.Builder(app_conn, pmc).as_staff(built.manager):
         bills, _ = payables.find_bills(app_conn, pmc)
     assert sorted((b.reference, b.status, b.overdue) for b in bills) == [
         ("ELC-3005", "paid", False),
-        (f"LAWN-{this_month:%Y-%m}", "to set aside", on.day > 28),
-        ("LND-3001", "to set aside", False),
+        (f"LAWN-{this_month:%Y-%m}", "ready to pay", on.day > 28),
+        ("LND-3001", "ready to pay", False),
+        ("PLB 3002", "void", False),
         ("PLB-1001", "paid", False),
-        ("PLB-3002", "to set aside", False),
-        ("PLB-3003", "to set aside", True),
+        ("PLB-3002", "ready to pay", False),
+        ("PLB-3003", "partly paid", True),
         ("RF-2207", "paid", False),
-        ("RF-3004", "needs approval", False),
+        ("RF-3004", "waiting for owner", False),
+        ("RF-3006", "short", False),
     ]
     # Six work orders, one at each step, the roofer's among them, each with its priority.
     assert rows(
