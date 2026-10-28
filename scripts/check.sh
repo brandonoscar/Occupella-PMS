@@ -116,6 +116,9 @@ step "migrations apply to an empty database" on_scratch dbmate --no-dump-schema 
 step "down/up" on_scratch python -m tools.check_rollback
 step "schema drift" schema_has_not_drifted
 step "upgrade a database that holds money" python -m tools.check_upgrade --base "$base"
+# db.yml, nightly: the same upgrade from some 50 earlier points of main; here from the oldest only
+step "upgrade from the oldest point of main (a short run)" \
+  python -m tools.check_upgrade_history --main "$base" --bases 1
 step "back up and restore a database that holds money" env PYTHONPATH=src python -m tools.check_backup
 # coverage.yml, ledger-invariants.yml, golden.yml and the ci job's tests
 if server_has preloaded; then
