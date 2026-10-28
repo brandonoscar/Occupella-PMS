@@ -2,12 +2,18 @@ name: enterprise
 
 # A company of 20,000 units brought over through the switching tool with five years of history,
 # its nightly run, its reports, fifty staff at work on it over HTTP for an hour with the nightly
-# run under them, then backed up and restored (tools/enterprise.py; synthetic data only). Each
-# step has a ceiling in ci/thresholds.toml ([enterprise]); the books must be right after each.
-# Weekly, as it takes hours; PRs test the tool itself on a small company (tests/tools).
+# run under them, each opening a page every 0 to 20 seconds, then backed up and restored
+# (tools/enterprise.py; synthetic data only). Each step has a ceiling in ci/thresholds.toml
+# ([enterprise]); the books must be right after each. Weekly, as it takes hours; on a PR that
+# changes it, the same company with five minutes of staff at work. Every PR's tests run the tool
+# on a small company (tests/tools/test_enterprise.py), and scripts/check.sh a short run.
 on:
   schedule:
     - cron: "17 9 * * 6" # Saturdays 09:17 UTC
+  pull_request:
+    paths:
+      - .github/workflows/enterprise.yml
+      - tools/enterprise.py
   workflow_dispatch:
     inputs:
       units:
@@ -33,7 +39,7 @@ env:
 
 jobs:
   enterprise:
-    name: enterprise, 20,000 units for an hour (weekly)
+    name: enterprise, 20,000 units, fifty staff at work (weekly for an hour)
     runs-on: ubuntu-24.04
     # A cap to stop a hung run, not a budget: see docs/CI.md for the measured time.
     timeout-minutes: 300
@@ -77,8 +83,9 @@ jobs:
         env:
           PYTHONPATH: src
           UNITS: ${{ inputs.units || '20000' }}
-          SECONDS_AT_WORK: ${{ inputs.seconds || '3600' }}
+          SECONDS_AT_WORK: ${{ inputs.seconds || (github.event_name == 'pull_request' && '300' || '3600') }}
         run: |
           set -o pipefail
-          python -m tools.enterprise --units "$UNITS" --staff 50 --seconds "$SECONDS_AT_WORK" \
-            --history-years 5 --seed "$GITHUB_RUN_ID" | tee -a "$GITHUB_STEP_SUMMARY"
+          python -m tools.enterprise --units "$UNITS" --staff 50 --pause 10 \
+            --seconds "$SECONDS_AT_WORK" --history-years 5 --seed "$GITHUB_RUN_ID" \
+            | tee -a "$GITHUB_STEP_SUMMARY"

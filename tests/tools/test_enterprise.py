@@ -33,12 +33,20 @@ def test_a_company_comes_over_works_and_comes_back_from_its_backup(
                 "0",
                 "--history-years",
                 "1",
+                "--months",
+                "2",
             ]
         )
         == 0
     )
     out = capsys.readouterr().out
     assert "import tenant history (1 file)" in out
+    # The switch two months back, and each month since in the PMS, this one included.
+    first = enterprise.datetime.now(enterprise.UTC).date().replace(day=1)
+    for months in (2, 1, 0):
+        assert f"month {enterprise.month_before(first, months):%Y-%m} in the PMS:" in out
+    lived = out.split("the months in the PMS: ")[1].splitlines()[0]
+    assert "payments=0" not in lived and "rents=0" not in lived
     assert "opening balances, deposits (40 accounts)" in out
     assert "part 6 of 6" in out and "restore:" in out
     assert "ok: 40 units" in out
@@ -49,7 +57,7 @@ def rows(text):
 
 
 def test_the_files_are_the_company_as_the_switching_tool_takes_them():
-    files = enterprise.company(200, date(2026, 10, 25), enterprise.random.Random(3), 2)
+    files = enterprise.company(200, date(2026, 10, 1), enterprise.random.Random(3), 2)
     kinds = dict(files.kinds)
 
     assert list(kinds) == [
@@ -99,10 +107,22 @@ def test_a_kind_with_more_than_a_file_takes_goes_in_several():
     ]
 
 
-def test_months_before_cross_the_year():
+def test_months_before_and_after_cross_the_year():
     assert enterprise.month_before(date(2026, 2, 1), 1) == date(2026, 1, 1)
     assert enterprise.month_before(date(2026, 2, 1), 2) == date(2025, 12, 1)
     assert enterprise.month_before(date(2026, 1, 1), 60) == date(2021, 1, 1)
+    assert enterprise.month_after(date(2025, 12, 1)) == date(2026, 1, 1)
+
+
+def test_a_refusal_in_words_is_passed_over_and_anything_else_stops_the_run():
+    def route(status):
+        raise enterprise.HTTPException(status, "nothing available to pay")
+
+    assert enterprise.done(lambda: None) is True
+    assert enterprise.done(route, 409) is False
+    assert enterprise.done(route, 422) is False
+    with pytest.raises(enterprise.HTTPException):
+        enterprise.done(route, 500)
 
 
 def test_each_step_over_its_ceiling_fails_the_run():
@@ -190,13 +210,13 @@ def test_books_left_wrong_or_a_step_over_its_ceiling_fail_the_command(
     monkeypatch.setenv("DATABASE_URL", database_url)
     asked = {}
 
-    def wrong(url, units, seed, t, staff, seconds, pause, years):
-        asked["run"] = (units, seed, staff, seconds, pause, years)
+    def wrong(url, units, seed, t, staff, seconds, pause, years, months):
+        asked["run"] = (units, seed, staff, seconds, pause, years, months)
         raise enterprise.Wrong("the trial balance has debits 1 and credits 2")
 
     monkeypatch.setattr(enterprise, "run", wrong)
     assert enterprise.main(["--units", "100", "--seed", "4"]) == 1
-    assert asked["run"] == (100, 4, 50, 300.0, 1.0, 5)
+    assert asked["run"] == (100, 4, 50, 300.0, 10.0, 5, 12)
     assert "FAIL: the trial balance has debits 1 and credits 2" in capsys.readouterr().out
 
     def slow(url, units, seed, t, *rest):
