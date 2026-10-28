@@ -27,7 +27,7 @@ from helpers import (
 )
 from people import join_as_staff, join_as_tenant, tenant_of
 
-from pms import payments
+from pms import email, payments
 from pms.api import Settings, create_app
 from pms.api import online_payments as op
 
@@ -280,6 +280,27 @@ def test_paid_is_recorded_as_staff_record_a_payment_and_only_once(
     assert bank_says(tenant_client, payment, "failed") == {"recorded": True}
     assert ok(tenant_client.get(f"/api/payments/leases/{lease}"))["payments"][0]["status"] == "paid"
     assert ok(client.get("/api/payments/waiting")) == []
+
+
+def test_a_payment_made_online_emails_its_receipt_once(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    # ADR 0010 phase 1c: every payment's receipt, online ones too, while the server sends email.
+    turn_on(client)
+    tenant_client.app.state.email = email.FakeSender()
+    payment = pay(tenant_client, lease, "1000.00")["id"]
+
+    bank_says(tenant_client, payment, "paid")
+    bank_says(tenant_client, payment, "paid")  # sent again: no second receipt
+
+    (transfer,) = conn.execute(
+        "SELECT id FROM pgledger_transfers WHERE metadata ->> 'key' = %s ORDER BY id",
+        (f"payment/{payment}",),
+    ).fetchall()
+    assert conn.execute(
+        "SELECT kind, lease_id, transfer_id FROM trust_emails WHERE pmc_id = %s",
+        (pmc.pmc_id,),
+    ).fetchall() == [("payment_receipt", lease, transfer[0])]
 
 
 def test_a_failed_payment_moves_nothing(client, tenant_client, conn, staff, tenant, lease, pmc):

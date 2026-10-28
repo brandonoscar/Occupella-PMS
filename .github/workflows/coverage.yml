@@ -84,8 +84,10 @@ jobs:
     # The tests run whatever the lint found; `coverage` reports both.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
-    # Each shard is half the suite: about 20 minutes once ADR 0005's pages landed.
-    timeout-minutes: 40
+    # Each shard is half the suite: about 20 minutes once ADR 0005's pages landed, 37 by 10/28
+    # (shard 1 on main fab8ebd: 35 minutes of tests, its last 18 on the property tests dealt
+    # to it), when a slower runner took #180's past 40.
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:

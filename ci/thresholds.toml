@@ -134,6 +134,13 @@ html_check_supported_min = 90.0
 page_p95_ms_max = 1000
 download_p95_ms_max = 10000
 
+[upgrade_history]
+# Earlier points of main that db.yml's nightly job (tools/check_upgrade_history.py) upgrades a
+# database holding money from, each night; the rest come round on later nights. Measured
+# 2026-10-25 on 4 cores: 48 points in 227 s (3.5 to 6.7 s each), well inside the job's 30
+# minutes.
+nightly_bases = 50
+
 [enterprise]
 # PLACEHOLDER: set from the first measured run (tools/enterprise.py).
 import_seconds_max = 99999

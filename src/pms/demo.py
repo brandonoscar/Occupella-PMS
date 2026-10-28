@@ -53,6 +53,7 @@ from psycopg import sql
 
 from pms import accounts, nightly
 from pms.api import (
+    applicant_details,
     assistance,
     budgets,
     company,
@@ -60,6 +61,7 @@ from pms.api import (
     documents,
     emails,
     groups,
+    household,
     inspections,
     journal,
     leads,
@@ -820,7 +822,6 @@ def company_profile(b: Builder, demo: Demo) -> None:
                 work_order_notices=True,
                 adverse_action_notices=True,
                 reserve_alerts=True,
-                payment_receipts=True,
             ),
         )
 
@@ -929,6 +930,50 @@ APPLICANTS: list[tuple[str, list[str], D, str]] = [
     ("Unit 412", ["Hayden Applicant"], D("1800.00"), "declined"),
     ("Unit 409", ["Kendall Applicant"], D("4600.00"), "withdrawn"),
 ]
+# What two of the applications list of their households (ADR 0010 phase 2, part G).
+HOUSEHOLDS = {
+    "Emery Applicant": applicant_details.HouseholdIn(
+        occupants=["Quinn Occupant"],
+        pets=[
+            household.NewPet(name="Biscuit", kind="Dog", breed="Mixed", weight_lbs=D("35.5")),
+            household.NewPet(name="Juniper", kind="Dog", assistance_animal=True),
+        ],
+        vehicles=[
+            household.NewVehicle(make="Sample Motors", model="Hatch", color="Blue", plate="DEMO123")
+        ],
+    ),
+    "Rowan Applicant": applicant_details.HouseholdIn(
+        pets=[household.NewPet(name="Pepper", kind="Cat")],
+    ),
+}
+
+
+def applicant_details_of(name: str, n: int) -> applicant_details.DetailsIn:
+    """What an applicant gives with their application: a fictional phone (555-0100 to 555-0199),
+    a sample address, a previous landlord and employer, an emergency contact and a proof of
+    income."""
+    first = name.split()[0]
+    return applicant_details.DetailsIn(
+        phone=f"(555) 555-01{10 + n:02d}",
+        address=applicant_details.AddressIn(
+            line_1=f"{100 + n} Sample Avenue", city="Sampleton", state="ST", postal_code="00001"
+        ),
+        previous_landlord=applicant_details.PreviousLandlordIn(
+            name="Sample Rentals",
+            phone="(555) 555-0150",
+            from_on=date(2023, 6, 1),
+            to_on=date(2025, 5, 31),
+        ),
+        employer=f"{first}'s Sample Employer",
+        emergency_contact=applicant_details.EmergencyContactIn(
+            name=f"{first} Contact", phone=f"(555) 555-01{60 + n:02d}"
+        ),
+        income_proof=applicant_details.IncomeProofIn(
+            content_type="application/pdf", content_base64=base64.b64encode(PDF).decode()
+        ),
+    )
+
+
 # The vacant units on the company's public vacancy page, with what it says of each.
 LISTED = {
     "Unit 409": "Fourth floor, two bedrooms, river view.",
@@ -948,6 +993,7 @@ def leasing_pipeline(
     conn = b.conn
     move_in = first_of_month(today, -1)
     links: dict[str, leasing.OpenedLink] = {}
+    applied: list[str] = []
     for unit, names, income, step in APPLICANTS:
         if unit not in links:
             listed = LISTED.get(unit)
@@ -973,12 +1019,16 @@ def leasing_pipeline(
                     monthly_income=income,
                     applicants=[
                         leasing.ApplicantIn(
-                            name=name, email=f"{name.split()[0].lower()}.applicant@example.com"
+                            name=name,
+                            email=f"{name.split()[0].lower()}.applicant@example.com",
+                            details=applicant_details_of(name, len(applied) + n),
                         )
-                        for name in names
+                        for n, name in enumerate(names)
                     ],
+                    household=HOUSEHOLDS.get(names[0]),
                 ),
             )
+        applied.extend(names)
         application = one(
             conn,
             "SELECT a.id FROM trust_applications AS a"

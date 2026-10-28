@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 
 from pms import accounts, exports, notice_letters
 from pms import email as outgoing
-from pms.api import company, notice_templates, outbox, rent, scope
+from pms.api import applicant_details, company, notice_templates, outbox, rent, scope
 from pms.api.deps import Conn, Staff, Tenant, refusal
 from pms.api.leasing import public_url
 from pms.api.rentals import Page, Paged, PerPage
@@ -756,6 +756,7 @@ def complete(session: Staff, conn: Conn, offer_id: UUID) -> OfferOut:
     except (psycopg.errors.CheckViolation, psycopg.errors.ExclusionViolation) as refused:
         raise HTTPException(409, refusal(refused)) from None
     keep_due_day(conn, session.pmc_id, offer_id)
+    applicant_details.carry_over(conn, session.pmc_id, offer_id)
     return offer_of(conn, session.pmc_id, offer_id)
 
 

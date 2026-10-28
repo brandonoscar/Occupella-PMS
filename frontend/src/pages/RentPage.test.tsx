@@ -47,7 +47,9 @@ const LEASE = {
   tenants: [{ id: "t1", name: "Tenant 1", prepaid: "0.00", deposit: "1500.00", deposits: [{ kind: "security", amount: "1500.00" }] }],
   owners: [{ account: "a1", owner: "Owner 1", percent: null }],
   owed: "1550.00",
-} as LeaseDetail;
+  open_charges: [],
+  moved_from: null,
+} as unknown as LeaseDetail;
 const RUNS: RentRunLine[] = [
   { at: "2026-10-16T06:00:00Z", due_on: "2026-10-01", late_fees_as_of: "2026-10-16", rents: 6, recurring: 1, late_fees: 0, by: null },
 ];
@@ -203,6 +205,43 @@ describe("RentPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Receive payment" }));
     fireEvent.change(screen.getByLabelText("Lease"), { target: { value: "unit" } });
     expect((await screen.findByRole("alert")).textContent).toBe("sign in first");
+  });
+
+  it("receives a housing authority's check split across its leases, and starts the next with Save and add another", async () => {
+    const authority = {
+      id: "h1", name: "Synthetic Housing Authority", owed: "800.00", late_fee: null, payments: [],
+      leases: [{
+        lease_id: "l1", home: "Tenant 1, Property 1 Unit 1", monthly: "800.00", contract: null, owed: "800.00",
+        open_charges: [], hold_since: null, hold_reason: null,
+      }],
+    };
+    const fetch = server({
+      "/api/assistance/authorities": [{ id: "h1", name: "Synthetic Housing Authority", leases: 1, owed: "800.00" }],
+      "/api/assistance/authorities/h1": authority,
+      "/api/assistance/payments": { transfers: ["t1"], paid: "800.00" },
+    });
+    render(<RentPage me={ME} />);
+    await roll();
+
+    fireEvent.click(screen.getByRole("button", { name: "Receive payment" }));
+    const panel = screen.getByRole("dialog", { name: "Receive payment" });
+    fireEvent.change(within(panel).getByLabelText("From"), { target: { value: "authority" } });
+    fireEvent.click(await within(panel).findByRole("button", { name: "Fill in what it owes" }));
+    fireEvent.change(within(panel).getByLabelText("Check or reference"), { target: { value: "HAP 1001" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Save and add another" }));
+
+    expect(await screen.findByText("$800.00 from Synthetic Housing Authority recorded.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/assistance/payments", expect.objectContaining({
+      housing_authority_id: "h1", method: "check", reference: "HAP 1001", lines: [{ lease_id: "l1", amount: "800.00" }],
+    })]]);
+    // The panel stays open on a fresh check.
+    await vi.waitFor(() => expect((within(panel).getByLabelText("Check or reference") as HTMLInputElement).value).toBe(""));
+    expect(within(panel).getByTestId("authority-pay-total").textContent).toBe("Total $0.00");
+    fireEvent.change(within(panel).getByLabelText("Tenant 1, Property 1 Unit 1 (owes $800.00)"), { target: { value: "10.00" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Record payment" }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [first, second] = posted(fetch).map(([, body]) => body as Record<string, unknown>);
+    expect(second?.request_id).not.toBe(first?.request_id);
   });
 
   it("lets an admin run rent now, saying what it charged, beside the latest runs", async () => {
