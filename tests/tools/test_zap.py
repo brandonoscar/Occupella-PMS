@@ -148,7 +148,8 @@ def test_an_ignored_rule_needs_its_reason(tmp_path):
 
     path.write_text('[[ignore]]\nrule = "10049"\nreason = "no-store everywhere"\n')
     assert zap_alerts.ignored(path) == {"10049": "no-store everywhere"}
-    assert zap_alerts.ignored() == {}  # the repo's own: nothing ignored yet
+    # The repo's own: only ZAP's report on its own version, about the scanner, not the PMS.
+    assert list(zap_alerts.ignored()) == ["10116"]
 
 
 def test_the_judge_fails_on_what_isnt_ignored(tmp_path, monkeypatch, capsys):
@@ -162,7 +163,7 @@ def test_the_judge_fails_on_what_isnt_ignored(tmp_path, monkeypatch, capsys):
     assert "FAIL: Medium [10020]" in capsys.readouterr().out
     assert zap_alerts.main([]) == 2
     assert zap_alerts.main(["--check"]) == 0
-    assert "ok: 0 rules ignored" in capsys.readouterr().out
+    assert "ok: 1 rules ignored" in capsys.readouterr().out
 
     bad = tmp_path / "ignore.toml"
     bad.write_text('[[ignore]]\nrule = "10020"\n')
@@ -182,3 +183,18 @@ def test_the_workflow_pins_its_images_and_never_puts_the_session_on_a_command_li
     for path in ("tools/zap_session.py", "tools/zap_alerts.py", "ci/zap-ignore.toml"):
         assert f"      - {path}\n" in WORKFLOW
     assert "pull_request_target" not in WORKFLOW
+
+
+def test_the_pms_keeps_bank_numbers_and_tax_ids_in_both_scans_as_in_e2e():
+    # Without a key the PMS keeps no account number or tax ID, so their pages show none and
+    # their routes refuse: each scan's server gets a throwaway one, made as e2e.yml makes it.
+    made = (
+        "PMS_DATA_KEY=\"$(python -c 'import base64, os;"
+        " print(base64.b64encode(os.urandom(32)).decode())')\""
+    )
+    assert made in (ROOT / ".github/workflows/e2e.yml").read_text()
+    serves = WORKFLOW.split("nohup python -m pms.api")[:-1]
+    assert len(serves) == 2
+    for before in serves:
+        step = before[before.rindex("- name:") :]
+        assert made in step and "export PMS_DATA_KEY" in step

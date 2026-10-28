@@ -81,6 +81,10 @@ jobs:
         run: dbmate --no-dump-schema up
       - name: Serve the portal and seed a synthetic PMC (as e2e.yml does)
         run: |
+          # A throwaway key, made here for this run, seals the synthetic payees' account numbers
+          # and tax IDs, as e2e.yml's does; it is never printed or kept.
+          PMS_DATA_KEY="$(python -c 'import base64, os; print(base64.b64encode(os.urandom(32)).decode())')"
+          export PMS_DATA_KEY
           PYTHONPATH=src PMS_STATIC_DIR=frontend/dist PMS_PORT=8123 \
             PMS_PUBLIC_URL="$ORIGIN" PMS_COOKIE_SECURE=false \
             PMS_SCREENING_PARTNER=fake PMS_EMAIL_SENDER=fake PMS_GEOCODER=fake PMS_PAYMENTS=fake \
@@ -163,6 +167,10 @@ jobs:
         run: dbmate --no-dump-schema up
       - name: Serve the API, and sign the scan in as staff of the demo PMC
         run: |
+          # A throwaway key, made here for this run, seals the synthetic payees' account numbers
+          # and tax IDs, as e2e.yml's does; it is never printed or kept.
+          PMS_DATA_KEY="$(python -c 'import base64, os; print(base64.b64encode(os.urandom(32)).decode())')"
+          export PMS_DATA_KEY
           PYTHONPATH=src PMS_PORT=8123 PMS_PUBLIC_URL="$ORIGIN" PMS_COOKIE_SECURE=false \
             PMS_SCREENING_PARTNER=fake PMS_EMAIL_SENDER=fake PMS_GEOCODER=fake PMS_PAYMENTS=fake \
             PMS_NIGHTLY=off \

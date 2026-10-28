@@ -533,7 +533,12 @@ in two jobs:
 refused); informational alerts are listed. `check.sh` runs both tools (the session on a throwaway
 database of its own, served as `python -m pms.api` serves it, and the ignore list); the scan
 itself needs ZAP's image, which the sandbox this was written in can't pull (NOT VERIFIED locally:
-its first run is this PR's).
+its first run was the PR's, #181). That first run found three alerts of low risk, none higher: the
+API's schema called the ledger zip JSON (now `application/zip`, as the records zip), API answers
+lacked `Cross-Origin-Resource-Policy` (now `same-origin` on every answer: no other site loads one
+into its page), and ZAP reported its own pinned version out of date (ignored, with why). The
+browser tests through ZAP needed the throwaway `PMS_DATA_KEY` e2e.yml makes, as both scans' servers
+now get.
 
 **simulate.yml** (by hand, and on a PR that changes `scripts/simulate.ps1`, `compose.e2e.yaml`,
 `frontend/playwright.config.ts` or the workflow): `scripts/simulate.ps1`, the browser tests played
