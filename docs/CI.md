@@ -269,6 +269,42 @@ trust bank account that doesn't tie out, an account other than a bank's cash bel
 timing tests pair two transactions; this is the many-way mix. Measured locally: 8,681
 operations in 60 s, none failed, books right. Run it with `python -m tools.contention`.
 
+Faults (`tests/test_faults.py`, timing tests, so 50 runs a night too): the work cut off at its
+worst moment, as a server that died or a network that dropped would cut it. Each test does a
+piece of work as the app in a transaction of its own and, once the work is done and before it
+commits, kills that connection from outside (`pg_terminate_backend`). Then nothing of it stands,
+and the work done again lands once, as if nothing had failed: a payment (sent again with the
+page's request id, twice), tonight's rent run (it ends the same as a company whose night ran
+whole), Pay owners (each owner paid once) and an import of 200 tenants (each brought in once).
+Measured locally: 4 tests in 7.7 s, 20 of 20 runs passed in random order. They add about 6 s to
+each of the 50 timing runs (the job took 19 min 22 s on 10/24), so its limit went from 30 to 40
+minutes.
+
+Nightly too, a company lives through five years of nights (`tools/fast_forward.py`, the founder's
+request of 2026-10-25): the demo's books from five years back, with everything the PMS does by
+itself turned on (the monthly management fees, prepaid rent paying new charges, every email it
+writes, to the outbox), a monthly bill that the nightly run enters by itself, and an email address
+for every tenant and owner. Each day the nightly run runs for it, then its people act through the
+API's own route functions: each lease's tenants pay by a habit of their own (on time, late, half
+on time and the rest late, two months at once, or on time with one payment in four bouncing three
+days later), owners are paid what is available on the 10th and the open bills are paid on the
+15th (Pay bills). After each night: nothing it posted is dated after it (the part of the PMS that
+reads the real clock instead of the day it runs for would show here), no rent is charged twice for
+a due date, the delinquency report is what is open of the leases' charges, the trial balance
+balances and each trust bank account's book cash is what it holds. On the 1st, each owner's
+statement for the month before ends at their accounts' balances; by a month's end, every account
+under an agreement has had the month before's management fee taken. Every choice comes from one
+seed (a new one each night), and a failure prints the command that replays it. Every PR runs 13
+months of it with the other tests (about a minute), and three tests that break one thing each the
+way a bug would and expect the night's check to name it; `scripts/check.sh` runs two months (about
+30 s).
+Measured 10/25 here, 4 cores shared with other work: five years (1,912 nights from 2021-08-01,
+seed 1) in 12 minutes, every check passing: 378 rents, 409 payments, 149 late fees, 22 bounces,
+248 management fees, 251 owner payouts, 63 bills entered by the nightly run and paid, and 772
+emails written. Run it with `python -m tools.fast_forward [--months 60] [--seed N]`. What it doesn't
+do yet: month-end reconciliation (no bank statements come in), leases ending and renewing, move-outs
+and year closes.
+
 Nightly too, the speed test (`tools/speed.py`, the founder's review q148) times the API as staff
 use it: it builds a 1,000-unit company with a year of books (the demo's books and properties of
 20 units, every unit leased, its deposit held, each month's rent charged and paid but a tenth of
@@ -590,9 +626,9 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   running at once.
 - Nightly runs are staggered, though the property jobs now run into the later ones' hours:
   - 03:17 UTC ledger-invariants (8 property jobs of up to 4.5 hours; 4 API fuzz jobs, timing,
-    many-staff and speed, all done within the hour: 15 at first, 8 after 04:17). The property
-    jobs overlap mutation (2 to 3 hours from 04:17, measured 10/21 to 10/23), so up to 18 jobs
-    run at once, and on a Monday the security jobs can bring that to 22: GitHub queues what is
+    many-staff, fast-forward and speed, all done within the hour: 16 at first, 8 after 04:17).
+    The property jobs overlap mutation (2 to 3 hours from 04:17, measured 10/21 to 10/23), so up
+    to 18 jobs run at once, and on a Monday the security jobs can bring that to 22: GitHub queues what is
     past 20 until one ends, and a PR's checks then wait too;
   - 04:17 mutation (8 SQL shards and 1 Python job, then 1 scoring job);
   - 05:17 selfhost (1);

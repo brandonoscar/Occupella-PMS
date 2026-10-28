@@ -156,6 +156,10 @@ step "many staff at once (a short soak)" env PYTHONPATH=src python -m tools.cont
 # three on 100 units for 15 seconds, against the same ceilings
 step "speed (a short run)" env PYTHONPATH=src python -m tools.speed --units 100 --staff 3 \
   --months 2 --seconds 15
+# ledger-invariants.yml, nightly: a company lives through five years of nights, its books checked
+# after each; here two months
+step "every night over months (a short run)" env PYTHONPATH=src python -m tools.fast_forward \
+  --months 2 --seed 1
 # e2e.yml: the portal's typecheck, lint (oxlint, knip), unit tests and build (the browser tests
 # need a running API and a seeded database; frontend/playwright.config.ts says how to run them
 # by hand)
