@@ -297,6 +297,8 @@ def test_api_answers_are_never_cached_or_sniffed(client):
     assert answer.headers["x-content-type-options"] == "nosniff"
     assert answer.headers["referrer-policy"] == "no-referrer"
     assert answer.headers["cross-origin-opener-policy"] == "same-origin"
+    # No other site may load it into its page (OWASP ZAP's Spectre isolation check, 90004).
+    assert answer.headers["cross-origin-resource-policy"] == "same-origin"
     assert answer.headers["permissions-policy"] == (
         "camera=(), microphone=(), geolocation=(), payment=()"
     )

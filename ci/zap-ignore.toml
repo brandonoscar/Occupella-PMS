@@ -1,0 +1,18 @@
+# ZAP rules whose alerts are no risk here (tools/zap_alerts.py, zap.yml). Every alert of low risk
+# or higher fails the scan unless its rule is here, each with why. A new entry needs a reason a
+# reviewer can check against the code; never add one to get green. An entry naming paths ignores
+# its rule only there (a path's query and trailing slash aside); seen anywhere else, it fails.
+#
+# [[ignore]]
+# rule = "10000"
+# paths = ["/api/only/here"]   (optional)
+# reason = "why this alert is no risk in this app"
+
+[[ignore]]
+rule = "10116"
+reason = "ZAP is Out of Date: about the scanner, not the PMS. zap.yml pins ZAP's image (ZAP_IMAGE) by version and digest so a run is repeatable, and the pinned version's rules still run in full; a newer ZAP is taken by changing that pin in a PR of its own."
+
+[[ignore]]
+rule = "100001"
+paths = ["/api/ledger.zip", "/api/records.zip"]
+reason = "Unexpected Content-Type: ZAP's API scan expects an API to answer only JSON, YAML, XML, text/plain or application/octet-stream (its Alert_on_Unexpected_Content_Types script, which reads no schema). These two are the ledger's and every record's zip downloads: application/zip on purpose, sent as an attachment and so stated in the API's schema (tests/api/test_downloads.py). Anywhere else the alert still fails."
