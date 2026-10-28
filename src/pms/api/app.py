@@ -336,6 +336,9 @@ def create_app(settings: Settings) -> FastAPI:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        # No other site loads an answer of the PMS into its page (Spectre's side channel reads
+        # what a page loads); every page of the portal loads only the PMS's own.
+        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
         response.headers["Permissions-Policy"] = PERMISSIONS_POLICY
         if https:
             response.headers["Strict-Transport-Security"] = STRICT_TRANSPORT
@@ -531,11 +534,11 @@ def create_app(settings: Settings) -> FastAPI:
             return reports.preview(table)
         return download(exports.export(table, fmt), name.removeprefix("trust_report_"), fmt)
 
-    @app.get("/api/ledger.zip")
+    @app.get("/api/ledger.zip", response_class=Response, responses=ZIP)
     def ledger(session: Staff, conn: Conn) -> Response:
         return download(exports.ledger_zip(conn, session.pmc_id), "ledger", "zip")
 
-    @app.get("/api/records.zip")
+    @app.get("/api/records.zip", response_class=Response, responses=ZIP)
     def records(session: Staff, conn: Conn) -> Response:
         """Everything of the company (q132): every record, its files and its ledger. It holds
         everyone's contact details and documents, so only an admin downloads it."""
@@ -620,6 +623,10 @@ CROSS_SITE = frozenset({"cross-site", "same-site"})
 STRICT_TRANSPORT = "max-age=63072000; includeSubDomains"
 # Nothing in the portal uses these.
 PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=()"
+# A zip download, as the API's schema states it (what OWASP ZAP checks an answer against).
+ZIP: dict[int | str, dict[str, Any]] = {
+    200: {"description": "A zip file", "content": {"application/zip": {}}}
+}
 
 
 # The portal's own pages: a built React app (frontend/dist). Its scripts and styles are files

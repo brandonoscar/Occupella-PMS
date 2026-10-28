@@ -97,8 +97,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   allowed and bad input. A report's PMC always comes from the session (every report takes
   `p_pmc_id` first; a test pins it). Changes must be JSON from the app's own origin (a browser's
   Sec-Fetch-Site of another site refuses one whatever its Origin), the session cookie is HttpOnly
-  and SameSite=Strict, and every answer forbids being framed or opened by another site (COOP),
-  the camera and the like, and over https anything but https (HSTS). A refusal from the database
+  and SameSite=Strict, and every answer forbids being framed or opened by another site (COOP)
+  or loaded into one's page (CORP), the camera and the like, and over https anything but https (HSTS). A refusal from the database
   reaches people in words, without internal ids (`deps.refusal`: an account short of money, a
   draw over what is available, the last admin), and a request that finds every database connection
   busy for 30 s is told so (503, `deps.BUSY`), never a server error.
