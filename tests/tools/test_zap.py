@@ -126,7 +126,9 @@ def test_low_risk_and_up_fails_unless_ignored_with_why_and_informational_is_list
         )
     )
 
-    failing, listed = zap_alerts.judge(found, {"10049": "every answer says no-store"})
+    failing, listed = zap_alerts.judge(
+        found, {"10049": zap_alerts.Ignore("every answer says no-store")}
+    )
 
     assert [line.split(":")[0] for line in failing] == [
         "High [40018] SQL Injection",
@@ -147,9 +149,62 @@ def test_an_ignored_rule_needs_its_reason(tmp_path):
         zap_alerts.ignored(path)
 
     path.write_text('[[ignore]]\nrule = "10049"\nreason = "no-store everywhere"\n')
-    assert zap_alerts.ignored(path) == {"10049": "no-store everywhere"}
-    # The repo's own: only ZAP's report on its own version, about the scanner, not the PMS.
-    assert list(zap_alerts.ignored()) == ["10116"]
+    assert zap_alerts.ignored(path) == {"10049": zap_alerts.Ignore("no-store everywhere")}
+
+    # A rule is ignored once, and its paths, if any, are each a path from /.
+    entry = '[[ignore]]\nrule = "10049"\nreason = "why"\n'
+    path.write_text(entry * 2)
+    with pytest.raises(ValueError, match="rule 10049 is ignored twice"):
+        zap_alerts.ignored(path)
+    for paths in ("[]", '"/api/x"', '["api/x"]', "[1]"):
+        path.write_text(f"{entry}paths = {paths}\n")
+        with pytest.raises(ValueError, match="paths must each be a path from /"):
+            zap_alerts.ignored(path)
+
+    # The repo's own: ZAP's report on its own version, about the scanner, not the PMS; and the
+    # zip downloads' content type (whose schema says zip: tests/api/test_downloads.py), only there.
+    ours = zap_alerts.ignored()
+    assert list(ours) == ["10116", "100001"]
+    assert ours["10116"].paths == frozenset()
+    assert ours["100001"].paths == {"/api/ledger.zip", "/api/records.zip"}
+
+
+def test_a_rule_ignored_on_some_paths_fails_anywhere_else():
+    def seen(*uris, risk=1):
+        return zap_alerts.Alert("100001", "Unexpected Content-Type was returned", risk, list(uris))
+
+    zips = zap_alerts.Ignore("zips on purpose", frozenset({"/api/ledger.zip", "/api/records.zip"}))
+    there = seen(
+        "GET http://127.0.0.1:8123/api/ledger.zip",
+        "GET http://127.0.0.1:8123/api/ledger.zip/",
+        "GET http://127.0.0.1:8123/api/records.zip?query=x",
+    )
+    failing, listed = zap_alerts.judge([there], {"100001": zips})
+    assert failing == []
+    assert listed[0].endswith("(ignored: zips on purpose)")
+
+    # Seen anywhere else too, it fails, naming only the places it isn't ignored.
+    elsewhere = seen(
+        "GET http://127.0.0.1:8123/api/ledger.zip",
+        "GET http://127.0.0.1:8123/api/ledger.zip.html",
+        "POST http://127.0.0.1:8123/api/ledger",
+    )
+    failing, listed = zap_alerts.judge([elsewhere], {"100001": zips})
+    assert failing == [
+        "Low [100001] Unexpected Content-Type was returned: "
+        "GET http://127.0.0.1:8123/api/ledger.zip.html; POST http://127.0.0.1:8123/api/ledger"
+    ]
+    assert listed == []
+
+    # An alert with no place isn't on the paths; informational, it is listed either way.
+    failing, _ = zap_alerts.judge([seen()], {"100001": zips})
+    assert failing == ["Low [100001] Unexpected Content-Type was returned: "]
+    _, listed = zap_alerts.judge([seen("GET http://127.0.0.1:8123/", risk=0)], {"100001": zips})
+    assert listed[0].startswith("Informational [100001]")
+
+    # Every place is kept, though a line shows the first three.
+    kept = zap_alerts.alerts(report(("100001", "Unexpected Content-Type was returned", 1)))
+    assert len(kept[0].where) == 5
 
 
 def test_the_judge_fails_on_what_isnt_ignored(tmp_path, monkeypatch, capsys):
@@ -163,7 +218,7 @@ def test_the_judge_fails_on_what_isnt_ignored(tmp_path, monkeypatch, capsys):
     assert "FAIL: Medium [10020]" in capsys.readouterr().out
     assert zap_alerts.main([]) == 2
     assert zap_alerts.main(["--check"]) == 0
-    assert "ok: 1 rules ignored" in capsys.readouterr().out
+    assert "ok: 2 rules ignored" in capsys.readouterr().out
 
     bad = tmp_path / "ignore.toml"
     bad.write_text('[[ignore]]\nrule = "10020"\n')

@@ -530,14 +530,17 @@ in two jobs:
 
 `tools/zap_alerts.py` judges each report: an alert of low risk or higher fails the job unless
 `ci/zap-ignore.toml` names its rule with why it is no risk here (an entry without a reason is
-refused); informational alerts are listed. `check.sh` runs both tools (the session on a throwaway
+refused), maybe only on the paths it names (seen anywhere else, it fails); informational alerts
+are listed. `check.sh` runs both tools (the session on a throwaway
 database of its own, served as `python -m pms.api` serves it, and the ignore list); the scan
 itself needs ZAP's image, which the sandbox this was written in can't pull (NOT VERIFIED locally:
 its first run was the PR's, #181). That first run found three alerts of low risk, none higher: the
 API's schema called the ledger zip JSON (now `application/zip`, as the records zip), API answers
 lacked `Cross-Origin-Resource-Policy` (now `same-origin` on every answer: no other site loads one
 into its page), and ZAP reported its own pinned version out of date (ignored, with why). The
-browser tests through ZAP needed the throwaway `PMS_DATA_KEY` e2e.yml makes, as both scans' servers
+second run still flagged the ledger zip's content type: ZAP's API scan expects an API to answer
+JSON, YAML, XML, plain text or octet-stream whatever its schema says, so that rule (100001) is
+ignored on the two zip downloads alone. The browser tests through ZAP needed the throwaway `PMS_DATA_KEY` e2e.yml makes, as both scans' servers
 now get.
 
 **simulate.yml** (by hand, and on a PR that changes `scripts/simulate.ps1`, `compose.e2e.yaml`,
