@@ -5,8 +5,8 @@ name: ledger-invariants
 # Nightly: nightly_examples per property, each twice with a seed of its own; the tests rotate,
 # a part of them each night (ci/property-times.toml), shared out over 4 shards (8 jobs). Any
 # failing case is uploaded as an artifact (synthetic data only). Nightly also runs the timing
-# tests 50 times, the API fuzz deeper, the many-staff soak (tools/contention.py) and the speed
-# test (tools/speed.py).
+# tests 50 times, the API fuzz deeper, the many-staff soak (tools/contention.py), five years of
+# a company's nights (tools/fast_forward.py) and the speed test (tools/speed.py).
 on:
   pull_request:
   push:
@@ -332,6 +332,55 @@ jobs:
         run: |
           set -o pipefail
           python -m tools.contention --workers 16 --seconds 300 --seed "$GITHUB_RUN_ID" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  fast-forward:
+    # A company lived through every night of five years (tools/fast_forward.py): the nightly run
+    # for each day, then its tenants paying by their habits (on time, late, half then the rest,
+    # two months at once, now and then a bounce), its owners and bills paid, and its books
+    # checked after each night: nothing dated after the night, nothing charged twice, the
+    # delinquency report, trial balance, balance sheet, owners' statements and management fees
+    # right. Each night a new seed; a failure prints the seed that replays it.
+    name: fast-forward five years (nightly)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dbmate
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: pip install -r requirements-dev.txt
+      - name: Five years of nights, the books checked after each
+        env:
+          PYTHONPATH: src
+        run: |
+          set -o pipefail
+          python -m tools.fast_forward --months 60 --seed "$GITHUB_RUN_ID" \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
   speed:
