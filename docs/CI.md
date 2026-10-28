@@ -241,6 +241,17 @@ trust bank account that doesn't tie out, an account other than a bank's cash bel
 timing tests pair two transactions; this is the many-way mix. Measured locally: 8,681
 operations in 60 s, none failed, books right. Run it with `python -m tools.contention`.
 
+Faults (`tests/test_faults.py`, timing tests, so 50 runs a night too): the work cut off at its
+worst moment, as a server that died or a network that dropped would cut it. Each test does a
+piece of work as the app in a transaction of its own and, once the work is done and before it
+commits, kills that connection from outside (`pg_terminate_backend`). Then nothing of it stands,
+and the work done again lands once, as if nothing had failed: a payment (sent again with the
+page's request id, twice), tonight's rent run (it ends the same as a company whose night ran
+whole), Pay owners (each owner paid once) and an import of 200 tenants (each brought in once).
+Measured locally: 4 tests in 7.7 s, 20 of 20 runs passed in random order. They add about 6 s to
+each of the 50 timing runs (the job took 19 min 22 s on 10/24), so its limit went from 30 to 40
+minutes.
+
 Nightly too, a company lives through five years of nights (`tools/fast_forward.py`, the founder's
 request of 2026-10-25): the demo's books from five years back, with everything the PMS does by
 itself turned on (the monthly management fees, prepaid rent paying new charges, every email it
