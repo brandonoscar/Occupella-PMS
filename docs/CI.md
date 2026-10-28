@@ -23,6 +23,19 @@ tests in `tests/api/`, which drive the app through FastAPI's test client: every 
 success, for a caller who isn't allowed (no session, the wrong kind of login, another PMC) and
 for bad input.
 
+`tests/api/test_isolation.py` sweeps another PMC over every route at once, so a new route can't
+skip it. Two demo companies (`pms.demo.build`) go in side by side, and company A's staff, owner
+or tenant calls each route with one of company B's ids in its path or body, the rest A's own:
+it is refused (an id in the path as not found), while B's own request with B's ids, on an app
+that rolls every transaction back, is answered otherwise, so the refusal is the company's and not
+a bad id. After each request every row of B's (each `trust_*` table, and B's part of pgledger's)
+is as it was, writes that name no record included. Every list, page and report, as it is, with
+B's id in each id it takes and searching for B's names, shows nothing of B's: not its PMC id, the
+id of any row of its, or a name of its, with CSV, PDF, workbook and zip opened. A path parameter,
+body field, query parameter or report argument the sweep doesn't know fails it, saying what to
+add; the few routes no company's staff, owner or tenant calls (the fake payments partner's pages,
+the public vacancy page, a calendar feed) are listed with why. About 450 cases in a minute.
+
 The synthetic-data scan (`tools/check_synthetic_data.py`) reads every tracked file for values
 shaped like real records: routing numbers that pass the ABA checksum with a real Fed prefix,
 SSNs, ITINs and EINs that could be issued, emails outside the reserved domains, and US phone
