@@ -206,6 +206,7 @@ AREA_PATHS = (
     ("/api/tenants/", "setup"),
     ("/api/owners/", "setup"),
     ("/api/vendors", "setup"),
+    ("/api/tax-ids/", "setup"),  # an owner's or vendor's tax ID, as their profile
     ("/api/move-out/", "move-out"),  # a tenant leaving a lease too
     ("/api/leases/", "setup"),  # who lives there and guarantees it
     ("/api/inspections", "move-out"),

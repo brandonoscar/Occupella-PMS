@@ -18,10 +18,12 @@ type Chosen = { type: ContentType | null; size: number; base64: string };
 // to download or remove, and one more to upload. It reads and writes what Files does
 // (/api/documents), kept to this record's kind of document and any `also` its record takes
 // (a lease's move-out photos beside its documents, a vendor's other documents beside their W-9s),
-// chosen as the upload's category. `note` says who else sees them.
-export function FilesCard({ kind, also = [], aboutId, name, note }: {
+// chosen as the upload's category, and any `listed` kind that comes some other way (a lease's
+// payments' files, kept as each payment is received). `note` says who else sees them.
+export function FilesCard({ kind, also = [], listed = [], aboutId, name, note }: {
   kind: Kind;
   also?: Kind[];
+  listed?: Kind[];
   aboutId: string;
   name: string;
   note?: string;
@@ -43,7 +45,7 @@ export function FilesCard({ kind, also = [], aboutId, name, note }: {
   }
   useEffect(refresh, []);
 
-  const files = library?.documents.filter((d) => kinds.includes(d.kind) && d.about_id === aboutId) ?? [];
+  const files = library?.documents.filter((d) => [...kinds, ...listed].includes(d.kind) && d.about_id === aboutId) ?? [];
   const problem =
     file === null ? "" : file.type === null ? "A file is a PDF, a JPEG or a PNG." : file.size > MAX_BYTES ? "A file is at most 5 MB." : "";
   return (

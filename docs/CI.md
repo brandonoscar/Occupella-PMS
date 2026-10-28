@@ -23,6 +23,19 @@ tests in `tests/api/`, which drive the app through FastAPI's test client: every 
 success, for a caller who isn't allowed (no session, the wrong kind of login, another PMC) and
 for bad input.
 
+`tests/api/test_isolation.py` sweeps another PMC over every route at once, so a new route can't
+skip it. Two demo companies (`pms.demo.build`) go in side by side, and company A's staff, owner
+or tenant calls each route with one of company B's ids in its path or body, the rest A's own:
+it is refused (an id in the path as not found), while B's own request with B's ids, on an app
+that rolls every transaction back, is answered otherwise, so the refusal is the company's and not
+a bad id. After each request every row of B's (each `trust_*` table, and B's part of pgledger's)
+is as it was, writes that name no record included. Every list, page and report, as it is, with
+B's id in each id it takes and searching for B's names, shows nothing of B's: not its PMC id, the
+id of any row of its, or a name of its, with CSV, PDF, workbook and zip opened. A path parameter,
+body field, query parameter or report argument the sweep doesn't know fails it, saying what to
+add; the few routes no company's staff, owner or tenant calls (the fake payments partner's pages,
+the public vacancy page, a calendar feed) are listed with why. About 450 cases in a minute.
+
 The synthetic-data scan (`tools/check_synthetic_data.py`) reads every tracked file for values
 shaped like real records: routing numbers that pass the ABA checksum with a real Fed prefix,
 SSNs, ITINs and EINs that could be issued, emails outside the reserved domains, and US phone
@@ -227,6 +240,42 @@ the job, and so do books left wrong (an account's balance not what its transfers
 trust bank account that doesn't tie out, an account other than a bank's cash below zero). The
 timing tests pair two transactions; this is the many-way mix. Measured locally: 8,681
 operations in 60 s, none failed, books right. Run it with `python -m tools.contention`.
+
+Faults (`tests/test_faults.py`, timing tests, so 50 runs a night too): the work cut off at its
+worst moment, as a server that died or a network that dropped would cut it. Each test does a
+piece of work as the app in a transaction of its own and, once the work is done and before it
+commits, kills that connection from outside (`pg_terminate_backend`). Then nothing of it stands,
+and the work done again lands once, as if nothing had failed: a payment (sent again with the
+page's request id, twice), tonight's rent run (it ends the same as a company whose night ran
+whole), Pay owners (each owner paid once) and an import of 200 tenants (each brought in once).
+Measured locally: 4 tests in 7.7 s, 20 of 20 runs passed in random order. They add about 6 s to
+each of the 50 timing runs (the job took 19 min 22 s on 10/24), so its limit went from 30 to 40
+minutes.
+
+Nightly too, a company lives through five years of nights (`tools/fast_forward.py`, the founder's
+request of 2026-10-25): the demo's books from five years back, with everything the PMS does by
+itself turned on (the monthly management fees, prepaid rent paying new charges, every email it
+writes, to the outbox), a monthly bill that the nightly run enters by itself, and an email address
+for every tenant and owner. Each day the nightly run runs for it, then its people act through the
+API's own route functions: each lease's tenants pay by a habit of their own (on time, late, half
+on time and the rest late, two months at once, or on time with one payment in four bouncing three
+days later), owners are paid what is available on the 10th and the open bills are paid on the
+15th (Pay bills). After each night: nothing it posted is dated after it (the part of the PMS that
+reads the real clock instead of the day it runs for would show here), no rent is charged twice for
+a due date, the delinquency report is what is open of the leases' charges, the trial balance
+balances and each trust bank account's book cash is what it holds. On the 1st, each owner's
+statement for the month before ends at their accounts' balances; by a month's end, every account
+under an agreement has had the month before's management fee taken. Every choice comes from one
+seed (a new one each night), and a failure prints the command that replays it. Every PR runs 13
+months of it with the other tests (about a minute), and three tests that break one thing each the
+way a bug would and expect the night's check to name it; `scripts/check.sh` runs two months (about
+30 s).
+Measured 10/25 here, 4 cores shared with other work: five years (1,912 nights from 2021-08-01,
+seed 1) in 12 minutes, every check passing: 378 rents, 409 payments, 149 late fees, 22 bounces,
+248 management fees, 251 owner payouts, 63 bills entered by the nightly run and paid, and 772
+emails written. Run it with `python -m tools.fast_forward [--months 60] [--seed N]`. What it doesn't
+do yet: month-end reconciliation (no bank statements come in), leases ending and renewing, move-outs
+and year closes.
 
 Nightly too, the speed test (`tools/speed.py`, the founder's review q148) times the API as staff
 use it: it builds a 1,000-unit company with a year of books (the demo's books and properties of
@@ -486,6 +535,29 @@ database of its own, served as `python -m pms.api` serves it, and the ignore lis
 itself needs ZAP's image, which the sandbox this was written in can't pull (NOT VERIFIED locally:
 its first run is this PR's).
 
+**simulate.yml** (by hand, and on a PR that changes `scripts/simulate.ps1`, `compose.e2e.yaml`,
+`frontend/playwright.config.ts` or the workflow): `scripts/simulate.ps1`, the browser tests played
+against a fresh synthetic company in Docker (`compose.e2e.yaml`: the API with e2e.yml's settings,
+on 127.0.0.1:8123) in each browser and time zone picked, by PowerShell (`pwsh`, on GitHub's
+runners) as on a Windows machine (README, "Simulate people using it"). The e2e job runs the tests
+in Chromium in UTC only; a date that is a day off for someone in Los Angeles or Kiritimati, or a
+page that breaks in Firefox or Edge, shows here. On a PR it runs once, Chromium in UTC, to show
+the script works; by hand it takes any browsers and time zones (default nine runs). What fails
+there is a lead to fix before it runs on a schedule. PSScriptAnalyzer (MIT, pinned) lints the
+script first. `tests/tools/test_simulate.py` keeps the stack's settings the same as e2e.yml's, the
+PMS published on this machine only, the seed writing only where git ignores it, the script plain
+ASCII (Windows PowerShell 5.1 reads a file without a byte order mark as ANSI) and free of what
+only PowerShell 7 has, and every program's exit code read under 'Continue' (5.1 makes a redirected
+stderr an error first). `scripts/check.sh` lists it as NOT RUN: it takes hours in Docker.
+
+Measured 10/25 in the build container, Chromium only, with the API served directly (the image
+doesn't build there and it has no PowerShell, so the script and its stack are NOT VERIFIED there;
+CI's job is their first run): Los Angeles 87 of 87, at a time its day was behind UTC's;
+Kiritimati 84 of 87. Two failed because the run crossed midnight UTC between seeding and the test
+(the seed's days are fixed when it runs; the tests count from when they run), and the housing
+authority test reached its 30-second limit (30.7 s on the rerun too). All three passed on a
+rerun.
+
 **licenses.yml** (PRs and main): every installed dependency, direct or transitive, must carry a
 license on the allowlist in `ci/licenses.toml`: compatible with this repo's Apache-2.0, and never
 non-commercial or source-available. A PMC that self-hosts needs to be able to use every piece
@@ -547,9 +619,9 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   running at once.
 - Nightly runs are staggered, though the property jobs now run into the later ones' hours:
   - 03:17 UTC ledger-invariants (8 property jobs of up to 4.5 hours; 4 API fuzz jobs, timing,
-    many-staff and speed, all done within the hour: 15 at first, 8 after 04:17). The property
-    jobs overlap mutation (2 to 3 hours from 04:17, measured 10/21 to 10/23), so up to 18 jobs
-    run at once, and on a Monday the security jobs can bring that to 22: GitHub queues what is
+    many-staff, fast-forward and speed, all done within the hour: 16 at first, 8 after 04:17).
+    The property jobs overlap mutation (2 to 3 hours from 04:17, measured 10/21 to 10/23), so up
+    to 18 jobs run at once, and on a Monday the security jobs can bring that to 22: GitHub queues what is
     past 20 until one ends, and a PR's checks then wait too;
   - 04:17 mutation (8 SQL shards and 1 Python job, then 1 scoring job);
   - 05:17 selfhost (1);
@@ -559,4 +631,5 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
 - A push to main runs the same checks (minus `deps-and-secrets`), plus gitleaks over full
   history, pip-audit and Scorecard: 11 jobs.
 - A new PR job is chained after another one, as `e2e` is, to stay within 8. The daily scan's one
-  job runs on a PR only when the PR changes `daily-scan.yml`.
+  job runs on a PR only when the PR changes `daily-scan.yml`, and the simulate job only when it
+  changes the script, its stack, the browser tests' config or `simulate.yml`.

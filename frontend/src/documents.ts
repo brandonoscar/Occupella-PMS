@@ -12,7 +12,8 @@ export type Kind =
   | "lease_document"
   | "vendor_document"
   | "request_photo"
-  | "listing_photo";
+  | "listing_photo"
+  | "payment_attachment";
 export type ContentType = "application/pdf" | "image/jpeg" | "image/png";
 export type Subject = { id: string; label: string };
 export type Document = {
@@ -55,6 +56,8 @@ export const KINDS: { kind: Kind; label: string; about: string }[] = [
   { kind: "vendor_document", label: "Vendor document", about: "Vendor" },
   { kind: "request_photo", label: "Request photo", about: "Maintenance request" },
   { kind: "listing_photo", label: "Listing photo", about: "Unit" },
+  // Kept as a payment is received (Receive payment), never uploaded by itself.
+  { kind: "payment_attachment", label: "Payment's check or PDF", about: "Lease" },
 ];
 
 // What a file may be attached to, in the order Upload offers them, and the categories each takes

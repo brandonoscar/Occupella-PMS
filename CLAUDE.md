@@ -154,7 +154,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   from a day of the month (1 to 28); a vendor's work order when assigned or scheduled; the
   adverse action notice to each applicant when a decision rests on a screening (the PDF's text,
   shown on the applicant's page); and, since migration 0111 (q029), a payment's receipt to each
-  tenant on its lease when staff record it (`payment_receipt`, once per tenant and payment). Each
+  tenant on its lease (`payment_receipt`, once per tenant and payment), since ADR 0010 phase 1c
+  for every payment, staff's, a payment file's, online and autopay, with no switch. Each
   names what it is about and is written once (a unique index per kind); a lease under a payment
   hold gets no reminder or late notice. The nightly run and an admin's Run rent now write the
   first three, after the run, in its transaction. A receipt carries the receipt's PDF and an owner's
@@ -316,8 +317,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   through a link staff open for a unit (`/apply#<token>`) and follow it with a status link;
   both tokens travel in JSON bodies and are kept only as SHA-256. Screening goes through
   `pms.leasing.screening.Partner`; the server's `PMS_SCREENING_PARTNER` picks one ("fake" for
-  development and CI, none by default). The PMS keeps only applicants' names and emails; the
-  partner collects anything else on its own side. Lease offers (`src/pms/api/offers.py`) carry
+  development and CI, none by default). Since migration 0155 (ADR 0010, part G,
+  `src/pms/api/applicant_details.py`) the form asks each applicant for a phone, current address,
+  previous landlord and employer if they have them, an emergency contact and a proof of income
+  (an `income_proof` document, in no list of files), and the household's others, animals (an
+  assistance animal marked) and vehicles: nothing more, nothing fair housing protects, never an
+  SSN or a birth date; the partner collects anything else on its own side. When its offer becomes
+  the lease, each tenant who was an applicant is linked to them once (`trust_tenant_applicants`),
+  with their email, phone and emergency contact (`trust_emergency_contacts`, which staff change on
+  the tenant's page), and the household goes on the lease. Lease offers (`src/pms/api/offers.py`) carry
   the PMC's own lease PDF, or one of its lease templates filled in from the offer's terms
   (migration 0121; the PMS writes no lease text either way), and are signed on the PMS's own signing
   page (ADR 0008, migration 0097, `src/pms/api/signing.py`, `pms.leasing.esign`; it replaced the
@@ -390,7 +398,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
   screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes,
-  nor notices made for a lease, nor vendors' links, nor leads and showings, nor screening criteria (`AI_NEVER_READS` in
+  nor notices made for a lease, nor vendors' links, nor leads and showings, nor screening criteria,
+  nor tax IDs and who saw them, nor what applicants give of themselves (`AI_NEVER_READS` in
   `tests/test_privileges.py`), nor their rows in the audit log: row-level security shows it only
   the audit rows of tables it may read (migration 0043).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
@@ -488,6 +497,20 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   pre-printed stock, numbered on; a download takes disburse and is logged
   (`trust_payout_file_downloads`). The PMS moves no money: the company's bank does. All
   append-only; the AI role reads no bank account, ACH detail or download.
+- Receive payment and the lease money rules (migration 0154, `docs/adr/0010-design-pass.md` phase
+  1c): one panel (`pages/ReceivePayment.tsx`) from the rent roll, a lease's page and a housing
+  authority's page takes a tenant's payment or an authority's check split across its leases (it
+  replaced the authority page's Record payment). A tenant's payment may carry a note
+  (`trust_payment_notes`, once, naming who; staff only, the AI never reads it) and the check's
+  photo or a PDF (a `payment_attachment` document about the lease and its first transfer), both in
+  its own request, kept once; and the open charges it pays first (`charges`, each all or part),
+  the rest of it in the usual order; Save and add another keeps the panel open. A fixed-term lease
+  whose term ran out with no renewal goes month to month at the same rent (`trust_roll_over_leases`,
+  the nightly run and Run rent now, the first night after its end within a week, once;
+  `trust_lease_holdovers`), never one whose end staff gave (`trust_lease_end_notices`, written by
+  Move-out's end; earlier ends found in the audit log), one another lease follows at its unit, one
+  its tenants moved from, one whose deposit was returned, or one entered after its end. The
+  Dashboard notes it for 30 days. All append-only.
 - Shared bills and markups (migration 0083, `docs/law.md`): one vendor invoice shared across
   properties (`trust_shared_bills`, `trust_shared_bill_parts`; `POST /api/payables/shared-bills`)
   is a bill for each owner's property account's share, under the invoice's reference with /1,
@@ -1118,6 +1141,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   holding, naming who recorded it; the same again writes nothing). No tax ID is kept: it stays on
   the W-9. A profile moves no money; whether a vendor gets a 1099 decides only whether the 1099
   summary lists them (migration 0113). The AI role reads it.
+- Tax IDs (migration 0155, ADR 0010, part F, `src/pms/api/tax_ids.py`): an owner's or vendor's
+  EIN or SSN, sealed by the app under `PMS_DATA_KEY` (`src/pms/sealed.py`, its row's id bound in)
+  with only its last four in the clear (`trust_tax_ids`, append-only, the latest holding). Every
+  staff member sees the last four; only an admin sees one whole, by Reveal or in the year's 1099
+  export (`GET /api/tax-ids/1099`, amounts as the vendor payments report and the owner year-end
+  count them), each time a row of `trust_tax_id_reveals` naming them, which the database refuses
+  for anyone else. Never in a path, a log or another export.
 - A lease's people (migration 0080, `docs/law.md`): a tenant leaves a lease others stay on, once,
   from a day within it (`trust_remove_lease_tenant`, writing `trust_lease_departures`, naming
   who recorded it); the last tenant can't (the lease ends instead), nor anyone once its deposit
@@ -1221,4 +1251,7 @@ python -m tools.check_synthetic_data                 # no real-looking personal 
 (cd frontend && npm ci && npm run typecheck && npm run lint && npm run knip && npm test && npm run build)   # the portal
 ```
 
-Mutation testing and the rest: `docs/CI.md`.
+Mutation testing and the rest: `docs/CI.md`. On Windows (or anywhere with Docker and Node),
+`scripts/simulate.ps1` plays every browser test against a fresh synthetic company in Edge, Firefox
+and Chromium, in UTC, Los Angeles and Kiritimati time, and says what failed (README, "Simulate
+people using it").

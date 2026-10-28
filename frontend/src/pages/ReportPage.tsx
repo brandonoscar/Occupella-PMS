@@ -86,6 +86,9 @@ function Report({ me, spec }: { me: Me; spec: ReportSpec }) {
           <LinkButton href={reportHref(spec, args, scope, "pdf", byOwner)}>PDF</LinkButton>
           <LinkButton href={reportHref(spec, args, scope, "xlsx", byOwner)}>Excel</LinkButton>
           <LinkButton href={reportHref(spec, args, scope, "csv", byOwner)}>CSV</LinkButton>
+          {spec.name === "vendor_payments" && me.roles?.includes("admin") && (
+            <LinkButton href={`/api/tax-ids/1099?year=${filters.year}`}>1099 export, with tax IDs</LinkButton>
+          )}
         </div>
       )} />
       <p className="text-base text-ink-muted"><GoLink href="/reports" className={LINK}>Reports</GoLink></p>
@@ -122,6 +125,12 @@ function Report({ me, spec }: { me: Me; spec: ReportSpec }) {
             onChange={(e) => change({ year: e.target.value })} />
         )}
       </div>
+      {spec.name === "vendor_payments" && me.roles?.includes("admin") && (
+        <p className="text-sm text-ink-muted">
+          The 1099 export lists each vendor and owner the year's 1099s are for, with their tax ID whole: taking it is
+          recorded with your name. The PMS files nothing.
+        </p>
+      )}
       <Notice tone="error">{error}</Notice>
       {preview === null ? (
         !error && <Notice tone="info">{args ? "Loading" : "Choose what the report covers."}</Notice>

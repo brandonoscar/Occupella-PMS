@@ -401,7 +401,8 @@ def break_fee(session: Staff, conn: Conn, lease_id: UUID, ends_on: date) -> Brea
 @router.post("/{lease_id}/end", status_code=204)
 def end(session: Staff, conn: Conn, lease_id: UUID, body: End) -> None:
     """Sets the lease's last day (before its deposit is returned), and charges the lease-break
-    fee when staff ask and the lease ends before its end date."""
+    fee when staff ask and the lease ends before its end date. Its last month is charged only for
+    the days it covers. A lease staff end never goes month to month by itself."""
     if returned(conn, session.pmc_id, lease_id):
         raise HTTPException(409, "the deposit was returned; the lease's days stay as they were")
     fee = None
@@ -418,6 +419,11 @@ def end(session: Staff, conn: Conn, lease_id: UUID, body: End) -> None:
         conn.execute("SELECT trust_end_lease(%s, %s, %s)", (session.pmc_id, lease_id, body.ends_on))
     except psycopg.errors.CheckViolation as refused:  # before it starts
         raise HTTPException(422, refusal(refused)) from None
+    # Staff gave this end (a move-out, a notice): the lease never rolls to month to month past it.
+    conn.execute(
+        "INSERT INTO trust_lease_end_notices (pmc_id, lease_id, ends_on) VALUES (%s, %s, %s)",
+        (session.pmc_id, lease_id, body.ends_on),
+    )
     if fee is not None:
         conn.execute(
             "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)"

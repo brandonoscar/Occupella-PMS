@@ -322,29 +322,18 @@ def rent_account_at(conn, pmc, owner):
     )
 
 
-def test_receipts_go_to_the_tenants_while_the_company_asks_for_them(
+def test_receipts_go_to_the_tenants_of_every_payment_while_the_server_sends_email(
     client, conn, staff, pmc, homes
 ):
     first = homes[0]
     ok(client.post(f"/api/tenants/{first.tenant}/contact", json={"email": "r@example.com"}), 204)
     client.app.state.email = email.FakeSender()
-    ok(client.post("/api/emails/settings", json={**EMAILS, "payment_receipts": True}))
 
     ok(bring(client, a_file(f"{TODAY},1200.00,Property 1,1A,,,")), 201)
 
     assert conn.execute(
         "SELECT kind, lease_id FROM trust_emails WHERE pmc_id = %s", (pmc.pmc_id,)
     ).fetchall() == [("payment_receipt", first.id)]
-
-
-EMAILS = {
-    "rent_reminder_days": None,
-    "late_notices": False,
-    "owner_statement_day": None,
-    "work_order_notices": False,
-    "adverse_action_notices": False,
-    "payment_receipts": False,
-}
 
 
 def test_another_pmcs_file_line_or_lease_reads_as_not_found(client, conn, staff, pmc, homes):
