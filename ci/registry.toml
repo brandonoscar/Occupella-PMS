@@ -1558,6 +1558,43 @@ tests = [
   "tests/test_privileges.py::test_ai_role_reads_only_what_the_app_reads",
 ]
 
+[[invariant]]
+id = "payment-pays-the-charges-chosen-first"
+statement = "Receive payment (ADR 0010 phase 1c): a tenant's payment pays each open charge of its lease that staff chose exactly what they chose, then spreads what is left over the lease's open charges in the usual order (rent first, oldest first), never past what is open of a charge or the payment, and holds the rest as prepaid rent as before. A choice that doesn't fit (a charge not open on the lease, chosen twice, more than is open of it, more than the payment, or a lease its tenants moved to) records nothing. What the lease owes and every trust bank account tie out."
+tests = [
+  "tests/properties/test_receive_payment_properties.py::test_a_payment_pays_the_charges_chosen_first_and_the_rest_as_before",
+  "tests/api/test_receive_payment_api.py::test_a_payment_pays_the_charges_staff_chose_first_and_the_rest_as_before",
+  "tests/api/test_receive_payment_api.py::test_a_payment_beyond_what_is_owed_still_holds_the_rest_as_prepaid_rent",
+  "tests/api/test_receive_payment_api.py::test_a_choice_that_does_not_fit_is_refused_and_records_nothing",
+  "tests/api/test_receive_payment_api.py::test_a_lease_its_tenants_moved_to_pays_each_lease_in_turn_and_takes_no_choice",
+]
+
+[[invariant]]
+id = "payment-note-and-file-kept-once-for-staff"
+statement = "What staff write about a tenant's payment and its file (a check's photo, a PDF; migration 0154) are kept with the payment once, naming who wrote it: sent again, the payment keeps what it first came with, and a file that isn't what it says refuses the payment too. The file is a document about the lease, listed on its Files tab, never uploaded by itself. A tenant never sees the note, and the AI role reads neither."
+tests = [
+  "tests/api/test_receive_payment_api.py::test_a_note_is_kept_with_the_payment_once_and_names_who_wrote_it",
+  "tests/api/test_receive_payment_api.py::test_a_tenant_never_sees_what_staff_wrote",
+  "tests/api/test_receive_payment_api.py::test_a_file_is_kept_with_the_payment_once_and_listed_on_the_lease",
+  "tests/api/test_receive_payment_api.py::test_a_file_that_is_not_what_it_says_refuses_the_payment",
+  "tests/api/test_receive_payment_api.py::test_a_payments_file_comes_only_with_its_payment",
+  "tests/test_privileges.py::test_ai_role_reads_only_what_the_app_reads",
+]
+
+[[invariant]]
+id = "lease-goes-month-to-month-once"
+statement = "A fixed-term lease whose term ran out with no renewal signed goes month to month at the same rent (ADR 0010 phase 1c, migration 0154): on the first night after its last day, within the week, once, its end cleared through trust_end_lease so the days of its last month credited are charged back. Never a lease whose end staff gave (a move-out or a notice, recorded as an end notice naming them), one another lease follows at its unit, one its tenants moved from, one whose deposit was returned, or one entered after its end had passed. The Dashboard notes it for 30 days while it stays month to month."
+tests = [
+  "tests/properties/test_receive_payment_properties.py::test_a_lease_goes_month_to_month_once_when_its_term_runs_out_without_an_end_of_staffs",
+  "tests/test_lease_holdovers.py::test_a_term_that_ran_out_goes_month_to_month_once",
+  "tests/test_lease_holdovers.py::test_the_days_of_its_last_month_come_back_at_the_same_rent",
+  "tests/test_lease_holdovers.py::test_an_end_staff_gave_never_rolls_over",
+  "tests/test_lease_holdovers.py::test_a_lease_that_another_follows_its_tenants_left_or_whose_deposit_came_back_stays_ended",
+  "tests/test_nightly.py::test_a_night_takes_a_fixed_term_that_ran_out_month_to_month_once",
+  "tests/api/test_moveout.py::test_an_end_staff_give_is_a_notice_naming_them_and_never_goes_month_to_month",
+  "tests/api/test_today.py::test_a_lease_gone_month_to_month_is_noted_for_thirty_days_while_it_is",
+]
+
 [[retired]]
 id = "invariant:bill-paid-once-after-set-aside"
 decision = "docs/adr/0010-design-pass.md"
@@ -1567,3 +1604,32 @@ replaced_by = "invariant:bill-paid-in-parts-once-per-key"
 id = "invariant:owners-page-shows-what-a-draw-takes"
 decision = "docs/adr/0010-design-pass.md"
 replaced_by = "invariant:owners-page-shows-what-a-draw-takes-past-held-bills"
+
+[[invariant]]
+id = "tax-id-whole-only-to-an-admin"
+statement = "An owner's or vendor's tax ID is kept sealed under the server's key, its row's id bound in, with only its last four in the clear (ADR 0010 phase 2, part F; migration 0155). Only an admin sees one whole, on screen or in the year's 1099 export, and each time is a row naming them, which the database refuses for anyone else; it is never in the audit log in the clear, and the AI role reads none of it."
+tests = [
+  "tests/api/test_tax_ids_api.py::test_staff_keep_a_tax_id_sealed_and_see_its_last_four",
+  "tests/api/test_tax_ids_api.py::test_an_admin_sees_one_whole_and_each_time_is_recorded",
+  "tests/api/test_tax_ids_api.py::test_staff_who_are_not_admins_see_the_last_four_only",
+  "tests/api/test_tax_ids_api.py::test_the_database_shows_a_whole_tax_id_only_to_an_admin",
+  "tests/api/test_tax_ids_api.py::test_the_1099_export_gives_each_payee_their_tax_id_whole_and_records_it",
+  "tests/properties/test_tax_id_properties.py::test_only_an_admin_sees_a_tax_id_whole_and_it_stays_sealed",
+]
+
+[[invariant]]
+id = "the-1099-export-counts-as-the-reports-do"
+statement = "The 1099 export's amounts are the vendor payments report's 1099 vendors at or over the year's threshold and the owner year-end package's 1099-MISC rents: one count, read from both sides (ADR 0010 phase 2, part F)."
+tests = [
+  "tests/api/test_tax_ids_api.py::test_the_1099_export_counts_as_the_reports_do",
+]
+
+[[invariant]]
+id = "applicant-details-carried-once"
+statement = "What an applicant gave (phone, address, previous landlord, employer, emergency contact, proof of income) and the household they listed come all or none with the application, ask nothing fair housing protects and never a Social Security number or birth date; once the application's offer is the lease, each tenant who was an applicant is linked to them once, with their contact details and emergency contact, and the household goes on the lease once, a retry carrying nothing twice (ADR 0010 phase 2, part G; migration 0155)."
+tests = [
+  "tests/api/test_applicant_details_api.py::test_bad_details_refuse_the_whole_application",
+  "tests/api/test_applicant_details_api.py::test_an_applicant_who_becomes_a_tenant_takes_what_they_gave_with_them",
+  "tests/api/test_applicant_details_api.py::test_the_database_links_a_tenant_only_to_the_applicant_they_were",
+  "tests/api/test_applicant_details_api.py::test_a_signer_who_was_not_an_applicant_takes_nothing",
+]

@@ -23,6 +23,19 @@ tests in `tests/api/`, which drive the app through FastAPI's test client: every 
 success, for a caller who isn't allowed (no session, the wrong kind of login, another PMC) and
 for bad input.
 
+`tests/api/test_isolation.py` sweeps another PMC over every route at once, so a new route can't
+skip it. Two demo companies (`pms.demo.build`) go in side by side, and company A's staff, owner
+or tenant calls each route with one of company B's ids in its path or body, the rest A's own:
+it is refused (an id in the path as not found), while B's own request with B's ids, on an app
+that rolls every transaction back, is answered otherwise, so the refusal is the company's and not
+a bad id. After each request every row of B's (each `trust_*` table, and B's part of pgledger's)
+is as it was, writes that name no record included. Every list, page and report, as it is, with
+B's id in each id it takes and searching for B's names, shows nothing of B's: not its PMC id, the
+id of any row of its, or a name of its, with CSV, PDF, workbook and zip opened. A path parameter,
+body field, query parameter or report argument the sweep doesn't know fails it, saying what to
+add; the few routes no company's staff, owner or tenant calls (the fake payments partner's pages,
+the public vacancy page, a calendar feed) are listed with why. About 450 cases in a minute.
+
 The synthetic-data scan (`tools/check_synthetic_data.py`) reads every tracked file for values
 shaped like real records: routing numbers that pass the ABA checksum with a real Fed prefix,
 SSNs, ITINs and EINs that could be issued, emails outside the reserved domains, and US phone
@@ -492,6 +505,29 @@ nothing. Grype ran only in CI: the image doesn't build in that sandbox (NOT VERI
 Run the parts locally with the commands above, `cd frontend && npm audit --omit=dev`, and
 `docker compose build`, then syft and grype as in the workflow.
 
+**simulate.yml** (by hand, and on a PR that changes `scripts/simulate.ps1`, `compose.e2e.yaml`,
+`frontend/playwright.config.ts` or the workflow): `scripts/simulate.ps1`, the browser tests played
+against a fresh synthetic company in Docker (`compose.e2e.yaml`: the API with e2e.yml's settings,
+on 127.0.0.1:8123) in each browser and time zone picked, by PowerShell (`pwsh`, on GitHub's
+runners) as on a Windows machine (README, "Simulate people using it"). The e2e job runs the tests
+in Chromium in UTC only; a date that is a day off for someone in Los Angeles or Kiritimati, or a
+page that breaks in Firefox or Edge, shows here. On a PR it runs once, Chromium in UTC, to show
+the script works; by hand it takes any browsers and time zones (default nine runs). What fails
+there is a lead to fix before it runs on a schedule. PSScriptAnalyzer (MIT, pinned) lints the
+script first. `tests/tools/test_simulate.py` keeps the stack's settings the same as e2e.yml's, the
+PMS published on this machine only, the seed writing only where git ignores it, the script plain
+ASCII (Windows PowerShell 5.1 reads a file without a byte order mark as ANSI) and free of what
+only PowerShell 7 has, and every program's exit code read under 'Continue' (5.1 makes a redirected
+stderr an error first). `scripts/check.sh` lists it as NOT RUN: it takes hours in Docker.
+
+Measured 10/25 in the build container, Chromium only, with the API served directly (the image
+doesn't build there and it has no PowerShell, so the script and its stack are NOT VERIFIED there;
+CI's job is their first run): Los Angeles 87 of 87, at a time its day was behind UTC's;
+Kiritimati 84 of 87. Two failed because the run crossed midnight UTC between seeding and the test
+(the seed's days are fixed when it runs; the tests count from when they run), and the housing
+authority test reached its 30-second limit (30.7 s on the rerun too). All three passed on a
+rerun.
+
 **licenses.yml** (PRs and main): every installed dependency, direct or transitive, must carry a
 license on the allowlist in `ci/licenses.toml`: compatible with this repo's Apache-2.0, and never
 non-commercial or source-available. A PMC that self-hosts needs to be able to use every piece
@@ -567,4 +603,5 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
 - A push to main runs the same checks (minus `deps-and-secrets`), plus gitleaks over full
   history, pip-audit and Scorecard: 11 jobs.
 - A new PR job is chained after another one, as `e2e` is, to stay within 8. The daily scan's one
-  job runs on a PR only when the PR changes `daily-scan.yml`.
+  job runs on a PR only when the PR changes `daily-scan.yml`, and the simulate job only when it
+  changes the script, its stack, the browser tests' config or `simulate.yml`.

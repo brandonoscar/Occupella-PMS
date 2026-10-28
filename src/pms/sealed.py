@@ -1,12 +1,14 @@
-"""Bank account numbers, sealed before they reach the database (ADR 0009, rule 5).
+"""Bank account numbers and tax IDs, sealed before they reach the database (ADR 0009, rule 5;
+ADR 0010, part F).
 
 An owner's or vendor's account number is kept for the ACH file the company takes to its bank
-(src/pms/payouts/nacha.py). The app seals it with AES-GCM under the server's key
-(PMS_DATA_KEY: 32 random bytes, base64) before it is written, and opens it only to write that
-file; the database keeps the sealed bytes and the last four digits, to show. The key is never in
-the repo, a workflow or the database: a server without one keeps no account numbers, and says
-so. Rotating the key needs every sealed number opened under the old one and sealed again, which
-no tool does yet: keep it.
+(src/pms/payouts/nacha.py), and their tax ID for the year's 1099 export (src/pms/api/tax_ids.py).
+The app seals each with AES-GCM under the server's key (PMS_DATA_KEY: 32 random bytes, base64)
+before it is written, and opens it only to write that file (or, a tax ID, for an admin to see);
+the database keeps the sealed bytes and the last four digits, to show. The key is never in the
+repo, a workflow or the database: a server without one keeps neither, and says so. Rotating the
+key needs every sealed value opened under the old one and sealed again, which no tool does yet:
+keep it.
 
 A sealed value is a version byte (1), a 12-byte nonce, then the ciphertext with its tag. The
 row's id goes in as associated data, so a sealed number copied onto another row doesn't open.
@@ -34,10 +36,10 @@ class Unreadable(Exception):
     """A sealed value that doesn't open under this key (another key, or tampered with)."""
 
 
-def key_from(environ: Mapping[str, str] = os.environ) -> bytes:
+def key_from(environ: Mapping[str, str] = os.environ, keeps: str = "bank account numbers") -> bytes:
     text = environ.get("PMS_DATA_KEY", "").strip()
     if not text:
-        raise NoKey("this server keeps no bank account numbers: it has no PMS_DATA_KEY")
+        raise NoKey(f"this server keeps no {keeps}: it has no PMS_DATA_KEY")
     try:
         key = base64.b64decode(text, validate=True)
     except binascii.Error:

@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from pms import accounts, exports, notices
-from pms.api import outbox, scope, screening_criteria
+from pms.api import applicant_details, outbox, scope, screening_criteria
 from pms.api.deps import Conn, Staff, download, refusal
 from pms.api.listings import NewListing
 from pms.api.rentals import Page, Paged, PerPage
@@ -83,12 +83,17 @@ class Listing(BaseModel):
 class ApplicantIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     email: str = Field(min_length=3, max_length=254)
+    # Their phone, address, previous landlord, employer, emergency contact and proof of income
+    # (ADR 0010, part G): the form asks each applicant; the API takes an applicant without them.
+    details: applicant_details.DetailsIn | None = None
 
 
 class ApplicationIn(LinkToken):
     move_in_on: date
     monthly_income: Money
     applicants: list[ApplicantIn] = Field(min_length=1, max_length=MAX_APPLICANTS)
+    # Who else would live there, their pets and vehicles.
+    household: applicant_details.HouseholdIn | None = None
 
 
 class Submitted(BaseModel):
@@ -196,12 +201,17 @@ def apply(request: Request, conn: Conn, application: ApplicationIn) -> Submitted
         # Staff closed the link while this was on its way.
         raise HTTPException(404, NOT_OPEN) from None
     assert created is not None
-    with conn.cursor() as cur:
-        cur.executemany(
+    details: dict[UUID, applicant_details.DetailsIn] = {}
+    for n, ((name, email), given) in enumerate(zip(people, application.applicants, strict=True), 1):
+        row = conn.execute(
             "INSERT INTO trust_applicants (pmc_id, application_id, position, display_name, email)"
-            " VALUES (%s, %s, %s, %s, %s)",
-            [(pmc_id, created[0], n, name, email) for n, (name, email) in enumerate(people, 1)],
-        )
+            " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            (pmc_id, created[0], n, name, email),
+        ).fetchone()
+        assert row is not None
+        if given.details is not None:
+            details[row[0]] = given.details
+    applicant_details.keep(conn, pmc_id, created[0], details, application.household)
     return Submitted(status_url=f"{public_url(request)}/application#{token}")
 
 
@@ -314,6 +324,15 @@ class Withdraw(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
+class ApplicantOut(BaseModel):
+    id: UUID
+    name: str
+    email: str
+    details: applicant_details.Details
+    # The tenant they became, once the application's offer became its lease.
+    tenant_id: UUID | None
+
+
 class ApplicationOut(BaseModel):
     id: UUID
     property_id: UUID
@@ -324,7 +343,8 @@ class ApplicationOut(BaseModel):
     move_in_on: date
     monthly_income: str
     submitted_at: datetime
-    applicants: list[ApplicantIn]
+    applicants: list[ApplicantOut]
+    household: applicant_details.Household
     screenings: list[Screening]
     decision: DecisionOut | None
     status: ApplicationStatus
@@ -455,13 +475,22 @@ def applications_of(
         },
     ).fetchall()
     ids = [row[0] for row in rows]
-    people: dict[UUID, list[ApplicantIn]] = {i: [] for i in ids}
-    for application, name, email in conn.execute(
-        "SELECT application_id, display_name, email FROM trust_applicants"
-        " WHERE application_id = ANY(%s) ORDER BY application_id, position",
+    people: dict[UUID, list[ApplicantOut]] = {i: [] for i in ids}
+    found_people = conn.execute(
+        "SELECT a.application_id, a.id, a.display_name, a.email, x.tenant_id"
+        " FROM trust_applicants AS a"
+        " LEFT JOIN trust_tenant_applicants AS x ON x.applicant_id = a.id"
+        " WHERE a.application_id = ANY(%s) ORDER BY a.application_id, a.position",
         (ids,),
-    ).fetchall():
-        people[application].append(ApplicantIn(name=name, email=email))
+    ).fetchall()
+    given = applicant_details.details_of(conn, [row[1] for row in found_people])
+    for application, applicant, name, email, tenant in found_people:
+        people[application].append(
+            ApplicantOut(
+                id=applicant, name=name, email=email, details=given[applicant], tenant_id=tenant
+            )
+        )
+    households = applicant_details.households_of(conn, ids)
     screened: dict[UUID, list[Screening]] = {i: [] for i in ids}
     for application, *screening_row in conn.execute(
         "SELECT application_id, id, partner, partner_reference, recommendation, reasons,"
@@ -492,6 +521,7 @@ def applications_of(
             monthly_income=exports.text(income),
             submitted_at=submitted,
             applicants=people[i],
+            household=households[i],
             screenings=screened[i],
             decision=None
             if decision is None

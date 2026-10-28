@@ -178,6 +178,10 @@ describe("rent", () => {
     expect(rentRunSummary({ rents: 1, recurring: 0, late_fees: 0, emails: 2, autopay: 1 })).toBe(
       "1 rent, 0 recurring charges and 0 late fees charged. 1 autopay payment started. 2 emails written.",
     );
+    // And the fixed-term leases that ran out with no renewal, gone month to month.
+    expect(rentRunSummary({ rents: 0, recurring: 0, late_fees: 0, emails: 0, leases_rolled_over: 2 })).toBe(
+      "0 rents, 0 recurring charges and 0 late fees charged. 2 leases went month to month.",
+    );
   });
   it("says a payment hold's days, why, who released it and what it let past", () => {
     const hold: Hold = { id: "h1", starts_on: "2026-10-01", reason: "Eviction filed", ends_on: null, released_by: null, allowed: 0, in_force: true };

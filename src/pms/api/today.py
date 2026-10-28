@@ -2,7 +2,8 @@
 waiting for a decision, lease offers waiting for signatures, journal entries waiting to be
 posted, vendor insurance expired or running out, the company's earned fees still in trust,
 trust bank accounts with no broker on file or a signer's bond running out, security deposits a
-signed lease asked that are not all held yet, and the owner draws prepared on the draw day.
+signed lease asked that are not all held yet, the owner draws prepared on the draw day, and the
+fixed-term leases gone month to month with no renewal signed.
 
 Read only. Each part comes from the route of the page that does that work (rent, bills,
 month-end, leasing, the journal, vendors), so the two never disagree; this only picks out what needs
@@ -13,9 +14,10 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
+import psycopg
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
@@ -90,6 +92,46 @@ class DepositDue(BaseModel):
     to_receive: str  # what is not held yet
 
 
+class Holdover(BaseModel):
+    lease_id: UUID
+    property: str
+    unit: str
+    tenants: list[str]
+    term_ended_on: date
+    rolled_on: date
+
+
+HOLDOVERS = """
+SELECT h.lease_id, p.display_name, u.display_name,
+       ARRAY(SELECT t.display_name FROM trust_lease_tenants AS lt
+             JOIN trust_tenants AS t ON t.id = lt.tenant_id
+             WHERE lt.lease_id = h.lease_id ORDER BY t.display_name COLLATE "C", t.id),
+       h.term_ended_on, h.rolled_on
+FROM trust_lease_holdovers AS h
+JOIN trust_leases AS l ON l.id = h.lease_id
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+WHERE h.pmc_id = %(pmc)s AND h.rolled_on > %(day)s::date - 30 AND h.rolled_on <= %(day)s
+  AND l.ends_on IS NULL
+ORDER BY h.rolled_on DESC, p.display_name COLLATE "C", u.display_name COLLATE "C"
+"""
+
+
+def holdovers(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> list[Holdover]:
+    """The leases gone month to month in the 30 days to the day, still month to month."""
+    return [
+        Holdover(
+            lease_id=row[0],
+            property=row[1],
+            unit=row[2],
+            tenants=list(row[3]),
+            term_ended_on=row[4],
+            rolled_on=row[5],
+        )
+        for row in conn.execute(HOLDOVERS, {"pmc": pmc_id, "day": day}).fetchall()
+    ]
+
+
 class Today(BaseModel):
     on: date
     late_rent: list[LateLease]
@@ -113,6 +155,9 @@ class Today(BaseModel):
     # The owner draws the nightly run prepared on the draw day, waiting for staff to pay them
     # (migration 0153).
     owner_draws: payouts.DrawRun | None = None
+    # Fixed-term leases that went month to month in the last 30 days, their term run out with no
+    # renewal signed (migration 0154).
+    month_to_month: list[Holdover] = []
 
 
 # The leases named as the rent page names them: property, unit and every tenant on it.
@@ -230,6 +275,7 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
         deposits_to_receive=deposits,
         deposits_to_return=moveout.due_back(conn, session.pmc_id, day),
         owner_draws=payouts.waiting_draws_of(conn, session.pmc_id),
+        month_to_month=holdovers(conn, session.pmc_id, day),
         renters_insurance=[
             Uninsured(
                 lease_id=lease,
