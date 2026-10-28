@@ -69,7 +69,7 @@ pins, every module checked against Go's checksum database
 gets up to three tries, keeping the modules already fetched. Locally:
 `go install github.com/axllent/mailpit@v1.31.6`, then `pytest -m mailpit`.
 
-**db.yml** (PRs and main): checks the migrations.
+**db.yml** (PRs, main and nightly): checks the migrations.
 - squawk lints new or changed migrations. A destructive change (drop, rename, type change) needs
   an explicit `-- squawk-ignore <rule>` line right above it.
 - Every migration is applied to an empty database.
@@ -102,6 +102,33 @@ gets up to three tries, keeping the modules already fetched. Locally:
   onto a server without the PMS's roles (it makes them without a login, as the migrations do),
   and refuses a database that isn't empty or a ledger that doesn't tie out. Measured locally:
   241 transfers and 175 tables and sequences; the whole check, migrations included, 11 s.
+- Upgrade from earlier points of main (`tools/check_upgrade_history.py`; nightly at 08:17 UTC
+  and by hand, never on a PR): a company that self-hosts may upgrade from a version months old,
+  skipping many merges, while the upgrade check above starts only from the PR's base. This runs
+  that same check, unchanged, from earlier points of main: each commit on main's first-parent
+  line (a merge or squash merge as it landed) that changed `db/migrations`, from the oldest
+  whose tree has the self-host seed (`selfhost/smoke.py`); the one point before it, the phase 0
+  ledger of 10/09, predates the self-host build, and the run says it left it out. A night checks
+  the oldest, the newest that landed by 7, 30 and 90 days before, and one in N of the points by
+  the night (days since 1970 mod N), at most `[upgrade_history] nightly_bases` in
+  `ci/thresholds.toml` (50), N as small as fits: on 10/25, 94 points, 48 a night, each every 2
+  nights. Each point's schema is built by its own migrations and filled by its own seed and app
+  code; this branch's migrations go on top, the money posted must be untouched, and this
+  branch's smoke runs on it. A failure from any point fails the job, prints that upgrade's output
+  and names the point; the other points still run. `--list` names a night's points without
+  checking them, and `--today` repeats a night. Measured on 10/25 (4 cores, a shared machine):
+  the nights of 10/25 and 10/26 took 48 points each, 227 s a night (3.5 to 6.7 s an upgrade),
+  and between them every one of the 94 upgraded with its money intact. CI's runner is NOT
+  VERIFIED yet: the job has not run on GitHub.
+
+  What it doesn't cover: the rows an old version holds are its seed's, a PMC with 50 properties
+  and their owners' accounts, 50 tenants with their deposits and a month of rent as ledger
+  transfers, so a migration that breaks only on rows the seed never makes (units, leases,
+  charges, bills, logins, applications and the like) still gets past it; an old seed runs with
+  this branch's installed packages, not the ones its commit pinned; each point goes to this
+  branch in one `dbmate up`, never through the versions between; a version between two points
+  has the older one's schema but newer app code, which no night runs; and it runs on Postgres 16
+  only.
 
 Trust records are kept for years, so a migration that silently drops or rewrites ledger data is
 the worst kind of change. On PRs that touch the Dockerfile, compose file or migrations, it then
@@ -110,6 +137,7 @@ runs the self-host check. Run it with:
 - `dbmate --no-dump-schema up && python -m tools.check_rollback`
 - `scripts/dump_schema.sh && git diff --exit-code db/schema.sql`
 - `python -m tools.check_upgrade --base origin/main`
+- `python -m tools.check_upgrade_history` (`--list` to see tonight's points first)
 - `PYTHONPATH=src python -m tools.check_backup`
 
 **ledger-invariants.yml** (PRs, main and nightly): property-based tests with Hypothesis. They
@@ -552,7 +580,8 @@ as soon as one merged.
 One command for every PR check that can run locally, in CI's order:
 - the ci, licenses and db checks, with the database ones on a throwaway database;
 - the portal's typecheck, lint, unit tests and build, if `npm` is installed;
-- the upgrade check, and the backup and restore check;
+- the upgrade check, a short run of the nightly upgrade from earlier points of main (from the
+  oldest only, about 5 s), and the backup and restore check;
 - the PL/pgSQL lint, if the server has plpgsql_check;
 - every test, with the coverage gates and diff-cover if plpgsql_check is preloaded (then in
   coverage.yml's two shards, one after the other);
@@ -604,7 +633,9 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   - 04:17 mutation (8 SQL shards and 1 Python job, then 1 scoring job);
   - 05:17 selfhost (1);
   - Mondays 06:17 security (codeql, gitleaks history, pip-audit, scorecard: 4);
-  - 07:17 daily-scan (1).
+  - 07:17 daily-scan (1);
+  - 08:17 db's upgrade from earlier points of main (1), after the property jobs' limit
+    (285 minutes from 03:17).
 - A push to main runs the same checks (minus `deps-and-secrets`), plus gitleaks over full
   history, pip-audit and Scorecard: 11 jobs.
 - A new PR job is chained after another one, as `e2e` is, to stay within 8. The daily scan's one
