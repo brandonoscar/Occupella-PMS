@@ -17,6 +17,9 @@
 --
 -- Which charges it reads, and what it gives, are unchanged.
 
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '60s';
+
 CREATE OR REPLACE FUNCTION trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at timestamp with time zone) RETURNS TABLE(lease_id uuid, charge_id uuid, open numeric)
     LANGUAGE sql STABLE ROWS 20
     SET search_path TO 'public', 'pg_temp'
@@ -100,6 +103,9 @@ CREATE OR REPLACE FUNCTION trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_
 $$;
 
 -- migrate:down
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '60s';
+
 CREATE OR REPLACE FUNCTION trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at timestamp with time zone) RETURNS TABLE(lease_id uuid, charge_id uuid, open numeric)
     LANGUAGE sql STABLE
     SET search_path TO 'public', 'pg_temp'
