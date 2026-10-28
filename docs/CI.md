@@ -463,8 +463,8 @@ for, signed on the PMS's page and activated, the rent run, a check paid and one 
 repair a vendor finishes through their link and its bill the owner approves in the portal, last
 month's fees taken out of trust, an owner paid, a renewal, a move-out, and the month-end the
 bookkeeper prepares from a bank statement of every move the register shows and the manager
-approves; wherever money moves, the pages that show it must agree to the cent (52 to 54 s in
-three runs locally on 10/22; the other days of the month NOT VERIFIED). On failure it keeps the Playwright
+approves; wherever money moves, the pages that show it must agree to the cent (33 to 54 s a
+run locally, on October 22, 25, 27 and 28; the other days of the month NOT VERIFIED). On failure it keeps the Playwright
 report and the API's log for 7 days. After every browser test, axe-core checks the page it
 ended on against WCAG 2.2 A and AA (`frontend/e2e/a11y.ts`), and one test walks every page of a
 demo of its own (staff's menu and Settings, a page of each kind a list opens, an owner's and a
