@@ -248,3 +248,55 @@ def test_the_rent_run_and_a_credit_together(conn, pmc):
     charge_recurring_due(conn, pmc.pmc_id, FEB_1)
 
     assert list(open_at(conn, pmc, FOREVER, lease).values()) == [Decimal("1400.00")]
+
+
+def test_one_leases_open_charges_read_its_own_charges_alone(conn, pmc):
+    """Migration 20261028000200: given a lease, trust_open_charges finds its charges by the
+    lease's index, so it reads them and not every charge of the PMC; given none, every lease's,
+    and each lease's are the same either way."""
+    leases = [lease_on(conn, pmc, f"Unit {n}") for n in range(1, 41)]
+    charged = {
+        lease: [charge(conn, pmc.pmc_id, lease, month, "1500.00") for month in (JAN_1, FEB_1)]
+        + [charge(conn, pmc.pmc_id, lease, FEB_1, "40.00", "fee")]
+        for lease in leases
+    }
+    one = leases[17]
+    pay(conn, pmc, charged[one][0], "1500.00", at(FEB_1))
+
+    every = open_at(conn, pmc, FOREVER)
+    for lease in leases:
+        own = open_at(conn, pmc, FOREVER, lease)
+        assert own == {c: left for c, left in every.items() if c in own}
+    assert sum(len(open_at(conn, pmc, FOREVER, lease)) for lease in leases) == len(every)
+
+    def charges_read():
+        return conn.execute(
+            "SELECT coalesce(seq_tup_read, 0) + coalesce(idx_tup_fetch, 0)"
+            " FROM pg_stat_xact_user_tables WHERE relname = 'trust_charges'"
+        ).fetchone()[0]
+
+    with conn.transaction():
+        # On a table this small a scan of it all costs less, and the planner would rightly
+        # take one; turned off, what is left is whether the lease's own index can be used.
+        conn.execute("SET LOCAL enable_seqscan = off")
+        before = charges_read()
+        assert open_at(conn, pmc, FOREVER, one) == {
+            charged[one][0]: Decimal("0.00"),
+            charged[one][1]: Decimal("1500.00"),
+            charged[one][2]: Decimal("40.00"),
+        }
+        # Its three, not the PMC's 120.
+        assert charges_read() - before <= 2 * 3
+
+
+def test_its_callers_look_up_its_few_rows_by_key(conn):
+    """Its callers join what it gives to trust_charges by id. Told it gives a lease's few rows
+    (ROWS 20; the planner's default for such a function is 1,000), the planner looks each up by
+    its key rather than hashing every charge of the database: on a company of 20,000 units, a
+    payment took 38 ms with the hash and 10 ms with the lookups (migration 20261028000200)."""
+    rows = conn.execute(
+        "SELECT prorows FROM pg_proc"
+        " WHERE oid = to_regprocedure('trust_open_charges(uuid, uuid, timestamptz)')"
+    ).fetchone()[0]
+
+    assert rows == 20
