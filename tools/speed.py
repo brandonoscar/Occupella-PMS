@@ -204,6 +204,7 @@ class ServerDown(Exception):
 class Server:
     origin: str
     log: IO[bytes]
+    pid: int = 0
 
     def tail(self, lines: int = 30) -> str:
         self.log.flush()
@@ -235,7 +236,7 @@ def serving(url: str, command: Sequence[str] | None = None) -> Iterator[Server]:
             stdout=log,
             stderr=subprocess.STDOUT,
         )
-        server = Server(origin, log)
+        server = Server(origin, log, process.pid)
         try:
             up_by = time.monotonic() + STARTING
             while not healthy(origin):

@@ -133,3 +133,15 @@ html_check_supported_min = 90.0
 # lower one, never raise one. Measured 2026-10-21 (4 cores): pages at most 728 ms, PDFs 1,539 ms.
 page_p95_ms_max = 1000
 download_p95_ms_max = 10000
+
+[enterprise]
+# PLACEHOLDER: set from the first measured run (tools/enterprise.py).
+import_seconds_max = 99999
+opening_seconds_max = 99999
+nightly_run_seconds_max = 99999
+report_seconds_max = 99999
+back_up_seconds_max = 99999
+restore_seconds_max = 99999
+soak_p95_growth_max = 99
+soak_memory_growth_max = 99
+soak_connections_growth_max = 99
