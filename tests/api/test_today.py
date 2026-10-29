@@ -25,6 +25,7 @@ from helpers import (
     prepare_bank,
     propose_entry,
     record_decision,
+    reverse_payment,
     send_offer,
     sign_for,
     sign_offer,
@@ -34,6 +35,7 @@ from helpers import (
 )
 from people import join_as_owner, join_as_staff, join_as_tenant
 
+from pms.api import today
 from pms.api.today import months_ended
 
 TODAY = datetime.now(UTC).date()
@@ -256,3 +258,45 @@ def test_months_ended_run_from_the_first_open_month_to_the_last_one_ended():
     assert months_ended(date(2026, 9, 15), date(2026, 10, 1)) == ["2026-09"]
     assert months_ended(date(2025, 11, 1), date(2026, 2, 28)) == ["2025-11", "2025-12", "2026-01"]
     assert months_ended(date(2026, 10, 1), date(2026, 10, 31)) == []
+
+
+@pytest.mark.parametrize("alone", [0, 10**9], ids=["lease by lease", "all at once"])
+def test_late_rent_is_the_same_read_lease_by_lease_or_all_at_once(conn, pmc, monkeypatch, alone):
+    """Late rent is read for the leases whose own payments haven't covered their rent, lease by
+    lease, or for the company all at once when most haven't (today.ALONE): the same rents."""
+    monkeypatch.setattr(today, "ALONE", alone)
+    _, owing = lease_of(conn, pmc, "Unit 1")
+    old = charge(conn, pmc.pmc_id, owing, TODAY - 40 * DAY, "1500.00")
+    charge(conn, pmc.pmc_id, owing, TODAY - 10 * DAY, "1500.00")
+    charge(conn, pmc.pmc_id, owing, TODAY - 5 * DAY, "200.00", "credit")
+    (part,) = transfer_batch(conn, [(pmc.operating_cash, pmc.owners[0].account, "1000.00")])
+    apply_payment(conn, pmc.pmc_id, old, part, Decimal("1000.00"))
+    # Paid in full, then the payment bounced: owing again.
+    _, bounced = lease_of(conn, pmc, "Unit 2")
+    rent = charge(conn, pmc.pmc_id, bounced, TODAY - 10 * DAY, "1500.00")
+    (paid,) = transfer_batch(conn, [(pmc.operating_cash, pmc.owners[0].account, "1500.00")])
+    apply_payment(conn, pmc.pmc_id, rent, paid, Decimal("1500.00"))
+    (back,) = transfer_batch(conn, [(pmc.owners[0].account, pmc.operating_cash, "1500.00")])
+    reverse_payment(conn, pmc.pmc_id, rent, paid, back, Decimal("1500.00"))
+    # Paid in full; and a credit that covers all its rent; and rent not due yet.
+    for name, covered in (("Unit 3", "payment"), ("Unit 4", "credit"), ("Unit 5", "later")):
+        _, lease = lease_of(conn, pmc, name)
+        rent = charge(
+            conn, pmc.pmc_id, lease, TODAY + (DAY if covered == "later" else -3 * DAY), "900.00"
+        )
+        if covered == "payment":
+            (paid,) = transfer_batch(conn, [(pmc.operating_cash, pmc.owners[0].account, "900.00")])
+            apply_payment(conn, pmc.pmc_id, rent, paid, Decimal("900.00"))
+        if covered == "credit":
+            charge(conn, pmc.pmc_id, lease, TODAY - 3 * DAY, "900.00", "credit")
+
+    late = sorted(today.rent_past_due(conn, pmc.pmc_id, TODAY))
+
+    # The credit comes off the oldest open rent first.
+    assert late == sorted(
+        [
+            (owing, TODAY - 40 * DAY, Decimal("300.00")),
+            (owing, TODAY - 10 * DAY, Decimal("1500.00")),
+            (bounced, TODAY - 10 * DAY, Decimal("1500.00")),
+        ]
+    )

@@ -1297,6 +1297,14 @@ tests = [
 ]
 
 [[invariant]]
+id = "a-leases-open-charges-are-the-pmcs"
+statement = "One lease's open charges (trust_open_charges given the lease, read by its index since migration 20261028000200) are exactly the PMC's open charges (given no lease) of that lease's charges, at any moment, whatever was paid, credited, waived or bounced on any lease; together the leases' are all of the PMC's, none twice; and one lease's call reads its own charges, not the PMC's."
+tests = [
+  "tests/properties/test_open_charges_properties.py::test_each_leases_open_charges_are_the_pmcs_of_its_charges",
+  "tests/test_open_charges.py::test_one_leases_open_charges_read_its_own_charges_alone",
+]
+
+[[invariant]]
 id = "pay-bills-all-or-none"
 statement = "Pay bills sets aside from its owner's money (if it wasn't) and pays from its trust bank account every bill it names, or nothing at all when one of them can't be paid, the refusal naming that bill; sent again it pays nothing twice, and each payment keeps how it was first recorded as sent (check or EFT)."
 tests = [

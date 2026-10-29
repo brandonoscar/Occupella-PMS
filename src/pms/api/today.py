@@ -184,6 +184,60 @@ def months_ended(start: date, on: date) -> list[str]:
     return found
 
 
+# How many of a company's rents due before a day, and which leases have one that their own
+# payments (net of bounces) have not covered. Every lease with rent still open is one of these:
+# credits and waivers only take more off.
+UNCOVERED = """
+SELECT count(*),
+       coalesce(array_agg(DISTINCT c.lease_id)
+                FILTER (WHERE c.amount > coalesce(paid.amount, 0) - coalesce(back.amount, 0)),
+                '{}')
+FROM trust_charges AS c
+LEFT JOIN (SELECT p.charge_id, sum(p.amount) AS amount FROM trust_charge_payments AS p
+           WHERE p.pmc_id = %(pmc)s GROUP BY p.charge_id) AS paid ON paid.charge_id = c.id
+LEFT JOIN (SELECT r.charge_id, sum(r.amount) AS amount FROM trust_payment_reversals AS r
+           WHERE r.pmc_id = %(pmc)s GROUP BY r.charge_id) AS back ON back.charge_id = c.id
+WHERE c.pmc_id = %(pmc)s AND c.kind = 'rent' AND c.due_on < %(day)s
+"""
+# What is open of those leases' rents due before the day: each lease's open charges read alone
+# (by its index, migration 20261028000200), or the company's all at once.
+OPEN_RENT_OF = """
+SELECT o.lease_id, c.due_on, o.open
+FROM unnest(%(leases)s::uuid[]) AS k (lease_id)
+CROSS JOIN LATERAL trust_open_charges(%(pmc)s, k.lease_id, 'infinity') AS o
+JOIN trust_charges AS c ON c.id = o.charge_id
+WHERE o.open > 0 AND c.kind = 'rent' AND c.due_on < %(day)s
+"""
+OPEN_RENT = """
+SELECT o.lease_id, c.due_on, o.open
+FROM trust_open_charges(%(pmc)s, NULL, 'infinity') AS o
+JOIN trust_charges AS c ON c.id = o.charge_id
+WHERE o.open > 0 AND c.kind = 'rent' AND c.due_on < %(day)s
+"""
+# One lease's open charges read alone cost about what this many charges cost read all at once:
+# on a company of 20,000 units, 0.32 ms a lease against 335 ms for its 22,053 charges (10/29).
+ALONE = 20
+
+
+def rent_past_due(
+    conn: psycopg.Connection[Any], pmc_id: UUID, day: date
+) -> list[tuple[UUID, date, Decimal]]:
+    """Each rent due before the day and still open: lease, due day, what is open of it. Read
+    lease by lease for the few leases whose payments haven't covered their rent (most days,
+    most leases have paid), all at once when most leases haven't (the days after rent is due);
+    either way the same."""
+    found = conn.execute(UNCOVERED, {"pmc": pmc_id, "day": day}).fetchone()
+    assert found is not None
+    rents, leases = found
+    if not leases:
+        return []
+    if len(leases) * ALONE <= rents:
+        query, params = OPEN_RENT_OF, {"pmc": pmc_id, "day": day, "leases": leases}
+    else:
+        query, params = OPEN_RENT, {"pmc": pmc_id, "day": day}
+    return [(lease, due_on, Decimal(left)) for lease, due_on, left in conn.execute(query, params)]
+
+
 @router.get("")
 def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None) -> Today:
     """What needs someone on the day (today, UTC, by default)."""
@@ -191,9 +245,8 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
     # Rent due before the day and still open, by the rent page's own open charges: only these
     # leases are read further, not every lease's whole rent page.
     due: dict[UUID, list[tuple[date, Decimal]]] = {}
-    for lease, _, due_on, kind, _, _, left in rent.charges_open(conn, session.pmc_id):
-        if kind == "rent" and due_on < day:
-            due.setdefault(lease, []).append((due_on, Decimal(left)))
+    for lease, due_on, left in rent_past_due(conn, session.pmc_id, day):
+        due.setdefault(lease, []).append((due_on, Decimal(left)))
     late = [
         LateLease(
             lease_id=lease,
