@@ -485,7 +485,14 @@ fees, credits, monthly charges, payments, prepaid rent, deposit and bounce, bill
 approves or declines in the portal, recurring bills, management and leasing fees and draws,
 staff roles and disabled logins, the owner's statement and year-end package, the tenant's lease
 and ledger, a mid-month move-out, a listing on the public vacancy page, setup, every report in
-every format, documents, and vendor payments carried over. On failure it keeps the Playwright
+every format, documents, and vendor payments carried over. `frontend/e2e/journey.spec.ts` runs
+a company's month start to end on a demo PMC of its own, as its people do it: a lease applied
+for, signed on the PMS's page and activated, the rent run, a check paid and one bounced, a
+repair a vendor finishes through their link and its bill the owner approves in the portal, last
+month's fees taken out of trust, an owner paid, a renewal, a move-out, and the month-end the
+bookkeeper prepares from a bank statement of every move the register shows and the manager
+approves; wherever money moves, the pages that show it must agree to the cent (33 to 54 s a
+run locally, on October 22, 25, 27 and 28; the other days of the month NOT VERIFIED). On failure it keeps the Playwright
 report and the API's log for 7 days. After every browser test, axe-core checks the page it
 ended on against WCAG 2.2 A and AA (`frontend/e2e/a11y.ts`), and one test walks every page of a
 demo of its own (staff's menu and Settings, a page of each kind a list opens, an owner's and a
@@ -540,6 +547,36 @@ dependency): pypdf is now 6.21.1, and pip-audit, npm audit and gitleaks over 199
 nothing. Grype ran only in CI: the image doesn't build in that sandbox (NOT VERIFIED locally).
 Run the parts locally with the commands above, `cd frontend && npm audit --omit=dev`, and
 `docker compose build`, then syft and grype as in the workflow.
+
+**zap.yml** (daily at 07:47 UTC, by hand, and on a PR that changes it or its tools): OWASP ZAP
+(Apache-2.0, `ghcr.io/zaproxy/zaproxy` pinned by digest) on the running PMS, synthetic data only,
+in two jobs:
+- passive: the browser tests (`frontend/e2e`, seeded as e2e.yml seeds them) run with ZAP as their
+  proxy (`PW_PROXY` in `playwright.config.ts`, loopback included), so ZAP reads every page and API
+  answer the tests' sessions get, owners' and tenants' as well as staff's, and flags what it sees:
+  headers, cookies, what an answer gives away. A test failing through the proxy fails the job.
+- active: `zap-api-scan` attacks every operation of the API's own OpenAPI schema (injections,
+  traversal, what a broken request makes the server say) as a staff member of the demo PMC
+  signed in with password and authenticator (`tools/zap_session.py`), for at most 45 minutes.
+  The schema leaves out only what would end that session (`LEFT_OUT`: signing out, disabling a
+  login). The session reaches ZAP through its environment (`ZAP_AUTH_HEADER_VALUE`), never a
+  command line or the log; it is a throwaway login's in a throwaway database. A server error in
+  the API's log fails the job too.
+
+`tools/zap_alerts.py` judges each report: an alert of low risk or higher fails the job unless
+`ci/zap-ignore.toml` names its rule with why it is no risk here (an entry without a reason is
+refused), maybe only on the paths it names (seen anywhere else, it fails); informational alerts
+are listed. `check.sh` runs both tools (the session on a throwaway
+database of its own, served as `python -m pms.api` serves it, and the ignore list); the scan
+itself needs ZAP's image, which the sandbox this was written in can't pull (NOT VERIFIED locally:
+its first run was the PR's, #181). That first run found three alerts of low risk, none higher: the
+API's schema called the ledger zip JSON (now `application/zip`, as the records zip), API answers
+lacked `Cross-Origin-Resource-Policy` (now `same-origin` on every answer: no other site loads one
+into its page), and ZAP reported its own pinned version out of date (ignored, with why). The
+second run still flagged the ledger zip's content type: ZAP's API scan expects an API to answer
+JSON, YAML, XML, plain text or octet-stream whatever its schema says, so that rule (100001) is
+ignored on the two zip downloads alone. The browser tests through ZAP needed the throwaway `PMS_DATA_KEY` e2e.yml makes, as both scans' servers
+now get.
 
 **simulate.yml** (by hand, and on a PR that changes `scripts/simulate.ps1`, `compose.e2e.yaml`,
 `frontend/playwright.config.ts` or the workflow): `scripts/simulate.ps1`, the browser tests played
@@ -656,6 +693,7 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   - 05:17 selfhost (1);
   - Mondays 06:17 security (codeql, gitleaks history, pip-audit, scorecard: 4);
   - 07:17 daily-scan (1);
+  - 07:47 zap (2, the active one up to 90 minutes);
   - 08:17 db's upgrade from earlier points of main (1), after the property jobs' limit
     (285 minutes from 03:17);
   - Saturdays 09:17 enterprise (1, ENTERPRISE_HOURS).

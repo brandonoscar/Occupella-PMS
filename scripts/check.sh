@@ -186,6 +186,11 @@ else
 fi
 skip "CodeQL and dependency review" "GitHub-only; CI's security workflow runs them"
 skip "self-host image" "needs Docker; CI's selfhost job runs it when the build changes"
+# zap.yml: its tools here; the scan itself needs ZAP's image, which its jobs run.
+step "ZAP's ignore list" python -m tools.zap_alerts --check
+step "ZAP's session and schema (on a throwaway database)" env PYTHONPATH=src \
+  python -m tools.zap_session --cookie-file "$(mktemp)" --schema-file "$(mktemp)"
+skip "ZAP scan" "needs ZAP's image; zap.yml runs it nightly and on a PR that changes it"
 skip "the browser tests in other browsers and time zones" "takes hours in Docker; scripts/simulate.ps1 runs them on your machine, CI's simulate workflow by hand"
 
 printf '\n== summary (base %s)\n' "$(git rev-parse --short "$base")"
