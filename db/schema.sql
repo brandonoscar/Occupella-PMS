@@ -5803,6 +5803,7 @@ $$;
 CREATE FUNCTION public.trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at timestamp with time zone) RETURNS TABLE(lease_id uuid, charge_id uuid, open numeric)
     LANGUAGE sql STABLE ROWS 20
     SET search_path TO 'public', 'pg_temp'
+    SET jit TO 'off'
     AS $$
     WITH mine AS (
         -- One lease's charges by its index, or, given no lease, every charge of the PMC: each

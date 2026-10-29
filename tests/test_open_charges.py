@@ -300,3 +300,35 @@ def test_its_callers_look_up_its_few_rows_by_key(conn):
     ).fetchone()[0]
 
     assert rows == 20
+
+
+def test_a_call_never_compiles_its_plan(conn, pmc):
+    """The plan for one lease is also costed for every charge of the PMC (the branch for no lease,
+    which it never runs), so it passed JIT's thresholds: each call compiled its plan to machine
+    code first, most of a second, and the nightly run's late fees, one call per rent, hung on a
+    company of 1,000 units a year on (migration 20261028000200). The API turns JIT off for its
+    connections; the function turns it off for itself, whoever calls it."""
+    assert conn.execute("SELECT pg_jit_available()").fetchone()[0], "this Postgres has no JIT"
+    lease = lease_on(conn, pmc)
+    charge(conn, pmc.pmc_id, lease, JAN_1, "1500.00")
+    plans: list[str] = []
+    conn.add_notice_handler(lambda notice: plans.append(notice.message_primary or ""))
+    with conn.transaction():
+        # Every plan compiled, as a large one would be, and each plan run inside a function
+        # shown to this connection.
+        conn.execute("LOAD 'auto_explain'")
+        for setting, value in (
+            ("jit", "on"),
+            ("jit_above_cost", "0"),
+            ("jit_inline_above_cost", "0"),
+            ("jit_optimize_above_cost", "0"),
+            ("auto_explain.log_min_duration", "0"),
+            ("auto_explain.log_nested_statements", "on"),
+            ("auto_explain.log_level", "notice"),
+        ):
+            conn.execute("SELECT set_config(%s, %s, true)", (setting, value))
+        open_at(conn, pmc, FOREVER, lease)
+
+    inside = [plan for plan in plans if "trust_charge_payments" in plan]
+    assert inside, plans
+    assert not any("JIT" in plan for plan in inside), inside

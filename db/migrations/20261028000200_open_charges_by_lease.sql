@@ -15,6 +15,11 @@
 -- lease's charges, has it look each one up by its key instead. With no lease given it gives more,
 -- but only the open ones are joined, each by its key.
 --
+-- Its plan is costed for the branch with no lease too, which reads every charge, so a call for
+-- one lease passed JIT's thresholds and compiled its plan first: most of a second a call, and
+-- the nightly run's late fees, a call per rent, hung on a company of 1,000 units a year on. The
+-- API turns JIT off for its connections; the function now turns it off for itself.
+--
 -- Which charges it reads, and what it gives, are unchanged.
 
 SET LOCAL lock_timeout = '5s';
@@ -23,6 +28,7 @@ SET LOCAL statement_timeout = '60s';
 CREATE OR REPLACE FUNCTION trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at timestamp with time zone) RETURNS TABLE(lease_id uuid, charge_id uuid, open numeric)
     LANGUAGE sql STABLE ROWS 20
     SET search_path TO 'public', 'pg_temp'
+    SET jit TO 'off'
     AS $$
     WITH mine AS (
         -- One lease's charges by its index, or, given no lease, every charge of the PMC: each
