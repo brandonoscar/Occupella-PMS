@@ -1405,11 +1405,13 @@ test("a lease ended mid-month keeps only its days of the month's rent, and its d
   await expect(lease.getByText("Ended, deposit to return")).toBeVisible();
   await expect(lease).toContainText(`owes ${dollars(cents)}`);
 
-  // Cleaning is charged; what is owed comes out of the deposit, the rest goes back.
+  // Cleaning is charged; what is owed comes out of the deposit, the rest goes back. $10.00, so
+  // the deposit covers the month's days and the cleaning whatever day it runs: on the 31st, 30
+  // days of rent are $1,141.94 (with $100.00 the test asked for a negative refund from the 30th).
   await lease.getByLabel("Cleaning or damage").fill("Carpet cleaning");
-  await lease.getByLabel("Amount").fill("100.00");
+  await lease.getByLabel("Amount").fill("10.00");
   await lease.getByRole("button", { name: "Charge it" }).click();
-  await expect(lease).toContainText("Charged $100.00: Carpet cleaning.");
+  await expect(lease).toContainText("Charged $10.00: Carpet cleaning.");
   // Owing something, the deposit is due back 14 days after the last day (the strictest deadline
   // found), here and on the Dashboard; the fee keeps its receipt.
   const returnBy = us(daysFromToday(13));
@@ -1425,7 +1427,7 @@ test("a lease ended mid-month keeps only its days of the month's rent, and its d
     `Unit 1, Aspen Row (Drew Sample): $1,180.00 held, due back by ${returnBy}`,
   );
   await section(page, "Move-outs");
-  const kept = cents + 10_000;
+  const kept = cents + 1_000;
   const back = 118_000 - kept;
   await expect(lease).toContainText(`Keeps ${dollars(kept)} for what the lease owes; ${dollars(back)} goes back.`);
   await lease.getByRole("button", { name: "Return the deposit" }).click();
