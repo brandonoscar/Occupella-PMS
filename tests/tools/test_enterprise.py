@@ -5,7 +5,11 @@ long time, backed up and restored. Each step has a ceiling, and the books must b
 import csv
 import io
 import os
+import subprocess
+import time
+import uuid
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 
@@ -239,3 +243,126 @@ def test_migrations_that_fail_fail_the_command(database_url, monkeypatch, tmp_pa
 
     assert enterprise.main([]) == 1
     assert "dbmate up failed" in capsys.readouterr().out
+
+
+class Figures:
+    """A connection that answers check_books' questions with the figures given: the leases
+    charged this month's rent, the trial balance's debits and credits, and the trust bank
+    accounts whose book cash isn't what they hold. The ledger never lets these be wrong, so
+    only figures can show the books' check catching them."""
+
+    def __init__(self, charged=3, debits=10, credits=10, off=0):
+        self.charged, self.debits, self.credits, self.off = charged, debits, credits, off
+
+    def execute(self, query, params=()):
+        if "trust_report_trial_balance" in query:
+            row = (self.debits, self.credits)
+        elif "trust_report_balance_sheet" in query:
+            row = (self.off,)
+        else:
+            row = (self.charged,)
+        return SimpleNamespace(fetchone=lambda: row)
+
+
+def test_a_trial_balance_off_or_a_bank_account_not_tied_out_fails_the_books():
+    pmc, day = uuid.uuid4(), date(2026, 10, 30)
+
+    enterprise.check_books(Figures(), pmc, day, 3)
+    with pytest.raises(enterprise.Wrong, match="the trial balance has debits 10 and credits 11"):
+        enterprise.check_books(Figures(credits=11), pmc, day, 3)
+    with pytest.raises(enterprise.Wrong, match="2 trust bank accounts' book cash isn't"):
+        enterprise.check_books(Figures(off=2), pmc, day, 3)
+
+
+LIMITS = {
+    "soak_p95_growth_max": 2.0,
+    "soak_memory_growth_max": 1.5,
+    "soak_connections_growth_max": 2.0,
+}
+
+
+def test_staff_work_that_failed_slowed_or_grew_fails_the_run(capsys):
+    def worked():
+        tally = enterprise.speed.Tally()
+        tally.add("dashboard", 0.2)
+        steady = [enterprise.Window(300, 140, 7), enterprise.Window(320, 141, 7)]
+        return enterprise.Worked(tally, nights=[4.0, 5.5], windows=steady)
+
+    fine = worked()
+    enterprise.judge(fine, LIMITS)
+    out = capsys.readouterr().out
+    assert "staff: 1 answers; p95 ms by page: {'dashboard': 200}" in out
+    assert "nightly runs under them: 2, longest 5.5 s" in out
+    assert "part 2 of 2: p95 320 ms, API memory 141 MB, database connections 7" in out
+
+    night = worked()
+    night.night_failures.append("OperationalError('the server went away')")
+    with pytest.raises(enterprise.Wrong, match="a nightly run under staff's work failed"):
+        enterprise.judge(night, LIMITS)
+
+    failed = worked()
+    failed.tally.add("payment", 0.1, "503: no connection was free")
+    with pytest.raises(enterprise.Wrong, match="1 staff requests failed, e.g. payment: 503"):
+        enterprise.judge(failed, LIMITS)
+
+    slow = worked()
+    slow.tally.add("rent roll", 2.5)
+    with pytest.raises(enterprise.Wrong, match="staff's pages were slow: rent roll: p95 2,500 ms"):
+        enterprise.judge(slow, LIMITS)
+
+    grew = worked()
+    grew.windows.append(enterprise.Window(900, 140, 7))
+    with pytest.raises(enterprise.Wrong, match="over the work, the answers' p95 went from 300"):
+        enterprise.judge(grew, LIMITS)
+
+
+def test_a_nightly_run_that_fails_under_staff_is_kept_and_the_runs_go_on(database_url, monkeypatch):
+    def fails(conn, pmc, day, url):
+        raise RuntimeError("the run broke")
+
+    monkeypatch.setattr(enterprise.nightly, "run_pmc", fails)
+    worked = enterprise.Worked(enterprise.speed.Tally())
+
+    enterprise.nights(
+        database_url, uuid.uuid4(), date(2026, 10, 30), time.monotonic() + 0.05, worked
+    )
+
+    assert worked.night_failures and len(worked.nights) == len(worked.night_failures)
+    assert worked.night_failures[0] == "RuntimeError('the run broke')"
+
+
+def test_memory_is_none_where_proc_tells_none(tmp_path):
+    (tmp_path / "7").mkdir()
+    (tmp_path / "7" / "status").write_text("Name:\tkthreadd\nState:\tS (sleeping)\n")
+    (tmp_path / "8").mkdir()
+    (tmp_path / "8" / "status").write_text("Name:\tpython\nVmRSS:\t   2048 kB\n")
+
+    assert enterprise.rss_mb(7, tmp_path) == 0.0
+    assert enterprise.rss_mb(8, tmp_path) == 2.0
+
+
+def test_a_backup_or_restore_that_fails_or_loses_a_transfer_fails_the_run(
+    database_url, monkeypatch
+):
+    def answers(dump, restore):
+        def backup(root, what, archive, url):
+            code, said = dump if what == "dump" else restore
+            return subprocess.CompletedProcess([what], code, "", said)
+
+        return backup
+
+    t = enterprise.Timings()
+    monkeypatch.setattr(enterprise, "backup", answers((1, "pg_dump: no space left"), (0, "")))
+    with pytest.raises(enterprise.Wrong, match="the backup failed: pg_dump: no space left"):
+        enterprise.restore_copy(database_url, database_url, t)
+
+    monkeypatch.setattr(enterprise, "backup", answers((0, ""), (1, "pg_restore: bad archive")))
+    with pytest.raises(enterprise.Wrong, match="the restore failed: pg_restore: bad archive"):
+        enterprise.restore_copy(database_url, database_url, t)
+
+    # Both said they worked, but the copy holds a transfer fewer than the books.
+    monkeypatch.setattr(enterprise, "backup", answers((0, ""), (0, "")))
+    counts = iter([5, 4])
+    monkeypatch.setattr(enterprise, "scalar", lambda conn, query, params=(): next(counts))
+    with pytest.raises(enterprise.Wrong, match="the restored copy doesn't hold every transfer"):
+        enterprise.restore_copy(database_url, database_url, t)

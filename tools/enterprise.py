@@ -412,14 +412,7 @@ def check_books(conn: psycopg.Connection[Any], pmc: UUID, day: date, leases_in_e
         raise Wrong(
             f"this month's rent went to {charged} of the {leases_in_effect} leases in effect"
         )
-    twice = scalar(
-        conn,
-        "SELECT count(*) FROM (SELECT 1 FROM trust_charges WHERE pmc_id = %s AND kind = 'rent'"
-        " GROUP BY lease_id, due_on HAVING count(*) > 1) AS d",
-        (pmc,),
-    )
-    if twice:
-        raise Wrong(f"{twice} leases were charged rent twice for a due date")
+    # Rent charged twice for a due date can't be: trust_charges_one_rent_per_due_date refuses it.
     debits, credits = conn.execute(
         "SELECT coalesce(sum(debit), 0), coalesce(sum(credit), 0)"
         " FROM trust_report_trial_balance(%s, %s)",
@@ -543,9 +536,8 @@ def live(
         # This month's one in three of those now and then a month behind.
         behind = {n for n in leases if habits[n] == "now and then" and rng.random() < 0.3}
         with t.step(f"month {first:%Y-%m} in the PMS"):
-            for day in [first.replace(day=d) for d in (1, 3, 10, 15, 20)]:
-                if day > today:
-                    break
+            days = [first.replace(day=d) for d in (1, 3, 10, 15, 20)]
+            for day in [d for d in days if d <= today]:  # this month's, up to today
                 if day.day in (1, 15):
                     ran = nightly.run_pmc(conn, pmc, day, URL)
                     lived.rents += ran.rents
@@ -634,30 +626,7 @@ def run(
             worked = work(conn, url, built, units, crew_size, seconds, pause, seed, today)
         check_books(conn, built.pmc_id, today, in_effect)
         size = scalar(conn, "SELECT pg_database_size(current_database())")
-    if worked.night_failures:
-        raise Wrong(f"a nightly run under staff's work failed: {worked.night_failures[0]}")
-    if worked.tally.failures:
-        raise Wrong(
-            f"{len(worked.tally.failures)} staff requests failed, e.g. {worked.tally.failures[0]}"
-        )
-    slow = speed.slow(worked.tally, speed.ceilings())
-    if slow:
-        raise Wrong("staff's pages were slow: " + "; ".join(slow))
-    answers = sum(len(v) for v in worked.tally.seconds.values())
-    p95 = {
-        k: round(speed.percentile(v, 0.95) * 1000) for k, v in sorted(worked.tally.seconds.items())
-    }
-    print(f"  staff: {answers} answers; p95 ms by page: {p95}")
-    longest = max(worked.nights, default=0)
-    print(f"  nightly runs under them: {len(worked.nights)}, longest {longest:.1f} s")
-    for n, w in enumerate(worked.windows, 1):
-        print(
-            f"  part {n} of {len(worked.windows)}: p95 {w.p95_ms:.0f} ms, API memory"
-            f" {w.rss_mb:.0f} MB, database connections {w.connections}"
-        )
-    growth = grown(worked.windows, limits())
-    if growth:
-        raise Wrong("over the work, " + "; ".join(growth))
+    judge(worked, limits())
     return {
         "units": units,
         "leases": files.leases,
@@ -693,10 +662,53 @@ class Worked:
     windows: list[Window] = field(default_factory=list)
 
 
-def rss_mb(pid: int) -> float:
+def judge(worked: Worked, ceilings: dict[str, float]) -> None:
+    """Staff's work fails the run when a nightly run under it failed, a staff request failed, a
+    page's 95th percentile passed the speed test's ceiling or something grew over the work past
+    its ceiling; otherwise what it did is printed."""
+    if worked.night_failures:
+        raise Wrong(f"a nightly run under staff's work failed: {worked.night_failures[0]}")
+    if worked.tally.failures:
+        raise Wrong(
+            f"{len(worked.tally.failures)} staff requests failed, e.g. {worked.tally.failures[0]}"
+        )
+    slow = speed.slow(worked.tally, speed.ceilings())
+    if slow:
+        raise Wrong("staff's pages were slow: " + "; ".join(slow))
+    answers = sum(len(v) for v in worked.tally.seconds.values())
+    p95 = {
+        k: round(speed.percentile(v, 0.95) * 1000) for k, v in sorted(worked.tally.seconds.items())
+    }
+    print(f"  staff: {answers} answers; p95 ms by page: {p95}")
+    longest = max(worked.nights, default=0)
+    print(f"  nightly runs under them: {len(worked.nights)}, longest {longest:.1f} s")
+    for n, w in enumerate(worked.windows, 1):
+        print(
+            f"  part {n} of {len(worked.windows)}: p95 {w.p95_ms:.0f} ms, API memory"
+            f" {w.rss_mb:.0f} MB, database connections {w.connections}"
+        )
+    growth = grown(worked.windows, ceilings)
+    if growth:
+        raise Wrong("over the work, " + "; ".join(growth))
+
+
+def nights(url: str, pmc: UUID, today: date, until: float, worked: Worked) -> None:
+    """The nightly run again and again, on a connection of its own, until `until` (monotonic);
+    a run that fails is a finding, kept and passed over."""
+    with as_app(url) as own:
+        while time.monotonic() < until:
+            began = time.monotonic()
+            try:
+                nightly.run_pmc(own, pmc, today, URL)
+            except Exception as failed:  # any error here is a finding
+                worked.night_failures.append(repr(failed)[:300])
+            worked.nights.append(time.monotonic() - began)
+
+
+def rss_mb(pid: int, proc: Path = Path("/proc")) -> float:
     """A process's resident memory in MB, as Linux counts it (0 where /proc has none)."""
     try:
-        status = Path(f"/proc/{pid}/status").read_text()
+        status = (proc / str(pid) / "status").read_text()
     except OSError:
         return 0.0
     for line in status.splitlines():
@@ -769,22 +781,11 @@ def work(
         ]
         began = time.monotonic()
         until = began + seconds
-
-        def nights() -> None:
-            with as_app(url) as own:
-                while time.monotonic() < until:
-                    began = time.monotonic()
-                    try:
-                        nightly.run_pmc(own, pmc, today, URL)
-                    except Exception as failed:  # any error here is a finding
-                        worked.night_failures.append(repr(failed)[:300])
-                    worked.nights.append(time.monotonic() - began)
-
         threads = [
             threading.Thread(target=s.run, args=(until, worked.tally, time.monotonic, pause))
             for s in crew
         ]
-        threads.append(threading.Thread(target=nights))
+        threads.append(threading.Thread(target=nights, args=(url, pmc, today, until, worked)))
 
         def watch() -> None:
             # At the end of each part of the time: that part's answers, the API's memory, the
