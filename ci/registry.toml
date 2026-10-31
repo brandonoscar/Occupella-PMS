@@ -440,6 +440,15 @@ tests = [
 ]
 
 [[invariant]]
+id = "a-late-fee-run-works-out-only-rents-left-open"
+statement = "A late fee run charges a rent a late fee exactly when what is open of it at the end of its grace (trust_open_charges at that moment, payments, bounces, credits and waivers all counted) is above zero, the terms' fee on what was open, once. It works out what is open only of the rents whose own payments by then, less what of them bounced by then, left them uncovered (migration 20261031000200): a rent its payments covered is open of nothing then, so every rent ever paid on time costs a run no more than a look at its payments."
+tests = [
+  "tests/properties/test_late_fee_properties.py::test_a_rent_is_charged_a_late_fee_exactly_when_open_at_the_end_of_its_grace",
+  "tests/test_rent_automation.py::test_a_run_works_out_only_the_rents_their_own_payments_left_open",
+  "tests/test_rent_automation.py::test_a_payment_counts_only_if_dated_before_the_grace_runs_out",
+]
+
+[[invariant]]
 id = "lease-end-keeps-charged-months-at-their-days"
 statement = "When a lease's end is set, moved or cleared, every charge the rent run makes for it (rent, and a recurring charge's fee or credit) that, with what followed earlier ends, stood at its month's days under the old end gets a credit or a fee, due on its own day, so it stands at its month's days under the new end (a month wholly after the end at nothing); a charge standing at anything else is left as it is. Setting the same end changes nothing, and a rent run and an end wait for each other, so no charged month misses an end."
 tests = [
