@@ -108,6 +108,15 @@ SELECT format('CREATE ROLE %I NOLOGIN', :'role')
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'role') \gexec
 SQL
   done < <(roles_named grantees "$archive")
+  # A key's request runs as trust_ai_agent (migration 0201, ADR 0011): trust_app may set that
+  # role and never inherits it. Like the roles, that membership lives in the server, not the
+  # backup, so a new server gets it here (one that has it already is left as it is).
+  value <<'SQL' >/dev/null
+SELECT 'GRANT trust_ai_agent TO trust_app WITH INHERIT FALSE, SET TRUE'
+WHERE to_regrole('trust_app') IS NOT NULL AND to_regrole('trust_ai_agent') IS NOT NULL
+  AND NOT EXISTS (SELECT FROM pg_auth_members
+                  WHERE roleid = to_regrole('trust_ai_agent') AND member = to_regrole('trust_app')) \gexec
+SQL
 
   pg_restore --single-transaction --exit-on-error --no-password --dbname="$database" "$archive"
   value <<<"ANALYZE" >/dev/null

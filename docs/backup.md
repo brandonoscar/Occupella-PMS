@@ -33,7 +33,8 @@ PGDATABASE=pms_restored scripts/backup.sh restore pms.dump   # or "restore -" to
   its owner only.
 - **A restore** refuses a database that holds anything ("never over books that are running").
   On a new server it makes the roles the books grant to (`trust_app`, `trust_ai_agent`) without a
-  login, as the migrations do; the grants come from the backup. It refuses a backup whose objects
+  login, as the migrations do, and lets `trust_app` set the `trust_ai_agent` role an API key's
+  request runs as (ADR 0011); the grants come from the backup. It refuses a backup whose objects
   belong to a role the server lacks: restore as that role. It runs in one transaction, so a
   failure leaves the new database empty. Then it runs `ANALYZE` and the self-host smoke's ledger
   checks (every transfer balances, every balance is its entries' sum, nothing held is below zero,
