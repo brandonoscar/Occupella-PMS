@@ -601,6 +601,28 @@ Kiritimati 84 of 87. Two failed because the run crossed midnight UTC between see
 authority test reached its 30-second limit (30.7 s on the rerun too). All three passed on a
 rerun.
 
+**enterprise.yml** (Saturdays at 09:17 UTC, by hand, and on a PR that changes it or
+`tools/enterprise.py`): a company of 20,000 units, the size an enterprise brings, run as one would
+(`tools/enterprise.py`, synthetic data only), every step timed against its ceiling in
+`ci/thresholds.toml` (`[enterprise]`) and the books checked after:
+- brought over from another system on Settings, Import (the switching tool's route functions):
+  owners, vendors, 1,000 properties, their units, tenants and leases, last month's unpaid rent
+  and bills, and five years of history (each home's rent, each owner's draws, each vendor's
+  bills: 1.2 million lines), in files of at most the tool's 20,000 rows; then the two trust bank
+  accounts opened with what each of their some 22,000 accounts held, and the tie-out signed off;
+- tonight's nightly run on it, the reports staff open most, and every owner's statement;
+- fifty staff signed in over HTTP, each opening a page every 0 to 20 seconds (the speed test's
+  pages and payments, `tools/speed.py`), with the nightly run going again and again under them,
+  for an hour (the soak; five minutes on a PR): every answer must succeed and each page's 95th
+  percentile stay under the speed test's ceilings, and from the first sixth of the hour to the
+  last the answers' p95, the API's memory and the database's connections must not grow past
+  their ceilings;
+- backed up with `scripts/backup.sh` and restored into an empty database, every transfer there.
+
+Each run's company comes from its own seed. Every PR's tests run the tool on 40 units
+(`tests/tools/test_enterprise.py`), and `scripts/check.sh` on 200 units for 20 seconds.
+ENTERPRISE_MEASURED
+
 **licenses.yml** (PRs and main): every installed dependency, direct or transitive, must carry a
 license on the allowlist in `ci/licenses.toml`: compatible with this repo's Apache-2.0, and never
 non-commercial or source-available. A PMC that self-hosts needs to be able to use every piece
@@ -673,9 +695,11 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   - 07:17 daily-scan (1);
   - 07:47 zap (2, the active one up to 90 minutes);
   - 08:17 db's upgrade from earlier points of main (1), after the property jobs' limit
-    (285 minutes from 03:17).
+    (285 minutes from 03:17);
+  - Saturdays 09:17 enterprise (1, ENTERPRISE_HOURS).
 - A push to main runs the same checks (minus `deps-and-secrets`), plus gitleaks over full
   history, pip-audit and Scorecard: 11 jobs.
 - A new PR job is chained after another one, as `e2e` is, to stay within 8. The daily scan's one
-  job runs on a PR only when the PR changes `daily-scan.yml`, and the simulate job only when it
-  changes the script, its stack, the browser tests' config or `simulate.yml`.
+  job runs on a PR only when the PR changes `daily-scan.yml`, the simulate job only when it
+  changes the script, its stack, the browser tests' config or `simulate.yml`, and the enterprise
+  job only when it changes `tools/enterprise.py` or `enterprise.yml`.
