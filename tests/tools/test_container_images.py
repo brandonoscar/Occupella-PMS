@@ -74,3 +74,27 @@ def test_the_email_job_builds_mailpit_with_the_go_image_the_dockerfile_pins():
 
     assert go_image.startswith(MIRROR + "golang:")
     assert go_image in [image for file, _, image in image_references() if file == "Dockerfile"]
+
+
+def test_the_app_image_runs_the_python_every_job_tests_on():
+    # The image the self-host guide runs takes its Python from its last FROM line. It must be
+    # the version CI's jobs test on (setup-python) and mypy checks for (pyproject.toml), so a
+    # scan's finding is fixed by a newer release of that version (a new digest), never by a
+    # Python the tests never ran on (10/31: 3.11.17's CVE-2026-115557, fixed in 3.11.18).
+    (app,) = [
+        image
+        for file, _, image in image_references()
+        if file == "Dockerfile" and image.startswith(MIRROR + "python:")
+    ]
+    tested = set(
+        re.findall(
+            r'python-version:\s*"([\d.]+)"',
+            "".join(p.read_text() for p in (ROOT / ".github/workflows").glob("*.yml")),
+        )
+    )
+    (checked,) = re.findall(
+        r'^python_version = "([\d.]+)"', (ROOT / "pyproject.toml").read_text(), re.MULTILINE
+    )
+
+    assert tested == {checked}
+    assert re.fullmatch(MIRROR + rf"python:{re.escape(checked)}-slim@sha256:[0-9a-f]{{64}}", app)
