@@ -17,7 +17,9 @@ every state shares and the strictest state found: `docs/law.md` (founder, 2026-1
    `tools/check_synthetic_data.py` lists the never-issued forms to use instead.
 3. The repo is public under Apache-2.0 (`LICENSE`). Every dependency's license must be on the
    allowlist in `ci/licenses.toml`; never a non-commercial or source-available one.
-4. No hosted database, Supabase project, Render service or deploy. CI uses a throwaway Postgres.
+4. No hosted database, Supabase project, Render service or deploy from this repo. CI uses a
+   throwaway Postgres. Hosted companies run from the private `occupella-cloud` repo, under its
+   own rules, on this repo's published image unchanged (`docs/adr/0011-ai-link.md`).
 5. No secrets exist in Phase 0. Never put a credential on a command line or print one. No secret
    in any workflow a PR can trigger, and never `pull_request_target`.
 6. Say what you measured and what you didn't. Write NOT VERIFIED when that's the truth.
@@ -52,8 +54,12 @@ rule: what Buildium has, we have): rent, owners' money and application fees paid
 a payments provider (each company's own keys, or the hosted version's Stripe Connect), autopay,
 owners and vendors paid by ACH file and printed check, state and city rules from a property's
 address, balance notices, announcements, staff to-dos, texts, listing syndication and homeowner
-associations, built in three lanes with their own migration numbers (the ADR). Still out of
-scope: 1099 filing, a mailing service, selling renters insurance, reporting rent to credit
+associations, built in three lanes with their own migration numbers (the ADR). Since 2026-10-31
+(`docs/adr/0011-ai-link.md`): the link the AI plugs into, through this API alone: API keys that
+run as `trust_ai_agent`, drafts that staff approve before the PMS acts, events, an MCP server and
+Enable AI, which pairs a self-hosted PMS with Occupella AI once the company pays for it. The AI
+itself (prompts, models, connectors, billing, chat) is not open source and never ships here.
+Still out of scope: 1099 filing, a mailing service, selling renters insurance, reporting rent to credit
 bureaus, and the AI moving money. If one of these looks needed, stop and ask the founder.
 
 ## The standing rule: tests come with the code
