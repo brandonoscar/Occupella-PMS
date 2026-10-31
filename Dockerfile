@@ -24,7 +24,7 @@ RUN go mod init build \
     && go get github.com/amacneil/dbmate/v2@v2.37.0 github.com/klauspost/compress@v1.18.7 \
     && go build -o /go/bin/dbmate github.com/amacneil/dbmate/v2
 
-FROM mirror.gcr.io/library/python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60
+FROM mirror.gcr.io/library/python:3.13-slim@sha256:2d44738ebf4ce5f63b9d9ea871e9c7cfdc0426f7b0c97cac915fd88ded1d86bb
 
 COPY --from=dbmate /go/bin/dbmate /usr/local/bin/dbmate
 RUN useradd --create-home --uid 10001 pms
