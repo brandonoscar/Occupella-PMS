@@ -1004,6 +1004,24 @@ BEGIN
           AND NOT EXISTS (
               SELECT f.rent_charge_id FROM trust_late_fees AS f WHERE f.rent_charge_id = c.id
           )
+          -- Its own payments by the end of its grace, less what of them bounced by then, have not
+          -- covered it. Credits and waivers only take more off what is open, so a rent its own
+          -- payments covered is not open then, and is charged no late fee, whatever else holds.
+          AND c.amount
+              > coalesce((
+                  SELECT sum(cp.amount)
+                  FROM trust_charge_payments AS cp
+                  JOIN pgledger_transfers AS t ON t.id = cp.transfer_id
+                  WHERE cp.charge_id = c.id
+                    AND t.event_at < (c.due_on + p.grace_days + 1)::timestamp AT TIME ZONE 'UTC'
+              ), 0)
+              - coalesce((
+                  SELECT sum(r.amount)
+                  FROM trust_payment_reversals AS r
+                  JOIN pgledger_transfers AS t ON t.id = r.reversal_id
+                  WHERE r.charge_id = c.id
+                    AND t.event_at < (c.due_on + p.grace_days + 1)::timestamp AT TIME ZONE 'UTC'
+              ), 0)
         ORDER BY c.id
     LOOP
         PERFORM c.id FROM trust_charges AS c WHERE c.id = v_rent.id FOR NO KEY UPDATE;
@@ -33260,4 +33278,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261025000210'),
     ('20261025000220'),
     ('20261027000155'),
-    ('20261028000200');
+    ('20261028000200'),
+    ('20261031000200');
