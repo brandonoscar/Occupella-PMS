@@ -615,6 +615,7 @@ FEATURES = (
     "payouts",
     "receive-payment",
     "tax-ids",
+    "ai-keys",
 )
 
 

@@ -16,6 +16,7 @@ migration adds one without deciding who may use it. That matters most for functi
 Postgres lets PUBLIC call a new function unless the migration revokes it.
 """
 
+import psycopg
 import pytest
 from helpers import NOT_FROM_AN_EXTENSION
 
@@ -328,6 +329,10 @@ TABLES = {
     "trust_application_vehicles": {"SELECT", "INSERT"},
     "trust_emergency_contacts": {"SELECT", "INSERT"},
     "trust_tenant_applicants": {"SELECT", "INSERT"},
+    # API keys and taking one back (ADR 0011, migration 0201): an admin's inserts, the secret
+    # kept as its SHA-256.
+    "trust_api_keys": {"SELECT", "INSERT"},
+    "trust_api_key_revocations": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -426,6 +431,9 @@ AI_NEVER_READS = {
     "trust_lease_household_removals",
     # A housing-assistance household's income and size, as private as an application's.
     "trust_income_certifications",
+    # API keys (ADR 0011): credentials, as logins are. A key's request reads as this role.
+    "trust_api_keys",
+    "trust_api_key_revocations",
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [
@@ -590,6 +598,8 @@ FUNCTIONS = {
     "trust_check_reserve_event()": set(),
     "trust_check_assistance_record()": set(),
     "trust_check_tax_id_reveal()": set(),
+    # Only an admin makes an API key or takes one back (migration 0201).
+    "trust_check_api_key_admin()": set(),
     "trust_check_tenant_applicant()": set(),
     "trust_check_decision_override()": set(),
     "trust_fill_bill_markup()": set(),
@@ -1006,6 +1016,42 @@ def test_ai_role_has_no_powers_beyond_its_grants(conn):
         "SELECT roleid::regrole::text FROM pg_auth_members WHERE member = 'trust_ai_agent'::regrole"
     ).fetchall()
     assert memberships == []
+
+
+def test_the_app_may_become_the_ai_role_and_never_holds_its_grants(conn):
+    # An API key's request runs as trust_ai_agent (ADR 0011, migration 0201): the app sets the
+    # role for the request's transaction (SET LOCAL ROLE) and never inherits it, so its own
+    # grants stay its own and the AI's stay the AI's. It can't grant the role on, either.
+    memberships = conn.execute(
+        "SELECT roleid::regrole::text, inherit_option, set_option, admin_option"
+        " FROM pg_auth_members WHERE member = 'trust_app'::regrole"
+    ).fetchall()
+    assert memberships == [("trust_ai_agent", False, True, False)]
+    usage, member, may_set = conn.execute(
+        "SELECT pg_has_role('trust_app', 'trust_ai_agent', 'USAGE'),"
+        " pg_has_role('trust_app', 'trust_ai_agent', 'MEMBER'),"
+        " pg_has_role('trust_app', 'trust_ai_agent', 'SET')"
+    ).fetchone()
+    assert (usage, member, may_set) == (False, True, True)
+
+
+def test_the_app_as_the_ai_role_reads_only_what_the_ai_reads(app_conn):
+    # Once it becomes the AI's role, the app holds that role's grants and no more: a credential
+    # it reads as itself is refused, and nothing that writes is allowed.
+    with app_conn.transaction():
+        app_conn.execute("SET LOCAL ROLE trust_ai_agent")
+        assert app_conn.execute("SELECT current_user").fetchone() == ("trust_ai_agent",)
+        refused = [
+            table
+            for table in ("trust_api_keys", "trust_logins", "trust_contacts")
+            if not app_conn.execute(
+                "SELECT has_table_privilege(current_user, %s, 'SELECT')", (table,)
+            ).fetchone()[0]
+        ]
+        assert refused == ["trust_api_keys", "trust_logins", "trust_contacts"]
+        with pytest.raises(psycopg.errors.InsufficientPrivilege), app_conn.transaction():
+            app_conn.execute("SELECT count(*) FROM trust_api_keys")
+    assert app_conn.execute("SELECT current_user").fetchone() == ("trust_app",)
 
 
 @pytest.mark.parametrize("table", TABLES)

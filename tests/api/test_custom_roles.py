@@ -19,6 +19,8 @@ NOT_AN_AREA = {
     "/api/staff": "adds a staff member: admin",
     "/api/staff/{staff_id}/roles": "changes a role: admin",
     "/api/logins/{login_id}/disable": "disables a login: admin",
+    "/api/ai/keys": "makes an API key: admin",
+    "/api/ai/keys/{key_id}/revoke": "takes an API key back: admin",
     "/api/custom-roles": "makes a custom role: admin",
     "/api/custom-roles/{role_id}/areas": "changes a custom role: admin",
     "/api/custom-roles/{role_id}/staff": "gives a custom role: admin",

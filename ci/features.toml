@@ -1165,6 +1165,20 @@ browser = [
 ]
 
 [[feature]]
+id = "ai-keys"
+statement = "An admin makes an API key in Settings, AI (ADR 0011) and sees its secret once; the list shows each key by its first characters, who made it and whether it was taken back. Software sends the key, with no session, and reads whose books it holds and the company's reports as the AI's role, which moves no money and changes nothing; the staff pages refuse a key. Taken back from its row's menu, the key opens nothing from its next request."
+operations = [
+  "GET /api/ai/keys",
+  "POST /api/ai/keys",
+  "POST /api/ai/keys/{key_id}/revoke",
+  "GET /api/ai/me",
+  "GET /api/ai/reports/{name}",
+]
+browser = [
+  "features.spec.ts › an admin makes an API key, software reads the company's books with it and no session, and once taken back it opens nothing",
+]
+
+[[feature]]
 id = "tax-ids"
 statement = "Staff keep an owner's or a vendor's tax ID (an EIN or an SSN), sealed by the server and shown by its last four; an admin reveals one whole and takes the year's 1099 export from the 1099 summary with each payee's tax ID, each time recorded with their name; staff who aren't admins see the last four only (ADR 0010, part F)."
 operations = [

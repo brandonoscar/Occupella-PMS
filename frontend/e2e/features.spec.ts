@@ -5226,3 +5226,52 @@ test("staff keep an owner's and a vendor's tax ID by its last four, an admin rev
   await bookkeeper.getByRole("link", { name: "1099 summary" }).click();
   await expect(bookkeeper.getByRole("link", { name: "1099 export, with tax IDs" })).toHaveCount(0);
 });
+
+test("an admin makes an API key, software reads the company's books with it and no session, and once taken back it opens nothing", async ({
+  page,
+  request,
+}) => {
+  const people = seed.features["ai-keys"]!;
+  await joinAsStaff(page, people.manager);
+  const company = ((await (await page.request.get("/api/me")).json()) as { pmc_name: string }).pmc_name;
+  await settings(page, "AI");
+  await expect(page.getByTestId("empty-state")).toContainText("No API keys yet.");
+
+  // Made in a side panel: its secret is shown this once.
+  await page.getByRole("button", { name: "Make a key" }).click();
+  const panel = page.getByRole("dialog", { name: "Make a key" });
+  await panel.getByLabel("Name").fill("Reporting script");
+  await panel.getByRole("button", { name: "Make key" }).click();
+  await expect(panel).toContainText("Shown once: copy it now");
+  const secret = await panel.getByLabel("Secret key").inputValue();
+  expect(secret).toMatch(/^occ_[A-Za-z0-9_-]{43}$/);
+  await expectAccessible(page, "Settings, AI, a key's secret shown once");
+  await panel.getByRole("button", { name: "Done" }).click();
+  await expect(panel).toHaveCount(0);
+  const row = page.getByRole("row", { name: "Reporting script" });
+  await expect(row).toContainText(`${secret.slice(0, 12)}…`);
+  await expect(row).toContainText("Active");
+  await expect(page.getByLabel("Secret key")).toHaveCount(0);
+  expect(await page.content()).not.toContain(secret);
+
+  // Software with the key, no browser and no session: whose books, and a report of them.
+  const key = { Authorization: `Bearer ${secret}` };
+  const me = await request.get("/api/ai/me", { headers: key });
+  expect(me.status()).toBe(200);
+  expect(await me.json()).toEqual({ company, key: "Reporting script" });
+  const roll = await request.get(`/api/ai/reports/rent_roll?arg=${today()}`, { headers: key });
+  expect(roll.status()).toBe(200);
+  const report = (await roll.json()) as { columns: string[]; rows: (string | null)[][] };
+  expect(report.columns.slice(0, 3)).toEqual(["line", "item", "property"]);
+  expect(report.rows.map((r) => r[2])).toContain("Cedar House");
+  // A key is no session: the staff pages refuse it.
+  expect((await request.get("/api/dashboard", { headers: key })).status()).toBe(401);
+
+  // Taken back from its row's menu: its next request is refused.
+  await chooseAction(page, "Reporting script", "Take back");
+  await expect(page.getByText("Took back the key Reporting script.")).toBeVisible();
+  await expect(row).toContainText("Taken back");
+  const after = await request.get("/api/ai/me", { headers: key });
+  expect(after.status()).toBe(401);
+  expect(((await after.json()) as { detail: string }).detail).toBe("this key was taken back or doesn't exist");
+});
