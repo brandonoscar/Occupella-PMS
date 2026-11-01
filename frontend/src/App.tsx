@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Me } from "./api";
 import { ApiError, api } from "./api";
 import { Notice } from "./components/Notice";
+import { AiKeysPage } from "./pages/AiKeysPage";
 import { ApplicationStatusPage } from "./pages/ApplicationStatusPage";
 import { ApplyPage } from "./pages/ApplyPage";
 import { BillsPage } from "./pages/BillsPage";
@@ -150,6 +151,7 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/settings/quickbooks": (me) => <QuickBooksPage me={me} />,
   "/settings/calendar": (me) => <CalendarPage me={me} />,
   "/settings/notices": (me) => <NoticeTemplatesPage me={me} />,
+  "/settings/ai": (me) => <AiKeysPage me={me} />,
 };
 
 // A record's own page, by its address (ADR 0005).

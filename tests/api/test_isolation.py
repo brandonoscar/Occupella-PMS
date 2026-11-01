@@ -198,6 +198,8 @@ RECORDS = {
     "payout run": _ONLY.format("trust_payout_runs"),
     # Made by fill_in: the vendor's EIN, sealed.
     "tax id": _ONLY.format("trust_tax_ids"),
+    # Made by fill_in: an API key (ADR 0011).
+    "api key": _ONLY.format("trust_api_keys"),
 }
 
 # A path parameter's record, by its name; then where one name means another record on a route.
@@ -242,6 +244,7 @@ PATH_IDS = {
     "autopay_id": "autopay",
     "run_id": "payout run",
     "tax_id": "tax id",
+    "key_id": "api key",
     "pmc_id": "company",
 }
 ROUTE_PATH_IDS = {
@@ -366,6 +369,10 @@ EXEMPT = {
     "POST /api/payments/fake-save/{autopay_id}": "the fake payments partner's own page, as above",
     "GET /api/payments/fake": "the fake payments partner's queue of every payment it holds, as"
     " the partner's own dashboard lists them (development and tests only)",
+    "GET /api/ai/me": "software calls it with an API key, no person's session: the key is the"
+    " credential and names the company (tests/api/test_ai_keys.py)",
+    "GET /api/ai/reports/{name}": "software calls it with an API key: the report's company is"
+    " always the key's, its first argument (tests/api/test_ai_keys.py)",
 }
 # Where a route refuses another company's record in its path otherwise than as not found, and
 # why (none does today).
@@ -972,6 +979,7 @@ def fill_in(client: TestClient, company: Company, conn: psycopg.Connection[Any])
     tenant("POST", f"/api/payments/leases/{lease}/autopay", {"rule": "fixed", "amount": "10.00"})
     company.vendor_token = staff("POST", f"/api/vendors/{vendor}/link")["url"].split("#", 1)[1]
     staff("POST", f"/api/tax-ids/vendors/{vendor}", {"kind": "EIN", "number": "00-7654321"})
+    staff("POST", "/api/ai/keys", {"name": "Isolation key"})
     printed = staff(
         "POST",
         "/api/payables/bills",

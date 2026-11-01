@@ -375,7 +375,8 @@ def ledger_zip(conn: psycopg.Connection[Any], pmc_id: Any) -> bytes:
 # files, and the ledger. Tables whose rows are credentials are never in it, nor the hash of any
 # token (an invite's, a signing link's...), in a table or in the audit log's copies of rows.
 NEVER_EXPORTED = frozenset({"trust_login_secrets", "trust_sessions"})
-CREDENTIAL_COLUMNS = ("token_hash", "token_sha256", "status_token_sha256")
+# An API key's secret_sha256 too (ADR 0011).
+CREDENTIAL_COLUMNS = ("token_hash", "token_sha256", "status_token_sha256", "secret_sha256")
 # The binary columns that are files (a document's bytes, a lease offered, a signature drawn):
 # each written as a file of its own under files/, the CSV naming it. Other binary columns are
 # digests, written as hex.

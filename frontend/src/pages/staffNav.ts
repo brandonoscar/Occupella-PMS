@@ -76,4 +76,5 @@ export const SETTINGS = [
   { href: "/settings/data-export", label: "Data export" },
   { href: "/settings/quickbooks", label: "QuickBooks" },
   { href: "/settings/calendar", label: "Your calendar" },
+  { href: "/settings/ai", label: "AI" },
 ] as const;
