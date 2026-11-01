@@ -54,6 +54,8 @@ def test_a_company_comes_over_works_and_comes_back_from_its_backup(
     # Every bill the old system had not paid, approved there, is paid on the first 15th.
     assert f"bills_paid={enterprise.old_bills(40 // enterprise.PER_PROPERTY)}" in lived
     assert "opening balances, deposits (40 accounts)" in out
+    # The tables are analyzed after the year, as autovacuum would have done over it.
+    assert "analyze, as autovacuum would have over the year:" in out
     assert "part 6 of 6" in out and "restore:" in out
     assert "ok: 40 units" in out
 

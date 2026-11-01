@@ -21,7 +21,8 @@ enterprise could trust).
      their late fee, and one in twenty now and then misses a month and pays both the next; each
      owner is paid what is available on the 10th (Pay owners), and the old system's bills, which
      their owners approved there, on the first 15th (Pay bills). Each month is timed, so a month
-     taking longer as the books grow shows;
+     taking longer as the books grow shows. Then the tables are analyzed, as autovacuum would
+     have done over a year of real time;
   4. runs tonight's nightly run on it (pms.nightly.run_pmc): the month's rent for every lease,
      the late fees of what is past its grace, everything else the run does;
   5. runs the reports staff open most on it (the rent roll, delinquency, the trial balance, the
@@ -605,6 +606,15 @@ def run(
             built = demo.books(conn, today)
         banks = bring_over(conn, built, files, cutover, t)
         lived = live(conn, built, banks["operating"], cutover, today, rng, t)
+        # A year lived in a minute outruns autovacuum, which looks once a minute and analyzes a
+        # table once a tenth of it changed; a year of real time would have analyzed every table
+        # many times over. Unanalyzed, the planner took a 200-unit company's 2,700 charges for 8
+        # and the delinquency report (the Dashboard's, Needs attention's) ran 1.2-1.6 s instead
+        # of 0.03 (11/01). So the reports and staff's pages are planned on what the tables hold.
+        with t.step("analyze, as autovacuum would have over the year"):
+            conn.execute("RESET ROLE")
+            conn.execute("ANALYZE")
+            conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier("trust_app")))
         in_effect = scalar(
             conn,
             "SELECT count(*) FROM trust_leases WHERE pmc_id = %s AND starts_on <= %s"
