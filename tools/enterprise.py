@@ -19,9 +19,9 @@ enterprise could trust).
      the month's rent and on the 15th the late fees (each property's terms from the switch: five
      days' grace, $50); most tenants pay what they owe on the 3rd, one in ten on the 20th after
      their late fee, and one in twenty now and then misses a month and pays both the next; each
-     owner is paid what is available on the 10th (Pay owners), and the old system's bills on the
-     first 15th (Pay bills). Each month is timed, so a month taking longer as the books grow
-     shows;
+     owner is paid what is available on the 10th (Pay owners), and the old system's bills, which
+     their owners approved there, on the first 15th (Pay bills). Each month is timed, so a month
+     taking longer as the books grow shows;
   4. runs tonight's nightly run on it (pms.nightly.run_pmc): the month's rent for every lease,
      the late fees of what is past its grace, everything else the run does;
   5. runs the reports staff open most on it (the rent roll, delinquency, the trial balance, the
@@ -86,7 +86,7 @@ THRESHOLDS = ROOT / "ci/thresholds.toml"
 PER_PROPERTY = 20
 UNITS_PER_OWNER = 50
 VENDORS = 200
-OLD_BILLS = 300
+OLD_BILLS = 3  # for every ten properties: 300 at 20,000 units
 HISTORY_YEARS = 5
 MONTHS = 12
 LATE_FEE = Decimal("50.00")
@@ -155,6 +155,11 @@ def month_before(first: date, months: int) -> date:
     """The first of the month `months` before the month starting on `first`."""
     index = first.year * 12 + first.month - 1 - months
     return date(index // 12, index % 12 + 1, 1)
+
+
+def old_bills(properties: int) -> int:
+    """How many bills the old system had not paid: three for every ten properties, at least one."""
+    return max(1, properties * OLD_BILLS // 10)
 
 
 def company(units: int, on: date, rng: random.Random, history_years: int = HISTORY_YEARS) -> Files:
@@ -242,7 +247,7 @@ def company(units: int, on: date, rng: random.Random, history_years: int = HISTO
         )
     files.operating.append({"kind": "fees", "amount": money(rng.randint(100_000, 1_000_000))})
     bills = []
-    for b in range(OLD_BILLS):
+    for b in range(old_bills(len(props))):
         p = rng.randrange(len(props))
         bills.append(
             [
@@ -255,6 +260,9 @@ def company(units: int, on: date, rng: random.Random, history_years: int = HISTO
                 money(rng.randint(5_000, 90_000)),
                 "a bill the old system had not paid",
                 OPERATING,
+                # The owner approved it there, so Pay bills pays it (it isn't held back for one).
+                props[p][1],
+                last_month.isoformat(),
             ]
         )
     files.leases = len(lease_lines)
@@ -293,6 +301,8 @@ def company(units: int, on: date, rng: random.Random, history_years: int = HISTO
                     "amount",
                     "memo",
                     "bank account",
+                    "approved by",
+                    "approved on",
                 ],
                 bills,
             ),

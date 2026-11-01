@@ -51,6 +51,8 @@ def test_a_company_comes_over_works_and_comes_back_from_its_backup(
         assert f"month {enterprise.month_before(first, months):%Y-%m} in the PMS:" in out
     lived = out.split("the months in the PMS: ")[1].splitlines()[0]
     assert "payments=0" not in lived and "rents=0" not in lived
+    # Every bill the old system had not paid, approved there, is paid on the first 15th.
+    assert f"bills_paid={enterprise.old_bills(40 // enterprise.PER_PROPERTY)}" in lived
     assert "opening balances, deposits (40 accounts)" in out
     assert "part 6 of 6" in out and "restore:" in out
     assert "ok: 40 units" in out
@@ -91,6 +93,13 @@ def test_the_files_are_the_company_as_the_switching_tool_takes_them():
     properties = len(rows(kinds["properties"][0])) - 1
     assert len(rows(kinds["owner history"][0])) - 1 == properties * 24
     assert len(rows(kinds["vendor history"][0])) - 1 == enterprise.VENDORS * 24
+    # Three old bills for every ten properties, each approved in the old system by its owner.
+    (bills,) = kinds["bills"]
+    header, *lines = rows(bills)
+    assert len(lines) == enterprise.old_bills(properties) == 3
+    approver, owner = header.index("approved by"), header.index("owner")
+    assert all(line[approver] == line[owner] and line[approver + 1] for line in lines)
+    assert enterprise.old_bills(1) == 1 and enterprise.old_bills(1_000) == 300
     # A deposit for each home; the operating account holds each property's owner and the fees.
     assert len(files.deposits) == 200
     assert sum(1 for line in files.operating if line["kind"] == "owner") == properties
