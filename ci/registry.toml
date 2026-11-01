@@ -1306,6 +1306,16 @@ tests = [
 ]
 
 [[invariant]]
+id = "a-company-of-twenty-thousand-units"
+statement = "A company of 20,000 units (tools/enterprise.py; weekly in enterprise.yml) comes over through the switching tool with five years of history and its trust bank accounts' opening balances, takes its nightly run, its reports and every owner's statement, and fifty staff at work over HTTP for an hour with the nightly run under them, then is backed up and restored, each step within its ceiling: after it, this month's rent is charged once to every lease in effect, the trial balance balances, every trust bank account's book cash is what it holds, every staff request succeeds within the speed test's ceilings, the answers, the API's memory and the database's connections don't grow over the hour past theirs, and the restored copy holds every transfer."
+tests = [
+  "tests/tools/test_enterprise.py::test_a_company_comes_over_works_and_comes_back_from_its_backup",
+  "tests/tools/test_enterprise.py::test_a_lease_in_effect_left_without_its_rent_fails_the_books",
+  "tests/tools/test_enterprise.py::test_each_step_over_its_ceiling_fails_the_run",
+  "tests/tools/test_enterprise.py::test_answers_memory_or_connections_growing_over_the_work_fail_the_run",
+]
+
+[[invariant]]
 id = "a-leases-open-charges-are-the-pmcs"
 statement = "One lease's open charges (trust_open_charges given the lease, read by its index since migration 20261028000200) are exactly the PMC's open charges (given no lease) of that lease's charges, at any moment, whatever was paid, credited, waived or bounced on any lease; together the leases' are all of the PMC's, none twice; and one lease's call reads its own charges, not the PMC's."
 tests = [

@@ -107,6 +107,8 @@ def test_the_owner_with_three_properties_has_them_on_one_statement(conn, built):
 
 def test_the_owners_bills_show_on_their_income_statement_as_repairs(conn, built):
     month_ago, _, this_month = built.months
+    # The two months before this one. Through this month's first day, it also took in the
+    # disposal bill the demo sets aside today, whenever today was the 1st.
     rows = report(
         conn,
         "SELECT property, item, schedule_e, amount"
@@ -114,7 +116,7 @@ def test_the_owners_bills_show_on_their_income_statement_as_repairs(conn, built)
         built.pmc_id,
         built.owners["Demo Owner A"],
         month_ago,
-        this_month,
+        this_month - DAY,
     )
 
     # The kitchen drain at Elm Court and the roof at Cedar House, both in Repairs.
