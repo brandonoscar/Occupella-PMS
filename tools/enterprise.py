@@ -58,6 +58,7 @@ import tempfile
 import threading
 import time
 import tomllib
+from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -673,18 +674,10 @@ class Worked:
 
 
 def judge(worked: Worked, ceilings: dict[str, float]) -> None:
-    """Staff's work fails the run when a nightly run under it failed, a staff request failed, a
-    page's 95th percentile passed the speed test's ceiling or something grew over the work past
-    its ceiling; otherwise what it did is printed."""
-    if worked.night_failures:
-        raise Wrong(f"a nightly run under staff's work failed: {worked.night_failures[0]}")
-    if worked.tally.failures:
-        raise Wrong(
-            f"{len(worked.tally.failures)} staff requests failed, e.g. {worked.tally.failures[0]}"
-        )
-    slow = speed.slow(worked.tally, speed.ceilings())
-    if slow:
-        raise Wrong("staff's pages were slow: " + "; ".join(slow))
+    """What staff's work did is printed first, so a run that fails says which pages were slow.
+    The work fails the run when a nightly run under it failed, a staff request failed, a page's
+    95th percentile passed the speed test's ceiling or something grew over the work past its
+    ceiling."""
     answers = sum(len(v) for v in worked.tally.seconds.values())
     p95 = {
         k: round(speed.percentile(v, 0.95) * 1000) for k, v in sorted(worked.tally.seconds.items())
@@ -697,6 +690,18 @@ def judge(worked: Worked, ceilings: dict[str, float]) -> None:
             f"  part {n} of {len(worked.windows)}: p95 {w.p95_ms:.0f} ms, API memory"
             f" {w.rss_mb:.0f} MB, database connections {w.connections}"
         )
+    if worked.night_failures:
+        raise Wrong(f"a nightly run under staff's work failed: {worked.night_failures[0]}")
+    if worked.tally.failures:
+        pages = Counter(failure.split(":")[0] for failure in worked.tally.failures)
+        raise Wrong(
+            f"{len(worked.tally.failures)} staff requests failed"
+            f" ({', '.join(f'{page} {n}' for page, n in pages.most_common())}),"
+            f" e.g. {worked.tally.failures[0]}"
+        )
+    slow = speed.slow(worked.tally, speed.ceilings())
+    if slow:
+        raise Wrong("staff's pages were slow: " + "; ".join(slow))
     growth = grown(worked.windows, ceilings)
     if growth:
         raise Wrong("over the work, " + "; ".join(growth))

@@ -311,8 +311,16 @@ def test_staff_work_that_failed_slowed_or_grew_fails_the_run(capsys):
 
     failed = worked()
     failed.tally.add("payment", 0.1, "503: no connection was free")
-    with pytest.raises(enterprise.Wrong, match="1 staff requests failed, e.g. payment: 503"):
+    failed.tally.add("today", 30.0, "503: no connection was free")
+    failed.tally.add("payment", 0.1, "503: no connection was free")
+    with pytest.raises(
+        enterprise.Wrong, match=r"3 staff requests failed \(payment 2, today 1\), e.g. payment: 503"
+    ):
         enterprise.judge(failed, LIMITS)
+    # A run that fails still says what each page took.
+    assert "p95 ms by page: {'dashboard': 200, 'payment': 100, 'today': 30000}" in (
+        capsys.readouterr().out
+    )
 
     slow = worked()
     slow.tally.add("rent roll", 2.5)
