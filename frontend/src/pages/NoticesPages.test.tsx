@@ -194,12 +194,14 @@ describe("NoticesCard", () => {
     render(<NoticesCard leaseId="l1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Write a notice" }));
     await vi.waitFor(() => expect(Object.keys(answers)).toHaveLength(1));
-    fireEvent.change(screen.getByLabelText("Dated"), { target: { value: "2026-11-01" } });
-    await vi.waitFor(() => expect(answers["2026-11-01"]).toBeTruthy());
+    // The card opens on today; the day picked is any other, whatever day the test runs.
+    const first = Object.keys(answers)[0]!;
+    const picked = first === "2026-11-01" ? "2026-11-02" : "2026-11-01";
+    fireEvent.change(screen.getByLabelText("Dated"), { target: { value: picked } });
+    await vi.waitFor(() => expect(answers[picked]).toBeTruthy());
 
-    answers["2026-11-01"]!(new Response(JSON.stringify({ ...FILLED, body: "For November" }), { status: 200 }));
+    answers[picked]!(new Response(JSON.stringify({ ...FILLED, body: "For November" }), { status: 200 }));
     await screen.findByText("For November");
-    const first = Object.keys(answers).find((on) => on !== "2026-11-01")!;
     answers[first]!(new Response(JSON.stringify({ ...FILLED, body: "For today" }), { status: 200 }));
     await new Promise((settle) => setTimeout(settle, 20));
     expect(screen.queryByText("For today")).toBeNull();
