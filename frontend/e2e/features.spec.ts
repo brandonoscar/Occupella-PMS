@@ -321,8 +321,8 @@ test("staff charge this month's rent and its late fees, and the Dashboard shows 
   await expect(unitA).toContainText("$1,415.00 paid what is owed.");
   const open = unitA.getByRole("list", { name: "Open charges" });
   await expect(open).toContainText(`${us(lastMonthEnd)} Key replacement: $25.00 open`);
-  await expect(open).toContainText(`Pet rent due ${firstOfThisMonth()}: $15.00 open of $35.00`);
-  await expect(open).not.toContainText(`Rent due ${firstOfThisMonth()}`);
+  await expect(open).toContainText(`Pet rent due ${us(firstOfThisMonth())}: $15.00 open of $35.00`);
+  await expect(open).not.toContainText(`Rent due ${us(firstOfThisMonth())}`);
   await expect(open.getByRole("listitem")).toHaveCount(late ? 3 : 2);
 
   // Aspen Row Unit 1 pays the rest of what it owes, so the rent roll's Owing list leaves it out,
@@ -1449,6 +1449,10 @@ test("a lease ended mid-month keeps only its days of the month's rent, and its d
   await lease.getByText("Move-out for Unit 1").click();
   await lease.getByLabel("Last day").fill(yesterday);
   await lease.getByRole("button", { name: "End the lease" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    `End Aspen Row, Unit 1's lease on ${us(yesterday)}? Rent is charged only through that day.`,
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: "End the lease" }).click();
   await expect(lease).toContainText(`The lease ends on ${us(yesterday)}.`);
   await expect(lease.getByText("Ended, deposit to return")).toBeVisible();
   await expect(lease).toContainText(`owes ${dollars(cents)}`);
@@ -1604,6 +1608,8 @@ test("staff list a vacant unit on the public page; someone applies from it, staf
   await section(page, "Listings");
   const again = page.getByRole("row", { name: "Aspen Row, Unit 2" });
   await again.getByRole("button", { name: "Unlist" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("Take Aspen Row, Unit 2 off the public page? Its link stays open");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Unlist" }).click();
   await expect(page.getByText("Took Aspen Row, Unit 2 off the public page.")).toBeVisible();
   await expect(again.getByTestId("listed")).toHaveText("Not listed");
   await visitor.goto(`/listings?pmc=${people.pmc_id}`);
@@ -2067,12 +2073,18 @@ test("a bookkeeper proposes journal entries; the manager posts one, the ledger r
   const toPost = entry(manager, "Birch Flats rent deposited as Aspen Row");
   await expect(toPost.getByRole("row", { name: /Demo Owner B \/ Aspen Row .*Demo Owner A \/ Birch Flats \$10\.00/ })).toBeVisible();
   await toPost.getByRole("button", { name: "Post" }).click();
+  await expect(manager.getByRole("alertdialog")).toContainText(
+    `Post Birch Flats rent deposited as Aspen Row? It moves $10.00 as its lines say, dated ${us(today())}, and isn't undone later.`,
+  );
+  await manager.getByRole("alertdialog").getByRole("button", { name: "Post" }).click();
   await expect(manager.getByText("Posted: Birch Flats rent deposited as Aspen Row.")).toBeVisible();
   await expect(toPost.getByTestId("status")).toHaveText("posted");
   await expect(toPost).toContainText("Posted by Demo Manager.");
 
   const tooMuch = entry(manager, "Typed an extra zero");
   await tooMuch.getByRole("button", { name: "Post" }).click();
+  await expect(manager.getByRole("alertdialog")).toContainText("Post Typed an extra zero? It moves $1,000,000.00 as its lines say");
+  await manager.getByRole("alertdialog").getByRole("button", { name: "Post" }).click();
   await expect(tooMuch.getByRole("alert")).toHaveText(/^not enough money: the owner's account would be \$[\d,]+\.\d\d short$/);
   await expect(tooMuch.getByTestId("status")).toHaveText("waiting");
   await tooMuch.getByRole("button", { name: "Decline" }).click();
@@ -2514,7 +2526,7 @@ test("staff move a tenant in mid-month on a year's lease and the rent run charge
   await expect(run).toHaveCount(0);
   await expect(page.getByRole("main")).toContainText(/7 rents, 1 recurring charge and \d+ late fees? charged\./);
   const unitB = await openLease(page, "Birch Flats, Unit B");
-  const lateFee = `Late fee, rent due ${firstOfThisMonth()}`;
+  const lateFee = `Late fee, rent due ${us(firstOfThisMonth())}`;
   if (dayOfMonth() > 1) {
     await expect(unitB.getByRole("list", { name: "Open charges" })).toContainText(`${lateFee}: $60.00 open`);
   } else {
@@ -2526,7 +2538,7 @@ test("staff move a tenant in mid-month on a year's lease and the rent run charge
   const yearLease = page.getByRole("main");
   await expect(page.getByRole("heading", { level: 1, name: /^Aspen Row · Unit 2 · / })).toBeVisible();
   await expect(yearLease.getByRole("list", { name: "Open charges" })).toContainText(
-    `${us(starts)} Rent due ${starts}, ${starts} to ${year}-${month}-${days} (${days - 15} of ${days} days): ${firstPart} open`,
+    `${us(starts)} Rent due ${us(starts)}, ${us(starts)} to ${month}/${days}/${year} (${days - 15} of ${days} days): ${firstPart} open`,
   );
 
   // Mid-term, the rent changes only as the lease's own terms allow, which staff name with it.
@@ -2669,6 +2681,8 @@ test("staff keep the company's name, address, logo and the fees new properties s
   // Removed, there is no logo.
   await settings(page, "Company setup");
   await page.getByRole("button", { name: "Remove logo" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("Remove this logo? Owners and tenants stop seeing it");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove logo" }).click();
   await expect(page.getByText("The logo is removed.")).toBeVisible();
   await expect(page.getByText("No logo yet")).toBeVisible();
 });
@@ -2697,6 +2711,8 @@ test("staff email a tenant from their page and every tenant of a property, an ow
   await page.getByRole("tab", { name: "Email", exact: true }).click();
   await page.getByRole("button", { name: "Write email" }).click();
   const panel = page.getByRole("dialog", { name: "Email Drew Sample" });
+  // Who gets it, before it is sent (ADR 0010, rule 3).
+  await expect(panel).toContainText(/To Drew Sample, .+@example\.com\./);
   await panel.getByLabel("Subject").fill("Parking lot repaving");
   await panel.getByLabel("Message").fill("Please move your car from the lot on Friday.");
   await panel.getByRole("button", { name: "Send email" }).click();
@@ -3042,7 +3058,7 @@ test("staff pick the day of the month a lease's rent is due, the rent run charge
   const aspen = await openLease(page, "Aspen Row, Unit 2");
   await expect(page.getByTestId("rent-due-day")).toHaveText(`Due on the ${nth(due)}`);
   await expect(aspen.getByRole("list", { name: "Open charges" })).toContainText(
-    `${us(dueOn)} Rent due ${dueOn}: $1,240.00 open`,
+    `${us(dueOn)} Rent due ${us(dueOn)}: $1,240.00 open`,
   );
   // This month is charged: a new due day starts after it.
   change = await leasePanel(page, "Change rent due day");
@@ -3818,6 +3834,10 @@ test("staff send a plumber their link; the plumber schedules the visit and says 
 
   await job.getByLabel("What you did (optional)").fill("Cleared the trap");
   await job.getByRole("button", { name: "The work is done" }).click();
+  await expect(plumber.getByRole("alertdialog")).toContainText(
+    /Mark #\d+ done\? It closes the work order and leaves your list; it can't be reopened\./,
+  );
+  await plumber.getByRole("alertdialog").getByRole("button", { name: "The work is done" }).click();
   await expect(plumber.getByText(/is done\. Thank you\./)).toBeVisible();
   await expect(plumber.getByRole("region", { name: "Kitchen sink drains slowly" })).toHaveCount(0);
   await page.reload();
@@ -3880,6 +3900,8 @@ test("staff add photos to a listed unit, which its public listing shows; a remov
   // Removed, a photo leaves the public page.
   await unit.getByRole("button", { name: "Photos, Aspen Row, Unit 2" }).click();
   await photos.getByRole("button", { name: "Remove Porch" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("Remove Porch? It leaves this unit's listing");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
   await expect(photos.getByText("Removed Porch.")).toBeVisible();
   await visitor.reload();
   await expect(shown).toHaveCount(1);
@@ -3916,6 +3938,8 @@ test("staff add a lead who asked about a unit, show it to them, record how it we
   await expect(row).toContainText("Unit 2, Aspen Row");
   await row.getByRole("button", { name: /^Actions for Showing / }).click();
   await page.getByRole("menuitem", { name: "Shown" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("showing shown? It can't be changed after.");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Shown" }).click();
   await expect(row).toContainText("Shown");
 
   // They applied: the lead closes and takes no more showings.
@@ -4174,6 +4198,10 @@ test("staff make a tenant a tenant at a second property and lease them a unit th
   await same.getByLabel("Name, email or phone").fill("Taylor");
   await same.getByRole("button", { name: "Find" }).click();
   await same.getByRole("button", { name: /^Same person: Taylor Demo, .*Cedar House/ }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    /Link Drew Sample and Taylor Demo \(.*Cedar House\) for good\? They get one portal sign-in/,
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: "This is them" }).click();
   await expect(same.getByRole("alert")).toContainText("Drew Sample signs in to the portal: link Taylor Demo to them instead");
 
   // Taylor signs in once and has both homes; a repair asked for at Aspen Row is theirs there.
@@ -4209,6 +4237,10 @@ test("staff approve last December in each trust bank account, close the year, an
   for (const account of ["Demo operating trust account", "Demo security deposit account"]) {
     await ready.getByRole("link", { name: account }).click();
     await page.getByRole("button", { name: `Approve through ${december}` }).click();
+    await expect(page.getByRole("alertdialog")).toContainText(
+      `Approve through ${december}? The account closes through that day: nothing dated on or before it can be added after.`,
+    );
+    await page.getByRole("alertdialog").getByRole("button", { name: `Approve through ${december}` }).click();
     await expect(page.getByText(`Approved through ${december}; the account is closed through it.`)).toBeVisible();
     await section(page, "Banking");
   }
@@ -4461,7 +4493,7 @@ test("staff name the operating trust account's cash for QuickBooks and download 
 });
 
 
-test("staff bring in a lockbox's payment file once: lines naming one lease are recorded to it, and staff record or set aside the ones that wait", async ({
+test("staff bring in a lockbox's payment file once: lines naming one lease are recorded to it, and staff record or skip the ones that wait", async ({
   page,
 }) => {
   const people = seed.features["payment-files"]!;
@@ -4508,7 +4540,7 @@ test("staff bring in a lockbox's payment file once: lines naming one lease are r
   await expect(page.getByText(`Line 3: $100.00 received ${us(day)} recorded to Riley Demo, Elm Court Unit 1.`)).toBeVisible();
   await expect(page.getByTestId("file-summary")).toContainText("3 payments recorded ($1,545.00); nothing waits.");
 
-  // The same file again comes in once; a line naming nobody is set aside, with why.
+  // The same file again comes in once; a line naming nobody is skipped, with why.
   await section(page, "Payment files");
   const again = await bringIn("lockbox-again.csv", lockbox);
   await expect(again.getByText(`This file came in on ${us(day)}; it comes in once.`)).toBeVisible();
@@ -4518,11 +4550,11 @@ test("staff bring in a lockbox's payment file once: lines naming one lease are r
   await stray.getByRole("button", { name: "Bring it in" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "stray.csv" })).toBeVisible();
   await page.getByRole("row", { name: "Line 2" }).getByRole("button", { name: "Actions for line 2" }).click();
-  await page.getByRole("menuitem", { name: "Set aside" }).click();
-  const aside = page.getByRole("dialog", { name: "Set line 2 aside" });
+  await page.getByRole("menuitem", { name: "Skip" }).click();
+  const aside = page.getByRole("dialog", { name: "Skip line 2" });
   await aside.getByLabel("Why").fill("A refund from the water utility, not rent");
-  await aside.getByRole("button", { name: "Set it aside" }).click();
-  await expect(page.getByRole("row", { name: "Line 2" })).toContainText("Set asideA refund from the water utility, not rent");
+  await aside.getByRole("button", { name: "Skip this line" }).click();
+  await expect(page.getByRole("row", { name: "Line 2" })).toContainText("SkippedA refund from the water utility, not rent");
 
   // Both files are listed, newest first; the payment is on Morgan Demo's lease.
   await section(page, "Payment files");
@@ -5192,7 +5224,7 @@ test("staff receive a payment with a note and the check's photo, choose the char
     .getByLabel(`${us(lastMonthEnd)} Key replacement: $25.00 open`).check();
   await pay.getByLabel("Note (staff only)").fill("Dropped off at the office");
   await pay.getByLabel("Check photo or PDF").setInputFiles({ name: "check 7002.png", mimeType: "image/png", buffer: LOGO });
-  await expect(pay).toContainText("Each tenant on the lease is emailed its receipt.");
+  await expect(pay).toContainText("Each tenant with an email on file is emailed a receipt.");
   await pay.getByRole("button", { name: "Save and add another" }).click();
   await expect(unitA).toContainText("$25.00 paid what is owed.");
   await expect(pay.getByLabel("Payment received")).toHaveValue("");
@@ -5201,7 +5233,7 @@ test("staff receive a payment with a note and the check's photo, choose the char
   await expect(pay).toHaveCount(0);
   // The key fee is paid; the $10.00 went to the rent, as a payment's rest does.
   const open = unitA.getByRole("list", { name: "Open charges" });
-  await expect(open).toContainText(`Rent due ${firstOfThisMonth()}`);
+  await expect(open).toContainText(`Rent due ${us(firstOfThisMonth())}`);
   await expect(open).not.toContainText("Key replacement");
 
   // The Ledger tab: what staff wrote and the check's photo beside its receipt; Files lists it.

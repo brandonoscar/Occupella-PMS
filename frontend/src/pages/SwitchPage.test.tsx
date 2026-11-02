@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Cutover } from "../switching";
@@ -111,7 +111,7 @@ describe("SwitchPage", () => {
     expect(posted(fetch)).toEqual([
       ["/api/switching/opening-balances", { bank_account_id: "b2", opened_on: "2026-01-01", book_cash: "4500.00", content: "Kind,Amount\n" }],
     ]);
-    expect(screen.getByText(/has postings or a reconciliation already/)).toBeTruthy();
+    expect(screen.getByText(/has money recorded or a month-end already/)).toBeTruthy();
   });
 
   it("shows the tie-out, adds items carried over and signs it off", async () => {
@@ -129,7 +129,16 @@ describe("SwitchPage", () => {
     await vi.waitFor(() => expect(adding.disabled).toBe(false));
     fireEvent.click(adding);
     expect(await screen.findByText("1 item carried over.")).toBeTruthy();
+    // Signing off asks first; Cancel sends nothing.
+    const question = "Sign off the tie-out? The items carried over are frozen: none can be added after, and it isn't undone.";
     fireEvent.click(screen.getByRole("button", { name: "Sign off the tie-out" }));
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch).map(([path]) => path)).toEqual(["/api/switching/items"]);
+    fireEvent.click(screen.getByRole("button", { name: "Sign off the tie-out" }));
+    expect(posted(fetch).map(([path]) => path)).toEqual(["/api/switching/items"]);
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "Sign off the tie-out" }));
     expect(await screen.findByText("Signed off. The items carried over are frozen.")).toBeTruthy();
 
     expect(posted(fetch)).toEqual([

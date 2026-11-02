@@ -163,7 +163,7 @@ function AuthorityPaymentRow({ payment, record }: { payment: AuthorityPayment; r
         ) : (
           <RowMenu label={`${usDate(payment.received_on)} payment of ${money(payment.amount)}`} actions={[{
             label: "It bounced", danger: true,
-            confirm: `Mark the ${money(payment.amount)} payment bounced today? Its money moves back out of the owners' accounts and the authority owes it again.`,
+            confirm: `Mark the ${money(payment.amount)} payment bounced today? Its money moves back out of the owners' accounts and the authority owes it again. Tenants' balances don't change.`,
             onSelect: () => record(`/api/assistance/payments/${encodeURIComponent(payment.transfer_id)}/bounce`,
               { on: day(new Date()) }, () => `The ${money(payment.amount)} payment bounced; the authority owes it again.`),
           }]} />
@@ -192,7 +192,14 @@ function LateFeeForm({ authority, record }: { authority: string; record: ReturnT
       <Field label="In force from" id="authority-fee-from" type="date" required value={from} onChange={(e) => setFrom(e.target.value)} />
       <Field label="Grace days" id="authority-fee-grace" inputMode="numeric" required value={grace} onChange={(e) => setGrace(e.target.value)} />
       <Field label="Late payment fee" id="authority-fee" inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} />
-      <div><Button type="submit">Set late fee</Button></div>
+      <div>
+        <Button type="submit"
+          says={Number(fee.trim() || "0") > 0
+            ? `From ${usDate(from)}, the authority is charged this fee once per rent it leaves unpaid past the grace days. Nothing is charged now.`
+            : `No late payment fee from ${usDate(from)}. Nothing is charged now.`}>
+          Set late fee
+        </Button>
+      </div>
     </Form>
   );
 }

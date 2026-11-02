@@ -328,7 +328,7 @@ tests = [
 
 [[invariant]]
 id = "bill-holds-the-owners-balance"
-statement = "A bill not yet paid holds its amount and markup of its owner's property account without moving money (ADR 0010): the balance is laid over the open bills dated by today in the order they are due, so holds never come to more than the balance, what is short of each is what the owner must send, money that arrives clears it, a paid or void bill holds nothing, and a draw never pays held money."
+statement = "A bill not yet paid holds its amount and markup of its owner's property account without moving money (ADR 0010): the balance is laid over the open bills dated by today in the order they are due, so holds never come to more than the balance, what is short of each is what the owner must send, money that arrives clears it, a paid or void bill holds nothing (a void releases its hold to the other bills and to draws), and a draw never pays held money."
 tests = [
   "tests/properties/test_payables_properties.py::test_payables_invariants_hold_under_random_bills_contributions_and_draws",
   "tests/test_bill_lifecycle.py::test_the_balance_is_held_for_the_bill_due_first_and_the_rest_is_short",

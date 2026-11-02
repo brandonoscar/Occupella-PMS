@@ -71,7 +71,7 @@ export function RecordActions({
         >
           <Field label="Name" id={`rename-${path}`} required maxLength={200} value={draft}
             onChange={(event) => setDraft(event.target.value)} />
-          <Button type="submit" size="sm">Save</Button>
+          <Button type="submit" size="sm" says="The new name shows everywhere; its history stays.">Save</Button>
         </Form>
       )}
       <Notice tone="error">{error}</Notice>

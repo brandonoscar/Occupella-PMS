@@ -107,7 +107,9 @@ export function InspectionsPanel({ leaseId, label }: { leaseId: string; label: s
             onClick={() => setRooms([...rooms, { room: "", condition: "good", note: "" }])}>
             Add a room
           </Button>
-          <Button type="submit">Record inspection</Button>
+          <Button type="submit" says="Keeps it with the lease's inspections; earlier ones stay. Nothing is charged: charge damage at move-out.">
+            Record inspection
+          </Button>
         </div>
       </Form>
       <Said>{said}</Said>

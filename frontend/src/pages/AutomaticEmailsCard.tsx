@@ -145,7 +145,11 @@ function EmailSettingsForm({ settings, save }: { settings: EmailSettings; save: 
         An owner hears once each time one of their accounts falls below the reserve its management agreement keeps,
         as the nightly run finds it.
       </p>
-      <div><Button type="submit">Save</Button></div>
+      <div>
+        <Button type="submit" says="Sets which emails go out by themselves from now on. None is sent as you save; the old settings stay in the history.">
+          Save
+        </Button>
+      </div>
     </Form>
   );
 }

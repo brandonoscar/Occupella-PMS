@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { House } from "lucide-react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Badge } from "./Badge";
@@ -53,6 +53,34 @@ describe("Notice", () => {
 });
 
 describe("Button", () => {
+  it("puts its plain line under it and is described by it (rule 1)", () => {
+    render(<Button type="submit" says="Records the payment. Nothing is sent to the tenant.">Record</Button>);
+    const button = screen.getByRole("button", { name: "Record" });
+    const says = screen.getByTestId("button-says");
+    expect(says.textContent).toBe("Records the payment. Nothing is sent to the tenant.");
+    expect(button.getAttribute("aria-describedby")).toBe(says.id);
+    expect(says.className).toContain("text-ink-muted");
+  });
+
+  it("doesn't submit its form unless it is the submit button", () => {
+    const submit = vi.fn((event: { preventDefault: () => void }) => event.preventDefault());
+    render(
+      <form onSubmit={submit}>
+        <Button variant="ghost" onClick={() => undefined}>Cancel</Button>
+        <Button type="submit">Make the notice</Button>
+      </form>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(submit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Make the notice" }));
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("has no line and no description without one", () => {
+    render(<Button>Cancel</Button>);
+    expect(screen.getByRole("button", { name: "Cancel" }).getAttribute("aria-describedby")).toBeNull();
+    expect(screen.queryByTestId("button-says")).toBeNull();
+  });
   it("is 36px by default and 32px as a row's action", () => {
     render(
       <>

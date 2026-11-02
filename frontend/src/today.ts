@@ -2,7 +2,7 @@
 import type { JournalEntry } from "./journal";
 import { entryTotal } from "./journal";
 import type { Application } from "./leasing";
-import { money, usDate } from "./money";
+import { money, usDate, usDatesIn } from "./money";
 import type { Offer } from "./offers";
 import type { Bill, CompanyFees } from "./payables";
 import { companyFeesLabel } from "./payables";
@@ -153,7 +153,7 @@ export function offerLine(offer: Offer): string {
 
 // "Rent deposited to the wrong property: $25.00, dated 2026-10-10, proposed by Bookkeeper 1".
 export function journalLine(entry: JournalEntry): string {
-  return `${entry.memo}: ${money(entryTotal(entry))}, dated ${usDate(entry.event_on)}, proposed by ${entry.proposed_by}`;
+  return `${usDatesIn(entry.memo)}: ${money(entryTotal(entry))}, dated ${usDate(entry.event_on)}, proposed by ${entry.proposed_by}`;
 }
 
 // "Vendor 1, general liability: expires in 15 days (07/15/2026)".

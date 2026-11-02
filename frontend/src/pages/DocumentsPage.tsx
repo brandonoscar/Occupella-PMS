@@ -22,6 +22,7 @@ import { usDate } from "../money";
 import type { Paged } from "../rentals";
 import { scopeParams, useScope } from "../scope";
 import { GoLink } from "./NeedsAttention";
+import { uploadSays } from "./FilesCard";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
@@ -183,7 +184,9 @@ function UploadForm({ record }: { record: Recorder }) {
       </Select>
       {subjects.length === 0 && <Notice tone="info">{`No ${about.toLowerCase()} to attach a file to yet.`}</Notice>}
       <Notice tone="error">{problem}</Notice>
-      <div><Button type="submit" disabled={file === null || !chosen || problem !== ""}>Upload</Button></div>
+      <div>
+        <Button type="submit" disabled={file === null || !chosen || problem !== ""} says={uploadSays(kind)}>Upload</Button>
+      </div>
     </Form>
   );
 }

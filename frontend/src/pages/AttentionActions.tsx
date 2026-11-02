@@ -65,14 +65,12 @@ export function ReminderForm({ leaseId, record }: { leaseId: string; record: Rec
       {reminder.sent_today && <Notice tone="info">A reminder of this rent went to them today already.</Notice>}
       <div>
         <Button disabled={n === 0 || reminder.sent_today}
+          says="Writes one email to each, listed on their Email tab. Nothing else changes; no fee is charged."
           onClick={() => record(`/api/emails/rent-reminders/${leaseId}`, {},
             () => `Sent the reminder to ${n} tenant${n === 1 ? "" : "s"}.`)}>
           {n === 0 ? "No one to send it to" : `Send to ${n} tenant${n === 1 ? "" : "s"}`}
         </Button>
       </div>
-      <p className="text-sm text-ink-subtle">
-        Writes one email to each, listed on their Email tab. Nothing else changes; no fee is charged.
-      </p>
     </div>
   );
 }
@@ -90,10 +88,15 @@ export function ApproveDrawsForm({ run, record }: { run: DrawRun; record: Record
   const total = sumMoney(Object.values(chosen));
   const payouts = lines.map((l) => ({ account: l.account, amount: chosen[l.account] ?? "0", method: l.method }));
   const skipped = run.lines.length - lines.length;
+  // What a payout file makes for these: an ACH file for those paid by ACH, checks for the rest.
+  const made = [
+    payouts.some((p) => p.method === "EFT") && "writes the ACH file",
+    payouts.some((p) => p.method === "check") && "prints the checks",
+  ].filter(Boolean).join(" and ");
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
       event.preventDefault();
-      const files = output === "file" ? " The PMS writes the ACH file and prints the checks; the bank moves the money." : "";
+      const files = output === "file" ? ` The PMS ${made}; the bank moves the money.` : "";
       ask(`Pay ${money(total)} to ${lines.length} owner account${lines.length === 1 ? "" : "s"} on ${usDate(on)}, each the way they are paid?${files}`,
         () => record<OwnerPaid[]>("/api/payables/draws/batch", {
           request_id: request, on, method: "check", payouts, output, draw_run_id: run.id,
@@ -114,10 +117,15 @@ export function ApproveDrawsForm({ run, record }: { run: DrawRun; record: Record
         <option value="file">ACH file and checks to print</option>
       </Select>
       <Field label="Paid out on" id="draws-on" type="date" required value={on} onChange={(e) => setOn(e.target.value)} />
-      <div><Button type="submit" disabled={lines.length === 0}>Pay {money(total)}</Button></div>
-      <p className="text-sm text-ink-subtle">
-        Records the payouts, all of them or none. To change an amount or an owner, use Pay owners.
-      </p>
+      <div>
+        <Button type="submit" disabled={lines.length === 0}
+          says={output === "file"
+            ? `Records the payouts, all of them or none, and ${made}. The PMS sends no money; the bank does.`
+            : "Records the payouts, all of them or none, from each owner's balance. The PMS sends no money."}>
+          Pay {money(total)}
+        </Button>
+      </div>
+      <p className="text-sm text-ink-subtle">To change an amount or an owner, use Pay owners.</p>
       {prompt}
     </Form>
   );

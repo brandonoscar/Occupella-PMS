@@ -49,7 +49,7 @@ export function TenantAutopayCard({ leaseId }: { leaseId: string }) {
               )}
               <div>
                 <Button variant="secondary" onClick={() =>
-                  ask("Turn autopay off? Nothing more is taken from your bank account.", () =>
+                  ask("Turn autopay off? No new payment starts from it; one already sent to your bank isn't called back.", () =>
                     record(`${path}/stop`, {}, () => "Autopay is off."), "Turn it off")}>
                   Turn off autopay
                 </Button>
@@ -95,7 +95,10 @@ function SetUpForm({ path, view, fail }: { path: string; view: AutopayView; fail
       <Field label={rule === "balance" ? "Up to" : "Amount"} id="autopay-amount" inputMode="decimal" value={amount}
         onChange={(e) => setAmount(e.target.value)} />
       <div>
-        <Button type="submit" disabled={!payable(amount)}>Save a bank account and turn on autopay</Button>
+        <Button type="submit" disabled={!payable(amount)}
+          says="Takes you to our payments partner's page to save your bank account. Nothing is paid before a rent due day.">
+          Save a bank account and turn on autopay
+        </Button>
       </div>
     </Form>
   );
@@ -145,7 +148,7 @@ export function LeaseAutopayCard({ leaseId }: { leaseId: string }) {
               </span>
               {a.stopped === null && (
                 <Button variant="secondary" onClick={() =>
-                  ask(`Turn off ${a.tenant}'s autopay (${autopayRule(a)})? Nothing more is taken from their bank.`, () =>
+                  ask(`Turn off ${a.tenant}'s autopay (${autopayRule(a)})? No new payment starts from it; one already sent to their bank isn't called back.`, () =>
                     record(`/api/payments/autopay/${a.id}/stop`, {}, () => `Turned off ${a.tenant}'s autopay.`),
                     "Turn it off")}>
                   Turn off

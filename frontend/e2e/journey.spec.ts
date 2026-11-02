@@ -388,6 +388,11 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await drew.getByText("Move-out for Unit 1").click();
     await drew.getByLabel("Last day").fill(lastMonthEnd);
     await drew.getByRole("button", { name: "End the lease" }).click();
+    // Ending a lease asks first, naming the day (ADR 0010 phase 4, rule 4).
+    await expect(page.getByRole("alertdialog")).toContainText(
+      `End Aspen Row, Unit 1's lease on ${us(lastMonthEnd)}? Rent is charged only through that day.`,
+    );
+    await page.getByRole("alertdialog").getByRole("button", { name: "End the lease" }).click();
     await expect(drew).toContainText(`The lease ends on ${us(lastMonthEnd)}.`);
     await expect(drew.getByText("Ended, deposit to return")).toBeVisible();
     await expect(drew).toContainText("owes $0.00");
@@ -546,6 +551,11 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await expect(job.getByTestId("visit")).toHaveText(`Visit on ${us(visit)}, 9-11 am`);
     await job.getByLabel("What you did (optional)").fill("Replaced the cartridge");
     await job.getByRole("button", { name: "The work is done" }).click();
+    // Closing it asks first: it can't be reopened (ADR 0010 phase 4, rule 4).
+    await expect(plumber.getByRole("alertdialog")).toContainText(
+      /Mark #\d+ done\? It closes the work order and leaves your list; it can't be reopened\./,
+    );
+    await plumber.getByRole("alertdialog").getByRole("button", { name: "The work is done" }).click();
     await expect(plumber.getByText(/is done\. Thank you\./)).toBeVisible();
     await done(plumber, "the plumber's work order link");
 
@@ -868,7 +878,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await bookkeeper.getByRole("tab", { name: "Reconciliations" }).click();
     await bookkeeper.getByRole("button", { name: "Match the sure ones" }).click();
     await expect(bookkeeper.getByText(`${lines.length} lines matched.`)).toBeVisible();
-    for (const side of ["Bank lines not matched", "Transfers not matched"]) {
+    for (const side of ["Bank lines not matched", "In the books, not matched"]) {
       await expect(bookkeeper.getByRole("group", { name: side })).toContainText("None.");
     }
 
@@ -912,6 +922,11 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await page.getByRole("row", { name: OPERATING, exact: true }).getByRole("link").click();
     await expect(page.getByRole("heading", { level: 1, name: OPERATING })).toBeVisible();
     await page.getByRole("button", { name: `Approve through ${us(through)}` }).click();
+    // Approving closes the account through the day, so it asks first (ADR 0010 phase 4, rule 4).
+    await expect(page.getByRole("alertdialog")).toContainText(
+      `Approve through ${us(through)}? The account closes through that day: nothing dated on or before it can be added after.`,
+    );
+    await page.getByRole("alertdialog").getByRole("button", { name: `Approve through ${us(through)}` }).click();
     await expect(page.getByText(`Approved through ${us(through)}; the account is closed through it.`)).toBeVisible();
     await expect(
       page.getByRole("table", { name: "Approved" }).getByRole("row", {

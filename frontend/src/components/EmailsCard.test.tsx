@@ -25,8 +25,9 @@ const EMAILS: EmailLine[] = [
   },
 ];
 
-function server(emails: unknown = EMAILS, refuse?: string) {
-  const fetch = vi.fn(async (_path: string, init?: RequestInit) => {
+function server(emails: unknown = EMAILS, refuse?: string, to: string | null = "t@example.com") {
+  const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.startsWith("/api/emails/to?")) return new Response(JSON.stringify({ name: "Person 1", to }));
     if (init?.method === "POST") {
       return refuse
         ? new Response(JSON.stringify({ detail: refuse }), { status: 422 })
@@ -76,6 +77,11 @@ describe("EmailsCard", () => {
     expect(await screen.findByText("No email to Vendor 1 yet.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Write email" }));
     const panel = screen.getByRole("dialog", { name: "Email Vendor 1" });
+    // Who gets it, before it is sent (rule 3), and what Send does (rule 1).
+    expect(await within(panel).findByText("To Person 1, t@example.com.")).toBeTruthy();
+    expect(within(panel).getByTestId("button-says").textContent)
+      .toBe("Goes to t@example.com now, and is listed here with whether it went.");
+    expect(fetch.mock.calls.map(([path]) => path)).toContain("/api/emails/to?about=vendor&about_id=v1");
     fireEvent.change(within(panel).getByLabelText("Subject"), { target: { value: " Gate code " } });
     fireEvent.change(within(panel).getByLabelText("Message"), { target: { value: "It is 0000." } });
     fireEvent.click(within(panel).getByRole("button", { name: "Send email" }));
@@ -93,10 +99,23 @@ describe("EmailsCard", () => {
     await screen.findByText("No email to Tenant 1 yet.");
     fireEvent.click(screen.getByRole("button", { name: "Write email" }));
     const panel = screen.getByRole("dialog", { name: "Email Tenant 1" });
+    await within(panel).findByText("To Person 1, t@example.com.");
     fireEvent.change(within(panel).getByLabelText("Subject"), { target: { value: "Hi" } });
     fireEvent.change(within(panel).getByLabelText("Message"), { target: { value: "Hi" } });
     fireEvent.click(within(panel).getByRole("button", { name: "Send email" }));
     expect((await within(panel).findByRole("alert")).textContent).toContain("no email on file");
+  });
+
+  it("says before writing when someone has no email on file, and sends nothing", async () => {
+    server([], undefined, null);
+    render(<EmailsCard about="owner" aboutId="o2" name="Owner 2" />);
+    await screen.findByText("No email to Owner 2 yet.");
+    fireEvent.click(screen.getByRole("button", { name: "Write email" }));
+    const panel = screen.getByRole("dialog", { name: "Email Owner 2" });
+    expect(await within(panel).findByText("Person 1 has no email on file: add one on their page first.")).toBeTruthy();
+    const send = within(panel).getByRole("button", { name: "Send email" }) as HTMLButtonElement;
+    expect(send.disabled).toBe(true);
+    expect(within(panel).getByTestId("button-says").textContent).toBe("Nothing is sent until they have an email on file.");
   });
 
   it("says when the server sends no email yet, and that what is written waits", async () => {
@@ -105,6 +124,9 @@ describe("EmailsCard", () => {
     expect(await screen.findByText("This server sends no email yet: what you write waits until it does.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Write email" }));
     const panel = screen.getByRole("dialog", { name: "Email Owner 1" });
+    await within(panel).findByText("To Person 1, t@example.com.");
+    expect(within(panel).getByTestId("button-says").textContent)
+      .toBe("It waits until this server sends email, then goes to t@example.com. It's listed here either way.");
     fireEvent.change(within(panel).getByLabelText("Subject"), { target: { value: "Hi" } });
     fireEvent.change(within(panel).getByLabelText("Message"), { target: { value: "Hi" } });
     fireEvent.click(within(panel).getByRole("button", { name: "Send email" }));
@@ -161,7 +183,8 @@ describe("EmailsCard", () => {
 describe("WriteEmail", () => {
   it("shows its note and closes from Close", () => {
     const close = vi.fn();
-    render(<WriteEmail title="Email tenants of Cedar House" note="Everyone gets a copy." onSend={async () => ""} onClose={close} />);
+    render(<WriteEmail title="Email tenants of Cedar House" note="Everyone gets a copy." says="Goes to each of them."
+      onSend={async () => ""} onClose={close} />);
     expect(screen.getByText("Everyone gets a copy.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(close).toHaveBeenCalled();

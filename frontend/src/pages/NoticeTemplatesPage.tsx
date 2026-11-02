@@ -87,7 +87,7 @@ export function NoticeTemplatesPage({ me }: { me: Me }) {
                   <td className="text-right" onClick={(event) => event.stopPropagation()}>
                     <RowMenu label={template.name} actions={[
                       { label: "Remove", danger: true, onSelect: () => remove(template),
-                        confirm: `Remove ${template.name}? The notices made from it stay.` },
+                        confirm: `Remove ${template.name}? Nothing new can be made from it; the notices made from it stay.` },
                     ]} />
                   </td>
                 </tr>
@@ -145,7 +145,15 @@ function TemplateForm({ template, fields, leaseFields, onSaved }: {
         onChange={(event) => setBody(event.target.value)}
         className="rounded-sm border border-line-strong bg-sunken px-2 py-1.5 text-base text-ink" />
       <Notice tone="error">{error}</Notice>
-      <div><Button type="submit">Save template</Button></div>
+      <div>
+        <Button type="submit" says={template !== null
+          ? "Saves a new version; what was made from it before keeps its words. Nothing is sent to anyone."
+          : use === "lease"
+            ? "Adds your lease; a draft lease can then be made from it. Nothing is sent to anyone."
+            : "Adds the template; a lease's Files tab makes notices from it. Nothing is sent to anyone."}>
+          Save template
+        </Button>
+      </div>
       <section aria-label="Blanks the PMS fills" className="flex flex-col gap-1 text-sm">
         <p className="text-ink-muted">
           {use === "lease" ? "Blanks the PMS fills from the draft lease's terms:" : "Blanks the PMS fills from the lease:"}

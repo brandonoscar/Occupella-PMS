@@ -40,7 +40,7 @@ const WORD: Record<LineStatus, string> = {
   "to record": "To record",
   recorded: "Recorded",
   waiting: "Waiting",
-  "set aside": "Set aside",
+  "set aside": "Skipped",
 };
 
 // Rentals → Rent roll → Payment files (the founder's review q035): a bank's or lockbox's CSV file
@@ -83,7 +83,7 @@ export function PaymentFilesPage({ me }: { me: Me }) {
                   <th className="text-right">Lines</th>
                   <th className="text-right">Recorded</th>
                   <th className="text-right">Waiting</th>
-                  <th className="text-right">Set aside</th>
+                  <th className="text-right">Skipped</th>
                 </tr>
               </thead>
               <tbody>
@@ -190,14 +190,21 @@ function BringIn({ onCame }: { onCame: (file: FileDetail) => void }) {
               </tbody>
             </table>
           </Wide>
-          {preview.came_in === null && <div><Button type="submit">Bring it in</Button></div>}
+          {preview.came_in === null && (
+            <div>
+              <Button type="submit"
+                says="Records each line marked To record as a payment to its lease and emails its tenants a receipt. The rest wait here.">
+                Bring it in
+              </Button>
+            </div>
+          )}
         </>
       )}
     </Form>
   );
 }
 
-// A payment file's page: each line recorded (to which lease), waiting (why) or set aside (why).
+// A payment file's page: each line recorded (to which lease), waiting (why) or skipped (why).
 // A waiting line's ⋯ menu records it to a lease staff pick, or sets it aside.
 export function PaymentFilePage({ me, id }: { me: Me; id: string }) {
   const [file, setFile] = useState<FileDetail | null>(null);
@@ -272,7 +279,7 @@ export function PaymentFilePage({ me, id }: { me: Me; id: string }) {
                   {line.status === "waiting" && (
                     <RowMenu label={`line ${line.line_no}`} actions={[
                       { label: "Record to a lease", onSelect: () => setPanel({ kind: "record", line }) },
-                      { label: "Set aside", onSelect: () => setPanel({ kind: "aside", line }) },
+                      { label: "Skip", onSelect: () => setPanel({ kind: "aside", line }) },
                     ]} />
                   )}
                 </td>
@@ -288,7 +295,7 @@ export function PaymentFilePage({ me, id }: { me: Me; id: string }) {
         </SidePanel>
       )}
       {panel?.kind === "aside" && (
-        <SidePanel title={`Set line ${panel.line.line_no} aside`} onClose={() => setPanel(null)}>
+        <SidePanel title={`Skip line ${panel.line.line_no}`} onClose={() => setPanel(null)}>
           <SetAside line={panel.line} record={record} />
           <Notice tone="error">{refused}</Notice>
         </SidePanel>
@@ -357,7 +364,12 @@ function RecordLine({ line, record }: { line: FileLine; record: Recorder }) {
               Accept this payment past the payment hold
             </label>
           )}
-          <div><Button type="submit">Record {money(line.amount)} to this lease</Button></div>
+          <div>
+            <Button type="submit"
+              says="Records it as a payment to this lease, as Receive payment does; each tenant with an email on file gets a receipt.">
+              Record {money(line.amount)} to this lease
+            </Button>
+          </div>
         </Form>
       )}
     </div>
@@ -370,12 +382,12 @@ function SetAside({ line, record }: { line: FileLine; record: Recorder }) {
     <Form className="flex flex-col gap-3" onSubmit={async (event) => {
       event.preventDefault();
       await record<FileLine>(`/api/rent/payment-files/lines/${line.id}/set-aside`, { reason },
-        (done) => `Line ${done.line_no} is set aside; it records nothing.`);
+        (done) => `Line ${done.line_no} is skipped; it records nothing.`);
     }}>
-      <p className="text-base text-ink">{lineWords(line)}. Setting it aside records nothing.</p>
+      <p className="text-base text-ink">{lineWords(line)}.</p>
       <Field label="Why" id={`aside-${line.line_no}`} required maxLength={500} value={reason}
         onChange={(event) => setReason(event.target.value)} />
-      <div><Button type="submit">Set it aside</Button></div>
+      <div><Button type="submit" says="Records nothing for it, now or later; why is kept with the line.">Skip this line</Button></div>
     </Form>
   );
 }

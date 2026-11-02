@@ -373,3 +373,72 @@ the Dashboard's tiles and Needs attention actions (Send reminder, Pay bill, Appr
 reconciliation, Review application); Renew lease's New rent a month, Send for signing and Send
 anyway; the ledgers' From, To, Export CSV and Updated; the tenant's Lease card; the owner's top;
 Email tenants' boxes; "A new housing authority".
+
+## Phase 4: the finish (copy sweep, browser tests, goldens, property tests)
+
+Screens before and after: `docs/design-pass/4/`. No migration.
+
+**Rule 1, a plain line under every action button.** `Button` takes `says`, the line under it
+saying what pressing it does and what it doesn't; the button is described by it, so a screen reader
+reads it too. Every submit button in the portal has one (a report's Show and a Preview change
+nothing and have none), and so does every button that changes something on click without asking
+first. `src/buttonRules.test.ts` reads every `<Button>` in the portal's source and fails on a
+submit button without a line. Each line was checked against the API route and the database
+function it calls before it was written: one never says "nothing is sent" of a step that emails,
+or "nothing is charged" of one that charges. A confirm question that only asked now says what
+happens too. *Forced by the code:* `Button` defaults to `type="button"`, so only the submit
+button submits its form: the notice card's Cancel, a button with no type inside its form, could
+make the notice it was cancelling.
+
+**Rule 2, no internal jargon.** Payment files' "Set aside" is Skip, Skipped and "Skip this line"
+(the API's own messages too). A day inside a memo reads MM/DD/YYYY wherever a memo shows ("Rent
+due 10/01/2026", "Management fee 09/01/2026 to 09/30/2026"): the lease ledger, the owner's
+statement, Move-outs, the tenant's portal, month-end and the open charges. The owner's statement
+on screen reads "Bill RF-1" where the ledger's memo says "Bill RF-1 set aside" (*forced by the
+code:* phase 1a kept that write path and its memo, and a ledger memo is never rewritten). Month-end
+reads "In the books" for what it called transfers; switching says "money recorded" for postings.
+The browser sweep that checks every page of the demo for accessibility also fails a page whose
+text carries a name from the code, "set aside", "PMC", "EFT", a value printed as nothing or a day
+as YYYY-MM-DD (`frontend/e2e/words.ts`). **Left to the founder:** the reports, the general ledger
+page and every download print the ledger's own words (`bank_cash:`, `owner_property:`, "PMC",
+"posting", "Bill X set aside", times in UTC). An earlier decision kept a report's text as the
+report writes it, so the sweep leaves those pages out here. **The founder's answer (2026-10-26):
+translate them everywhere**, on screen and in every download, from one word list, with the report
+functions and their golden cases unchanged; a follow-up PR does it and takes the exception out
+of the sweep.
+
+**Rule 3, who gets it before it sends.** Write email names the address it goes to, or says the
+person has no email on file and sends nothing (`GET /api/emails/to`). A portal invite says whether
+it is emailed or only a link to hand over, as the server sends email or not. A work order's Next
+step names the vendor's email before an assignment or a visit emails them, or why none goes (no
+email on file, work order emails off, a server that sends none). A decision resting on a screening
+names each applicant and their email, counted, before the adverse action notice goes. *Not done:*
+a payment's receipt and an over-limit bill's approval email still go to the address on file
+without the screen naming it first; both are written by themselves as the payment or bill is
+recorded, and naming each address needs the API to answer it first.
+
+**Rule 4, ask before what can't be taken back.** `AskFirst` asks a question naming what happens
+before Post (a journal entry), Sign off the tie-out, Approve through (month-end), This is them (one
+tenant at two properties), Remove logo, a file's and a listing photo's Remove, Unlist, Take away
+(a signer) and Try again (an online payment that came back); a showing's outcome, ending a lease
+from Move-outs and a vendor's The work is done ask too. Each shows only where it applies, as
+before. *Not done:* they stay where they were rather than moving into a ⋯ menu (Unlist and a
+file's Remove sit beside one; a signer's Take away, a photo's Remove and Remove logo have none to
+go in). Undo on a month-end match stays a plain button: it changes nothing that can't be matched
+again.
+
+**Golden files for what the PMS hands people** (`tests/golden/test_golden_files.py`): a payment
+receipt, an owner's statement as the PDF they download, the ACH file and the printed checks, each
+from a fixed synthetic fixture and compared as the text it shows. *Found by them:* an ACH file
+taken again read the company's bank details as they are now; it now reads them as the run had
+them, as it already read each payee's account, so a file taken again is the file uploaded.
+
+**Property tests for holds and draws** (`tests/properties/test_payables_properties.py`): holds
+never come to more than the balance, a draw never pays held money, and now a void releases its
+hold (the bill holds nothing, no other bill holds less, and a draw may take at least what it could
+before).
+
+**Renamed labels (rule 2)**: payment files' "Set aside" (⋯ menu), "Set it aside" and "Set aside"
+(column, status) are Skip, Skip this line and Skipped; month-end's "Transfers not matched" is "In
+the books, not matched", "Lines … · Transfers …" is "Bank lines … · Books …", and "No transfer" is
+"Nothing in the books". New: the line under each action button; the confirm questions above.

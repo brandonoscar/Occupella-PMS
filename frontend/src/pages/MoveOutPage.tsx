@@ -95,12 +95,17 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
         className="flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
           event.preventDefault();
-          record(`/api/move-out/${id}/end`, { ends_on: ends }, () => `The lease ends on ${usDate(ends)}.`);
+          ask(`End ${lease.property}, ${lease.unit}'s lease on ${usDate(ends)}? Rent is charged only through that day.`,
+            () => record(`/api/move-out/${id}/end`, { ends_on: ends }, () => `The lease ends on ${usDate(ends)}.`),
+            "End the lease");
         }}
       >
         <Field label="Last day" id={`ends-${id}`} type="date" required value={ends}
           onChange={(e) => setEnds(e.target.value)} />
-        <Button type="submit" variant="secondary">End the lease</Button>
+        <Button type="submit" variant="secondary"
+          says="Sets this last day; rent is charged only through it. No fee is charged and the deposit isn't returned yet.">
+          End the lease
+        </Button>
       </Form>
       <Form
         className="flex flex-wrap items-end gap-3"
@@ -117,7 +122,10 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
           onChange={(e) => setMemo(e.target.value)} />
         <Field label="Amount" id={`amount-${id}`} inputMode="decimal" required value={amount}
           onChange={(e) => setAmount(e.target.value)} />
-        <Button type="submit" variant="secondary">Charge it</Button>
+        <Button type="submit" variant="secondary"
+          says={`Charges the tenants this fee, due ${usDate(lease.ends_on ?? today)}. No money moves now; returning the deposit keeps what the lease owes.`}>
+          Charge it
+        </Button>
       </Form>
     </>
   );
@@ -154,7 +162,8 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
                 </LinkButton>
               ))}
               <Button variant="secondary" onClick={() =>
-                record<StatementSent>(`/api/move-out/${id}/statement/send`, {}, sentLine)}>
+                record<StatementSent>(`/api/move-out/${id}/statement/send`, {}, sentLine)}
+                says={`Emails ${lease.tenants.join(", ")} their statement at the email on file. Each press emails it again.`}>
                 Email the statement
               </Button>
             </div>
@@ -196,7 +205,8 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
                     owner_account: choose ? owner : null,
                   };
                   ask(`Return the deposit on ${usDate(on)}: keep ${money(next.kept)} for what the lease owes and`
-                    + ` pay ${money(next.returned)} back to the tenants?`, () =>
+                    + ` pay ${money(next.returned)} back to the tenants? This records what you paid at the bank;`
+                    + " it sends no money or email.", () =>
                     record<{ returned: string }>(`/api/move-out/${id}/return`, body,
                       (done) => `Returned ${money(done.returned)} to the tenants; the rest paid what the lease owed.`));
                 }}
@@ -218,13 +228,13 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
                     ))}
                   </Select>
                 )}
-                <Button type="submit">Return the deposit</Button>
-                <p className="w-full text-sm text-ink-subtle">
-                  Keeps {money(next.kept)} for what the lease owes; {money(next.returned)} goes back.
-                </p>
+                <Button type="submit"
+                  says={`Keeps ${money(next.kept)} for what the lease owes; ${money(next.returned)} goes back. A lease's deposit is returned once.`}>
+                  Return the deposit
+                </Button>
               </Form>
             ) : null}
-            {ended && prompt}
+            {prompt}
           </>
         )}
         <Said>{said}</Said>
@@ -287,7 +297,10 @@ function FeeRow({ leaseId, fee, record }: { leaseId: string; fee: Fee; record: R
               setFile({ name: picked.name, type, base64: toBase64(bytes) });
             }} />
         </label>
-        <Button type="submit" variant="secondary" disabled={file === null}>Add receipt</Button>
+        <Button type="submit" variant="secondary" disabled={file === null}
+          says="Keeps it with this fee and the lease's files; its tenants can download it in the portal. Nothing is charged.">
+          Add receipt
+        </Button>
       </Form>
       <Notice tone="error">{problem}</Notice>
     </li>

@@ -100,7 +100,7 @@ export function AddPropertyPanel({ panel, opened }: { panel: Panel; opened: (id:
           <Field label="Property name" id="property-name" required maxLength={200} value={name}
             onChange={(e) => setName(e.target.value)} />
           <OwnerAndBank books={books} owner={owner} bank={bank} setOwner={setOwner} setBank={setBank} id="property" />
-          <div><Button type="submit">Add property</Button></div>
+          <div><Button type="submit" says="Adds the property for this owner, with the company's default late and NSF fees if it has any. No money moves.">Add property</Button></div>
           <Notice tone="error">{error}</Notice>
         </Form>
       )}
@@ -118,7 +118,7 @@ export function AddUnitPanel({ panel, propertyId }: { panel: Panel; propertyId: 
         return save("units", { property_id: propertyId, name }, () => `Added ${name.trim()}.`);
       }}>
         <Field label="Unit name" id="unit-name" required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} />
-        <div><Button type="submit">Add unit</Button></div>
+        <div><Button type="submit" says="Adds the unit to this property. No lease or rent comes with it.">Add unit</Button></div>
         <Notice tone="error">{error}</Notice>
       </Form>
     </SidePanel>
@@ -141,7 +141,7 @@ export function AddOwnerPanel({ panel, propertyId }: { panel: Panel; propertyId:
             () => `Added ${name}'s account.`);
         }}>
           <OwnerAndBank books={books} owner={owner} bank={bank} setOwner={setOwner} setBank={setBank} id="add-owner" />
-          <div><Button type="submit">Add owner</Button></div>
+          <div><Button type="submit" says="Opens their account at this property, holding nothing. No money moves.">Add owner</Button></div>
           <Notice tone="error">{error}</Notice>
         </Form>
       )}
@@ -189,7 +189,7 @@ export function OwnershipPanel({ panel, propertyId, name, owners }: {
             ? "A percent is above 0, at most 100, to four decimals."
             : whole ? "Together 100%." : `Together ${total.text}; the shares come to 100%.`}
         </p>
-        <div><Button type="submit" disabled={!whole}>Set ownership</Button></div>
+        <div><Button type="submit" disabled={!whole} says="Records these shares from that day on. No money moves between the owners now.">Set ownership</Button></div>
         <Notice tone="error">{error}</Notice>
       </Form>
     </SidePanel>
@@ -241,7 +241,7 @@ export function TermsPanel({ panel, accounts, everyOwnerOf }: {
           <Field key={key} label={label} id={`terms-${key}`} inputMode="decimal" value={amounts[key]}
             onChange={(e) => setAmounts({ ...amounts, [key]: e.target.value })} />
         ))}
-        <div><Button type="submit">Set terms</Button></div>
+        <div><Button type="submit" says="These terms hold from that day; earlier ones stay as they were. No fee is taken now.">Set terms</Button></div>
         <Notice tone="error">{error}</Notice>
       </Form>
     </SidePanel>
@@ -266,7 +266,7 @@ export function LateFeesPanel({ panel, propertyId }: { panel: Panel; propertyId:
         <Field label="Flat fee" id="fees-flat" inputMode="decimal" value={fees.flat_fee} onChange={set("flat_fee")} />
         <Field label="Percent of unpaid" id="fees-percent" inputMode="decimal" value={fees.percent} onChange={set("percent")} />
         <Field label="Up to" id="fees-maximum" inputMode="decimal" value={fees.maximum} onChange={set("maximum")} />
-        <div><Button type="submit">Set late fees</Button></div>
+        <div><Button type="submit" says="Rent due from that day is charged late fees on these terms; earlier terms stay. Nothing is charged now.">Set late fees</Button></div>
         <Notice tone="error">{error}</Notice>
       </Form>
     </SidePanel>
@@ -285,7 +285,7 @@ export function NsfFeePanel({ panel, propertyId }: { panel: Panel; propertyId: s
       }}>
         <Field label="NSF fee from" id="nsf-from" type="date" required value={from} onChange={(e) => setFrom(e.target.value)} />
         <Field label="NSF fee" id="nsf-fee" inputMode="decimal" required value={fee} onChange={(e) => setFee(e.target.value)} />
-        <div><Button type="submit">Set NSF fee</Button></div>
+        <div><Button type="submit" says="A payment returned from that day is charged this fee (0 charges none); earlier terms stay. Nothing is charged now.">Set NSF fee</Button></div>
         <Notice tone="error">{error}</Notice>
       </Form>
     </SidePanel>
@@ -314,7 +314,7 @@ export function DepositInterestPanel({ panel, propertyId }: { panel: Panel; prop
           Each day&apos;s deposit earns the day&apos;s rate. Pay it from the lease&apos;s page, when the law you
           follow says to: as a credit against the rent, or added to the deposit.
         </p>
-        <div><Button type="submit">Set deposit interest</Button></div>
+        <div><Button type="submit" says="Deposits earn this rate from that day; earlier days keep theirs. Nothing is paid or credited now.">Set deposit interest</Button></div>
         <Notice tone="error">{error}</Notice>
       </Form>
     </SidePanel>
@@ -342,10 +342,8 @@ export function LeaseBreakFeePanel({ panel, propertyId }: { panel: Panel; proper
           onChange={(e) => setFlat(e.target.value)} />
         <Field label="Months of rent" id="break-months" inputMode="decimal" required value={months}
           onChange={(e) => setMonths(e.target.value)} />
-        <p className="text-sm text-ink-muted">
-          Charged only when you end a lease before its end date and choose to charge it.
-        </p>
-        <div><Button type="submit">Set lease-break fee</Button></div>
+        <div><Button type="submit"
+          says="Leases starting from that day break under these terms. Nothing is charged unless you end one early and choose to.">Set lease-break fee</Button></div>
         <Notice tone="error">{error}</Notice>
       </Form>
     </SidePanel>
@@ -398,7 +396,8 @@ export function AddLeasePanel({ panel, unitId, propertyId, propertyName }: {
           </fieldset>
           <div className="flex flex-wrap items-end gap-3">
             <Field label="Tenant's name" id="tenant-name" maxLength={200} value={tenant} onChange={(e) => setTenant(e.target.value)} />
-            <Button type="button" variant="secondary" disabled={!tenant.trim()} onClick={async () => {
+            <Button type="button" variant="secondary" disabled={!tenant.trim()}
+              says="Adds them as a tenant of this property and ticks them for this lease. Nothing is sent to them." onClick={async () => {
               const name = tenant.trim();
               const added = await adding.record<{ id: string }>("/api/setup/tenants", { property_id: propertyId, name }, (made) => {
                 setChosen((now) => [...now, made.id]);
@@ -408,7 +407,8 @@ export function AddLeasePanel({ panel, unitId, propertyId, propertyName }: {
             }}>Add tenant</Button>
           </div>
           <Said>{adding.said}</Said>
-          <div><Button type="submit" disabled={chosen.length === 0}>Add lease</Button></div>
+          <div><Button type="submit" disabled={chosen.length === 0}
+            says="Records the lease already in place. Nothing is charged now: the nightly rent run charges it when due.">Add lease</Button></div>
           <Notice tone="error">{adding.error || error}</Notice>
         </Form>
       )}

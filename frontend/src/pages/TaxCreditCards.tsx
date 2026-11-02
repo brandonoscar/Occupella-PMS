@@ -113,7 +113,12 @@ function LimitsForm({ propertyId, record }: { propertyId: string; record: Record
         <Field key={household} label={household} id={`limit-${n + 1}`} inputMode="decimal" required value={values[n]}
           onChange={(e) => setValues(values.map((v, m) => (m === n ? e.target.value : v)))} />
       ))}
-      <div><Button type="submit">Save income limits</Button></div>
+      <div>
+        <Button type="submit"
+          says={`Uses these limits from ${usDate(from)}; the earlier ones stay listed. No rent is changed and nothing is filed.`}>
+          Save income limits
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -200,7 +205,14 @@ function DesignationForm({ unitId, record }: { unitId: string; record: Recorder 
           </p>
         </>
       )}
-      <div><Button type="submit">Save tax credit</Button></div>
+      <div>
+        <Button type="submit"
+          says={ending
+            ? `It stops being a tax credit unit from ${usDate(from)}; earlier designations stay listed. No rent is changed.`
+            : `Makes it a tax credit unit from ${usDate(from)}; earlier designations stay listed. Its rent isn't changed, only tested.`}>
+          Save tax credit
+        </Button>
+      </div>
     </Form>
   );
 }

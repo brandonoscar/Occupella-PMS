@@ -14,6 +14,8 @@ import { Card } from "./Shell";
 import { SidePanel } from "./SidePanel";
 
 export type EmailAbout = "tenant" | "owner" | "vendor";
+// Who an email to a person goes to now (GET /api/emails/to): none without an email on file.
+type Addressee = { name: string; to: string | null };
 export type EmailLine = {
   id: string;
   kind:
@@ -58,11 +60,15 @@ const STATUS: Record<EmailLine["status"], { word: string; tone: BadgeTone }> = {
 
 // Writing an email, in a side panel (ADR 0007): a subject and the text, signed with the staff
 // member's name and the company's when it goes. `onSend` answers why it was refused, or "".
-export function WriteEmail({ title, onSend, onClose, note }: {
+// `note` says who gets it (ADR 0010, rule 3) and `says` what Send does; `blocked` is when there
+// is no one to send it to.
+export function WriteEmail({ title, onSend, onClose, note, says, blocked = false }: {
   title: string;
   onSend: (subject: string, body: string) => Promise<string>;
   onClose: () => void;
   note?: string;
+  says: string;
+  blocked?: boolean;
 }) {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -85,7 +91,7 @@ export function WriteEmail({ title, onSend, onClose, note }: {
           className="rounded-sm border border-line-strong bg-sunken px-2 py-1.5 text-base text-ink" />
         <p className="text-sm text-ink-subtle">Your name and the company's are added below it.</p>
         <Notice tone="error">{error}</Notice>
-        <div><Button type="submit">Send email</Button></div>
+        <div><Button type="submit" disabled={blocked} says={says}>Send email</Button></div>
       </Form>
     </SidePanel>
   );
@@ -104,6 +110,8 @@ export function EmailsCard({ about, aboutId, name, emailOn }: {
 }) {
   const [emails, setEmails] = useState<EmailLine[] | null>(null);
   const [writing, setWriting] = useState(false);
+  // Who an email goes to, read when staff start one: null until it comes.
+  const [addressee, setAddressee] = useState<Addressee | null>(null);
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
   const query = new URLSearchParams({ about, about_id: aboutId });
@@ -117,6 +125,13 @@ export function EmailsCard({ about, aboutId, name, emailOn }: {
     refresh(run.keep);
     return run.stop;
   }, [about, aboutId]);
+
+  function write() {
+    setAddressee(null);
+    setWriting(true);
+    api.get<Addressee>(`/api/emails/to?${query}`).then(setAddressee)
+      .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
+  }
 
   async function send(subject: string, body: string) {
     setSaid("");
@@ -133,7 +148,7 @@ export function EmailsCard({ about, aboutId, name, emailOn }: {
   return (
     <Card title="Email">
       {about !== "application" && (
-        <div className="mb-3"><Button type="button" variant="secondary" onClick={() => setWriting(true)}>Write email</Button></div>
+        <div className="mb-3"><Button type="button" variant="secondary" onClick={write}>Write email</Button></div>
       )}
       {emailOn === false && about !== "application" && (
         <Notice tone="info">This server sends no email yet: what you write waits until it does.</Notice>
@@ -162,7 +177,18 @@ export function EmailsCard({ about, aboutId, name, emailOn }: {
           ))}
         </ul>
       )}
-      {writing && <WriteEmail title={`Email ${name}`} onSend={send} onClose={() => setWriting(false)} />}
+      {writing && (
+        <WriteEmail title={`Email ${name}`} onSend={send} onClose={() => setWriting(false)}
+          note={addressee === null ? "Finding their email…"
+            : addressee.to ? `To ${addressee.name}, ${addressee.to}.`
+            : `${addressee.name} has no email on file: add one on their page first.`}
+          says={addressee?.to
+            ? emailOn === false
+              ? `It waits until this server sends email, then goes to ${addressee.to}. It's listed here either way.`
+              : `Goes to ${addressee.to} now, and is listed here with whether it went.`
+            : "Nothing is sent until they have an email on file."}
+          blocked={!addressee?.to} />
+      )}
     </Card>
   );
 }

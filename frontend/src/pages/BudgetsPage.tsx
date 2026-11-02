@@ -191,7 +191,9 @@ function BudgetGrid({ budget, refused, save }: { budget: Budget; refused: string
         </table>
       </Wide>
       <div className="flex items-center gap-3">
-        <Button type="submit">Save budget</Button>
+        <Button type="submit" says="Saves the whole year, all or none; earlier figures stay in the history. A budget moves no money.">
+          Save budget
+        </Button>
         {changed && <span className="text-sm text-ink-muted">Unsaved changes</span>}
       </div>
       <Notice tone="error">{wrong || refused}</Notice>

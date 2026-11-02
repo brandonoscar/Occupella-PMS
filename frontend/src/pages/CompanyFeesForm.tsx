@@ -40,7 +40,12 @@ export function CompanyFeesForm({ fees, record }: { fees: CompanyFees; record: R
             inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} />
           <Field label="Paid out on" id={`company-fees-on-${fees.bank_account_id}`} type="date"
             required value={on} onChange={(event) => setOn(event.target.value)} />
-          <div><Button type="submit">Take out company fees</Button></div>
+          <div>
+            <Button type="submit"
+              says="Records the fees paid out of trust to the company's own account. Owners' balances don't change; the PMS sends no money.">
+              Take out company fees
+            </Button>
+          </div>
         </Form>
       )}
       {prompt}

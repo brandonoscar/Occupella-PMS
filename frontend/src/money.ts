@@ -34,6 +34,13 @@ export function usDate(iso: string | null): string {
   return found ? `${found[2]}/${found[3]}/${found[1]}` : iso;
 }
 
+// Days written into free text (a charge's memo "Rent due 2026-08-01", a fee's "2026-09-01 to
+// 2026-09-30") read as MM/DD/YYYY on screen too; the rest of the text is as it came, and a day
+// inside a longer token (a reference like "INV-2026-10-05") is left alone.
+export function usDatesIn(text: string): string {
+  return text.replace(/(?<![\w-])(\d{4})-(\d{2})-(\d{2})(?![\w-])/g, "$2/$3/$1");
+}
+
 // Amounts added up exactly, in whole cents, never as floats: "12.30" + "0.75" is "13.05".
 export function sumMoney(amounts: string[]): string {
   let cents = 0n;

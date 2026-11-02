@@ -137,7 +137,11 @@ function GroupPanel({
         </fieldset>
         <Notice tone="error">{error}</Notice>
         <div className="flex gap-2">
-          <Button type="submit">{group === null ? "Add group" : "Save"}</Button>
+          <Button type="submit" says={group === null
+            ? "Every list can then show just these properties. Nothing about the properties changes."
+            : "Saves its name and which properties are in it. Nothing about the properties changes."}>
+            {group === null ? "Add group" : "Save"}
+          </Button>
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
         </div>
       </Form>

@@ -181,7 +181,8 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
                   <SignsInElsewhere tenant={tenant} />
                 ) : (
                   <PortalCard kind="tenant" personId={id} name={tenant.name} portal={tenant.portal}
-                    loginEmail={tenant.login_email} contactEmail={tenant.contact.email} refresh={refresh}
+                    loginEmail={tenant.login_email} contactEmail={tenant.contact.email} emailOn={me.email_on ?? false}
+                    refresh={refresh}
                     onEditContact={() => setEditContact((n) => n + 1)} />
                 )}
                 {home && home.status !== "ended" && <HouseholdCards leaseId={home.id} />}

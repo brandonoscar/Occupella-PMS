@@ -143,11 +143,13 @@ export function RenewLeaseForm({ leaseId, record }: { leaseId: string; record: R
       )}
       <Notice tone="error">{problem}</Notice>
       <div>
-        <Button type="submit" disabled={!ready}>Send for signing</Button>
+        <Button type="submit" disabled={!ready}
+          says="Sends each tenant listed their own link to sign; the lease stays as it is until all of them sign.">
+          Send for signing
+        </Button>
       </div>
       <p className="text-sm text-ink-subtle">
-        Each tenant gets their own link to sign. Once everyone has signed, it becomes the lease from its first day,
-        and this one ends the day before.
+        Once everyone has signed, it becomes the lease from its first day, and this one ends the day before.
       </p>
       {prompt}
     </Form>

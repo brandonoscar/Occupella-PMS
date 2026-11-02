@@ -84,6 +84,29 @@ describe("OnlinePaymentsWaiting", () => {
     expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({ bank_account_id: "b1", amount: "4.00" });
   });
 
+  it("asks before recording a return again, and Cancel sends nothing", async () => {
+    const fetch = server([{ ...FEE, payment_id: "p3", what: "return", company_owes: null, cover_needed: "0.00" }]);
+    render(<OnlinePaymentsWaiting refresh={0} />);
+    expect(await screen.findByText("Came back, not undone yet: the owner's account holds too little")).toBeTruthy();
+    const question = "Record that $500.00 for Morgan Demo, Birch Flats Unit A came back?"
+      + " The payment comes off the lease, and the property's NSF fee, if any, is charged.";
+    const sent = () => fetch.mock.calls.filter(([, init]) => init?.method === "POST");
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(sent()).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(sent()).toEqual([]);
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "Try again" }));
+    await vi.waitFor(() => expect(sent()).toHaveLength(1));
+    expect(sent()[0]?.[0]).toBe("/api/payments/p3/record");
+    expect(JSON.parse(String(sent()[0]?.[1]?.body))).toEqual({});
+    await vi.waitFor(() => expect(screen.getByRole("status").textContent).toBe("Recorded what came back."));
+  });
+
   it("still says what the deposit did once nothing waits", async () => {
     server([FEE]);
     render(<OnlinePaymentsWaiting refresh={0} />);

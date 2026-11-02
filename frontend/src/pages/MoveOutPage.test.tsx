@@ -79,7 +79,8 @@ describe("MoveOutPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Return the deposit" }));
     const ask = screen.getByRole("alertdialog");
     expect(ask.getAttribute("aria-label")).toBe(
-      "Return the deposit on 07/05/2026: keep $350.00 for what the lease owes and pay $850.00 back to the tenants?",
+      "Return the deposit on 07/05/2026: keep $350.00 for what the lease owes and pay $850.00 back to the tenants?"
+        + " This records what you paid at the bank; it sends no money or email.",
     );
     expect(posted(fetch)).toHaveLength(0);
     fireEvent.click(within(ask).getByRole("button", { name: "Confirm" }));
@@ -121,7 +122,16 @@ describe("MoveOutPage", () => {
     expect(within(done).getByText("Deposit returned").closest("[data-tone]")?.getAttribute("data-tone")).toBe("positive");
 
     fireEvent.change(screen.getAllByLabelText("Last day")[1]!, { target: { value: "2026-07-31" } });
+    // Ending the lease asks first; Cancel sends nothing.
+    const question = "End Property 1, Unit 2's lease on 07/31/2026? Rent is charged only through that day.";
     fireEvent.click(screen.getAllByRole("button", { name: "End the lease" })[1]!);
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(screen.getAllByRole("button", { name: "End the lease" })[1]!);
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "End the lease" }));
     expect(await screen.findByText("The lease ends on 07/31/2026.")).toBeTruthy();
     fireEvent.change(screen.getAllByLabelText("Cleaning or damage")[0]!, { target: { value: " Carpet cleaning " } });
     fireEvent.change(screen.getAllByLabelText("Amount")[0]!, { target: { value: "120.00" } });

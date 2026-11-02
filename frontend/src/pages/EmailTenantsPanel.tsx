@@ -84,11 +84,15 @@ export function EmailTenantsPanel({ propertyId, name, onSent, onClose }: {
           <textarea id="email-body" required maxLength={8000} rows={8} value={body}
             onChange={(event) => setBody(event.target.value)}
             className="rounded-sm border border-line-strong bg-sunken px-2 py-1.5 text-base text-ink" />
-          <p className="text-sm text-ink-subtle">
-            Each gets their own copy, kept on their Email tab. Your name and the company's are added below it.
-          </p>
+          <p className="text-sm text-ink-subtle">Your name and the company's are added below the message.</p>
           <Notice tone="error">{error}</Notice>
-          <div><Button type="submit" disabled={n === 0}>{n === 0 ? "Choose who gets it" : `Send to ${plural(n)}`}</Button></div>
+          <div>
+            <Button type="submit" disabled={n === 0} says={n === 0
+              ? "Tick at least one tenant above. Nothing is sent until you do."
+              : `Each of the ${plural(n)} ticked gets their own copy, kept on their Email tab. No one else is written to.`}>
+              {n === 0 ? "Choose who gets it" : `Send to ${plural(n)}`}
+            </Button>
+          </div>
         </Form>
       )}
     </SidePanel>

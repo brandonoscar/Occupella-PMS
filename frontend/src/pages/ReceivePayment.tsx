@@ -175,10 +175,12 @@ function AuthorityLines({ page, record, onRecorded }: {
       )}
       <p className="text-sm text-ink" data-testid="authority-pay-total">{`Total ${money(total)}`}</p>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" disabled={total === "0.00"} onClick={() => { another.current = false; }}>
+        <Button type="submit" disabled={total === "0.00"} onClick={() => { another.current = false; }}
+          says={`Records ${money(total)} from ${page.name}. The tenants' balances stay as they are, and nothing is sent.`}>
           Record payment
         </Button>
-        <Button type="submit" variant="secondary" disabled={total === "0.00"} onClick={() => { another.current = true; }}>
+        <Button type="submit" variant="secondary" disabled={total === "0.00"} onClick={() => { another.current = true; }}
+          says="Records it the same way, then starts another check.">
           Save and add another
         </Button>
       </div>

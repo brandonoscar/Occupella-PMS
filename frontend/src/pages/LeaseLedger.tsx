@@ -9,7 +9,7 @@ import { SidePanel } from "../components/SidePanel";
 import { UpdatedStamp } from "../components/Updated";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
-import { day, money, usDate } from "../money";
+import { day, money, usDate, usDatesIn } from "../money";
 import { downloadHref, FORMATS } from "../reports";
 import type { LeaseDetail, Ledger, LedgerLine } from "../rentals";
 import { LEDGER_KIND } from "../rentals";
@@ -105,7 +105,7 @@ export function LedgerTab({ lease, runs, record }: { lease: LeaseDetail; runs: n
                     </button>
                     {line.bounced && <> <Badge tone="danger">Bounced</Badge></>}
                   </td>
-                  <td className="text-ink-muted">{line.memo ?? ""}</td>
+                  <td className="text-ink-muted">{usDatesIn(line.memo ?? "")}</td>
                   <td className="text-right">{line.charged ? money(line.charged) : ""}</td>
                   <td className="text-right">{line.paid ? money(line.paid) : ""}</td>
                   <td className="text-right">{money(line.balance)}</td>
@@ -162,7 +162,7 @@ function LedgerItem({ line, lease, record }: { line: LedgerLine; lease: LeaseDet
           <dt className="text-ink-muted">Due</dt>
           <dd>{usDate(line.on)}</dd>
           <dt className="text-ink-muted">What</dt>
-          <dd>{LEDGER_KIND[line.kind]}{line.memo ? `: ${line.memo}` : ""}</dd>
+          <dd>{LEDGER_KIND[line.kind]}{line.memo ? `: ${usDatesIn(line.memo)}` : ""}</dd>
           <dt className="text-ink-muted">Amount</dt>
           <dd>{money(line.charged)}</dd>
           <dt className="text-ink-muted">Still open</dt>

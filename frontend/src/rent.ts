@@ -1,5 +1,5 @@
 // Staff's rent work as the API sends it (src/pms/api/rent.py), and how it reads.
-import { day, money, sumMoney, usDate } from "./money";
+import { day, money, sumMoney, usDate, usDatesIn } from "./money";
 
 export type OpenCharge = {
   id: string;
@@ -189,7 +189,7 @@ export function paymentSummary(payment: Payment): string {
 }
 
 export function chargeLabel(charge: OpenCharge): string {
-  const what = charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee");
+  const what = usDatesIn(charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee"));
   const part = charge.open === charge.amount ? "" : ` of ${money(charge.amount)}`;
   return `${usDate(charge.due_on)} ${what}: ${money(charge.open)} open${part}`;
 }

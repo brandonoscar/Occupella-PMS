@@ -368,6 +368,32 @@ def test_owners_paid_by_ach_get_one_file_their_bank_takes(client, conn, staff, p
     )
 
 
+def test_an_ach_file_taken_again_is_the_one_made_when_the_run_was_paid(client, conn, staff, pmc):
+    fund(conn, pmc, "500.00")
+    ach_details(client, pmc)
+    owner_bank(client, pmc)
+    run = ok(pay_owners(client, pmc, "EFT", amount="125.50"), 201)[0]["run_id"]
+    first = client.get(f"/api/payouts/runs/{run}/ach").content
+    # The bank's details and the owner's account change after it was paid.
+    ok(
+        send(
+            client,
+            f"payouts/bank-accounts/{pmc.operating_bank_id}",
+            bank_routing_number=routing("00999999"),
+            bank_name="Another Bank",
+            origin_id="2000000000",
+            origin_name="Other PMC",
+            company_id="2000000000",
+            company_name="Other PMC",
+        )
+    )
+    owner_bank(client, pmc, number="99999999")
+    again = client.get(f"/api/payouts/runs/{run}/ach").content
+    # Byte for byte: the bank details, the account and the time are the run's.
+    assert again == first
+    assert first.decode("ascii").splitlines()[0][63:86].strip() == "GOLDEN PMC"
+
+
 def test_owners_paid_by_check_get_their_checks_numbered_on(client, conn, staff, pmc):
     fund(conn, pmc, "500.00", n=0)
     fund(conn, pmc, "300.00", n=1)

@@ -225,7 +225,10 @@ export function PayBillsPage({ me }: { me: Me }) {
               <option value="file">{method === "EFT" ? "ACH file" : "Checks to print"}</option>
             </Select>
             <Field label="Paid on" id="bills-on" type="date" required value={on} onChange={(e) => setOn(e.target.value)} />
-            <Button type="submit" disabled={picked.length === 0}>
+            <Button type="submit" disabled={picked.length === 0}
+              says={output === "file"
+                ? `Records them paid and ${method === "EFT" ? "writes the ACH file to upload" : "prints the checks to mail"}. The PMS sends no money; the bank does.`
+                : "Records them paid, all or none, from each owner's money in trust. The PMS sends no money."}>
               {picked.length === 0 ? "Choose bills to pay" : `Pay ${money(total)}`}
             </Button>
           </div>

@@ -12,7 +12,7 @@ import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
-import { day, money, usDate } from "../money";
+import { day, money, usDate, usDatesIn } from "../money";
 import { downloadHref, FORMATS } from "../reports";
 import type { CompanyFees } from "../payables";
 import { companyFeesDue } from "../payables";
@@ -47,6 +47,7 @@ import { YearCloseCard } from "./YearCloseCard";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
 import type { BankKind } from "../setup";
+import { AskFirst } from "../components/Confirm";
 
 // Accounting → Banking (ADR 0005): each trust bank account with what the books hold in it, how
 // far it is reconciled and whether a month waits for approval, each opening its own page. Add
@@ -180,7 +181,11 @@ function AddBankAccount() {
       </Select>
       <Field label="Bank account name" id="new-bank-name" required maxLength={200} value={name}
         onChange={(event) => setName(event.target.value)} />
-      <div><Button type="submit">Add bank account</Button></div>
+      <div>
+        <Button type="submit" says="Adds it empty and opens its page. What it holds can't be changed later; no money moves.">
+          Add bank account
+        </Button>
+      </div>
       <Notice tone="error">{error}</Notice>
     </Form>
   );
@@ -361,7 +366,10 @@ function StatementsCard({ bank, refresh }: BankProps) {
           onChange={(e) => setOpening(e.target.value)} />
         <Field label="Closing balance" id="statement-closing" inputMode="decimal" value={closing}
           onChange={(e) => setClosing(e.target.value)} />
-        <Button type="submit" disabled={!file}>Import statement</Button>
+        <Button type="submit" disabled={!file}
+          says="Adds the bank's lines and matches checks to bill payments by number and amount. No money moves.">
+          Import statement
+        </Button>
       </Form>
       <p className="mt-3 text-sm text-ink-subtle">
         {file ? `Ready: ${file.name}.` : "Choose the file first."} A CSV needs its days; by default a
@@ -442,7 +450,7 @@ function WorksheetCard({
                 {items(sheet.rows).map((row) => (
                   <tr key={row.line}>
                     <td className="first-letter:uppercase">{row.item}</td>
-                    <td className="text-ink-muted">{row.detail}</td>
+                    <td className="text-ink-muted">{usDatesIn(row.detail ?? "")}</td>
                     <td className="text-right">{money(row.amount)}</td>
                   </tr>
                 ))}
@@ -459,15 +467,17 @@ function WorksheetCard({
                 {money(prepared.bank_balance)}, books {money(prepared.book_cash)}.
               </span>
               {who === "may" ? (
-                <Button
-                  onClick={() =>
+                <AskFirst
+                  says={`Closes the account through ${usDate(prepared.through)}: nothing dated on or before it can be added after. No money moves.`}
+                  question={`Approve through ${usDate(prepared.through)}? The account closes through that day: nothing dated on or before it can be added after.`}
+                  onConfirm={() =>
                     record<{ id: string }>(`/api/reconcile/${bank.id}/approve`,
                       { preparation_id: prepared.id },
                       () => `Approved through ${usDate(prepared.through)}; the account is closed through it.`)
                   }
                 >
-                  Approve through {usDate(prepared.through)}
-                </Button>
+                  {`Approve through ${usDate(prepared.through)}`}
+                </AskFirst>
               ) : (
                 <span className="text-sm text-ink-subtle">
                   {who === "preparer"
@@ -481,6 +491,7 @@ function WorksheetCard({
             <Button
               variant={prepared ? "secondary" : "primary"}
               disabled={gap !== "0.00"}
+              says="Saves these figures for another staff member who may approve. Nothing closes until then; no money moves."
               onClick={() =>
                 record<{ id: string }>(`/api/reconcile/${bank.id}/prepare`, { through: day },
                   () => `Prepared through ${usDate(day)}; another staff member who may approve approves it.`)
@@ -579,14 +590,14 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
   return (
     <Card title="Match the bank to the books">
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Button variant="secondary"
+        <Button variant="secondary" says="Matches only the lines it is sure of; the rest wait for you. No money moves."
           onClick={() => record<{ matched: number }>(`/api/reconcile/${bank.id}/auto-match`, {},
             (done) => `${done.matched} line${done.matched === 1 ? "" : "s"} matched.`)}>
           Match the sure ones
         </Button>
         <span className="text-sm text-ink-subtle">
           Pairs a check with the bill payments recorded under its number and amount, then a line with
-          the one transfer of its amount within a week, when there is no other. No money moves.
+          the one amount in the books like it within a week, when there is no other.
         </span>
       </div>
       <div className={`grid gap-6 ${sheet.open_items.length > 0 ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
@@ -598,7 +609,7 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
           )}
         </fieldset>
         <fieldset>
-          <legend className="mb-2 text-sm font-medium">Transfers not matched</legend>
+          <legend className="mb-2 text-sm font-medium">In the books, not matched</legend>
           {sheet.open_transfers.length === 0 ? <p className="text-sm text-ink-subtle">None.</p> : (
             <Checks items={sheet.open_transfers} label={transferLabel} chosen={moved}
               toggle={(id) => setMoved(toggleTransfer(sheet.open_transfers, moved, id))} />
@@ -614,10 +625,11 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <span className="text-sm" data-testid="picked">
-          Lines {money(lineTotal)} · Transfers {money(movedTotal)}
+          Bank lines {money(lineTotal)} · Books {money(movedTotal)}
         </span>
         <Button
           disabled={lines.length + moved.length + carried.length === 0 || lineTotal !== movedTotal}
+          says="Pairs what is ticked on each side. No money moves; Undo takes it back until the month is approved."
           onClick={async () => {
             const body = { line_ids: lines, transfer_ids: moved, cutover_item_ids: carried };
             if (await record(`/api/reconcile/${bank.id}/matches`, body, () => "Matched.")) {
@@ -645,10 +657,10 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
                 <td>{m.lines.map(lineLabel).join("; ") || "No bank line"}</td>
                 <td>
                   {[...m.transfers.map(transferLabel), ...m.items.map(itemLabel)].join("; ") ||
-                    "No transfer"}
+                    "Nothing in the books"}
                 </td>
                 <td className="text-right">
-                  <Button variant="ghost" size="sm"
+                  <Button variant="ghost" size="sm" says="Unpairs them; both sides go back to the lists above. No money moves."
                     onClick={() => record(`/api/reconcile/matches/${m.id}/undo`, {}, () => "Match undone.")}>
                     Undo
                   </Button>
@@ -698,7 +710,8 @@ function OpeningCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet })
               </option>
             ))}
           </Select>
-          <Button onClick={() => record(`/api/reconcile/${bank.id}/opening-match`, { line_id: chosen },
+          <Button says="Pairs this bank line with the opening balances. No money moves."
+            onClick={() => record(`/api/reconcile/${bank.id}/opening-match`, { line_id: chosen },
             () => "The opening is matched.")}>
             Match the opening
           </Button>
