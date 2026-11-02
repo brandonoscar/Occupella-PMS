@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { fillApplicant } from "./apply";
 import { expectAccessible } from "./a11y";
+import { expectPlainWords } from "./words";
 import { totp } from "./totp";
 
 type Seed = {
@@ -143,7 +144,7 @@ test("staff enroll an authenticator, invite a tenant and see a repair through", 
   await expect(portal).toContainText("Goes to tenant.e2e@example.com, the email in their contact details.");
   await portal.getByRole("button", { name: "Invite to the portal" }).click();
   const ask = page.getByRole("alertdialog");
-  await expect(ask).toContainText("Send Tenant E2E an invite to the portal at tenant.e2e@example.com?");
+  await expect(ask).toContainText("Email Tenant E2E an invite to the portal at tenant.e2e@example.com?");
   await ask.getByRole("button", { name: "Send invite" }).click();
   await expect(portal.getByLabel("Invite link, Tenant E2E")).toHaveValue(/\/invite#/);
   await expect(portal).toContainText("Invited");
@@ -785,6 +786,10 @@ test("staff import last month's statement, match it to the books and prepare it;
   await page.getByRole("row", { name: "E2E operating trust account", exact: true }).getByRole("link").click();
   await expect(page.getByRole("heading", { level: 1, name: "E2E operating trust account" })).toBeVisible();
   await page.getByRole("button", { name: `Approve through ${us(iso(last))}` }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    `Approve through ${us(iso(last))}? The account closes through that day: nothing dated on or before it can be added after.`,
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: `Approve through ${us(iso(last))}` }).click();
   await expect(page.getByText(`Approved through ${us(iso(last))}; the account is closed through it.`)).toBeVisible();
   const approved = page.getByRole("table", { name: "Approved" }).getByRole("row", {
     name: `${us(iso(first))} to ${us(iso(last))} $4,700.00 $4,700.00 Approver E2E`,
@@ -836,6 +841,10 @@ test("staff bring a roster in, open an account with its old balances and a check
   await expect(card).toContainText("1 item carried over.");
   await expect(card).toContainText("The bank's statement should open at $1,050.00.");
   await card.getByRole("button", { name: "Sign off the tie-out" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    "Sign off the tie-out? The items carried over are frozen: none can be added after, and it isn't undone.",
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: "Sign off the tie-out" }).click();
   await expect(card).toContainText("Signed off. The items carried over are frozen.");
   await expect(card).toContainText("Switch E2E at ");
 
@@ -856,7 +865,7 @@ test("staff bring a roster in, open an account with its old balances and a check
   // Carried by the opening match, the check waits for the bank line that clears it.
   await expect(page.getByLabel(`${us(before)} Check to Vendor E2E (2001), from before the cutover: ($150.00)`)).toBeVisible();
   const carried = page.getByRole("table", { name: "Reconciling items" }).getByRole("row", {
-    name: `outstanding withdrawal ${before} Check to Vendor E2E (2001), from before the cutover ($150.00)`,
+    name: `outstanding withdrawal ${us(before)} Check to Vendor E2E (2001), from before the cutover ($150.00)`,
   });
   await expect(carried).toBeVisible();
 });
@@ -885,6 +894,10 @@ test("the demo opens on last month waiting for its manager, who approves it and 
     `Prepared through ${us(iso(last))} by Demo Bookkeeper: bank $2,379.20, books $1,729.20.`,
   );
   await page.getByRole("button", { name: `Approve through ${us(iso(last))}` }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    `Approve through ${us(iso(last))}? The account closes through that day: nothing dated on or before it can be added after.`,
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: `Approve through ${us(iso(last))}` }).click();
   await expect(page.getByText(`Approved through ${us(iso(last))}; the account is closed through it.`)).toBeVisible();
   const approved = page.getByRole("table", { name: "Approved" }).getByRole("row", {
     name: `${us(iso(first))} to ${us(iso(last))} $2,379.20 $1,729.20 Demo Manager`,
@@ -956,14 +969,18 @@ async function hrefs(page: Page, where: Locator = page.locator("body")): Promise
   return where.locator("a[href^='/']").evaluateAll((links) => links.map((a) => a.getAttribute("href") ?? ""));
 }
 
+// The reports print the ledger's own words (ADR 0010, phase 4 leaves them to the founder's call).
+const REPORT_TEXT = /^\/(reports\/|general-ledger)/;
+
 async function scanned(page: Page, path: string): Promise<void> {
   await page.goto(path);
   await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
   await page.waitForLoadState("networkidle");
   await expectAccessible(page, path);
+  if (!REPORT_TEXT.test(path)) await expectPlainWords(page, path);
 }
 
-test("every page of the demo meets WCAG 2.2 AA as axe checks it: staff's, an owner's, a tenant's and the public ones", async ({
+test("every page of the demo meets WCAG 2.2 AA as axe checks it, in plain words: staff's, an owner's, a tenant's and the public ones", async ({
   browser,
   page,
 }) => {
@@ -1013,6 +1030,7 @@ test("every page of the demo meets WCAG 2.2 AA as axe checks it: staff's, an own
     await expect(portal.getByRole("navigation", { name: "Sections" })).toBeVisible();
     await portal.waitForLoadState("networkidle");
     await expectAccessible(portal, `the ${who === demo.owner ? "owner" : "tenant"}'s portal`);
+    await expectPlainWords(portal, `the ${who === demo.owner ? "owner" : "tenant"}'s portal`);
     await portal.context().close();
   }
 });

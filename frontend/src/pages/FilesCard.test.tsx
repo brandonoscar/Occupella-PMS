@@ -49,7 +49,18 @@ describe("FilesCard", () => {
     expect(within(files).getByRole("link", { name: "Agreement" }).getAttribute("href")).toBe("/api/documents/d1/file");
     expect(files.textContent).toContain("Owner document, 2 KB, uploaded 10/02/2026");
 
+    // Removing asks first; Cancel sends nothing.
+    const question = "Remove Agreement? It leaves every list here and in the portals, and its download stops. Its record stays.";
     fireEvent.click(screen.getByRole("button", { name: "Remove Agreement" }));
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch)).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Agreement" }));
+    expect(screen.getByRole("alertdialog", { name: question })).toBeTruthy();
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove" }));
     expect(await screen.findByText("Removed Agreement.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/documents/d1/remove", {}]]);
   });

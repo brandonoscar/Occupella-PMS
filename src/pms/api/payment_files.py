@@ -221,7 +221,7 @@ def words(refused: Exception) -> str:
         return str(refused.detail)
     text = refusal(cast(psycopg.Error, refused))
     if "payment hold" in text:
-        return "the lease is on a payment hold: accept the payment past the hold, or set it aside"
+        return "the lease is on a payment hold: accept the payment past the hold, or skip the line"
     return text
 
 
@@ -596,7 +596,7 @@ def waiting_line(conn: psycopg.Connection[Any], pmc_id: UUID, line_id: UUID) -> 
     if recorded_to is not None:
         raise HTTPException(409, f"this line is recorded already, to {label(conn, recorded_to)}")
     if aside:
-        raise HTTPException(409, "this line is set aside")
+        raise HTTPException(409, "this line was skipped")
     return Line(*said)
 
 

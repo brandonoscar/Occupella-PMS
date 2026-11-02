@@ -78,7 +78,13 @@ function AutomaticPrepaidForm({ prepaid, save }: { prepaid: AutomaticPrepaid; sa
         <input type="checkbox" checked={automatic} onChange={(e) => setAutomatic(e.target.checked)} />
         Use tenants' prepaid rent by itself for new rent
       </label>
-      <div><Button type="submit">Save</Button></div>
+      <div>
+        <Button type="submit" says={automatic
+          ? "Each night, tenants' prepaid rent pays what their lease owes. Nothing is used as you save."
+          : "Prepaid rent waits for staff to use it on the lease. Nothing is used as you save."}>
+          Save
+        </Button>
+      </div>
     </Form>
   );
 }

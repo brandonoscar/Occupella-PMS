@@ -13,6 +13,7 @@ import type { FeePayer, PaymentSettings, Waiting } from "../payments";
 import { PAYMENT_SETTINGS, settingsLine, waitingLine } from "../payments";
 import { requestId } from "../rent";
 import { useRecord } from "./useRecord";
+import { AskFirst } from "../components/Confirm";
 
 // Company setup: whether tenants may pay online, and who pays the processing fee on a bank
 // payment (the founder, 2026-10-23: the company chooses). Off until a company turns it on.
@@ -81,7 +82,13 @@ function SettingsForm({ settings, save }: { settings: PaymentSettings; save: (bo
         Some states limit what a tenant may be charged to pay, and every tenant must still be able to pay by check
         or money order for free. Check your state's rules before passing the fee on.
       </p>
-      <div><Button type="submit">Save</Button></div>
+      <div>
+        <Button type="submit" says={online
+          ? "Saves it; tenants can pay online from their lease. Payments already started keep the fee they had."
+          : "Saves it; tenants can't start a payment online, and autopay starts none. Payments already made stay as they are."}>
+          Save
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -116,14 +123,18 @@ export function OnlinePaymentsWaiting({ refresh }: { refresh: number }) {
             </span>
             {item.what === "payment" && (
               <Button variant="secondary" onClick={() => ask(
-                `Record ${money(item.amount)} paid online for ${item.memo}, accepting it past the lease's payment hold?`,
+                `Record ${money(item.amount)} paid online for ${item.memo}, accepting it past the lease's payment hold?`
+                  + " The bank already paid it; this puts it on the lease's balance. The hold stays for other payments.",
                 () => record(`/api/payments/${item.payment_id}/record`, { past_hold: true },
                   () => `Recorded ${money(item.amount)} paid online.`),
                 "Record it")}>Accept past the hold</Button>
             )}
             {item.what === "return" && (
-              <Button variant="secondary" onClick={() => record(`/api/payments/${item.payment_id}/record`, {},
-                () => "Recorded what came back.")}>Try again</Button>
+              <AskFirst variant="secondary"
+                says="Records the return if the owner's balance now covers it: the payment comes off the lease and any NSF fee is charged."
+                question={`Record that ${money(item.amount)} for ${item.memo} came back? The payment comes off the lease, and the property's NSF fee, if any, is charged.`}
+                onConfirm={() => record(`/api/payments/${item.payment_id}/record`, {},
+                () => "Recorded what came back.")}>Try again</AskFirst>
             )}
           </li>
         ))}
@@ -131,7 +142,8 @@ export function OnlinePaymentsWaiting({ refresh }: { refresh: number }) {
       {banks.map(([bank, needed]) => (
         <div key={bank} className="mt-3">
           <Button onClick={() => ask(
-            `Record the company's deposit of ${money(needed)} from its own account into this trust bank account, to pay what online payments cost?`,
+            `Record the company's deposit of ${money(needed)} from its own account into this trust bank account, to pay what online payments cost?`
+              + " This only records it; make the deposit at the bank yourself.",
             () => record("/api/payments/partner-fees/cover", { bank_account_id: bank, amount: needed, request_id: requestId() },
               () => `Recorded the company's ${money(needed)}.`),
             "Record the deposit")}>

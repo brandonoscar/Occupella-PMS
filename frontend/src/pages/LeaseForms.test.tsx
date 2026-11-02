@@ -42,6 +42,12 @@ describe("PaymentForm", () => {
     expect(part.value).toBe("50.00");
     fireEvent.change(part, { target: { value: "40.00" } });
     expect(within(choices).getByText("$40.00 to the charges chosen; what is left of it pays the rest as usual.")).toBeTruthy();
+    // Its line says what it pays first, where the rest goes and who is emailed (ADR 0010, rule 1).
+    const pay = screen.getByRole("button", { name: "Record payment" });
+    expect(document.getElementById(pay.getAttribute("aria-describedby") ?? "")?.textContent).toBe(
+      "Pays the charges chosen first, then the rest owed; any extra is held as prepaid rent."
+        + " Each tenant with an email on file is emailed a receipt.",
+    );
     // A part typed half way counts nothing yet, and nothing breaks.
     fireEvent.change(part, { target: { value: "40." } });
     expect(within(choices).getByText("$0.00 to the charges chosen; what is left of it pays the rest as usual.")).toBeTruthy();

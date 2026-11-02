@@ -64,7 +64,8 @@ export function TaxIdCard({ kind, id, name }: { kind: "owner" | "vendor"; id: st
             {held && onFile.may_reveal && (whole ? (
               <Button variant="secondary" onClick={() => setWhole(null)}>Hide</Button>
             ) : (
-              <Button variant="secondary" onClick={() => void reveal(held.id)}>Reveal</Button>
+              <Button variant="secondary" says="Shows it whole until you hide it or leave; each time is recorded with your name."
+                onClick={() => void reveal(held.id)}>Reveal</Button>
             ))}
             <Button variant="secondary" onClick={() => setEditing(true)}>
               {held ? "Change tax ID" : "Add tax ID"}
@@ -115,7 +116,11 @@ function TaxIdForm({ save }: { save: (body: unknown) => Promise<void> }) {
       <p className="text-sm text-ink-muted">
         Kept sealed and shown by its last four. Only an admin sees it whole, and only it goes into the year's 1099 export.
       </p>
-      <div><Button type="submit">Save</Button></div>
+      <div>
+        <Button type="submit" says="It replaces the one on file from now on; the old one stays in the history. Nothing is sent to them.">
+          Save
+        </Button>
+      </div>
     </Form>
   );
 }

@@ -145,7 +145,7 @@ function AddVendorForm({ added }: { added: (id: string) => void }) {
         onChange={(e) => setEmail(e.target.value)} />
       <Field label="Phone (optional)" id="vendor-phone" maxLength={30} value={phone}
         onChange={(e) => setPhone(e.target.value)} />
-      <div><Button type="submit">Add vendor</Button></div>
+      <div><Button type="submit" says="Adds the vendor and opens their page. Nothing is sent to them.">Add vendor</Button></div>
       <Notice tone="error">{error}</Notice>
     </Form>
   );

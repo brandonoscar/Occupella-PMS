@@ -29,6 +29,8 @@ function server(answers: Record<string, unknown>, refuse: Record<string, string>
 
 const bodies = (fetch: ReturnType<typeof server>) =>
   fetch.mock.calls.map(([path, init]) => [path, JSON.parse(String(init?.body))]);
+// The plain line under a button (ADR 0010, rule 1): what describes it.
+const says = (button: HTMLElement) => document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent;
 
 describe("VendorLinkPage", () => {
   it("shows the vendor's work orders, and schedules a visit with the token", async () => {
@@ -43,10 +45,15 @@ describe("VendorLinkPage", () => {
 
     fireEvent.change(within(leak).getByLabelText("Visit on"), { target: { value: "2026-10-20" } });
     fireEvent.change(within(leak).getByLabelText("Window (optional)"), { target: { value: " 8-10 am " } });
+    expect(says(within(leak).getByRole("button", { name: "Schedule the visit" })))
+      .toBe("The company and any tenant who asked for the repair see the day. No email is sent.");
+    expect(says(within(leak).getByRole("button", { name: "The work is done" })))
+      .toBe("Tells the company it's done and closes the work order; it leaves this list and can't be reopened.");
     fireEvent.click(within(leak).getByRole("button", { name: "Schedule the visit" }));
     expect(await screen.findByText("Visit for #7 on 10/20/2026, 8-10 am.")).toBeTruthy();
     expect(screen.getByTestId("visit").textContent).toBe("Visit on 10/20/2026, 8-10 am");
-    expect(screen.getByRole("button", { name: "Change the visit" })).toBeTruthy();
+    expect(says(screen.getByRole("button", { name: "Change the visit" })))
+      .toBe("The company and any tenant who asked for the repair see the new day. No email is sent.");
 
     expect(bodies(fetch)).toEqual([
       ["/api/vendor-link/work-orders", { token: "a-token-of-enough-length" }],
@@ -61,7 +68,16 @@ describe("VendorLinkPage", () => {
     render(<VendorLinkPage />);
     const leak = await screen.findByRole("region", { name: "Leak" });
     fireEvent.change(within(leak).getByLabelText("What you did (optional)"), { target: { value: " New washer " } });
+    // Saying it's done asks first; Cancel sends nothing.
+    const question = "Mark #7 done? It closes the work order and leaves your list; it can't be reopened.";
     fireEvent.click(within(leak).getByRole("button", { name: "The work is done" }));
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(bodies(fetch)).toEqual([["/api/vendor-link/work-orders", { token: "a-token-of-enough-length" }]]);
+    fireEvent.click(within(leak).getByRole("button", { name: "The work is done" }));
+    expect(bodies(fetch)).toHaveLength(1);
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "The work is done" }));
     expect(await screen.findByText("#7 is done. Thank you.")).toBeTruthy();
     expect(screen.getByText("No work order is waiting for you.")).toBeTruthy();
     expect(bodies(fetch)[1]).toEqual([
@@ -74,6 +90,11 @@ describe("VendorLinkPage", () => {
     render(<VendorLinkPage />);
     const leak = await screen.findByRole("region", { name: "Leak" });
     fireEvent.click(within(leak).getByRole("button", { name: "The work is done" }));
+    fireEvent.click(
+      within(screen.getByRole("alertdialog", {
+        name: "Mark #7 done? It closes the work order and leaves your list; it can't be reopened.",
+      })).getByRole("button", { name: "The work is done" }),
+    );
     expect((await screen.findByRole("alert")).textContent).toBe("no such work order of yours");
     cleanup();
 

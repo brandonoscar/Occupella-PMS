@@ -163,6 +163,17 @@ describe("PageHeader", () => {
     expect(screen.getByText("Each lease's charges.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Run" })).toBeTruthy();
   });
+
+  it("keeps room for its title: actions with long plain lines wrap under it, never squeeze it away", () => {
+    render(<PageHeader title="Renewal for Cedar House, House" actions={<button type="button">Resend</button>} />);
+    const header = screen.getByRole("banner");
+    expect(header.className).toContain("flex-wrap");
+    const title = screen.getByRole("heading", { level: 1 }).parentElement as HTMLElement;
+    expect(title.className).toContain("min-w-64");
+    const actions = screen.getByRole("button", { name: "Resend" }).parentElement as HTMLElement;
+    expect(actions.className).not.toContain("shrink-0");
+    expect(actions.className).toContain("max-w-full");
+  });
 });
 
 describe("Card", () => {

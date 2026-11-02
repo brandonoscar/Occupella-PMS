@@ -84,7 +84,11 @@ function AddAccountPanel({ books, say, refresh, close }: {
           <option value="">Choose a line</option>
           {books.schedule_e_lines.map((l) => <option key={l.line} value={l.line}>{l.line}: {l.label}</option>)}
         </Select>
-        <div><Button type="submit">Add account</Button></div>
+        <div>
+          <Button type="submit" says="Adds it to the accounts bills go in. It can't be renamed or removed later; no money moves.">
+            Add account
+          </Button>
+        </div>
         <Notice tone="error">{error}</Notice>
       </Form>
     </SidePanel>

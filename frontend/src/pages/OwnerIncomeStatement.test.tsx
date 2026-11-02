@@ -77,6 +77,8 @@ describe("OwnerIncomeStatement", () => {
     render(<OwnerIncomeStatement />);
 
     const property = await screen.findByRole("table", { name: "Property 1" });
+    // Its days as MM/DD/YYYY, without the report's UTC.
+    expect(screen.getByText("01/01/2025 to 12/31/2025, cash basis")).toBeTruthy();
     expect(within(property).getByRole("row", { name: "Repairs $200.00" })).toBeTruthy();
     expect(within(property).getByRole("row", { name: "Net income $1,230.00" })).toBeTruthy();
     const scheduleE = screen.getByRole("list", { name: "Schedule E, Property 1" });

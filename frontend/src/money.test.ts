@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { day, lastMonth, money, sumMoney } from "./money";
+import { day, lastMonth, money, sumMoney, usDatesIn } from "./money";
 
 describe("money", () => {
   it("shows dollars and cents from the API's text, negatives in parentheses", () => {
@@ -46,5 +46,20 @@ describe("sumMoney", () => {
     expect(sumMoney(["1200.5", "-0.75", "3"])).toBe("1202.75");
     expect(sumMoney(["-1.00", "0.25"])).toBe("-0.75");
     expect(sumMoney([])).toBe("0.00");
+  });
+});
+
+describe("usDatesIn", () => {
+  it("reads each day in free text as MM/DD/YYYY and leaves the rest as it came", () => {
+    expect(usDatesIn("Rent due 2026-08-01")).toBe("Rent due 08/01/2026");
+    expect(usDatesIn("Management fee 2026-09-01 to 2026-09-30")).toBe("Management fee 09/01/2026 to 09/30/2026");
+    expect(usDatesIn("NSF fee, payment returned 2026-10-06: $35.00")).toBe("NSF fee, payment returned 10/06/2026: $35.00");
+  });
+
+  it("leaves a day inside a reference, and text with none, alone", () => {
+    expect(usDatesIn("Bill INV-2026-10-05 paid")).toBe("Bill INV-2026-10-05 paid");
+    expect(usDatesIn("Bill LAWN-2026-10")).toBe("Bill LAWN-2026-10");
+    expect(usDatesIn("2026-10-05T12:00")).toBe("2026-10-05T12:00");
+    expect(usDatesIn("")).toBe("");
   });
 });

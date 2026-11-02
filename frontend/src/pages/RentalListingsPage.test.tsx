@@ -44,6 +44,8 @@ function server(units: OpenUnit[] = [VACANT, LISTED, LINKED]) {
 
 const posted = (fetch: ReturnType<typeof server>) =>
   fetch.mock.calls.filter(([, init]) => init?.method === "POST").map(([path, init]) => [path, JSON.parse(String(init?.body))]);
+// The plain line under a button (ADR 0010, rule 1): what describes it.
+const says = (button: HTMLElement) => document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent;
 
 describe("RentalListingsPage", () => {
   it("lists each unit coming free with its rent, applications and whether it is listed", async () => {
@@ -73,12 +75,16 @@ describe("RentalListingsPage", () => {
     expect((within(panel).getByLabelText("Rent a month") as HTMLInputElement).value).toBe("1400.00");
     fireEvent.change(within(panel).getByLabelText("Rent a month"), { target: { value: "1450.00" } });
     fireEvent.change(within(panel).getByLabelText("Description (optional)"), { target: { value: " Sunny. " } });
+    expect(says(within(panel).getByRole("button", { name: "List it" })))
+      .toBe("Opens an application link at this rent and puts it on the public page. Nothing goes to listing sites.");
     fireEvent.click(within(panel).getByRole("button", { name: "List it" }));
     await screen.findByText("Listed Property 1, Unit 1 at $1,450.00.");
 
     fireEvent.click(within(screen.getByRole("row", { name: "Property 1, Unit 3" })).getByRole("button", { name: "List" }));
     panel = screen.getByRole("dialog", { name: "List on the public page" });
     expect(within(panel).queryByLabelText("Rent a month")).toBeNull();
+    expect(says(within(panel).getByRole("button", { name: "List it" })))
+      .toBe("Puts it on the public page under its open link. Nothing goes to listing sites.");
     fireEvent.click(within(panel).getByRole("button", { name: "List it" }));
     await screen.findByText("Listed Property 1, Unit 3 at $1,600.00.");
 
@@ -93,12 +99,24 @@ describe("RentalListingsPage", () => {
     render(<RentalListingsPage me={ME} />);
     const listed = await screen.findByRole("row", { name: "Property 1, Unit 2" });
 
+    expect(says(within(listed).getByRole("button", { name: "Unlist" })))
+      .toBe("Takes it off the public page; its link stays open. To list it again, open a new link.");
+    // Unlisting asks first; Cancel sends nothing.
+    const question = "Take Property 1, Unit 2 off the public page? Its link stays open; to list it again you open a new link.";
     fireEvent.click(within(listed).getByRole("button", { name: "Unlist" }));
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(listed).getByRole("button", { name: "Unlist" }));
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "Unlist" }));
     await screen.findByText("Took Property 1, Unit 2 off the public page.");
     fireEvent.click(within(listed).getByRole("button", { name: "Actions for Property 1, Unit 2" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Close its link" }));
     expect(screen.getByRole("alertdialog").textContent).toContain(
-      "Close the application link for Property 1, Unit 2? It takes no more applications and leaves the public page.",
+      "Close the application link for Property 1, Unit 2? It takes no more applications and leaves the public page;"
+      + " applications already in stay as they are.",
     );
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Close its link" }));
     await screen.findByText("Closed the link for Property 1, Unit 2.");
@@ -127,6 +145,8 @@ describe("RentalListingsPage", () => {
     render(<RentalListingsPage me={ME} />);
     const listed = await screen.findByRole("row", { name: "Property 1, Unit 2" });
     fireEvent.click(within(listed).getByRole("button", { name: "Unlist" }));
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: "Take Property 1, Unit 2 off the public page? Its link stays open; to list it again you open a new link." }))
+      .getByRole("button", { name: "Unlist" }));
     await screen.findByText("Took Property 1, Unit 2 off the public page.");
 
     fireEvent.click(screen.getByRole("button", { name: "Copy public page link" }));
@@ -172,7 +192,14 @@ describe("RentalListingsPage", () => {
     const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "Living room.png", { type: "image/png" });
     fireEvent.change(picker, { target: { files: [png] } });
     await within(panel).findByText("Added Living room.");
+    expect(says(within(panel).getByRole("button", { name: "Remove Porch" })))
+      .toBe("Takes the photo off this unit's listing. Its file stays in the records.");
     fireEvent.click(within(panel).getByRole("button", { name: "Remove Porch" }));
+    const asked = screen.getByRole("alertdialog", {
+      name: "Remove Porch? It leaves this unit's listing; its file stays in the records.",
+    });
+    expect(asked.textContent).toContain("Remove Porch? It leaves this unit's listing; its file stays in the records.");
+    fireEvent.click(within(asked).getByRole("button", { name: "Remove" }));
     await within(panel).findByText("Removed Porch.");
 
     const sent = fetch.mock.calls.filter(([, init]) => init?.method === "POST").map(([path, init]) => [path, JSON.parse(String(init?.body))]);

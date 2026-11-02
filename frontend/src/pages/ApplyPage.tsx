@@ -115,7 +115,8 @@ export function ApplyPage() {
             <HouseholdFields household={household} setHousehold={setHousehold} />
             <Notice tone="error">{error}</Notice>
             <div>
-              <Button type="submit" disabled={busy}>
+              <Button type="submit" disabled={busy}
+                says={`Sends it to ${listing.pmc}; you get a link to see where it stands. It can't be changed after, and nothing is charged.`}>
                 Send application
               </Button>
             </div>

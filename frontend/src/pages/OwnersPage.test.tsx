@@ -24,6 +24,8 @@ const ME: Me = {
   pmc_id: "p1",
   pmc_name: "Synthetic PMC",
 };
+// A server that sends email: an invite is emailed.
+const EMAIL_ON: Me = { ...ME, email_on: true };
 
 const ACCOUNTS: OwnerMoney[] = [
   {
@@ -175,7 +177,7 @@ describe("OwnersPage", () => {
 describe("OwnerPage", () => {
   it("sums up the owner: contact details, portal login and the agreements' terms", async () => {
     const fetch = server({ "/api/invites": { url: "https://pms.example/invite#token" } });
-    render(<OwnerPage me={ME} id="o1" />);
+    render(<OwnerPage me={EMAIL_ON} id="o1" />);
 
     expect(await screen.findByRole("heading", { level: 1, name: "Owner 1" })).toBeTruthy();
     expect(screen.getByText("None")).toBeTruthy();
@@ -189,7 +191,7 @@ describe("OwnerPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Invite to the portal" }));
     expect(posted(fetch)).toEqual([]);
     const ask = await screen.findByRole("alertdialog");
-    expect(ask.textContent).toContain("Send Owner 1 an invite to the portal at owner1@example.com?");
+    expect(ask.textContent).toContain("Email Owner 1 an invite to the portal at owner1@example.com?");
     fireEvent.click(within(ask).getByRole("button", { name: "Send invite" }));
 
     expect(((await screen.findByLabelText("Invite link, Owner 1")) as HTMLInputElement).value).toBe(
@@ -245,7 +247,7 @@ describe("OwnerPage", () => {
 
   it("says why an invite was refused", async () => {
     server({}, { "/api/invites": "that email signs in for someone else" });
-    render(<OwnerPage me={ME} id="o1" />);
+    render(<OwnerPage me={EMAIL_ON} id="o1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Invite to the portal" }));
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Send invite" }));
     expect((await screen.findByRole("alert")).textContent).toBe("that email signs in for someone else");

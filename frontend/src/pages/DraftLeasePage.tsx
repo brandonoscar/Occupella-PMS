@@ -71,16 +71,27 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
       <PageHeader title={`${found.kind === "renewal" ? "Renewal" : "Lease"} for ${name}`} actions={
         <div className="flex flex-wrap items-center gap-2">
           {found.status === "draft" && (
-            <Button onClick={() => record<Offered>(`/api/leasing/offers/${id}/send`, {}, (sent) => {
+            <Button says={me.email_on
+              ? "Emails each signer below their own signing link; the links show here too. No lease is made yet."
+              : "Makes each signer below a signing link, shown here to give them. This server sends no email."}
+              onClick={() => record<Offered>(`/api/leasing/offers/${id}/send`, {}, (sent) => {
               setLinks(sent.links);
               return sentLine(sent);
             })}>
               Send
             </Button>
           )}
-          {waiting && <Button variant="secondary" onClick={resend}>Resend</Button>}
+          {waiting && (
+            <Button variant="secondary" onClick={resend}
+              says="Makes a new link for each signer who hasn't signed, shown here; old ones still work. No email is sent.">
+              Resend
+            </Button>
+          )}
           {(waiting || found.status === "signed") && (
-            <Button onClick={() => record<Offer>(`/api/leasing/offers/${id}/complete`, {},
+            <Button says={found.kind === "renewal"
+              ? "Makes it the lease once all have signed; the old lease ends the day before. Nothing is collected or emailed."
+              : "Makes it the lease once all have signed, with its monthly charges. Nothing is collected or emailed."}
+              onClick={() => record<Offer>(`/api/leasing/offers/${id}/complete`, {},
               (made) => `${name} has its lease from ${usDate(made.starts_on)}.`)}>
               Activate lease
             </Button>
@@ -227,7 +238,8 @@ function VoidForm({ offer, record }: { offer: Offer; record: Recorder }) {
         <textarea id="void-reason" rows={3} maxLength={500} value={reason}
           onChange={(e) => setReason(e.target.value)} className={TEXTAREA} />
       </label>
-      <div><Button type="submit" variant="danger">Void it</Button></div>
+      <div><Button type="submit" variant="danger"
+        says="It can't be sent, signed or made the lease after, and signers' links stop working. Nothing is emailed.">Void it</Button></div>
     </Form>
   );
 }

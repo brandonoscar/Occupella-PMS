@@ -103,7 +103,9 @@ export function InvitePage() {
             autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)}
             required />
           <Notice tone="error">{error}</Notice>
-          <Button type="submit" disabled={busy}>
+          <Button type="submit" disabled={busy} says={details.kind === "staff"
+            ? "Sets your password. Next you set up an authenticator app; you aren't signed in until then."
+            : "Sets your password and signs you in. This link then stops working, and other sign-ins of yours end."}>
             Set password
           </Button>
         </Form>
@@ -119,7 +121,8 @@ export function InvitePage() {
           <Field label="Code" id="code" inputMode="numeric" autoComplete="one-time-code"
             pattern="[0-9]{6}" value={code} onChange={(e) => setCode(e.target.value)} required />
           <Notice tone="error">{error}</Notice>
-          <Button type="submit" disabled={busy}>
+          <Button type="submit" disabled={busy}
+            says="Checks the code and signs you in. Each sign-in after this asks for a new code from the app.">
             Finish
           </Button>
         </Form>

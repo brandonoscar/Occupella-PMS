@@ -60,7 +60,7 @@ export function CustomRolesCard({ members, admin }: { members: Member[]; admin: 
         >
           <Field label="New role" id="custom-role-name" required maxLength={100} value={name}
             onChange={(e) => setName(e.target.value)} />
-          <Button type="submit">Make role</Button>
+          <Button type="submit" says="Makes a role that may change nothing and that no one holds yet. Tick its areas and staff after.">Make role</Button>
         </Form>
       )}
     </Card>

@@ -230,10 +230,12 @@ export function DraftLeaseForm({ from = "", record, onMade }: {
           <Notice tone="error">{problem}</Notice>
           {from_ === "pdf" && !document && <Notice tone="info">Choose the lease document first.</Notice>}
           <div className="flex flex-wrap gap-2">
-            <Button type="submit" disabled={!ready} onClick={() => { sending.current = true; }}>
+            <Button type="submit" disabled={!ready} onClick={() => { sending.current = true; }}
+              says="Makes each signer above a signing link, emailed to them if this server sends email. No lease is made yet.">
               Send for signing
             </Button>
-            <Button type="submit" variant="secondary" disabled={!ready} onClick={() => { sending.current = false; }}>
+            <Button type="submit" variant="secondary" disabled={!ready} onClick={() => { sending.current = false; }}
+              says="Keeps it as a draft to send later. Nothing goes to the signers, and no lease is made.">
               Save draft
             </Button>
           </div>

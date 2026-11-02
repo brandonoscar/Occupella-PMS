@@ -324,14 +324,19 @@ def next_check(conn: psycopg.Connection[Any], pmc_id: UUID, bank: UUID) -> int:
     return int(row[0])
 
 
-def bank_settings_of(conn: psycopg.Connection[Any], pmc_id: UUID, bank: UUID) -> BankSettings:
+def bank_settings_of(
+    conn: psycopg.Connection[Any], pmc_id: UUID, bank: UUID, by: datetime | None = None
+) -> BankSettings:
+    """What the account's bank asks in an ACH file: the latest recorded, or by a moment (a payout
+    run's, so its file reads the same whenever it is taken again)."""
     row = conn.execute(
         "SELECT " + ", ".join(f"s.{c}" for c in SETTING_COLUMNS) + ", s.created_at,"  # noqa: S608
         " st.display_name FROM trust_bank_payout_settings AS s"
         " LEFT JOIN trust_staff AS st ON st.id = s.recorded_by"
         " WHERE s.pmc_id = %s AND s.bank_account_id = %s"
+        " AND (%s::timestamptz IS NULL OR s.created_at <= %s)"
         " ORDER BY s.created_at DESC, s.id DESC LIMIT 1",
-        (pmc_id, bank),
+        (pmc_id, bank, by, by),
     ).fetchone()
     values: dict[str, Any] = dict(zip(SETTING_COLUMNS, row[:7], strict=True)) if row else {}
     return BankSettings(
@@ -627,7 +632,6 @@ def ach_file(session: Staff, conn: Conn, run_id: UUID) -> Response:
     """The run's ACH file (NACHA) for the company to upload to its bank: one credit to each
     payee's bank account, their payouts in the run summed."""
     run = take_file(conn, session, run_id, "EFT")
-    settings = bank_settings_of(conn, session.pmc_id, run.bank_account_id)
     try:
         key = sealed.key_from()
     except sealed.NoKey as missing:
@@ -635,7 +639,10 @@ def ach_file(session: Staff, conn: Conn, run_id: UUID) -> Response:
     created = conn.execute(
         "SELECT created_at FROM trust_payout_runs WHERE id = %s", (run_id,)
     ).fetchone()
-    assert created is not None and settings.ach_ready
+    assert created is not None
+    # The bank's details and each payee's account as they were when the run was paid.
+    settings = bank_settings_of(conn, session.pmc_id, run.bank_account_id, by=created[0])
+    assert settings.ach_ready
     summed: dict[Any, list[Item]] = defaultdict(list)
     for item in items_of(conn, run_id):
         summed[item.owner_id or item.vendor_id].append(item)

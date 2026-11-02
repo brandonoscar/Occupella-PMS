@@ -108,7 +108,12 @@ export function TransferForm({ lease, record }: { lease: LeaseDetail; record: Re
         This lease ends the day before. Their prepaid rent first pays what it owes; whatever it still owes
         stays owed to its owner, and a payment on the new lease pays that first.
       </p>
-      <div><Button type="submit">Move the tenants</Button></div>
+      <div>
+        <Button type="submit"
+          says={`Opens their lease at the new unit${Number(deposit) > 0 ? "; their deposits stay held for it" : ""}. No money leaves trust and nothing is sent.`}>
+          Move the tenants
+        </Button>
+      </div>
     </Form>
   );
 }

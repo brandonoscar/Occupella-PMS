@@ -27,8 +27,9 @@ const APPLICATION: Application = {
   screenings: [SCREENING], decision: null, status: "screening", withdrawal: null, lease_id: null,
 };
 
-function server(found: Application = APPLICATION, refuse: Record<string, string> = {}) {
+function server(found: Application = APPLICATION, refuse: Record<string, string> = {}, emails?: object) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === "/api/emails/settings" && emails) return new Response(JSON.stringify(emails));
     if (init?.method === "POST") {
       if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
       return new Response(JSON.stringify(found), { status: 201 });
@@ -56,6 +57,8 @@ const posted = (fetch: ReturnType<typeof server>) =>
   fetch.mock.calls.filter(([, init]) => init?.method === "POST").map(([path, init]) => [path, JSON.parse(String(init?.body))]);
 const reads = (fetch: ReturnType<typeof server>) =>
   fetch.mock.calls.filter(([, init]) => init?.method !== "POST").map(([path]) => path);
+// The plain line under a button (ADR 0010, rule 1): what describes it.
+const says = (button: HTMLElement) => document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent;
 
 describe("ApplicantsPage", () => {
   it("lists each application with its status, screening and income to rent, and opens its page", async () => {
@@ -110,13 +113,15 @@ describe("ApplicantPage", () => {
       .toEqual(["Applicant A, a@example.com", "Applicant B, b@example.com"]);
     expect(screen.getByRole("list", { name: "Screenings" }).textContent).toContain("Recommends conditions: Income below 3x rent");
 
+    expect(says(screen.getByRole("button", { name: "Screen" })))
+      .toBe("Asks the screening partner and records its answer here. It decides nothing.");
     fireEvent.click(screen.getByRole("button", { name: "Screen" }));
     await screen.findByText("Screened Applicant A, Applicant B.");
     expect(posted(fetch)).toEqual([["/api/leasing/applications/a1/screen", {}]]);
   });
 
   it("rejects on the screening with the adverse action notice", async () => {
-    const fetch = server();
+    const fetch = server(APPLICATION, {}, { adverse_action_notices: true, sending: true });
     render(<ApplicantPage me={ME} id="a1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Reject" }));
 
@@ -127,6 +132,11 @@ describe("ApplicantPage", () => {
     fireEvent.change(within(panel).getByLabelText("Why decide against the screening's recommendation"), {
       target: { value: " No co-signer came forward " },
     });
+    // Who gets the notice, by name and email, counted, before it goes (rule 3).
+    await vi.waitFor(() => expect(says(within(panel).getByRole("button", { name: "Reject" }))).toBe(
+      "Rejects it; this is final. Emails the notice to all 2 applicants: Applicant A at a@example.com,"
+      + " Applicant B at b@example.com.",
+    ));
     fireEvent.click(within(panel).getByRole("button", { name: "Reject" }));
 
     await screen.findByText("Rejected: Applicant A, Applicant B.");
@@ -145,6 +155,8 @@ describe("ApplicantPage", () => {
     const panel = screen.getByRole("dialog", { name: "Approve" });
     fireEvent.change(within(panel).getByLabelText("Resting on"), { target: { value: "" } });
     expect(within(panel).queryByLabelText("Adverse action reasons, one a line")).toBeNull();
+    expect(says(within(panel).getByRole("button", { name: "Approve" })))
+      .toBe("Approves it; this is final. A draft lease comes next. Nothing is sent to the applicants.");
     // Approved outright against a screening that asks conditions: it says why.
     fireEvent.change(within(panel).getByLabelText("Why decide against the screening's recommendation"), {
       target: { value: "Pays a year ahead" },
@@ -162,6 +174,9 @@ describe("ApplicantPage", () => {
     fireEvent.change(within(again).getByLabelText("Conditions"), { target: { value: "A co-signer" } });
     // On conditions, as the screening recommends: no reason asked.
     expect(within(again).queryByLabelText("Why decide against the screening's recommendation")).toBeNull();
+    expect(says(within(again).getByRole("button", { name: "Approve" }))).toBe(
+      "Approves it on these conditions; this is final. Each applicant gets the notice by email only if adverse action emails are on.",
+    );
     fireEvent.click(within(again).getByRole("button", { name: "Approve" }));
     await screen.findByText("Approved on conditions: Applicant A, Applicant B.");
 

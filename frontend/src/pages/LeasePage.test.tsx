@@ -370,7 +370,7 @@ describe("LeasePage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Ledger" }));
     const ledger = await screen.findByRole("table", { name: "Ledger" });
     expect(within(ledger).getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent))).toEqual([
-      ["08/01/2026", "Rent", "Rent due 2026-08-01", "$1,500.00", "", "$1,500.00"],
+      ["08/01/2026", "Rent", "Rent due 08/01/2026", "$1,500.00", "", "$1,500.00"],
       ["08/01/2026", "Payment Bounced", "", "", "$1,500.00", "$0.00"],
       ["08/05/2026", "NSF fee", "NSF fee", "$35.00", "", "$35.00"],
       ["08/05/2026", "Bounced payment", "", "", "($1,500.00)", "$1,535.00"],
@@ -589,7 +589,7 @@ describe("LeasePage", () => {
     await open();
     const charges = screen.getByRole("list", { name: "Open charges" });
     expect(within(charges).getAllByRole("listitem").map((li) => li.querySelector("span")?.textContent)).toEqual([
-      "10/01/2026 Rent due 2026-10-01: $1,500.00 open",
+      "10/01/2026 Rent due 10/01/2026: $1,500.00 open",
       "10/06/2026 Late fee: $50.00 open",
     ]);
     fireEvent.click(within(charges).getByRole("button", { name: "Actions for Late fee due 10/06/2026" }));
@@ -710,9 +710,16 @@ describe("LeasePage", () => {
     ]);
     expect(within(one).getByRole("link", { name: "Tenant 1" }).getAttribute("href")).toBe("/tenants/t1");
     expect(within(one).getByRole("button", { name: "Resend invite" })).toBeTruthy();
+    // Each invite says, before it is made, whom it is for and at which email (ADR 0010, rule 1).
+    expect(within(one).getByTestId("button-says").textContent).toBe(
+      "Makes a portal invite link for Tenant 1 at t1@example.com to hand them; nothing is emailed. Using it sets a new password.",
+    );
     // No email on file: one is asked for.
     const two = screen.getByRole("row", { name: "Tenant 2" });
     fireEvent.change(within(two).getByLabelText("Email, Tenant 2"), { target: { value: "t2@example.com" } });
+    expect(within(two).getByTestId("button-says").textContent).toBe(
+      "Makes a portal invite link for Tenant 2 at t2@example.com to hand them; nothing is emailed.",
+    );
     fireEvent.click(within(two).getByRole("button", { name: "Invite" }));
     expect(await screen.findByText("Invite link made for t2@example.com; give it to Tenant 2.")).toBeTruthy();
     expect((within(two).getByLabelText("Invite link, Tenant 2") as HTMLInputElement).value).toBe("http://localhost/invite#abc");

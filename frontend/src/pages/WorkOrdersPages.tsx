@@ -262,7 +262,8 @@ function RecurringRow({ item, record }: { item: RecurringWorkOrder; record: Reco
         }}>
           <Field label={`Stop "${item.summary}" from`} id={`end-${item.id}`} type="date" required value={ends}
             onChange={(e) => setEnds(e.target.value)} />
-          <Button type="submit" variant="secondary">Stop it</Button>
+          <Button type="submit" variant="secondary"
+            says="None of it opens from that day; work orders already opened stay as they are. It can't be restarted.">Stop it</Button>
         </Form>
       )}
     </li>
@@ -324,7 +325,8 @@ function NewRecurringForm({ books, record, opened }: { books: Portfolio; record:
         <option value="">None: staff assign each one</option>
         {books.vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
       </Select>
-      <div><Button type="submit">Add recurring work order</Button></div>
+      <div><Button type="submit"
+        says="A work order opens on each of its days, any already due right away. The vendor isn't emailed when one opens.">Add recurring work order</Button></div>
     </Form>
   );
 }
@@ -410,7 +412,7 @@ function NewWorkOrderForm({ opened }: { opened: (id: string) => void }) {
       <Field label="Title" id="work-order-summary" required maxLength={500} value={summary}
         onChange={(event) => setSummary(event.target.value)} />
       <DetailsFields draft={draft} change={(part) => setDraft({ ...draft, ...part })} />
-      <div><Button type="submit">Open work order</Button></div>
+      <div><Button type="submit" says="Opens it with no vendor yet; assign one with Next step. Nothing is sent to anyone.">Open work order</Button></div>
       <Notice tone="error">{error}</Notice>
     </Form>
   );
@@ -652,7 +654,8 @@ function ChargeForm({ order, record }: { order: WorkOrder; record: Recorder }) {
         onChange={(event) => setAmount(event.target.value)} />
       <Field label="Due" id="charge-due" type="date" required value={due} onChange={(event) => setDue(event.target.value)} />
       <Field label="Memo" id="charge-memo" required maxLength={200} value={memo} onChange={(event) => setMemo(event.target.value)} />
-      <div><Button type="submit">Charge</Button></div>
+      <div><Button type="submit"
+        says={`Adds ${amount.trim() ? `a ${money(amount.trim())}` : "this"} fee to the lease${due ? `, due ${usDate(due)}` : ""}. Nothing is paid now; the owner still pays the vendor's bill.`}>Charge</Button></div>
     </Form>
   );
 }
@@ -686,7 +689,7 @@ function DetailsForm({ order, record }: { order: WorkOrder; record: Recorder }) 
         (answer) => (answer.changed ? "Saved the details." : "Nothing changed."));
     }}>
       <DetailsFields draft={draft} change={(part) => setDraft({ ...draft, ...part })} />
-      <div><Button type="submit">Save</Button></div>
+      <div><Button type="submit" says="Saves these details; the old ones stay in the history. No one is emailed.">Save</Button></div>
     </Form>
   );
 }
@@ -700,6 +703,8 @@ function StepForm({ order, vendors, record }: { order: WorkOrder; vendors: Named
   const [slot, setSlot] = useState("");
   const [note, setNote] = useState("");
   const chosen = vendor || vendors[0]?.id || "";
+  // Who the step emails, shown before it is recorded (ADR 0010, rule 3).
+  const emailed = useVendorEmail(step === "assigned" ? chosen : step === "scheduled" ? order.vendor_id : null);
   return (
     <Form
       className="flex flex-col gap-3"
@@ -738,7 +743,49 @@ function StepForm({ order, vendors, record }: { order: WorkOrder; vendors: Named
         </>
       )}
       <Field label="Note (optional)" id="step-note" maxLength={2000} value={note} onChange={(event) => setNote(event.target.value)} />
-      <div><Button type="submit">Record</Button></div>
+      <div><Button type="submit" says={stepSays(step, emailed)}>Record</Button></div>
     </Form>
   );
 }
+
+type VendorEmail = { name: string; to: string | null; on: boolean; sending: boolean };
+
+// Whether a vendor would be emailed now, and at what address: the server sends email, the company
+// has work order emails on (Company setup) and the vendor has an email on file. Null until read.
+function useVendorEmail(vendorId: string | null): VendorEmail | null {
+  const [found, setFound] = useState<VendorEmail | null>(null);
+  useEffect(() => {
+    setFound(null);
+    if (!vendorId) return;
+    const run = latest();
+    const query = new URLSearchParams({ about: "vendor", about_id: vendorId });
+    Promise.all([
+      api.get<{ name: string; to: string | null }>(`/api/emails/to?${query}`),
+      api.get<{ work_order_notices: boolean; sending: boolean }>("/api/emails/settings"),
+    ]).then(run.keep(([addressee, settings]) => setFound({
+      name: addressee.name, to: addressee.to, on: settings.work_order_notices, sending: settings.sending,
+    }))).catch(() => undefined);
+    return run.stop;
+  }, [vendorId]);
+  return found;
+}
+
+// What recording a step does, and for an assignment or a visit whom it emails.
+function stepSays(step: NextStep, emailed: VendorEmail | null): string {
+  if (step === "completed" || step === "cancelled" || emailed === null) return STEP_SAYS[step];
+  const first = step === "assigned" ? "Assigns them; it stays in the timeline." : "Adds the visit to the timeline.";
+  const what = step === "assigned" ? "the work order" : "the visit's day";
+  if (!emailed.sending) return `${first} This server sends no email, so ${emailed.name} isn't emailed.`;
+  if (!emailed.on) return `${first} Work order emails are off, so ${emailed.name} isn't emailed.`;
+  if (emailed.to === null) return `${first} ${emailed.name} has no email on file, so isn't emailed.`;
+  return `${first} Emails ${emailed.name} ${what} at ${emailed.to}.`;
+}
+
+// What recording each step does (ADR 0010, rule 1). The vendor's email goes only while the server
+// sends email, the company has work orders to vendors on and the vendor has an email on file.
+const STEP_SAYS: Record<NextStep, string> = {
+  assigned: "Assigns them; it stays in the timeline. They're emailed the work order only if work order emails are on.",
+  scheduled: "Adds the visit to the timeline. The vendor is emailed the day only if work order emails are on.",
+  completed: "Closes the work order; no step can follow it. No one is emailed.",
+  cancelled: "Closes the work order as cancelled; no step can follow it. No one is emailed.",
+};

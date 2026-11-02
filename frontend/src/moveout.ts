@@ -1,6 +1,6 @@
 // Staff's move-outs as the API sends them (src/pms/api/moveout.py), and how they read.
 import { fromCents, toCents } from "./reconcile";
-import { usDate } from "./money";
+import { usDate, usDatesIn } from "./money";
 
 // home: the home of a lease the tenants moved from ("Birch Flats, Unit A"); null for the lease's own.
 export type OpenCharge = {
@@ -43,7 +43,7 @@ export function needsReceipt(fee: Fee): boolean {
 }
 
 export function feeLabel(fee: Fee): string {
-  return `${fee.memo ?? "Fee"}, due ${usDate(fee.due_on)}`;
+  return `${usDatesIn(fee.memo ?? "Fee")}, due ${usDate(fee.due_on)}`;
 }
 
 // The day the deposit is due back, as a badge: caution until then, danger once it has passed.
@@ -80,7 +80,7 @@ export function leaseLabel(lease: MoveOut): string {
 }
 
 export function chargeLabel(charge: OpenCharge): string {
-  return `${usDate(charge.due_on)} ${charge.kind}${charge.memo ? `: ${charge.memo}` : ""}`;
+  return `${usDate(charge.due_on)} ${charge.kind}${charge.memo ? `: ${usDatesIn(charge.memo)}` : ""}`;
 }
 
 // The lease ended before `today` (YYYY-MM-DD, UTC), so its deposit may go back.

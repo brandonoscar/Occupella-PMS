@@ -177,7 +177,11 @@ function SettingsForm({ settings, save }: { settings: BankSettings; save: (body:
       <Field label="First check number" id="ach-first-check" inputMode="numeric" pattern="[0-9]*"
         value={draft.first_check_number}
         onChange={(e) => setDraft((was) => ({ ...was, first_check_number: e.target.value }))} />
-      <div><Button type="submit">Save</Button></div>
+      <div>
+        <Button type="submit" says="ACH files and checks from this account use these from now on; the old details stay in the history. Nothing is sent.">
+          Save
+        </Button>
+      </div>
     </Form>
   );
 }

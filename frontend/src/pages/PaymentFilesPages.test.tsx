@@ -194,7 +194,7 @@ describe("PaymentFilePage", () => {
   });
 
   it("starts from the lease a waiting line names, and says why the books refuse it", async () => {
-    const named = { ...WAITING, lease_id: "l2", note: "the lease is on a payment hold: accept the payment past the hold, or set it aside" };
+    const named = { ...WAITING, lease_id: "l2", note: "the lease is on a payment hold: accept the payment past the hold, or skip the line" };
     const hold = named.note;
     server(
       { "/api/rent/payment-files/f1": { ...FILE, items: [named] }, "/api/leases/l2": { ...LEASE, owners: [LEASE.owners[0]] } },
@@ -213,19 +213,19 @@ describe("PaymentFilePage", () => {
     expect(within(panel).getByLabelText("Lease")).toBeTruthy();
   });
 
-  it("sets a waiting line aside with why", async () => {
+  it("skips a waiting line, with why", async () => {
     const fetch = server({
       "/api/rent/payment-files/f1": FILE,
       "/api/rent/payment-files/lines/line3/set-aside": { ...WAITING, status: "set aside", note: "A utility refund", by: "Staff 1" },
     });
     render(<PaymentFilePage me={ME} id="f1" />);
     fireEvent.click(within(await screen.findByRole("row", { name: "Line 3" })).getByRole("button", { name: "Actions for line 3" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Set aside" }));
-    const panel = screen.getByRole("dialog", { name: "Set line 3 aside" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Skip" }));
+    const panel = screen.getByRole("dialog", { name: "Skip line 3" });
     fireEvent.change(within(panel).getByLabelText("Why"), { target: { value: "A utility refund" } });
-    fireEvent.click(within(panel).getByRole("button", { name: "Set it aside" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Skip this line" }));
 
-    expect(await screen.findByText("Line 3 is set aside; it records nothing.")).toBeTruthy();
+    expect(await screen.findByText("Line 3 is skipped; it records nothing.")).toBeTruthy();
     expect(posted(fetch)).toEqual([
       ["/api/rent/payment-files/lines/line3/set-aside", { reason: "A utility refund" }],
     ]);

@@ -228,7 +228,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
         {tab === "ledger" && <LedgerTab lease={lease} runs={runs} record={record} />}
         {tab === "tenants" && (
           <div className="flex flex-col gap-6">
-            <TenantsTab people={lease.people} refresh={refresh}
+            <TenantsTab people={lease.people} refresh={refresh} emailOn={me.email_on ?? false}
               onRemove={(person) => { setLeaving(person); setPanel("remove"); }} />
             <HouseholdCards leaseId={id} />
           </div>
@@ -345,13 +345,25 @@ function Summary({ lease, record, recordDeposit }: { lease: LeaseDetail; record:
   );
 }
 
+// What an invite does, under its button: emailed to the address named while the server sends
+// email (POST /api/invites), its link shown here either way; using a new one sets a new password.
+function inviteSays(person: LeasePerson, to: string, emailOn: boolean): string {
+  const at = to ? ` at ${to}` : "";
+  const made = emailOn
+    ? `Emails ${person.name} a portal invite${at}; its link shows here too.`
+    : `Makes a portal invite link for ${person.name}${at} to hand them; nothing is emailed.`;
+  return person.portal === "active" ? `${made} Using it sets a new password.` : made;
+}
+
 // Tenants: each one's page, phone, email and whether they can sign in to the portal; an invite
-// (or a new one, which resets their password) gives a link to hand them. The PMS sends it nowhere.
-// A tenant leaving while others stay is taken off from their ⋯ menu, and marked once they left.
-function TenantsTab({ people, refresh, onRemove }: {
+// (or a new one, which resets their password) gives a link to hand them, and is emailed too while
+// the server sends email. A tenant leaving while others stay is taken off from their ⋯ menu, and
+// marked once they left.
+function TenantsTab({ people, refresh, onRemove, emailOn }: {
   people: LeasePerson[];
   refresh: () => void;
   onRemove: (person: LeasePerson) => void;
+  emailOn: boolean;
 }) {
   const staying = people.filter((p) => p.left_on === null).length;
   const [links, setLinks] = useState<Record<string, string>>({});
@@ -404,7 +416,8 @@ function TenantsTab({ people, refresh, onRemove }: {
                           value={emails[person.id] ?? ""}
                           onChange={(event) => setEmails({ ...emails, [person.id]: event.target.value })} />
                       )}
-                      <Button type="submit" size="sm" variant="secondary">
+                      <Button type="submit" size="sm" variant="secondary"
+                        says={inviteSays(person, (emails[person.id] ?? person.login_email ?? person.email ?? "").trim(), emailOn)}>
                         {person.portal === "no login" ? "Invite" : "Resend invite"}
                       </Button>
                     </Form>

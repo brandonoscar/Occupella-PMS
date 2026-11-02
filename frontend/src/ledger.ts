@@ -1,6 +1,7 @@
 // A lease's ledger as the API sends it (trust_report_tenant_ledger's rows), split for the page:
 // the lease it is for, each charge and payment with the balance after it, and the totals.
 
+import { usDatesIn } from "./money";
 import type { StatementData } from "./statement";
 
 export type Entry = {
@@ -67,11 +68,12 @@ export function itemLabel(item: string): string {
 }
 
 // A ledger line in words: its kind, then its memo, unless the memo already says the kind
-// ("Rent due 2026-08-01" is not "Rent: Rent due 2026-08-01").
+// ("Rent due 08/01/2026" is not "Rent: Rent due 08/01/2026"); a day in the memo reads MM/DD/YYYY.
 export function entryWords(entry: Pick<Entry, "item" | "detail">): { what: string; detail: string } {
   const what = itemLabel(entry.item);
-  if (entry.detail.toLowerCase().startsWith(what.toLowerCase())) {
-    return { what: entry.detail, detail: "" };
+  const detail = usDatesIn(entry.detail);
+  if (detail.toLowerCase().startsWith(what.toLowerCase())) {
+    return { what: detail, detail: "" };
   }
-  return { what, detail: entry.detail };
+  return { what, detail };
 }

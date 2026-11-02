@@ -1,0 +1,13 @@
+Payment receipt
+Generated 2026-02-01 09:30:00 UTC
+item detail
+Received from Tenant 1, Tenant 2
+For Property 1, Unit 1
+Received on 01/03/2026
+Amount $1,600.00
+How Check 101
+Paid toward January rent, due 01/01/2026: $1,500.00
+Held as prepaid rent $100.00
+Received by Golden PMC, 1 Example Way, Sampletown, ZZ 00000
+Receipt number <id1>
+Page 1 of 1

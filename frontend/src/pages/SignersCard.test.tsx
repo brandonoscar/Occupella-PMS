@@ -78,7 +78,17 @@ describe("SignersCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Record" }));
     expect(await screen.findByText("Clerk 1 signs Deposit trust.")).toBeTruthy();
 
+    // Taking a signer away asks first; Cancel sends nothing.
+    const question =
+      "Take away Clerk 1? They can no longer pay out of Operating trust; their earlier authorization stays in the history.";
     fireEvent.click(screen.getByRole("button", { name: "Take away Clerk 1" }));
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch)).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Take away Clerk 1" }));
+    expect(posted(fetch)).toHaveLength(2);
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "Take away Clerk 1" }));
     expect(await screen.findByText("Clerk 1 no longer signs Operating trust.")).toBeTruthy();
 
     const [broker, signer, away] = posted(fetch) as [string, Record<string, unknown>][];

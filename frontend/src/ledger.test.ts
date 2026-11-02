@@ -47,7 +47,7 @@ describe("itemLabel", () => {
 
 describe("entryWords", () => {
   it("says a line's kind and memo once", () => {
-    expect(entryWords({ item: "rent", detail: "Rent due 2026-08-01" })).toEqual({ what: "Rent due 2026-08-01", detail: "" });
+    expect(entryWords({ item: "rent", detail: "Rent due 2026-08-01" })).toEqual({ what: "Rent due 08/01/2026", detail: "" });
     expect(entryWords({ item: "fee", detail: "Key replacement" })).toEqual({ what: "Fee", detail: "Key replacement" });
     expect(entryWords({ item: "payment", detail: "" })).toEqual({ what: "Payment", detail: "" });
   });

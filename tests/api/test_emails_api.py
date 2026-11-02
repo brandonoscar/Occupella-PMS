@@ -90,6 +90,31 @@ def test_an_owner_without_a_contact_email_is_written_at_their_login(
     assert sent["to"] == owner.email
 
 
+def recipient(client, about, about_id):
+    return client.get("/api/emails/to", params={"about": about, "about_id": str(about_id)})
+
+
+def test_staff_see_who_an_email_goes_to_before_they_send_it(
+    client, other_client, conn, app_conn, staff, pmc
+):
+    tenant = tenant_of(conn, pmc)
+    contact(client, "tenant", tenant, "tenant.one@example.com")
+    shown = ok(recipient(client, "tenant", tenant))
+    assert shown["to"] == "tenant.one@example.com" == ok(write(client, "tenant", tenant), 201)["to"]
+    # An owner with no contact email is written at their login's; one with neither, at none.
+    owner = join_as_owner(other_client, app_conn, pmc)
+    assert ok(recipient(client, "owner", owner.person_id))["to"] == owner.email
+    nobody = ok(recipient(client, "owner", pmc.owners[1].owner_id))
+    assert nobody["to"] is None and nobody["name"]
+
+
+def test_who_an_email_goes_to_needs_a_person_of_the_company(client, conn, staff, pmc):
+    other = make_pmc(conn)
+    assert recipient(client, "owner", other.owners[0].owner_id).status_code == 404
+    assert recipient(client, "applicant", tenant_of(conn, pmc)).status_code == 422
+    assert recipient(client, "tenant", "not-a-tenant").status_code == 422
+
+
 def test_someone_with_no_email_on_file_is_not_written(client, conn, staff, pmc):
     answer = write(client, "owner", pmc.owners[1].owner_id)
     assert answer.status_code == 422
@@ -251,6 +276,7 @@ def test_only_staff_read_or_write_email(client, conn, app_conn, pmc, caller):
         == status
     )
     assert write(client, "tenant", tenant).status_code == status
+    assert recipient(client, "tenant", tenant).status_code == status
     answer = client.post(
         "/api/emails/property",
         json={"property_id": str(pmc.owners[0].property_id), "subject": "s", "body": "b"},

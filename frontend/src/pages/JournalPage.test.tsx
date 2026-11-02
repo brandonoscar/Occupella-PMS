@@ -86,7 +86,18 @@ describe("JournalPage", () => {
     expect(row("02/10/2026 Entered twice").textContent).toContain("Declined by Manager 1: Duplicate.");
     expect(within(row("02/10/2026 Entered twice")).queryByRole("button")).toBeNull();
 
+    // Posting asks first, naming the amount and the day; Cancel sends nothing.
+    const question =
+      "Post Rent deposited to the wrong property? It moves $25.00 as its lines say, dated 02/10/2026, and isn't undone later.";
     fireEvent.click(within(waiting).getByRole("button", { name: "Post" }));
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch)).toEqual([]);
+
+    fireEvent.click(within(waiting).getByRole("button", { name: "Post" }));
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "Post" }));
     expect(await screen.findByText("Posted: Rent deposited to the wrong property.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/journal/e1/post", {}]]);
   });
@@ -135,6 +146,13 @@ describe("JournalPage", () => {
     const waiting = await screen.findByRole("listitem", { name: "02/10/2026 Rent deposited to the wrong property" });
 
     fireEvent.click(within(waiting).getByRole("button", { name: "Post" }));
+    fireEvent.click(
+      within(
+        screen.getByRole("alertdialog", {
+          name: "Post Rent deposited to the wrong property? It moves $25.00 as its lines say, dated 02/10/2026, and isn't undone later.",
+        }),
+      ).getByRole("button", { name: "Post" }),
+    );
     expect((await within(waiting).findByRole("alert")).textContent).toBe(
       "not enough money: the owner's account would be $0.01 short",
     );

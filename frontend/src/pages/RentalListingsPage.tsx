@@ -27,6 +27,7 @@ import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { MarketRent, UnitSize } from "./UnitDetailsCard";
 import { useRecord } from "./useRecord";
+import { AskFirst } from "../components/Confirm";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -133,7 +134,7 @@ export function RentalListingsPage({ me }: { me: Me }) {
                     actions.push({
                       label: "Close its link",
                       danger: true,
-                      confirm: `Close the application link for ${name}? It takes no more applications${unit.listing_id ? " and leaves the public page" : ""}.`,
+                      confirm: `Close the application link for ${name}? It takes no more applications${unit.listing_id ? " and leaves the public page" : ""}; applications already in stay as they are.`,
                       onSelect: () => record(`/api/leasing/links/${link}/close`, {}, () => `Closed the link for ${name}.`),
                     });
                   }
@@ -163,11 +164,13 @@ export function RentalListingsPage({ me }: { me: Me }) {
                       </td>
                       <td className="text-right">
                         {unit.listing_id ? (
-                          <Button variant="secondary" size="sm"
-                            onClick={() => record(`/api/leasing/listings/${unit.listing_id}/remove`, {},
+                          <AskFirst variant="secondary" size="sm"
+                            says="Takes it off the public page; its link stays open. To list it again, open a new link."
+                            question={`Take ${name} off the public page? Its link stays open; to list it again you open a new link.`}
+                            onConfirm={() => record(`/api/leasing/listings/${unit.listing_id}/remove`, {},
                               () => `Took ${name} off the public page.`)}>
                             Unlist
-                          </Button>
+                          </AskFirst>
                         ) : (
                           <Button variant="secondary" size="sm" onClick={() => setPanel({ kind: "list", unit })}>List</Button>
                         )}
@@ -224,7 +227,11 @@ function ListForm({ unit, record }: { unit: OpenUnit; record: Recorder }) {
           onChange={(e) => setDescription(e.target.value)}
           className="rounded-sm border border-line-strong bg-sunken px-3 py-2 text-base text-ink" />
       </label>
-      <div><Button type="submit">List it</Button></div>
+      <div><Button type="submit" says={unit.link_id
+        ? "Puts it on the public page under its open link. Nothing goes to listing sites."
+        : "Opens an application link at this rent and puts it on the public page. Nothing goes to listing sites."}>
+        List it
+      </Button></div>
     </Form>
   );
 }
@@ -243,7 +250,8 @@ function LinkForm({ unit, record }: { unit: OpenUnit; record: Recorder }) {
     }}>
       <Field label="Rent a month" id="link-rent" inputMode="decimal" required value={rent}
         onChange={(e) => setRent(e.target.value)} />
-      <div><Button type="submit" disabled={opened !== ""}>Open the link</Button></div>
+      <div><Button type="submit" disabled={opened !== ""}
+        says="Makes a link anyone can apply through, shown once below. It isn't listed or sent to anyone.">Open the link</Button></div>
       {opened && (
         <p className="text-sm text-ink-muted">
           Shown this once:{" "}
@@ -297,10 +305,12 @@ function PhotosForm({ unit, onChange }: { unit: OpenUnit; onChange: () => void }
               <img src={`/api/documents/${photo.id}/file`} alt={photo.title} className="h-32 w-full rounded-sm object-cover" />
               <div className="flex items-center justify-between gap-2 text-sm">
                 <span className="truncate text-ink-muted">{photo.title}</span>
-                <Button variant="ghost" size="sm" aria-label={`Remove ${photo.title}`}
-                  onClick={() => record(`/api/documents/${photo.id}/remove`, {}, () => `Removed ${photo.title}.`)}>
+                <AskFirst variant="ghost" size="sm" aria-label={`Remove ${photo.title}`} danger
+                  says="Takes the photo off this unit's listing. Its file stays in the records."
+                  question={`Remove ${photo.title}? It leaves this unit's listing; its file stays in the records.`}
+                  onConfirm={() => record(`/api/documents/${photo.id}/remove`, {}, () => `Removed ${photo.title}.`)}>
                   Remove
-                </Button>
+                </AskFirst>
               </div>
             </li>
           ))}

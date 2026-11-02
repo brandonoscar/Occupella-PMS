@@ -37,6 +37,8 @@ function server(company: Company, refuse = "") {
 const posted = (fetch: ReturnType<typeof server>) =>
   fetch.mock.calls.filter(([, i]) => i?.method === "POST").map(([p, i]) => [p, JSON.parse(String(i?.body))]);
 const panel = () => screen.getByRole("dialog");
+// The plain line under a button (ADR 0010, rule 1): what describes it.
+const says = (button: HTMLElement) => document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent;
 const type = (label: string, value: string) => fireEvent.change(within(panel()).getByLabelText(label), { target: { value } });
 
 describe("SetupPage", () => {
@@ -117,6 +119,9 @@ describe("SetupPage", () => {
     type("Grace days", "3");
     type("Flat fee", "25.00");
     type("NSF fee (empty for none)", "35.00");
+    expect(panel().textContent).toContain("A new property charges $35.00 for a returned payment.");
+    expect(says(within(panel()).getByRole("button", { name: "Save" })))
+      .toBe("Properties added from now on start with these. A property already here keeps its own terms.");
     fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Saved the fees new properties start with.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/company", {
@@ -131,6 +136,7 @@ describe("SetupPage", () => {
     fireEvent.click(within(panel()).getByLabelText("Charge late fees"));
     expect(within(panel()).queryByLabelText("Grace days")).toBeNull();
     type("NSF fee (empty for none)", "");
+    expect(panel().textContent).not.toContain("returned payment");
     fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(posted(again)).toHaveLength(1));
     expect(posted(again)[0]?.[1]).toMatchObject({ late_fees: null, nsf_fee: null });
@@ -144,7 +150,18 @@ describe("SetupPage", () => {
     expect(await screen.findByText("A logo is a PNG or a JPEG.")).toBeTruthy();
     fireEvent.change(input, { target: { files: [new File(["\x89PNG\r\n\x1a\n"], "logo.png", { type: "image/png" })] } });
     expect(await screen.findByText("The logo is saved.")).toBeTruthy();
+    expect(says(screen.getByRole("button", { name: "Remove logo" })))
+      .toBe("Takes this logo off the portals; an earlier logo you didn't remove shows again. Its file stays in the records.");
+    // Removing the logo asks first; Cancel sends nothing.
+    const question = "Remove this logo? Owners and tenants stop seeing it; an earlier logo you didn't remove shows again.";
     fireEvent.click(screen.getByRole("button", { name: "Remove logo" }));
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch).map(([path]) => path)).toEqual(["/api/company/logo"]);
+    fireEvent.click(screen.getByRole("button", { name: "Remove logo" }));
+    expect(posted(fetch).map(([path]) => path)).toEqual(["/api/company/logo"]);
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "Remove logo" }));
     expect(await screen.findByText("The logo is removed.")).toBeTruthy();
     expect(posted(fetch).map(([path]) => path)).toEqual(["/api/company/logo", "/api/company/logo/remove"]);
     expect(posted(fetch)[0]?.[1]).toMatchObject({ content_type: "image/png" });
