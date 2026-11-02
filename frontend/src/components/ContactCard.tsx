@@ -37,16 +37,26 @@ function ContactDetails({
   refresh,
   name,
   note,
+  editRequest = 0,
 }: {
   path: string;
   contact: Contact;
   refresh: () => void;
   name: string;
   note?: string;
+  // Raised by another part of the page (the portal's "Edit contact details") to open Edit.
+  editRequest?: number;
 }) {
   const { said, error, record } = useRecord(refresh);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => draftOf(contact));
+  useEffect(() => {
+    if (editRequest > 0) {
+      setDraft(draftOf(contact));
+      setEditing(true);
+    }
+    // Only a new request opens it, not a refreshed contact.
+  }, [editRequest]);
   const address = addressLines(contact);
   return (
     <div className="flex flex-col gap-3" aria-label={`Contact details, ${name}`} role="group">
@@ -123,6 +133,7 @@ export function ContactCard(props: {
   refresh: () => void;
   name: string;
   byTenantAt?: string | null;
+  editRequest?: number;
 }) {
   const { byTenantAt, ...details } = props;
   return (

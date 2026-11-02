@@ -140,7 +140,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   at most; staff reset through an admin's invite, keeping their authenticator) and what staff
   write (`src/pms/api/emails.py`): a tenant's, owner's or vendor's Email tab
   (`components/EmailsCard.tsx`) writes to them and lists every email the PMS wrote them with
-  whether it went, and a property's Email tenants writes to each tenant living there today. An
+  whether it went, and a property's Email tenants writes to the tenants living there today staff
+  tick, each named with their email first, and who has none (ADR 0010; `GET
+  /api/emails/property/<id>`); a past-due lease's rent reminder goes from Needs attention, once a
+  day (`/api/emails/rent-reminders/<lease>`). An
   email goes to the person's contact email, else their login's, its Reply-To the company's own
   email when Company setup has one (`trust_company_profiles.reply_to`, migration 0096; q086). An invite's or a reset's link is
   never written to the outbox: it waits in the writing process's memory until sent, ten minutes at
@@ -210,8 +213,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   narrows a list to it with `src/pms/api/scope.py`. Staff make groups at `/settings/groups`
   (`src/pms/api/groups.py`). Staff's menu (`pages/staffNav.ts`, ADR 0005)
   groups their pages as Buildium does. They open on the Dashboard at `/`: the company's figures
-  (`src/pms/api/dashboard.py`, each counted by its report) and what needs attention
-  (`src/pms/api/today.py`: read only, each part the work page's own answer). Rentals
+  (`src/pms/api/dashboard.py`, each counted by its report, each beside the same day a month
+  before; ADR 0010) and what needs attention (`src/pms/api/today.py`: read only, each part the work
+  page's own answer; one list, the longest overdue first, each row with its action). Rentals
   (`src/pms/api/rentals.py`): properties a page at a time at `/properties`, each at
   `/properties/<id>` (its owners' money, its units and their leases), a unit at `/units/<id>`
   (its details, `src/pms/api/unit_details.py`, and every lease it had), the rent roll at
@@ -219,11 +223,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   to come, ended or owing, with days left, rent, market rent, deposits and balance; Receive payment, and an
   admin's Run rent now) and a lease at `/leases/<id>` (ADR 0006: its balance due on top, Receive payment, Enter
   charge and the ⋯ menu's rent work in side panels, `src/pms/api/rent.py`; tabs Summary, Ledger
-  with the running balance of `trust_report_tenant_ledger`'s lines, Tenants with their portal
-  logins, Files and Notes); staff rename a
+  with the running balance of `trust_report_tenant_ledger`'s lines over the days picked, each line
+  opening its charge or payment, as CSV too (ADR 0010), Tenants with their portal logins, Files
+  and Notes; Renew lease in a side panel, `pages/RenewLeaseForm.tsx`); staff rename a
   property or unit there and archive it. Tenants at `/tenants` and owners at `/owners`
-  (`src/pms/api/directory.py`), each on a page of their own: a tenant's leases and the money
-  held for them; an owner's tabs (ADR 0006): Summary (contact, portal login, the agreements'
+  (`src/pms/api/directory.py`), each on a page of their own: a tenant's lease with its rent, due
+  day, term, deposit, autopay and balance, Receive payment and Renew lease (ADR 0010), and the
+  money held for them; an owner's top (how to reach them, how they are paid, their tax ID's last
+  four, balance, next draw) and tabs (ADR 0006): Summary (contact, portal login, the agreements'
   terms), Properties, Financials (their statement and Record contribution), Statements and Files.
   The Owners list shows each owner once with what they hold, keep back and may pay out, and opens
   Pay owners and Add owner. Staff keep a tenant's, owner's or vendor's contact details there, rename a tenant or owner
@@ -241,9 +248,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   record a withdrawal, Create draft lease), Draft leases at `/draft-leases` (Waiting for
   signatures, Leases made, Void, All; New draft lease in a side panel) with each at
   `/draft-leases/<id>` (Send, Resend, Activate lease, Void; each signer's progress and the signing certificate), the leases ending in the next 90 days with
-  their renewal status at `/renewals` (`src/pms/api/renewals.py`, the expirations report's rows). Accounting:
+  their renewal status at `/renewals` (`src/pms/api/renewals.py`, the expirations report's rows;
+  a lease's renewal plan with the written notice its state asks before a new rent,
+  `src/pms/rent_notice.py`, the rules `docs/law.md` records). Accounting:
   the trust bank accounts at `/banking` (Add bank account), each at `/bank-accounts/<id>` in tabs:
-  its register and balance breakdown (`src/pms/api/banking.py`), its deposits, its month-end
+  its register (each move opening its lease, bill, owner or tenant; CSV) and balance breakdown
+  (`src/pms/api/banking.py`), its deposits, its month-end
   (`src/pms/api/reconcile.py`) and its statements, bills at `/bills` (Unpaid, Paid,
   Recurring and Void tabs, a page at a time by group, vendor and due day, each Entered, Waiting
   for owner, Ready to pay, Short, Partly paid, Paid or Void; Record bill, maybe split across
@@ -554,9 +564,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   what is open). `trust_apply_assistance_payment` matches an authority's payment (cash into the
   property's owners' accounts, never a tenant's payment or a contribution; a transfer pays a
   tenant's charges or an authority's, never both) to its charges; the management fee, income
-  statement and year-end count it as rent. Rentals, Housing authorities
-  (`/housing-authorities`, `src/pms/api/assistance.py`, area rent) records its payment for many
-  leases at once; the lease's Summary shows the split. The AI role reads all four tables. Since
+  statement and year-end count it as rent. An authority has no menu page (ADR 0010): it is added
+  as a lease's assistance is set, on the lease's Summary (which shows the split and links the
+  authority's own page, `/housing-authorities/<id>`, `src/pms/api/assistance.py`, area rent), and
+  Receive payment (the rent roll's or the authority's page) records its check for many leases. The AI role reads all four tables. Since
   migration 0116 (the rest of q034): an authority's late payment fee from a day
   (`trust_authority_late_fees`: grace days, a flat fee, 0 none; append-only, naming who; Set late
   fee on its page) is charged on the authority by `trust_assess_authority_late_fees` (the nightly
@@ -608,8 +619,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   share comes off and each billed lease's share of the rest is rounded down to the cent and
   charged to it as a fee (`trust_utility_shares`), so tenants are never charged more than the
   bill; a vacant unit's days, a lease not billed and every part of a cent stay with the owner.
-  Accounting, Utility billing (`/utility-billing`, `src/pms/api/utilities.py`, area rent). The
-  AI role reads all five tables.
+  A property's own Utilities page (`/properties/<id>/utilities`, from its page; ADR 0010: the
+  only place a utility is billed back; `src/pms/api/utilities.py`, area rent). The AI role reads
+  all five tables.
 - Work orders: a job at a property (maybe one of its units). Its steps (assigned to a vendor,
   scheduled for a day, completed, cancelled) are append-only and in order, and nothing follows a
   close. A bill may name a work order of its property, never a cancelled one. Migration 0072: a

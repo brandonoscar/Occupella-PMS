@@ -57,6 +57,8 @@ class Unreconciled(BaseModel):
     months: list[str]  # each month ended and not reconciled, "YYYY-MM"
     # A month-end prepared through this day, waiting for someone who holds approve.
     waiting_for_approval: date | None
+    # That preparation, for Approve on the Dashboard (another staff member who holds approve).
+    prepared: reconcile.Prepared | None = None
 
 
 class Lapsing(BaseModel):
@@ -286,6 +288,7 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
                     closed_through=bank.closed_through,
                     months=months,
                     waiting_for_approval=bank.prepared.through if bank.prepared else None,
+                    prepared=bank.prepared,
                 )
             )
     return Today(

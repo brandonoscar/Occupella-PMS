@@ -141,7 +141,135 @@ def test_the_ledger_runs_its_balance_and_marks_the_payment_that_bounced(client, 
 
 def test_a_lease_with_nothing_on_it_has_an_empty_ledger(client, conn, staff, pmc):
     lease, _ = lease_of(conn, pmc)
-    assert ok(client.get(f"/api/leases/{lease}/ledger")) == {"lines": [], "balance": "0.00"}
+    assert ok(client.get(f"/api/leases/{lease}/ledger")) == {
+        "start": None,
+        "end": str(TODAY),
+        "opening": "0.00",
+        "lines": [],
+        "balance": "0.00",
+    }
+
+
+def ledger_with_a_bounce(client, conn, pmc):
+    """Rent, a fee and a credit; a payment by check, and another that bounced. Their ids."""
+    lease, _ = lease_of(conn, pmc)
+    rent = charge(conn, pmc.pmc_id, lease, START, "1500.00", memo="Rent")
+    fee = charge(conn, pmc.pmc_id, lease, START + 5 * DAY, "50.00", kind="fee", memo="=Lost key")
+    credit = charge(conn, pmc.pmc_id, lease, START + 6 * DAY, "20.00", kind="credit", memo="Credit")
+    paid = [
+        ok(
+            post(
+                client,
+                f"/api/rent/leases/{lease}/payments",
+                request_id=uuid.uuid4(),
+                amount=amount,
+                received_on=on,
+                reference=reference,
+            ),
+            201,
+        )["transfers"][0]
+        for amount, on, reference in (
+            ("1000.00", TODAY - 10 * DAY, "Check 101"),
+            ("200.00", TODAY - 5 * DAY, None),
+        )
+    ]
+    ok(post(client, f"/api/rent/payments/{paid[1]}/bounce", on=TODAY - 2 * DAY), 201)
+    return lease, (rent, fee, credit), paid
+
+
+def test_each_ledger_line_names_the_charge_or_payment_it_opens(client, conn, staff, pmc):
+    lease, (rent, fee, credit), (first, second) = ledger_with_a_bounce(client, conn, pmc)
+
+    ledger = ok(client.get(f"/api/leases/{lease}/ledger"))
+
+    assert [(line["kind"], line["charge_id"], line["transfer_id"]) for line in ledger["lines"]] == [
+        ("rent", str(rent), None),
+        ("fee", str(fee), None),
+        ("credit", str(credit), None),
+        ("payment", None, first),
+        ("payment", None, second),
+        # The bounce opens the payment that bounced.
+        ("bounced payment", None, second),
+    ]
+
+
+def test_a_payment_with_prepaid_rent_opens_as_the_lease_lists_it(client, conn, staff, pmc):
+    lease, _ = lease_of(conn, pmc)
+    charge(conn, pmc.pmc_id, lease, START, "100.00", memo="Rent")
+    ok(
+        post(
+            client,
+            f"/api/rent/leases/{lease}/payments",
+            request_id=uuid.uuid4(),
+            amount="250.00",
+            received_on=TODAY - DAY,
+        ),
+        201,
+    )
+
+    [paid] = [line for line in ok(client.get(f"/api/leases/{lease}/ledger"))["lines"][1:]]
+    [listed] = ok(client.get(f"/api/leases/{lease}"))["payments"]
+
+    # 100.00 paid the rent and 150.00 is prepaid rent, two transfers: the line opens the payment.
+    assert (paid["paid"], listed["amount"]) == ("100.00", "250.00")
+    assert paid["transfer_id"] == listed["transfer_id"]
+
+
+def test_a_ledger_over_days_brings_its_balance_forward(client, conn, staff, pmc):
+    lease, _, _ = ledger_with_a_bounce(client, conn, pmc)
+
+    ledger = ok(
+        client.get(
+            f"/api/leases/{lease}/ledger",
+            params={"start": str(START + 6 * DAY), "end": str(TODAY - 6 * DAY)},
+        )
+    )
+
+    # Rent and the fee came before: 1,550.00 forward; the bounced payment came after.
+    assert (ledger["start"], ledger["end"], ledger["opening"]) == (
+        str(START + 6 * DAY),
+        str(TODAY - 6 * DAY),
+        "1550.00",
+    )
+    assert [(line["kind"], line["balance"]) for line in ledger["lines"]] == [
+        ("credit", "1530.00"),
+        ("payment", "530.00"),
+    ]
+    assert ledger["balance"] == "530.00"
+
+
+def test_a_ledger_downloads_as_csv_with_its_balance_forward(client, conn, staff, pmc):
+    lease, _, _ = ledger_with_a_bounce(client, conn, pmc)
+
+    answer = client.get(
+        f"/api/leases/{lease}/ledger",
+        params={"start": str(START + 5 * DAY), "end": str(TODAY - 6 * DAY), "format": "csv"},
+    )
+
+    assert answer.status_code == 200, answer.text
+    assert answer.headers["content-type"].startswith("text/csv")
+    assert "lease-ledger-" in answer.headers["content-disposition"]
+    assert answer.text.splitlines() == [
+        "date,type,memo,charges,payments,balance",
+        f"{START + 5 * DAY},Balance forward,,,,1500.00",
+        # A memo a spreadsheet would run as a formula is text; a credit stays a number.
+        f"{START + 5 * DAY},Fee,'=Lost key,50.00,,1550.00",
+        f"{START + 6 * DAY},Credit,Credit,-20.00,,1530.00",
+        f"{TODAY - 10 * DAY},Payment,Check 101,,1000.00,530.00",
+    ]
+
+
+@pytest.mark.parametrize(
+    "asked",
+    [
+        {"start": str(TODAY), "end": str(TODAY - DAY)},
+        {"start": "2026-02-30"},
+        {"format": "xlsx"},
+    ],
+)
+def test_a_ledger_refuses_days_backwards_or_a_format_it_has_not(client, conn, staff, pmc, asked):
+    lease, _ = lease_of(conn, pmc)
+    assert client.get(f"/api/leases/{lease}/ledger", params=asked).status_code == 422
 
 
 def test_another_companys_lease_is_not_found(client, conn, staff):

@@ -15,12 +15,12 @@ from typing import Annotated, Any, Generic, Literal, TypeVar
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, StringConstraints
 
 from pms import exports
 from pms.api import addresses, rent, scope, setup, unit_details
-from pms.api.deps import Conn, Staff, refusal
+from pms.api.deps import Conn, Staff, download, refusal
 from pms.api.setup import Name
 
 router = APIRouter(prefix="/api")
@@ -781,9 +781,18 @@ class LedgerLine(BaseModel):
     balance: str
     # A payment that bounced since (its bounce is a line of its own).
     bounced: bool
+    # What the line opens (ADR 0010 phase 3, part M): a charge's id, or the payment's first
+    # transfer, as the lease's payments name it (for a bounce, the payment that bounced).
+    charge_id: UUID | None = None
+    transfer_id: str | None = None
 
 
 class Ledger(BaseModel):
+    # The days shown: from `start` (None: the lease's first line) through `end`.
+    start: date | None
+    end: date
+    # The balance brought forward from before `start` ("0.00" from the first line).
+    opening: str
     lines: list[LedgerLine]
     balance: str
 
@@ -791,7 +800,7 @@ class Ledger(BaseModel):
 # A lease's charges through a day, each with what it is, in the order its ledger lists them
 # (trust_report_tenant_ledger: by due date, then when entered, then id as text).
 LEDGER_CHARGES = """
-SELECT CASE
+SELECT c.id, CASE
          WHEN c.kind <> 'fee' THEN c.kind
          WHEN EXISTS (SELECT 1 FROM trust_late_fees AS f WHERE f.fee_charge_id = c.id)
            THEN 'late fee'
@@ -805,10 +814,19 @@ WHERE c.lease_id = %(lease)s AND c.due_on <= %(day)s
 ORDER BY c.due_on, c.created_at, c.id::text
 """
 
+# The payment a transfer `{t}` is part of, as the lease's payments name it (src/pms/api/rent.py):
+# the first transfer recorded under its request key for the lease (the key indexed).
+PAYMENT_OF = """coalesce((
+    SELECT o.id FROM pgledger_transfers AS o
+    WHERE o.metadata ->> 'key' = {t}.metadata ->> 'key'
+      AND o.metadata ->> 'lease_id' = {t}.metadata ->> 'lease_id'
+      AND o.metadata ->> 'kind' = 'tenant payment'
+    ORDER BY o.created_at, o.id LIMIT 1), {t}.id)"""
+
 # A lease's payments, in the order its ledger lists them (trust_report_tenant_ledger), each
 # with its check or reference (or else how it came) and whether it bounced.
-LEDGER_PAYMENTS = """
-SELECT coalesce(tr.metadata ->> 'reference', tr.metadata ->> 'method'),
+LEDGER_PAYMENTS = f"""
+SELECT {PAYMENT_OF.format(t="tr")}, coalesce(tr.metadata ->> 'reference', tr.metadata ->> 'method'),
        EXISTS (SELECT 1 FROM trust_payment_reversals AS r WHERE r.transfer_id = tr.id)
 FROM trust_charge_payments AS cp
 JOIN trust_charges AS c ON c.id = cp.charge_id
@@ -816,34 +834,80 @@ JOIN pgledger_transfers AS tr ON tr.id = cp.transfer_id
 WHERE c.lease_id = %(lease)s AND tr.event_at < (%(day)s::date + 1)::timestamp AT TIME ZONE 'UTC'
 GROUP BY tr.id, tr.event_at, tr.metadata
 ORDER BY (tr.event_at AT TIME ZONE 'UTC')::date, tr.event_at, tr.id
-"""
+"""  # noqa: S608 (made of this module's constants)
+
+# A lease's bounces, in the order its ledger lists them, each with the payment it moved back.
+LEDGER_BOUNCES = f"""
+SELECT (SELECT {PAYMENT_OF.format(t="p")} FROM pgledger_transfers AS p
+        WHERE p.id = min(r.transfer_id))
+FROM trust_payment_reversals AS r
+JOIN trust_charges AS c ON c.id = r.charge_id
+JOIN pgledger_transfers AS tr ON tr.id = r.reversal_id
+WHERE c.lease_id = %(lease)s AND tr.event_at < (%(day)s::date + 1)::timestamp AT TIME ZONE 'UTC'
+GROUP BY tr.id, tr.event_at
+ORDER BY (tr.event_at AT TIME ZONE 'UTC')::date, tr.event_at, tr.id
+"""  # noqa: S608 (made of this module's constants)
+
+LEDGER_COLUMNS = ("date", "type", "memo", "charges", "payments", "balance")
+LEDGER_WORDS = {
+    "rent": "Rent",
+    "recurring": "Recurring charge",
+    "late fee": "Late fee",
+    "NSF fee": "NSF fee",
+    "fee": "Fee",
+    "credit": "Credit",
+    "payment": "Payment",
+    "bounced payment": "Bounced payment",
+}
 
 
-@router.get("/leases/{lease_id}/ledger")
-def lease_ledger(session: Staff, conn: Conn, lease_id: UUID) -> Ledger:
-    """A lease's ledger through today: its charges, payments and bounces, oldest first, each
-    with the balance after it, as `trust_report_tenant_ledger` gives it; each charge says what it
-    is, and a payment its check or reference and whether it bounced."""
-    if (
-        conn.execute(
-            "SELECT 1 FROM trust_leases WHERE pmc_id = %s AND id = %s", (session.pmc_id, lease_id)
-        ).fetchone()
-        is None
-    ):
+@router.get("/leases/{lease_id}/ledger", response_model=Ledger)
+def lease_ledger(
+    session: Staff,
+    conn: Conn,
+    lease_id: UUID,
+    start: Annotated[date | None, Query()] = None,
+    end: Annotated[date | None, Query()] = None,
+    fmt: Annotated[Literal["json", "csv"], Query(alias="format")] = "json",
+) -> Ledger | Response:
+    """A lease's ledger through a day (today unless `end` says), from `start` (its first line
+    unless said) with the balance brought forward: its charges, payments and bounces, oldest
+    first, each with the balance after it, as `trust_report_tenant_ledger` gives it; each charge
+    says what it is, and a payment its check or reference and whether it bounced. Each line names
+    the charge or payment it opens. `format=csv` downloads the same lines."""
+    found = conn.execute(
+        "SELECT u.display_name FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id"
+        " WHERE l.pmc_id = %s AND l.id = %s",
+        (session.pmc_id, lease_id),
+    ).fetchone()
+    if found is None:
         raise HTTPException(404, "no such lease")
-    day = rent.today()
+    day = end or rent.today()
+    if start is not None and start > day:
+        raise HTTPException(422, "a ledger runs from a day to the same day or a later one")
     report = conn.execute(
         "SELECT on_date, item, detail, charged, paid, balance"
         " FROM trust_report_tenant_ledger(%s, %s, %s) ORDER BY line",
         (session.pmc_id, lease_id, day),
     ).fetchall()
     asked = {"lease": lease_id, "day": day}
-    charges = iter(row[0] for row in conn.execute(LEDGER_CHARGES, asked).fetchall())
+    charges = iter(conn.execute(LEDGER_CHARGES, asked).fetchall())
     payments = iter(conn.execute(LEDGER_PAYMENTS, asked).fetchall())
+    bounces = iter(row[0] for row in conn.execute(LEDGER_BOUNCES, asked).fetchall())
+    opening = Decimal(0)
     lines = []
     for on, item, memo, charged, paid, balance in report[1:-1]:
-        reference, bounced = next(payments) if item == "payment" else (None, False)
-        kind = item if item in ("payment", "bounced payment") else next(charges)
+        charge_id, transfer_id, reference, bounced = None, None, None, False
+        if item == "payment":
+            transfer_id, reference, bounced = next(payments)
+            kind = item
+        elif item == "bounced payment":
+            transfer_id, kind = next(bounces), item
+        else:
+            charge_id, kind = next(charges)
+        if start is not None and on < start:
+            opening = balance
+            continue
         lines.append(
             LedgerLine(
                 on=on,
@@ -855,10 +919,38 @@ def lease_ledger(session: Staff, conn: Conn, lease_id: UUID) -> Ledger:
                 paid=None if not paid else rent.cents(paid),
                 balance=rent.cents(balance),
                 bounced=bounced,
+                charge_id=charge_id,
+                transfer_id=transfer_id,
             )
         )
     owed = report[-1][3] - report[-1][4]
-    return Ledger(lines=lines, balance=rent.cents(owed))
+    ledger = Ledger(
+        start=start, end=day, opening=rent.cents(opening), lines=lines, balance=rent.cents(owed)
+    )
+    if fmt == "json":
+        return ledger
+    forward = [] if start is None else [(start, "Balance forward", None, None, None, opening)]
+    table = exports.Table(
+        f"Lease ledger, {found[0]}",
+        LEDGER_COLUMNS,
+        tuple(
+            forward
+            + [
+                (
+                    line.on,
+                    LEDGER_WORDS[line.kind],
+                    line.memo,
+                    # Numbers, never text: a credit's minus sign isn't a formula to escape.
+                    None if line.charged is None else Decimal(line.charged),
+                    None if line.paid is None else Decimal(line.paid),
+                    Decimal(line.balance),
+                )
+                for line in lines
+            ]
+        ),
+    )
+    name = f"lease-ledger-{(start or 'start')}-to-{day.isoformat()}"
+    return download(exports.to_csv(table), name, "csv")
 
 
 # --- search ------------------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BankDeposit, Breakdown, RegisterLine, Undeposited } from "../banking";
 import { holdBack } from "../holdBack";
@@ -12,11 +12,11 @@ afterEach(() => {
 const LINES: RegisterLine[] = [
   {
     transfer_id: "t2", on: "2026-10-15", type: "Owner draw", party: "Owner 1", memo: "Owner draw",
-    property: "Property 1", deposit: null, withdrawal: "300.00", balance: "700.00",
+    property: "Property 1", deposit: null, withdrawal: "300.00", balance: "700.00", opens: "/owners/o1",
   },
   {
     transfer_id: "t1", on: "2026-10-10", type: "Rent payment", party: "Tenant A", memo: "Rent – Tenant A, Property 1 Unit 1",
-    property: "Property 1", deposit: "1000.00", withdrawal: null, balance: "1000.00",
+    property: "Property 1", deposit: "1000.00", withdrawal: null, balance: "1000.00", opens: "/leases/l1",
   },
 ];
 
@@ -62,6 +62,28 @@ describe("RegisterTab", () => {
     await vi.waitFor(() =>
       expect(fetch.mock.calls.at(-1)?.[0]).toBe("/api/bank-accounts/b1/register?start=2026-10-01&end=2026-10-12&page=1"),
     );
+  });
+
+  it("opens what each move was, exports the days as CSV, and reads them again on focus", async () => {
+    const fetch = server(() => ({ items: [...LINES, { ...LINES[0]!, transfer_id: "t0", type: "Company fees", opens: null }], total: 3, page: 1, per_page: 50 }));
+    render(<RegisterTab bankId="b1" />);
+    const register = await screen.findByRole("table", { name: "Register" });
+
+    expect(within(register).getByRole("link", { name: "Owner draw" }).getAttribute("href")).toBe("/owners/o1");
+    // The company's own fees open nothing.
+    expect(within(register).queryByRole("link", { name: "Company fees" })).toBeNull();
+    fireEvent.click(within(register).getAllByRole("row")[2]!);
+    expect(window.location.pathname).toBe("/leases/l1");
+    window.history.pushState(null, "", "/");
+
+    const csv = new URL(screen.getByRole("link", { name: "Export CSV" }).getAttribute("href")!, "http://pms.test");
+    expect(csv.pathname).toBe("/api/bank-accounts/b1/register");
+    expect(csv.searchParams.get("format")).toBe("csv");
+    expect(screen.getByTestId("updated").textContent).toMatch(/^Updated \d\d:\d\d [AP]M$/);
+
+    const reads = fetch.mock.calls.length;
+    act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+    await vi.waitFor(() => expect(fetch.mock.calls.length).toBe(reads + 1));
   });
 
   it("says when no money moved in the days, and when the register can't be read", async () => {

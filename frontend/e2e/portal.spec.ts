@@ -28,7 +28,7 @@ type Seed = {
   switch_invite: string;
   demo_manager_invite: string;
   demo_owner_invite: string;
-  accessibility: { pmc_id: string; manager: string; owner: string; tenant: string };
+  accessibility: { pmc_id: string; authority: string; manager: string; owner: string; tenant: string };
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
 const PASSWORD = "a long synthetic passphrase";
@@ -133,8 +133,18 @@ test("staff enroll an authenticator, invite a tenant and see a repair through", 
   await page.getByRole("row", { name: /^Tenant E2E/ }).getByRole("link", { name: "Tenant E2E" }).click();
   const portal = page.locator("section", { has: page.getByRole("heading", { level: 2, name: "Portal", exact: true }) });
   await expect(portal).toContainText("None");
-  await portal.getByLabel("Email to sign in with").fill("tenant.e2e@example.com");
+  // The invite goes to the email in their contact details: with none on file the portal says so
+  // and opens their contact details to add one.
+  await expect(portal).toContainText("No email on file, so no invite can go to Tenant E2E.");
+  await portal.getByRole("button", { name: "Edit contact details" }).click();
+  const contact = page.getByRole("group", { name: "Contact details, Tenant E2E" });
+  await contact.getByLabel("Email").fill("tenant.e2e@example.com");
+  await contact.getByRole("button", { name: "Save contact details" }).click();
+  await expect(portal).toContainText("Goes to tenant.e2e@example.com, the email in their contact details.");
   await portal.getByRole("button", { name: "Invite to the portal" }).click();
+  const ask = page.getByRole("alertdialog");
+  await expect(ask).toContainText("Send Tenant E2E an invite to the portal at tenant.e2e@example.com?");
+  await ask.getByRole("button", { name: "Send invite" }).click();
   await expect(portal.getByLabel("Invite link, Tenant E2E")).toHaveValue(/\/invite#/);
   await expect(portal).toContainText("Invited");
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Settings", exact: true }).click();
@@ -333,11 +343,29 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
   await page.getByRole("tab", { name: "Void", exact: true }).click();
   await expect(page.getByRole("row", { name: "Renewal for E2E Property 3, E2E Unit 3" }).getByTestId("status")).toHaveText("Void");
 
-  // The renewal sent at once; the tenant signs it from their portal.
-  panel = await newDraft("E2E Property 3, E2E Unit 3: Renewer E2E");
+  // The renewal sent at once from the tenant's own page (ADR 0010 phase 3, part L): the new rent
+  // and term in a side panel, the company's own PDF, and a confirm naming who gets it. The tenant
+  // signs it from their portal.
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Tenants", exact: true }).click();
+  await page.getByRole("row", { name: /^Renewer E2E/ }).getByRole("link", { name: "Renewer E2E" }).click();
+  const leaseCard = page.locator("section", { has: page.getByRole("heading", { level: 2, name: "Lease", exact: true }) });
+  await leaseCard.getByRole("button", { name: "Renew lease" }).click();
+  panel = page.getByRole("dialog", { name: "Renew lease" });
+  await expect(panel.getByLabel("New rent a month")).toHaveValue("1000.00");
+  await expect(panel.getByLabel("Ends (empty for month to month)")).toHaveValue("");
+  await expect(panel.getByRole("list", { name: "Who signs" })).toContainText("Renewer E2E, renewer.");
   await panel.getByLabel("Starts").fill(day(60));
+  await panel.getByLabel("The lease").selectOption({ label: "Your own PDF" });
   await panel.getByLabel("Lease document (PDF, your own)").setInputFiles(document);
   await panel.getByRole("button", { name: "Send for signing" }).click();
+  const sending = page.getByRole("alertdialog");
+  await expect(sending).toContainText(
+    `Send the renewal of E2E Unit 3, E2E Property 3, $1,000.00 a month from ${us(day(60))}, to sign to Renewer E2E (renewer.`,
+  );
+  await sending.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(leaseCard.getByRole("status")).toContainText("Sent the renewal of E2E Unit 3, E2E Property 3. Sent to 1 signer.");
+  await draftLeases();
+  await page.getByRole("row", { name: "Renewal for E2E Property 3, E2E Unit 3" }).click();
   await expect(page.getByTestId("status")).toHaveText("Sent");
   await expect(page.getByText("0 of 1 signed", { exact: true })).toBeVisible();
   // Staff can make each signer a new link.
@@ -876,19 +904,21 @@ test("the demo opens on last month waiting for its manager, who approves it and 
   // has its broker, so signers have nothing to say.
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Dashboard", exact: true }).click();
   const thisMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  await expect(page.getByRole("region", { name: "Journal entries waiting" })).toContainText(
+  const attention = (what: string) =>
+    page.getByRole("list", { name: "Needs attention" }).getByRole("listitem", { name: what });
+  await expect(attention("Journal entry")).toContainText(
     `Reserve moved to Birch Flats, as Demo Owner A asked: $25.00, dated ${us(iso(thisMonth))}, proposed by Demo Bookkeeper`,
   );
-  await expect(page.getByRole("region", { name: "Vendor insurance" })).toContainText(
+  await expect(attention("Vendor insurance").filter({ hasText: "Demo Roofing Co" })).toContainText(
     "Demo Roofing Co, general liability: expires in 20 days",
   );
-  await expect(page.getByRole("region", { name: "Company fees in trust" })).toContainText(
+  await expect(attention("Company fees in trust")).toContainText(
     `Demo operating trust account: $779.20 of the company's fees, the oldest since ${us(iso(last))}`,
   );
-  await expect(page.getByRole("region", { name: "Renters insurance" })).toHaveText(
+  await expect(attention("Renters insurance")).toHaveText(
     /Unit 1, Aspen Row \(Drew Sample\): renters insurance none on file/,
   );
-  await expect(page.getByRole("region", { name: "Trust account signers" })).toHaveCount(0);
+  await expect(attention("Trust account signers")).toHaveCount(0);
   await page.getByRole("button", { name: "Sign out" }).click();
 
   await page.goto(`/invite#${seed.demo_owner_invite}`);
@@ -919,7 +949,6 @@ const DETAILS: [string, RegExp][] = [
   ["/applicants", /^\/applicants\/[^/]+$/],
   ["/leads", /^\/leads\/[^/]+$/],
   ["/draft-leases", /^\/draft-leases\/[^/]+$/],
-  ["/housing-authorities", /^\/housing-authorities\/[^/]+$/],
   ["/reports", /^\/reports\/[^/]+$/],
 ];
 
@@ -972,6 +1001,8 @@ test("every page of the demo meets WCAG 2.2 AA as axe checks it: staff's, an own
     expect(found, `a link from ${list} matching ${kind}`).toBeTruthy();
     await scanned(page, found!);
   }
+  // A housing authority's page, which a lease's housing assistance opens; no list does.
+  await scanned(page, `/housing-authorities/${demo.authority}`);
 
   for (const who of [demo.owner, demo.tenant]) {
     const portal = await (await browser.newContext()).newPage();

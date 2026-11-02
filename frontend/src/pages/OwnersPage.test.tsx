@@ -6,6 +6,7 @@ import { holdBack } from "../holdBack";
 import type { OwnerMoney } from "../payables";
 import type { Paged } from "../rentals";
 import { OwnerPage, OwnersPage, agreementLine, lastTwelveMonths } from "./OwnersPage";
+import { drawTotal, nextDrawOn } from "./OwnerTop";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -70,6 +71,7 @@ const STATEMENT = {
     ["5", null, null, "total", null, null, null],
   ],
 };
+const PAYEE = { method: "check", bank: null };
 const NO_FILES = { documents: [], subjects: { w9: [], receipt: [], move_out_photo: [], owner_document: [] } };
 
 function server(answers: Record<string, unknown> = {}, refuse: Record<string, string> = {}) {
@@ -78,6 +80,9 @@ function server(answers: Record<string, unknown> = {}, refuse: Record<string, st
       const found = Object.entries(answers).find(([prefix]) => path === prefix || path.startsWith(`${prefix}?`));
       const read = found ? found[1]
         : path === "/api/owners/o1" ? OWNER
+        : path === "/api/payouts/owners/o1" ? PAYEE
+        : path === "/api/tax-ids/owners/o1" ? { tax_id: null, may_reveal: false }
+        : path === "/api/payouts/draw-day" ? { draw_day: null, changed_at: null, changed_by: null }
         : path.startsWith("/api/owners/o1/statement") ? STATEMENT
         : path.startsWith("/api/documents") ? NO_FILES
         : ROWS;
@@ -178,8 +183,14 @@ describe("OwnerPage", () => {
       "Property 1: 8% of rent collected, at least $25.00, plus $10.00; leasing fee 50%; reserve $100.00;"
       + " the owner approves bills over $500.00; from 01/01/2026",
     );
-    expect((screen.getByLabelText("Email to sign in with") as HTMLInputElement).value).toBe("owner1@example.com");
+    // One click, to the email in their contact details, named before it goes.
+    expect(screen.queryByLabelText("Email to sign in with")).toBeNull();
+    expect(screen.getByText("Goes to owner1@example.com, the email in their contact details. The link works once.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Invite to the portal" }));
+    expect(posted(fetch)).toEqual([]);
+    const ask = await screen.findByRole("alertdialog");
+    expect(ask.textContent).toContain("Send Owner 1 an invite to the portal at owner1@example.com?");
+    fireEvent.click(within(ask).getByRole("button", { name: "Send invite" }));
 
     expect(((await screen.findByLabelText("Invite link, Owner 1")) as HTMLInputElement).value).toBe(
       "https://pms.example/invite#token",
@@ -236,6 +247,7 @@ describe("OwnerPage", () => {
     server({}, { "/api/invites": "that email signs in for someone else" });
     render(<OwnerPage me={ME} id="o1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Invite to the portal" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Send invite" }));
     expect((await screen.findByRole("alert")).textContent).toBe("that email signs in for someone else");
   });
 
@@ -400,5 +412,65 @@ describe("agreementLine and lastTwelveMonths", () => {
     expect(months[0]).toEqual({ label: "December 2025", start: "2025-12-01", end: "2025-12-31" });
     expect(months[11]).toEqual({ label: "January 2025", start: "2025-01-01", end: "2025-01-31" });
     expect(lastTwelveMonths(new Date(Date.UTC(2024, 2, 1)))[0]?.end).toBe("2024-02-29");
+  });
+});
+
+describe("the top of an owner's page", () => {
+  it("shows how to reach them, how they are paid, their tax ID's last four, their balance and the next draw", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-17T12:00:00Z") });
+    server({
+      "/api/owners/o1": {
+        ...OWNER,
+        contact: {
+          ...NO_CONTACT, email: "owner1@example.com", phone: "555-555-0100",
+          address_line_1: "100 Example Street", city: "Sampletown", state: "ZZ", postal_code: "00000",
+        },
+      },
+      "/api/payouts/owners/o1": {
+        method: "EFT",
+        bank: { routing_number: "001234561", account_type: "checking", last4: "6789", holder_name: "Owner 1",
+          recorded_at: "2026-10-01T00:00:00Z", recorded_by: null },
+      },
+      "/api/tax-ids/owners/o1": {
+        tax_id: { id: "t1", kind: "EIN", last4: "4321", recorded_at: "2026-10-01T00:00:00Z", recorded_by: null },
+        may_reveal: false,
+      },
+      "/api/payouts/draw-day": { draw_day: 15, changed_at: null, changed_by: null },
+    });
+    render(<OwnerPage me={ME} id="o1" />);
+
+    const about = await screen.findByTestId("owner-top");
+    expect(within(about).getByRole("link", { name: "555-555-0100" }).getAttribute("href")).toBe("tel:5555550100");
+    expect(within(about).getByRole("link", { name: "owner1@example.com" }).getAttribute("href")).toBe("mailto:owner1@example.com");
+    expect(about.textContent).toContain("100 Example StreetSampletown, ZZ 00000");
+    expect(await within(about).findByText("ACH to Checking ····6789, routing 001234561, Owner 1")).toBeTruthy();
+    expect(await within(about).findByText("EIN ••-•••4321")).toBeTruthy();
+    expect(screen.getByTestId("owner-balance").textContent).toBe("$1,200.00");
+    // The 15th has passed this month: next month's, with what a draw would pay now.
+    expect(await within(about).findByText("11/15/2026, $800.00 available now")).toBeTruthy();
+  });
+
+  it("says what is missing, and with no email opens their contact details to add one", async () => {
+    server({ "/api/owners/o1": { ...OWNER, contact: NO_CONTACT } });
+    render(<OwnerPage me={ME} id="o1" />);
+
+    const about = await screen.findByTestId("owner-top");
+    expect(await within(about).findByText("No draw day set")).toBeTruthy();
+    expect(within(about).getAllByText("None on file")).toHaveLength(4); // phone, email, address, tax ID
+    expect(screen.getByText("No email on file, so no invite can go to Owner 1.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Invite to the portal" })).toBeNull();
+    expect(screen.queryByLabelText("Street address")).toBeNull();
+    const portal = screen.getByText("No email on file, so no invite can go to Owner 1.").parentElement!;
+    fireEvent.click(within(portal).getByRole("button", { name: "Edit contact details" }));
+    expect(await screen.findByLabelText("Street address")).toBeTruthy();
+  });
+
+  it("finds the next draw day this month, or next month once it has passed", () => {
+    expect(nextDrawOn(15, "2026-10-10")).toBe("2026-10-15");
+    expect(nextDrawOn(15, "2026-10-15")).toBe("2026-10-15");
+    expect(nextDrawOn(15, "2026-10-16")).toBe("2026-11-15");
+    expect(nextDrawOn(5, "2026-12-20")).toBe("2027-01-05");
+    expect(drawTotal({ accounts: [{ ...ACCOUNTS[0]!, available: "800.10" }, { ...ACCOUNTS[1]!, available: "-5.00" }] }))
+      .toBe("800.10");
   });
 });

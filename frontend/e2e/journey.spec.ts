@@ -132,6 +132,10 @@ async function joinPortal(page: Page, invite: string): Promise<void> {
 const part = (page: Page, title: string) =>
   page.locator("section", { has: page.getByRole("heading", { level: 2, name: title, exact: true }) });
 
+// One item of the Dashboard's Needs attention list, by what it is about.
+const attention = (page: Page, what: string) =>
+  page.getByRole("list", { name: "Needs attention" }).getByRole("listitem", { name: what });
+
 async function section(page: Page, name: string): Promise<void> {
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name, exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name, exact: true })).toBeVisible();
@@ -630,7 +634,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     // Those fees are the company's, still in the operating trust account: the Dashboard says so,
     // and Banking holds exactly them.
     await section(page, "Dashboard");
-    const waiting = page.getByRole("region", { name: "Company fees in trust" });
+    const waiting = attention(page, "Company fees in trust");
     await expect(waiting).toContainText(`${OPERATING}: ${money(taken)} of the company's fees`);
     const before = await bookBalance(page, OPERATING);
     const row = page.getByRole("row", { name: OPERATING, exact: true });
@@ -649,7 +653,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
 
     await section(page, "Dashboard");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    await expect(page.getByRole("region", { name: "Company fees in trust" })).toHaveCount(0);
+    await expect(attention(page, "Company fees in trust")).toHaveCount(0);
   });
 
   await test.step("Pay owners pays Demo Owner A everything available; the Owners list then shows them holding only their reserves and the bill not yet paid", async () => {
@@ -673,25 +677,44 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
   });
 
   await test.step("Cedar House's lease is renewed at a new rent: staff send it, Taylor signs from the portal and Quinn from their link, staff activate it, and the rent roll shows both leases", async () => {
+    // Each of the lease's tenants signs at the email on file (ADR 0010 phase 3, part L): Taylor's
+    // is their portal login's; Quinn's goes on their page first.
+    await section(page, "Tenants");
+    await page.getByRole("row", { name: "Quinn Demo", exact: true }).getByRole("link", { name: "Quinn Demo" }).click();
+    const contact = page.getByRole("group", { name: "Contact details, Quinn Demo" });
+    await contact.getByRole("button", { name: "Edit contact details" }).click();
+    await contact.getByLabel("Email").fill("quinn.journey@example.com");
+    await contact.getByRole("button", { name: "Save contact details" }).click();
+    await expect(contact).toContainText("Contact details saved.");
+
+    // Renew lease, from the lease's ⋯ menu: the new rent and term in a side panel, the company's
+    // own PDF, and a confirm naming who gets it.
     await openLease(page, "Cedar House, House");
     await page.getByRole("button", { name: "Actions for this lease" }).click();
     await page.getByRole("menuitem", { name: "Renew lease" }).click();
-    const draft = page.getByRole("dialog", { name: "New draft lease" });
-    await expect(draft.getByRole("combobox", { name: "For", exact: true }).locator("option:checked")).toHaveText(
-      /^Cedar House, House: /,
-    );
-    await expect(draft.getByLabel("Rent a month")).toHaveValue("2250.00");
-    await draft.getByLabel("Starts").fill(nextMonth);
-    await draft.getByLabel("Rent a month").fill("2300.00");
-    await draft.getByLabel("Lease document (PDF, your own)").setInputFiles(RENEWAL);
-    await draft.getByLabel("Who signs, one a line: Name, email").fill(
-      `Taylor Demo, ${people.emails.taylor}\nQuinn Demo, quinn.journey@example.com`,
-    );
-    await draft.getByRole("button", { name: "Save draft" }).click();
+    const renew = page.getByRole("dialog", { name: "Renew lease" });
+    await expect(renew.getByLabel("New rent a month")).toHaveValue("2250.00");
+    const signers = renew.getByRole("list", { name: "Who signs" });
+    await expect(signers).toContainText(`Taylor Demo, ${people.emails.taylor}`);
+    await expect(signers).toContainText("Quinn Demo, quinn.journey@example.com");
+    await renew.getByLabel("Starts").fill(nextMonth);
+    await renew.getByLabel("New rent a month").fill("2300.00");
+    await renew.getByLabel("The lease").selectOption({ label: "Your own PDF" });
+    await renew.getByLabel("Lease document (PDF, your own)").setInputFiles(RENEWAL);
+    await renew.getByRole("button", { name: "Send for signing" }).click();
+    const sending = page.getByRole("alertdialog");
+    await expect(sending).toContainText(`$2,300.00 a month from ${us(nextMonth)}`);
+    await expect(sending).toContainText("Quinn Demo (quinn.journey@example.com)");
+    await sending.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(renew).toHaveCount(0);
+    await expect(page.getByText(/Sent to 2 signers\./).first()).toBeVisible();
+
+    // The renewal waits for its signatures on its own page; Resend gives each signer a new link.
+    await section(page, "Draft leases");
+    await page.getByRole("row", { name: "Renewal for Cedar House, House" }).click();
     await expect(page.getByRole("heading", { level: 1, name: "Renewal for Cedar House, House" })).toBeVisible();
-    await page.getByRole("button", { name: "Send", exact: true }).click();
-    await expect(page.getByText(/^Sent to 2 signers\./)).toBeVisible();
     await expect(page.getByText("0 of 2 signed", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Resend" }).click();
     const quinnLink = new URL(
       (await page.getByRole("list", { name: "Signing links" }).getByRole("listitem").filter({ hasText: "Quinn Demo" })
         .getByTestId("signing-link").textContent()) ?? "",

@@ -9,7 +9,8 @@ change the settings (custom roles). The AI role reads no email. Nothing here mov
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -20,7 +21,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from pms import email, notices
 from pms.api import outbox
 from pms.api.deps import Conn, Staff
-from pms.api.rent import today
+from pms.api.rent import cents, charges_open, today
 
 router = APIRouter(prefix="/api")
 
@@ -55,6 +56,23 @@ class NewPropertyEmail(BaseModel):
     property_id: UUID
     subject: Subject
     body: Text
+    # The tenants chosen from the preview (ADR 0010 phase 3, rule 3), each living there today;
+    # none given: everyone living there with an email on file.
+    tenant_ids: Annotated[list[UUID], Field(min_length=1, max_length=500)] | None = None
+
+
+class Living(BaseModel):
+    tenant_id: UUID
+    name: str
+    # None: no email on file, so nothing can be written to them.
+    to: str | None
+
+
+class PropertyRecipients(BaseModel):
+    property_id: UUID
+    # Tenants on a lease in effect today at the property: current tenants only, not past or
+    # future ones.
+    tenants: list[Living]
 
 
 class Sent(BaseModel):
@@ -173,35 +191,192 @@ ORDER BY t.display_name COLLATE "C", t.id
 """
 
 
-@router.post("/emails/property", status_code=201)
-def email_property(session: Staff, conn: Conn, new: NewPropertyEmail) -> PropertySent:
-    """Writes the same email to every tenant on a lease in effect today at a property: one email
-    each, on each tenant's Email tab. Tenants with no email on file are named, not written to."""
+def living_at(conn: psycopg.Connection[Any], pmc: UUID, property_id: UUID) -> list[Living]:
+    """The tenants on a lease in effect today at a property of the PMC, each with the address their
+    email goes to, if any."""
     if (
         conn.execute(
-            "SELECT 1 FROM trust_properties WHERE pmc_id = %s AND id = %s",
-            (session.pmc_id, new.property_id),
+            "SELECT 1 FROM trust_properties WHERE pmc_id = %s AND id = %s", (pmc, property_id)
         ).fetchone()
         is None
     ):
         raise HTTPException(404, "no such property")
-    living = conn.execute(
-        LIVING_AT, {"property": new.property_id, "pmc": session.pmc_id, "day": today()}
-    ).fetchall()
-    if not living:
+    return [
+        Living(tenant_id=tenant_id, name=name, to=address_of(conn, pmc, "tenant", tenant_id)[1])
+        for tenant_id, name in conn.execute(
+            LIVING_AT, {"property": property_id, "pmc": pmc, "day": today()}
+        ).fetchall()
+    ]
+
+
+@router.get("/emails/property/{property_id}")
+def property_recipients(session: Staff, conn: Conn, property_id: UUID) -> PropertyRecipients:
+    """Who an email to a property's tenants would go to, before it is written (ADR 0010, rule 3):
+    each tenant living there today, with their email, or none on file."""
+    return PropertyRecipients(
+        property_id=property_id, tenants=living_at(conn, session.pmc_id, property_id)
+    )
+
+
+@router.post("/emails/property", status_code=201)
+def email_property(session: Staff, conn: Conn, new: NewPropertyEmail) -> PropertySent:
+    """Writes the same email to the tenants on a lease in effect today at a property (those chosen,
+    or all of them): one email each, on each tenant's Email tab. Tenants with no email on file are
+    named, not written to."""
+    everyone = living_at(conn, session.pmc_id, new.property_id)
+    if not everyone:
         raise HTTPException(422, "no tenant lives there today")
+    chosen = everyone
+    if new.tenant_ids is not None:
+        picked = set(new.tenant_ids)
+        if not picked <= {t.tenant_id for t in everyone}:
+            raise HTTPException(422, "choose only tenants living there today")
+        chosen = [t for t in everyone if t.tenant_id in picked]
     emailed: list[Sent] = []
     without: list[str] = []
-    for tenant_id, name in living:
-        _, to = address_of(conn, session.pmc_id, "tenant", tenant_id)
-        if to is None:
-            without.append(name)
+    for tenant in chosen:
+        if tenant.to is None:
+            without.append(tenant.name)
             continue
         made = email.write_message(
-            conn, session.pmc_id, "tenant", tenant_id, to, new.subject, new.body, session.person_id
+            conn,
+            session.pmc_id,
+            "tenant",
+            tenant.tenant_id,
+            tenant.to,
+            new.subject,
+            new.body,
+            session.person_id,
         )
-        emailed.append(Sent(id=made, name=name, to=to))
+        emailed.append(Sent(id=made, name=tenant.name, to=tenant.to))
     return PropertySent(emailed=emailed, without_email=without)
+
+
+# --- a reminder of rent past due (the Dashboard's Send reminder; ADR 0010 phase 3) -------------
+
+
+class Recipient(BaseModel):
+    tenant_id: UUID
+    name: str
+    to: str
+
+
+class LeftOut(BaseModel):
+    name: str
+    why: str
+
+
+class Reminder(BaseModel):
+    lease_id: UUID
+    subject: str
+    # What each tenant gets, above the staff member's name and the company's.
+    body: str
+    to: list[Recipient]
+    # Tenants on the lease who get none, and why.
+    left_out: list[LeftOut]
+    # A reminder of this rent went to them today already: another waits for tomorrow.
+    sent_today: bool
+
+
+LEASE_TENANTS = """
+SELECT p.display_name, u.display_name, t.id, t.display_name
+FROM trust_leases AS l
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+JOIN trust_lease_tenants AS lt ON lt.lease_id = l.id
+JOIN trust_tenants AS t ON t.id = lt.tenant_id
+WHERE l.pmc_id = %(pmc)s AND l.id = %(lease)s
+  -- Not a tenant who left the lease (others staying on it): they get no reminder.
+  AND NOT EXISTS (SELECT 1 FROM trust_lease_departures AS d
+                  WHERE d.lease_id = l.id AND d.tenant_id = lt.tenant_id AND d.left_on <= %(day)s)
+ORDER BY t.display_name COLLATE "C", t.id
+"""
+
+SENT_TODAY = """
+SELECT EXISTS (
+  SELECT 1 FROM trust_emails AS e
+  WHERE e.pmc_id = %s AND e.kind = 'message' AND e.subject = %s AND e.tenant_id = ANY(%s)
+    AND e.created_at >= %s AND e.created_at < %s)
+"""
+
+
+def reminder_of(conn: psycopg.Connection[Any], pmc: UUID, lease_id: UUID) -> Reminder:
+    """The reminder of a lease's rent past due (rent due before today and still open, as the
+    Dashboard counts it): who gets it and who doesn't, and what it says."""
+    day = today()
+    tenants = conn.execute(LEASE_TENANTS, {"pmc": pmc, "lease": lease_id, "day": day}).fetchall()
+    if not tenants:
+        raise HTTPException(404, "no such lease")
+    late = [
+        (due_on, Decimal(left))
+        for _, _, due_on, kind, _, _, left in charges_open(conn, pmc, lease_id)
+        if kind == "rent" and due_on < day
+    ]
+    if not late:
+        raise HTTPException(409, "no rent of this lease is past due")
+    prop, unit = tenants[0][0], tenants[0][1]
+    owed = cents(sum((left for _, left in late), Decimal(0)))
+    oldest: date = min(due_on for due_on, _ in late)
+    subject = f"Rent past due at {unit}, {prop}"
+    body = (
+        f"Our records show ${Decimal(owed):,.2f} of rent at {unit}, {prop} not paid yet, the"
+        f" oldest due {notices.us(oldest)}. Please pay it, or tell us if you already have."
+    )
+    to: list[Recipient] = []
+    left_out: list[LeftOut] = []
+    for _, _, tenant_id, name in tenants:
+        _, address = address_of(conn, pmc, "tenant", tenant_id)
+        if address is None:
+            left_out.append(LeftOut(name=name, why="no email on file"))
+        else:
+            to.append(Recipient(tenant_id=tenant_id, name=name, to=address))
+    start = datetime.combine(day, time.min, tzinfo=UTC)  # the day, UTC
+    sent = conn.execute(
+        SENT_TODAY, (pmc, subject, [t[2] for t in tenants], start, start + timedelta(days=1))
+    ).fetchone()
+    return Reminder(
+        lease_id=lease_id,
+        subject=subject,
+        body=body,
+        to=to,
+        left_out=left_out,
+        sent_today=bool(sent and sent[0]),
+    )
+
+
+@router.get("/emails/rent-reminders/{lease_id}")
+def rent_reminder(session: Staff, conn: Conn, lease_id: UUID) -> Reminder:
+    """What Send reminder would write about a lease's rent past due, and to whom, before it
+    sends (ADR 0010, rule 3)."""
+    return reminder_of(conn, session.pmc_id, lease_id)
+
+
+@router.post("/emails/rent-reminders/{lease_id}", status_code=201)
+def send_rent_reminder(session: Staff, conn: Conn, lease_id: UUID) -> list[Sent]:
+    """Writes the reminder of a lease's rent past due to each of its tenants with an email on
+    file, once a day: sent again the same day (a retry, a second click), it writes nothing."""
+    reminder = reminder_of(conn, session.pmc_id, lease_id)
+    if not reminder.to:
+        raise HTTPException(422, "no tenant on this lease has an email on file")
+    if reminder.sent_today:
+        raise HTTPException(409, "a reminder of this rent went to them today already")
+    return [
+        Sent(
+            id=email.write_message(
+                conn,
+                session.pmc_id,
+                "tenant",
+                r.tenant_id,
+                r.to,
+                reminder.subject,
+                reminder.body,
+                session.person_id,
+            ),
+            name=r.name,
+            to=r.to,
+        )
+        for r in reminder.to
+    ]
 
 
 # --- the emails the PMS writes by itself ----------------------------------------------------------

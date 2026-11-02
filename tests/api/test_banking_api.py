@@ -10,7 +10,18 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import add_agreement, add_tenant, add_unit, charge, make_pmc, open_lease
+from helpers import (
+    add_agreement,
+    add_tenant,
+    add_unit,
+    approve_bill,
+    charge,
+    enter_bill,
+    make_pmc,
+    open_lease,
+    pay_bill,
+    set_aside_bill,
+)
 from people import join_as_owner, join_as_staff, join_as_tenant
 
 TODAY = datetime.now(UTC).date()
@@ -49,7 +60,8 @@ def names(conn, pmc):
 
 
 def money_moves(client, conn, pmc):
-    """A rent payment, a bounced one, a deposit, an owner contribution and a payout."""
+    """A rent payment, a bounced one, a deposit, an owner contribution and a payout; the lease and
+    its tenant."""
     lease, tenant = rented(conn, pmc)
     pay = {"amount": "1000.00", "received_on": TODAY - 5 * DAY, "reference": "Check 7"}
     ok(post(client, f"/api/rent/leases/{lease}/payments", request_id=uuid.uuid4(), **pay), 201)
@@ -99,6 +111,7 @@ def money_moves(client, conn, pmc):
         ),
         201,
     )
+    return lease, tenant
 
 
 def test_the_register_lists_each_move_of_cash_with_what_it_was_and_the_balance_after(
@@ -181,6 +194,59 @@ def test_the_register_takes_days_and_pages(client, conn, staff, pmc):
     assert second["total"] == 5
     backwards = client.get(f"/api/bank-accounts/{bank}/register?start={TODAY}&end={TODAY - DAY}")
     assert backwards.status_code == 422
+
+
+def test_each_move_opens_its_lease_bill_owner_or_tenant(client, conn, staff, pmc):
+    lease, tenant = money_moves(client, conn, pmc)
+    now = datetime.now(UTC)
+    bill = enter_bill(
+        conn, pmc.pmc_id, pmc.vendor_id, pmc.owners[0].account, "RF-1", TODAY, TODAY, "100.00"
+    )
+    approve_bill(conn, pmc.pmc_id, bill, TODAY, "Owner A")
+    set_aside_bill(conn, pmc.pmc_id, bill, now)
+    pay_bill(conn, pmc.pmc_id, bill, now)
+    owner = pmc.owners[0].owner_id
+
+    register = ok(client.get(f"/api/bank-accounts/{pmc.operating_bank_id}/register"))
+    deposits = ok(client.get(f"/api/bank-accounts/{pmc.deposit_bank_id}/register"))
+
+    assert [(r["type"], r["opens"]) for r in register["items"]] == [
+        ("Bill payment", f"/bills/{bill}"),
+        ("Owner draw", f"/owners/{owner}"),
+        ("Owner contribution", f"/owners/{owner}"),
+        ("Returned payment", f"/leases/{lease}"),
+        ("Rent payment", f"/leases/{lease}"),
+        ("Rent payment", f"/leases/{lease}"),
+    ]
+    assert [(r["type"], r["opens"]) for r in deposits["items"]] == [
+        ("Security deposit", f"/tenants/{tenant}"),
+    ]
+
+
+def test_the_register_downloads_as_csv_oldest_first(client, conn, staff, pmc):
+    money_moves(client, conn, pmc)
+    owner, prop = names(conn, pmc)
+    bank = pmc.operating_bank_id
+
+    answer = client.get(
+        f"/api/bank-accounts/{bank}/register",
+        params={"start": str(TODAY - 4 * DAY), "end": str(TODAY), "format": "csv", "per_page": 1},
+    )
+
+    assert answer.status_code == 200, answer.text
+    assert answer.headers["content-type"].startswith("text/csv")
+    assert f"register-{TODAY - 4 * DAY}-to-{TODAY}" in answer.headers["content-disposition"]
+    # Every move of the days, not a page; a running balance from before them.
+    assert answer.text.splitlines() == [
+        "date,type,party,memo,property,deposit,withdrawal,balance",
+        f"{TODAY - 4 * DAY},Rent payment,Tenant A,"
+        f'"Rent – Tenant A, {prop} Unit 1",{prop},50.00,,1050.00',
+        f"{TODAY - 3 * DAY},Returned payment,Tenant A,"
+        f'"Returned payment – Tenant A, {prop} Unit 1",{prop},,50.00,1000.00',
+        f"{TODAY - DAY},Owner contribution,{owner},Roof fund,{prop},25.00,,1025.00",
+        f"{TODAY},Owner draw,{owner},Owner draw,{prop},,300.00,725.00",
+    ]
+    assert client.get(f"/api/bank-accounts/{bank}/register?format=pdf").status_code == 422
 
 
 def test_the_breakdown_is_what_the_account_holds_by_kind_and_by_owner(client, conn, staff, pmc):
