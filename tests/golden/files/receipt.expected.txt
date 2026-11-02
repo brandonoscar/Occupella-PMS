@@ -1,5 +1,5 @@
 Payment receipt
-Generated 2026-02-01 09:30:00 UTC
+Generated 02/01/2026 09:30:00 UTC
 item detail
 Received from Tenant 1, Tenant 2
 For Property 1, Unit 1

@@ -43,7 +43,7 @@ def test_staff_download_a_leases_ledger_in_each_format(client, conn, staff, pmc)
     pdf = client.get(f"{REPORTS}tenant_ledger", params={**args, "format": "pdf"})
     xlsx = client.get(f"{REPORTS}tenant_ledger", params={**args, "format": "xlsx"})
 
-    assert table[0][:3] == ["line", "on_date", "item"]
+    assert table[0][:3] == ["Line", "On date", "Item"]
     assert (pdf.status_code, pdf.content[:5]) == (200, b"%PDF-")
     assert (xlsx.status_code, xlsx.content[:2]) == (200, b"PK")
     assert pdf.headers["content-disposition"].endswith('tenant_ledger.pdf"')
@@ -69,7 +69,7 @@ def test_staff_download_the_month_end_and_an_approved_periods_three_way(client, 
         f"{REPORTS}three_way_reconciliation", params={"arg": str(reconciliation), "format": "pdf"}
     )
 
-    assert day[0] == ["line", "item", "detail", "amount"] and len(day) > 1
+    assert day[0] == ["Line", "Item", "Detail", "Amount"] and len(day) > 1
     assert (three_way.status_code, three_way.content[:5]) == (200, b"%PDF-")
 
 
@@ -83,7 +83,7 @@ def test_another_companys_reconciliation_downloads_none_of_its_figures(client, c
 
     # The report reads only the session's company: theirs is no reconciliation of ours, so the
     # download has its header and not a figure of theirs.
-    assert rows(answer) == [["line", "item", "detail", "amount"]]
+    assert rows(answer) == [["Line", "Item", "Detail", "Amount"]]
 
 
 @pytest.mark.parametrize("args", [["not-a-lease", "2026-01-01"], ["2026-01-01"]])

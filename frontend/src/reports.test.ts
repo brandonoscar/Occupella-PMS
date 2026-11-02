@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GROUPS, REPORTS, columnLabel, defaultFilters, presetDays, reportArgs, reportHref, reportSpec } from "./reports";
+import { GROUPS, REPORTS, defaultFilters, presetDays, reportArgs, reportHref, reportSpec } from "./reports";
 
 const NOW = new Date("2026-03-10T02:00:00Z");
 
@@ -66,10 +66,5 @@ describe("reports", () => {
     expect(reportHref(roll, ["2026-03-10"], { group: "g1" }, "json", "o1")).toBe(
       "/api/reports/trust_report_rent_roll?arg=2026-03-10&format=json&group=g1&owner=o1",
     );
-  });
-
-  it("names a column as people read it", () => {
-    expect(columnLabel("monthly_rent")).toBe("Monthly rent");
-    expect(columnLabel("item")).toBe("Item");
   });
 });

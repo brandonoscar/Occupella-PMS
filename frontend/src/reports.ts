@@ -137,11 +137,7 @@ export function downloadHref(name: string, args: string[], format: "pdf" | "xlsx
 
 export const FORMATS = [["pdf", "PDF"], ["csv", "CSV"], ["xlsx", "Excel"]] as const;
 
-// A report on screen: its columns and rows as text, and how many rows it has in all.
-export type Preview = { title: string; columns: string[]; rows: string[][]; total_rows: number };
-
-// "monthly_rent" reads "Monthly rent".
-export function columnLabel(column: string): string {
-  const words = column.replace(/_/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
+// A report on screen: its columns by name with their headings, its rows as text in plain words
+// (the API's word list, src/pms/wording.py, the same as in a download), and how many rows it has
+// in all.
+export type Preview = { title: string; columns: string[]; headings: string[]; rows: string[][]; total_rows: number };

@@ -9,7 +9,7 @@ import { Select } from "../components/Select";
 import { PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import type { Filters, Preset, Preview, ReportSpec } from "../reports";
-import { PRESETS, columnLabel, defaultFilters, presetDays, reportArgs, reportHref, reportSpec } from "../reports";
+import { PRESETS, defaultFilters, presetDays, reportArgs, reportHref, reportSpec } from "../reports";
 import { useScope } from "../scope";
 import type { Portfolio } from "../setup";
 import { GoLink } from "./NeedsAttention";
@@ -139,7 +139,7 @@ function Report({ me, spec }: { me: Me; spec: ReportSpec }) {
           <Wide>
             <table className="w-full text-sm" aria-label={spec.label}>
               <thead>
-                <tr>{shown.map(([c]) => <th key={c} className="text-left">{columnLabel(c)}</th>)}</tr>
+                <tr>{shown.map(([c, n]) => <th key={c} className="text-left">{preview.headings[n]}</th>)}</tr>
               </thead>
               <tbody>
                 {preview.rows.map((row, r) => (

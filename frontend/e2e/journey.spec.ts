@@ -985,7 +985,8 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     const amount = (bank: string, item: string) =>
       sheet.getByRole("row").filter({ hasText: bank }).filter({ hasText: item }).getByRole("cell").last();
     await expect(amount(OPERATING, "cash less what is held")).toHaveText(/\d/);
-    for (const [name, kind] of [[OPERATING, "operating"], [DEPOSITS, "security_deposit"]] as const) {
+    // The balance sheet in the portal's words: a bank's kind in plain words, bills held for vendors.
+    for (const [name, kind] of [[OPERATING, "operating"], [DEPOSITS, "security deposit"]] as const) {
       const bank = `${name} (${kind})`;
       const cash = await amountIn(amount(bank, "cash in the bank, by the books"));
       expect(cash, bank).toBe(balances[name]);
@@ -996,7 +997,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     expect(await amountIn(amount(operatingBank, "owners' funds"))).toBe(owners);
     // Nothing waits paid out to a vendor (the $120.00 bill is held, not paid yet), and the
     // company's fees left trust.
-    expect(await amountIn(amount(operatingBank, "set aside for vendors' bills"))).toBe(0);
+    expect(await amountIn(amount(operatingBank, "held for vendors' bills"))).toBe(0);
     expect(await amountIn(amount(operatingBank, "the company's fees not yet taken"))).toBe(0);
     const all = (item: string) =>
       sheet.getByRole("row").filter({ hasText: "all trust bank accounts" }).filter({ hasText: item }).getByRole("cell").last();

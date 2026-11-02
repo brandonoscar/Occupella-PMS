@@ -37,8 +37,9 @@ const budgetOf = (account: string, year: number, property = `Property ${account.
 const VERSUS: Preview = {
   title: "Budget vs actual",
   columns: ["line", "property", "item", "budget", "actual", "actual_less_budget"],
+  headings: ["Line", "Property", "Item", "Budget", "Actual", "Actual less budget"],
   rows: [
-    ["1", "Synthetic PMC", "PMC", "", "", ""],
+    ["1", "Synthetic PMC", "Company", "", "", ""],
     ["2", "Property 1", "income: rent", "1200.00", "1500.00", "300.00"],
     ["3", "Property 1", "total income", "1200.00", "1500.00", "300.00"],
     ["4", "Property 1", "net income", "1150.00", "1490.00", "340.00"],

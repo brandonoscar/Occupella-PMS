@@ -5,11 +5,15 @@ the name up in the catalog, so a caller can name nothing else, and casts each ar
 type the function declares, so a day or an id can come in as text. It runs under the
 connection's own role: Postgres decides who may run which report.
 
-Every format keeps what the report says:
-  - CSV (RFC 4180, UTF-8): numbers as written, days as YYYY-MM-DD, times in UTC (ISO 8601),
+A download (`export`) reads in plain words: `wording` turns the ledger's own words into the
+portal's ("owner_property: ..." reads "Owner: ...", "PMC" reads "Company"), a column's name into
+a heading ("Monthly rent") and a day into MM/DD/YYYY (founder, 2026-10-26); the audit log's
+cells stay as the database wrote them. Every format keeps the report's figures:
+  - CSV (RFC 4180, UTF-8): numbers as written, days as MM/DD/YYYY, times in UTC to the second,
     NULL as an empty field;
-  - Excel: numbers as numbers, days as dates, times as UTC to the second; text stays text,
-    except that control characters XML can't hold read as "?" and line breaks as "\n";
+  - Excel: numbers as numbers, days as dates and times as UTC to the second, shown MM/DD/YYYY;
+    text stays text, except that control characters XML can't hold read as "?" and line breaks
+    as "\n";
   - PDF: a table on US Letter, landscape, its header row repeated on every page. Its built-in
     font covers Latin-1 only, so any other character prints as "?": CSV and Excel are the
     exact copies.
@@ -43,6 +47,8 @@ from openpyxl import Workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Font
 from psycopg import sql
+
+from pms import wording
 
 REPORT_NAME = re.compile(r"trust_report_[a-z0-9_]+")
 FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
@@ -150,10 +156,10 @@ def to_xlsx(table: Table, generated: datetime) -> bytes:
             elif isinstance(value, datetime):
                 # Excel keeps about a millisecond; the sheet shows and keeps whole seconds.
                 cell.value = _naive_utc(value).replace(microsecond=0)
-                cell.number_format = "yyyy-mm-dd hh:mm:ss"
+                cell.number_format = "mm/dd/yyyy hh:mm:ss"
             elif isinstance(value, date):
                 cell.value = value
-                cell.number_format = "yyyy-mm-dd"
+                cell.number_format = "mm/dd/yyyy"
             elif value is None or isinstance(value, bool | int | float | Decimal):
                 cell.value = value
             else:
@@ -194,7 +200,7 @@ def to_pdf(table: Table, generated: datetime) -> bytes:
     pdf.set_font("Helvetica", style="B", size=12)
     pdf.cell(0, 16, _latin1(table.title), new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", size=7)
-    stamp = generated.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+    stamp = wording.as_text(generated)
     pdf.cell(0, 12, f"Generated {stamp}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
     shares = _widths(table)
@@ -292,14 +298,15 @@ def _widths(table: Table) -> tuple[int, ...]:
 
 
 def export(table: Table, fmt: str, generated: datetime | None = None) -> bytes:
-    """The table in one of FORMATS."""
+    """The table in one of FORMATS, in plain words with its columns as headings (`wording`)."""
     moment = generated or datetime.now(UTC)
+    plain = wording.headed(wording.plain_table(table))
     if fmt == "csv":
-        return to_csv(table)
+        return to_csv(wording.days_as_text(plain))
     if fmt == "xlsx":
-        return to_xlsx(table, moment)
+        return to_xlsx(plain, moment)
     if fmt == "pdf":
-        return to_pdf(table, moment)
+        return to_pdf(wording.days_as_text(plain), moment)
     raise ExportError(f"no export format {fmt!r}; use one of {', '.join(FORMATS)}")
 
 

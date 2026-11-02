@@ -52,16 +52,18 @@ def test_a_report_previews_as_text(client, staff, pmc, leased):
     found = ok(client.get(ROLL, params={"arg": str(TODAY), "format": "json"}))
 
     assert found["columns"][:4] == ["line", "item", "property", "unit"]
+    assert found["headings"][:4] == ["Line", "Item", "Property", "Unit"]
+    assert column(found, "item")[0] == "Company"
     assert found["total_rows"] == len(found["rows"])
     # Every cell is text, as CSV writes it: money keeps its cents, an empty cell is "".
     assert all(isinstance(cell, str) for row in found["rows"] for cell in row)
     assert {"Property 1", "Property 2"} <= set(column(found, "property"))
     assert "1000.00" in column(found, "monthly_rent")
-    # The same rows as the CSV download.
+    # The same words and rows as the CSV download.
     csv_rows = list(
         csv.reader(io.StringIO(ok(client.get(ROLL, params={"arg": str(TODAY)})).decode()))
     )
-    assert csv_rows == [found["columns"], *found["rows"]]
+    assert csv_rows == [found["headings"], *found["rows"]]
 
 
 def test_a_preview_sends_at_most_its_first_rows(client, staff, pmc, leased, monkeypatch):
@@ -96,7 +98,7 @@ def test_a_report_narrowed_to_a_property_keeps_its_rows_and_says_so(client, staf
             io.StringIO(ok(client.get(ROLL, params={"arg": str(TODAY), "property": one})).decode())
         )
     )
-    assert narrowed == [found["columns"], *found["rows"]]
+    assert narrowed == [found["headings"], *found["rows"]]
 
 
 def test_a_report_narrowed_to_a_group_keeps_its_properties(client, staff, pmc, leased):
@@ -196,15 +198,18 @@ def test_the_ledger_reports_narrow_to_a_propertys_accounts(
     ]
     assert {prop for _, _, prop in kept} == {"", "Property 1"}
     # The heading lines (the company, the day or days) and the property's accounts stay.
-    assert [item for item, _, prop in kept if not prop][:2] in (["PMC", "as of"], ["PMC", "period"])
+    assert [item for item, _, prop in kept if not prop][:2] in (
+        ["Company", "as of"],
+        ["Company", "period"],
+    )
     assert all(
         account.startswith(
             (
-                "owner_property: Owner 1 / Property 1",
-                "prepaid_rent: Tenant 1",
-                "tenant_deposit: Tenant 1",
-                "prepaid_rent: Tenant A",
-                "tenant_deposit: Tenant A",
+                "Owner: Owner 1 / Property 1",
+                "Prepaid rent: Tenant 1",
+                "Deposit: Tenant 1",
+                "Prepaid rent: Tenant A",
+                "Deposit: Tenant A",
             )
         )
         for _, account, prop in kept

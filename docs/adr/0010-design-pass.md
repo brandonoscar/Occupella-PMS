@@ -407,6 +407,21 @@ translate them everywhere**, on screen and in every download, from one word list
 functions and their golden cases unchanged; a follow-up PR does it and takes the exception out
 of the sweep.
 
+**The follow-up (report words).** `src/pms/wording.py` is the one word list. It reads an
+account's kind as a word ("Bank: ", "Owner: ", "Company fees: ", "Deposit: ", "Prepaid rent: ",
+"Vendor: "), a deposit account as "(security deposit)", the heading word "PMC" as "Company" and
+"posting" as "transaction", "Bill X set aside" as "Bill X", "set aside for vendors' bills" as
+"held for vendors' bills" and "bills not yet set aside" as "bills held, nothing paid yet", a day
+as MM/DD/YYYY (an owner's statement's period "from midnight to midnight UTC" as its first and
+last day), and a column's name as its heading ("Monthly rent"; a few by hand, "1-30 days",
+"Held for the vendor", "W-9 on file"). Reports on screen (the API sends the headings with the
+rows, so the page has no list of its own), the general ledger page and every CSV, Excel and PDF
+download read through it; Excel keeps days as dates, shown MM/DD/YYYY. *Left as written:* the
+report functions and their golden cases; what the owner's and tenant's pages parse, which
+already say it their own way; the audit log, whose cells are the database's own rows; the
+ledger and records zips and the QuickBooks file, which are data for another system; and "UTC",
+because the reports' days end at midnight UTC. The sweep now leaves out only the audit log.
+
 **Rule 3, who gets it before it sends.** Write email names the address it goes to, or says the
 person has no email on file and sends nothing (`GET /api/emails/to`). A portal invite says whether
 it is emailed or only a link to hand over, as the server sends email or not. A work order's Next

@@ -107,4 +107,4 @@ def test_the_pdf_always_builds(table):
     pages = PdfReader(io.BytesIO(exports.to_pdf(table, GENERATED))).pages
 
     assert len(pages) >= 1
-    assert "Generated 2026-03-02 08:30:00 UTC" in pages[0].extract_text()
+    assert "Generated 03/02/2026 08:30:00 UTC" in pages[0].extract_text()

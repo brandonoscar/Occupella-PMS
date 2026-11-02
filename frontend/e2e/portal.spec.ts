@@ -490,6 +490,11 @@ test("staff set up a property from nothing where each thing lives, lease a unit 
   const csv = await rentRoll.text();
   expect(csv).toContain("E2E Property 9");
   expect(csv).toContain("Tenant Setup E2E");
+  // In the words Reports shows (src/pms/wording.py): headings, the company, days as MM/DD/YYYY.
+  expect(csv.split("\r\n")[0]).toBe("Line,Item,Property,Unit,Tenants,Detail,Monthly rent,Deposits,Prepaid,Charged,Paid,Balance due");
+  expect(csv).toContain("\r\n1,Company,");
+  expect(csv).toContain(us(today));
+  expect(csv).not.toMatch(/[a-z]+_[a-z]+|\d{4}-\d{2}-\d{2}/);
 });
 
 test("staff record a tenant's payment, the rest held as prepaid rent, and then its bounce", async ({
@@ -969,15 +974,16 @@ async function hrefs(page: Page, where: Locator = page.locator("body")): Promise
   return where.locator("a[href^='/']").evaluateAll((links) => links.map((a) => a.getAttribute("href") ?? ""));
 }
 
-// The reports print the ledger's own words (ADR 0010, phase 4 leaves them to the founder's call).
-const REPORT_TEXT = /^\/(reports\/|general-ledger)/;
+// The audit log shows the database's own rows as it wrote them (src/pms/wording.py): a record,
+// not words to read. Every other report reads in plain words (the founder, 2026-10-26).
+const RECORD_TEXT = /^\/reports\/audit_log$/;
 
 async function scanned(page: Page, path: string): Promise<void> {
   await page.goto(path);
   await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
   await page.waitForLoadState("networkidle");
   await expectAccessible(page, path);
-  if (!REPORT_TEXT.test(path)) await expectPlainWords(page, path);
+  if (!RECORD_TEXT.test(path)) await expectPlainWords(page, path);
 }
 
 test("every page of the demo meets WCAG 2.2 AA as axe checks it, in plain words: staff's, an owner's, a tenant's and the public ones", async ({
