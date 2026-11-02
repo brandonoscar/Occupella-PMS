@@ -237,7 +237,8 @@ function RailLink({
 }
 
 // A page's title, as Occupella's pages open: Fraunces, with one line saying what the page is for,
-// and the page's own actions at the right.
+// and the page's own actions at the right, or under it when they don't fit beside it: a button's
+// plain line can be long, and the title always keeps its room.
 export function PageHeader({
   title,
   description,
@@ -248,12 +249,12 @@ export function PageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <header className="flex items-start justify-between gap-4">
-      <div className="flex min-w-0 flex-col gap-1">
+    <header className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex min-w-64 flex-1 basis-64 flex-col gap-1">
         <h1 className="font-display text-lg leading-tight font-semibold tracking-tight">{title}</h1>
         {description && <p className="text-sm leading-relaxed text-ink-muted">{description}</p>}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+      {actions && <div className="flex max-w-full min-w-0 items-center gap-2">{actions}</div>}
     </header>
   );
 }
