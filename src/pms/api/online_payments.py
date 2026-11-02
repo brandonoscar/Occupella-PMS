@@ -616,6 +616,8 @@ class FakeCheckout(BaseModel):
     total: str
     memo: str
     status: Status
+    # Where the payer goes back to, as the partner's success page: a tenant's or an owner's.
+    done: str = "/pay/done"
 
 
 class FakeOutcome(BaseModel):

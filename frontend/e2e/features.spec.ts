@@ -4936,13 +4936,13 @@ test("a tenant pays rent online on the payments partner's page, it reaches the b
   // Company setup: online payments on, the company paying the fee.
   await page.goto("/settings/setup");
   const card = part(page, "Online payments");
-  await expect(card.getByTestId("online-payments")).toHaveText("Off: tenants pay by check, money order or in person.");
+  await expect(card.getByTestId("online-payments")).toHaveText("Off: tenants pay by check, money order or in person, and owners send their money by check or bank transfer.");
   await card.getByRole("button", { name: "Edit online payments" }).click();
   const settings = page.getByRole("dialog", { name: "Online payments" });
-  await settings.getByLabel("Tenants may pay online").check();
+  await settings.getByLabel("Tenants and owners may pay online").check();
   await settings.getByRole("button", { name: "Save" }).click();
   await expect(card.getByTestId("online-payments")).toHaveText(
-    "On: tenants pay by bank for free, and the company pays the processing fee.",
+    "On: tenants and owners pay by bank for free, and the company pays the processing fee.",
   );
 
   // The tenant pays $100.00 on the (fake) partner's page; the bank pays it.
@@ -4987,6 +4987,59 @@ test("a tenant pays rent online on the payments partner's page, it reaches the b
   await page.getByRole("alertdialog").getByRole("button", { name: "Record the deposit" }).click();
   await expect(page.getByRole("main")).toContainText("Recorded the company's $1.20.");
   await expect(part(page, "Online payments waiting")).toHaveCount(0);
+});
+
+
+test("an owner adds money to a property's account online once the company takes payments online, and the bank's payment reaches it with no fee", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["owners-pay-online"]!;
+  const owner = await (await browser.newContext()).newPage();
+  await joinPortal(owner, people.owner_a);
+  // Off until the company takes payments online: the owner is told how else to send money.
+  await expect(owner.getByTestId("owner-pay-off")).toHaveText(
+    "Your manager doesn't take payments online. Send money by check or bank transfer to your manager.",
+  );
+
+  await joinAsStaff(page, people.manager);
+  await page.goto("/settings/setup");
+  const card = part(page, "Online payments");
+  await card.getByRole("button", { name: "Edit online payments" }).click();
+  const settings = page.getByRole("dialog", { name: "Online payments" });
+  await settings.getByLabel("Tenants and owners may pay online").check();
+  await settings.getByRole("button", { name: "Save" }).click();
+  await expect(card.getByTestId("online-payments")).toHaveText(
+    "On: tenants and owners pay by bank for free, and the company pays the processing fee.",
+  );
+
+  // The owner picks Birch Flats and pays $125.00 on the (fake) partner's page: no fee on top.
+  await owner.reload();
+  const add = part(owner, "Add money");
+  await add.getByLabel("Property").selectOption({ label: "Birch Flats" });
+  const holds = (await add.getByTestId("owner-pay-holds").textContent()) ?? "";
+  const before = Number(/Holds \$([\d,]+\.\d\d)/.exec(holds)![1]!.replaceAll(",", ""));
+  await add.getByLabel("Amount").fill("125.00");
+  await add.getByRole("button", { name: "Pay by bank" }).click();
+  await expect(owner.getByRole("heading", { name: "Test payments partner" })).toBeVisible();
+  await expect(owner.getByText("Owner contribution – Demo Owner A / Birch Flats")).toBeVisible();
+  await expect(owner.getByTestId("fake-total")).toHaveText("$125.00");
+  await owner.getByRole("button", { name: "The bank paid it" }).click();
+  await expect(owner.getByText("Paid", { exact: true })).toBeVisible();
+  await owner.getByRole("link", { name: "Back to the portal" }).click();
+  await expect(owner.getByTestId("pay-done")).toContainText("It shows on your statement once your bank pays it.");
+  await owner.getByRole("link", { name: "Back to your properties" }).click();
+
+  // The payment reached Birch Flats' account, whole.
+  const after = part(owner, "Add money");
+  await expect(after.getByRole("list", { name: "Payments online" }).getByRole("listitem").first()).toContainText(
+    "Birch Flats · $125.00",
+  );
+  await expect(after.getByRole("list", { name: "Payments online" }).getByRole("listitem").first()).toContainText("Paid");
+  await after.getByLabel("Property").selectOption({ label: "Birch Flats" });
+  const now = (before + 125).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  await expect(after.getByTestId("owner-pay-holds")).toContainText(`Holds $${now}`);
+  await owner.close();
 });
 
 

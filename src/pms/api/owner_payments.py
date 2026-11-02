@@ -344,6 +344,7 @@ def fake_checkout(conn: psycopg.Connection[Any], row: Row) -> online.FakeCheckou
         total=rent.cents(row.amount),
         memo=f"Owner contribution – {where(conn, row.account).memo}",
         status=online.status_of(events_of(conn, row.id)),
+        done="/pay/owner-done",
     )
 
 

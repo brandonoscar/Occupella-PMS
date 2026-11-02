@@ -44,7 +44,7 @@ groups first; rent, recurring charges, late fees and recurring bills to post by 
 night; fees still move only when staff ask, unless a company turns on taking its monthly
 management fees by itself, the founder's amendment of 2026-10-18). Since 2026-10-22 (founder,
 split between two sessions): an email to an owner whose property account falls below its reserve
-(q054; online owner payments stay on hold), emails to a company's admins when its nightly run
+(q054; owners pay online since 2026-11-02, under ADR 0009), emails to a company's admins when its nightly run
 fails or emails keep failing, with a written support process (q149, `docs/support.md`), two-step
 sign-in for owners and tenants, and state rules as warnings where staff set terms (q142; no
 attorney has reviewed them); and a deposit's return deadline and statement (q040, q039), filling
@@ -837,6 +837,24 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and what the company's fee account can't (Record the company's deposit, never more than what
   waits needs, area rent). Each posting has a key of its own (`metadata ->> 'key'`, indexed), so
   a partner reporting twice moves nothing twice. The AI role reads these tables; it moves no money.
+- Owners pay in online (migration 20261102000150, `src/pms/api/owner_payments.py`, ADR 0009,
+  `docs/law.md`, readiness q054): while the company takes payments online (the same switch,
+  Tenants and owners may pay online), an owner adds money to one of their property accounts of a
+  property not archived from the owner portal (Add money, `GET /api/payments/owner`,
+  `POST /api/payments/owner/checkout`), the amount starting at what brings it back up to its
+  reserve, on the same partner's page (the owner returns to `/pay/owner-done`). The processing fee
+  is always the company's (the founder, 2026-11-02): nothing is added to what the owner pays, and
+  the partner's fee leaves trust from the company's fee account once it holds it, never from the
+  owner's money. Nothing reaches the books until the partner reports the bank paid
+  (`trust_owner_online_payments`, `trust_owner_online_payment_events`: append-only, each kind
+  once a payment, a trigger keeping them in order and the account an owner's property account):
+  then it is the owner's contribution (`trust_record_owner_contribution`, key
+  `owner-payment/<id>`, memo "Paid online by bank"), and a return comes back out of the owner's
+  account through its cash; one the books take only after month-end closed its day goes in on the
+  first day left open. What can't go in yet (a return the owner's account can't cover, a fee the
+  company's account can't) waits on Banking with the tenants' payments, an owner's naming the
+  owner, not a lease. A low-balance email to an owner who signs in says they may pay it online
+  once the company takes payments online. The AI role reads these tables; it moves no money.
 - Autopay (migration 0151, `src/pms/autopay.py`, `src/pms/api/autopay.py`, ADR 0009): a tenant
   sets up autopay of a lease from the portal (Autopay), a fixed amount each month or the balance
   due up to an amount they set (`trust_autopay`), and saves the bank account it pays from on the

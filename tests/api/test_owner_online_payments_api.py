@@ -145,7 +145,11 @@ def test_an_owner_sees_their_accounts_and_pays_only_once_the_company_takes_it(
     started = pay(owner_client, pmc.owners[0].account, "250.00")
     assert started["url"] == f"http://testserver/pay/fake#{started['id']}"
     shown = ok(owner_client.get(f"/api/payments/fake/{started['id']}"))
-    assert (shown["total"], shown["tenant_fee"]) == ("250.00", "0.00")
+    assert (shown["total"], shown["tenant_fee"], shown["done"]) == (
+        "250.00",
+        "0.00",
+        "/pay/owner-done",
+    )
     assert shown["memo"].startswith("Owner contribution – ")
     view = ok(owner_client.get("/api/payments/owner"))
     assert [(p["amount"], p["status"]) for p in view["payments"]] == [("250.00", "started")]

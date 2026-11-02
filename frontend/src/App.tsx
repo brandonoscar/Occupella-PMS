@@ -73,6 +73,7 @@ export function App() {
   if (path === "/vendor") return <VendorLinkPage />;
   // Back from the payments partner's page, and the fake partner's own page (development only).
   if (path === "/pay/done") return <PayDonePage />;
+  if (path === "/pay/owner-done") return <PayDonePage owner />;
   if (path === "/pay/fake") return <PayFakePage />;
   if (path === "/pay/fake-save") return <PayFakeSavePage />;
   if (path === "/sign-in") return <SignInPage />;

@@ -117,6 +117,16 @@ def can_sign_in(conn: psycopg.Connection[Any], pmc_id: UUID, kind: Kind, person_
     )
 
 
+def takes_payments_online(conn: psycopg.Connection[Any], pmc_id: UUID) -> bool:
+    """The company's latest choice in Company setup, Online payments (off until it chooses)."""
+    row = conn.execute(
+        "SELECT online FROM trust_payment_settings WHERE pmc_id = %s"
+        " ORDER BY created_at DESC, id DESC LIMIT 1",
+        (pmc_id,),
+    ).fetchone()
+    return row is not None and bool(row[0])
+
+
 def company_of(conn: psycopg.Connection[Any], pmc_id: UUID) -> str:
     row = conn.execute(
         "SELECT display_name FROM trust_pmcs WHERE pmc_id = %s", (pmc_id,)
@@ -443,18 +453,27 @@ def write_reserve_alerts(
         to = address(conn, pmc_id, "owner", owner)
         if to is None:
             continue
+        signs_in = can_sign_in(conn, pmc_id, "owner", owner)
         portal = (
             f"See the account on your statement in the owner portal:\n{public_url.rstrip('/')}/\n\n"
-            if can_sign_in(conn, pmc_id, "owner", owner)
+            if signs_in
             else ""
+        )
+        # An owner who signs in pays it online too, once the company takes payments online
+        # (src/pms/api/owner_payments.py); the processing fee is the company's.
+        how = (
+            f"Send it to {company} by check or bank transfer, or pay it online by bank from the"
+            " owner portal (Add money);"
+            if signs_in and takes_payments_online(conn, pmc_id)
+            else f"Send it to {company} by check or bank transfer;"
         )
         body = (
             f"Hello {name},\n\n"
             f"Your account for {prop} holds {email.dollars(held)} as of {us(day)}, below the"
             f" reserve of {email.dollars(reserve)} your management agreement keeps in it for"
             f" bills.\n"
-            f"{email.dollars(reserve - held)} would bring it back up. Send it to {company} by"
-            f" check or bank transfer; it shows on your statement once recorded.\n\n"
+            f"{email.dollars(reserve - held)} would bring it back up. {how} it shows on your"
+            " statement once recorded.\n\n"
             f"{portal}{company}\n"
         )
         written += _insert(

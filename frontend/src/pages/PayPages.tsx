@@ -8,14 +8,22 @@ import { money, usDate } from "../money";
 import type { OnlineStatus } from "../payments";
 import { STATUS } from "../payments";
 
-type FakeCheckout = { amount: string; tenant_fee: string; total: string; memo: string; status: OnlineStatus };
+type FakeCheckout = {
+  amount: string;
+  tenant_fee: string;
+  total: string;
+  memo: string;
+  status: OnlineStatus;
+  // The payer's page to go back to: a tenant's (/pay/done) or an owner's (/pay/owner-done).
+  done: string;
+};
 type FakeSave = { tenant: string; memo: string; saved: boolean };
 type FakeQueued = { id: string; memo: string; amount: string; tenant_fee: string; started_at: string };
 type Outcome = "paid" | "failed" | "returned" | "expired";
 
-// Where the payments partner sends the tenant back: paid (the bank's answer still to come for a
-// bank payment) or cancelled.
-export function PayDonePage() {
+// Where the payments partner sends the tenant back (or an owner, at /pay/owner-done): paid (the
+// bank's answer still to come for a bank payment) or cancelled.
+export function PayDonePage({ owner = false }: { owner?: boolean }) {
   const query = new URLSearchParams(window.location.search);
   const cancelled = query.has("cancelled");
   const autopay = query.has("autopay");
@@ -29,9 +37,11 @@ export function PayDonePage() {
             ? "You left the payment page before paying. Nothing was taken from your account."
             : autopay
               ? "Your bank account is saved. Autopay pays on your rent's due day, from the next one, and emails you before each payment."
-              : "Your bank takes a few business days with a bank payment. It shows on your lease once your bank pays it."}
+              : owner
+                ? "Your bank takes a few business days with a bank payment. It shows on your statement once your bank pays it."
+                : "Your bank takes a few business days with a bank payment. It shows on your lease once your bank pays it."}
         </p>
-        <LinkButton href="/">Back to your lease</LinkButton>
+        <LinkButton href="/">{owner ? "Back to your properties" : "Back to your lease"}</LinkButton>
       </Card>
     </main>
   );
@@ -83,7 +93,7 @@ function PayFakeCheckout({ payment }: { payment: string }) {
             <Button variant="secondary" onClick={() => bankSays("failed")}>It didn't go through</Button>
             <Button variant="secondary" onClick={() => bankSays("returned")}>It came back</Button>
             <Button variant="secondary" onClick={() => bankSays("expired")}>Left without paying</Button>
-            <LinkButton href="/pay/done?paid=1">Back to the portal</LinkButton>
+            <LinkButton href={`${checkout.done}?paid=1`}>Back to the portal</LinkButton>
           </div>
         </Card>
       )}

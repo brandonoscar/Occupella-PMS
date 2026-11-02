@@ -123,6 +123,35 @@ def test_an_owner_hears_once_each_time_an_account_falls_below_its_reserve(conn, 
     assert "$0.01 would bring it back up" in second[2] and second[4] == 3
 
 
+def test_an_owner_who_signs_in_hears_they_may_pay_online_once_the_company_takes_it(
+    conn, app_conn, pmc
+):
+    first = funded(conn, pmc)
+    conn.execute(
+        "INSERT INTO trust_logins (pmc_id, kind, owner_id, email) VALUES (%s, 'owner', %s, %s)",
+        (pmc.pmc_id, first.owner_id, "owner.one@example.com"),
+    )
+    spend(conn, pmc, first.account, "B-1", "200.00", OCT_10)  # 400 of 500
+    assert notices.write_reserve_alerts(app_conn, pmc.pmc_id, OCT_10 + DAY, URL) == 1
+    conn.execute(
+        "INSERT INTO trust_payment_settings (pmc_id, online, ach_fee_payer)"
+        " VALUES (%s, true, 'company')",
+        (pmc.pmc_id,),
+    )
+    contribute(conn, pmc.pmc_id, first.account, "c-2", "100.00", datetime(2026, 10, 14, tzinfo=UTC))
+    assert notices.write_reserve_alerts(app_conn, pmc.pmc_id, OCT_10 + 4 * DAY, URL) == 0  # back
+    spend(conn, pmc, first.account, "B-2", "0.01", OCT_10)  # 499.99 of 500
+    assert notices.write_reserve_alerts(app_conn, pmc.pmc_id, OCT_10 + 5 * DAY, URL) == 1
+    off, on = (row[2] for row in reserve_emails(conn, pmc.pmc_id))
+    assert " by check or bank transfer; it shows on your statement once recorded." in off
+    assert "owner portal (Add money)" not in off
+    assert (
+        " by check or bank transfer, or pay it online by bank from the owner portal (Add money);"
+        " it shows on your statement once recorded." in on
+    )
+    assert f"in the owner portal:\n{URL}/" in on
+
+
 def test_a_higher_reserve_from_a_day_is_a_drop_too(conn, app_conn, pmc):
     first = funded(conn, pmc)
     add_agreement(conn, pmc.pmc_id, first.account, OCT_10 + DAY, reserve="750.00")

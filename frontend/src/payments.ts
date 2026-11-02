@@ -32,7 +32,9 @@ export type PaymentSettings = {
 export type WaitingWhat = "payment" | "return" | "partner fee" | "fee refund";
 export type Waiting = {
   payment_id: string;
-  lease_id: string;
+  // A tenant's payment's lease, or the owner of an owner's payment (src/pms/api/owner_payments.py).
+  lease_id: string | null;
+  owner_id: string | null;
   memo: string;
   amount: string;
   what: WaitingWhat;
@@ -54,13 +56,14 @@ export const STATUS: Record<OnlineStatus, { label: string; tone: BadgeTone }> = 
   expired: { label: "Not finished", tone: "neutral" },
 };
 
-// "On: tenants pay by bank for free; the company pays the processing fee", or why it is off.
+// "On: tenants and owners pay by bank for free; the company pays the processing fee", or why it is
+// off. An owner's processing fee is always the company's (the founder, 2026-11-02).
 export function settingsLine(settings: PaymentSettings): string {
   if (settings.partner === null) return "This server takes no payments online: its payments partner isn't set up.";
-  if (!settings.online) return "Off: tenants pay by check, money order or in person.";
+  if (!settings.online) return "Off: tenants pay by check, money order or in person, and owners send their money by check or bank transfer.";
   return settings.ach_fee_payer === "company"
-    ? "On: tenants pay by bank for free, and the company pays the processing fee."
-    : "On: tenants pay by bank and pay the processing fee, shown before they pay.";
+    ? "On: tenants and owners pay by bank for free, and the company pays the processing fee."
+    : "On: tenants pay by bank and pay the processing fee, shown before they pay. Owners pay by bank for free; the company pays theirs.";
 }
 
 // "$1,000.00, no fee" or "$1,000.00 + $5.00 processing fee = $1,005.00".
@@ -77,17 +80,41 @@ export function payable(text: string): boolean {
 
 // What waits for staff, in words.
 export function waitingLine(item: Waiting): string {
+  const owners = item.owner_id !== null;
   switch (item.what) {
     case "payment":
-      return `Paid online, not in the books yet: the lease is on a payment hold, or the books refused it`;
+      return owners
+        ? "Paid online by the owner, not in the books yet: the books refused it"
+        : "Paid online, not in the books yet: the lease is on a payment hold, or the books refused it";
     case "return":
-      return `Came back, not undone yet: the owner's account holds too little`;
+      return owners
+        ? "The owner's payment came back, not taken back out yet: their account holds too little"
+        : "Came back, not undone yet: the owner's account holds too little";
     case "partner fee":
       return `The processor kept ${money(item.company_owes)}; the company's fee account holds ${money(item.company_holds)}`;
     case "fee refund":
       return `The tenant's ${money(item.company_owes)} fee came back; the company's fee account holds ${money(item.company_holds)}`;
   }
 }
+
+// Owners pay in online (src/pms/api/owner_payments.py): into one of their property accounts, the
+// processing fee always the company's.
+export type OwnerAccount = {
+  account_id: string;
+  property: string;
+  bank: string;
+  balance: string;
+  reserve: string;
+  // What brings the account back up to its reserve: "0.00" when it holds that much.
+  short: string;
+};
+export type OwnerPayment = { id: string; started_at: string; property: string; amount: string; status: OnlineStatus };
+export type OwnerPayView = {
+  available: boolean;
+  why_not: string | null;
+  accounts: OwnerAccount[];
+  payments: OwnerPayment[];
+};
 
 // Autopay (src/pms/api/autopay.py): a lease's rent paid each month from a bank account the tenant
 // saved at the payments partner.
