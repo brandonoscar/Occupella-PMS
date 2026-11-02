@@ -600,7 +600,11 @@ def webhook(
         return Received(recorded=False)
     if isinstance(event, payments.Saved):
         return Received(recorded=record_saved(conn, event, partner.name))
-    return Received(recorded=apply(conn, event, partner.name))
+    from pms.api import owner_payments  # it reads this module's helpers; owners pay in online too
+
+    return Received(
+        recorded=apply(conn, event, partner.name) or owner_payments.apply(conn, event, partner.name)
+    )
 
 
 # --- the fake partner's page ------------------------------------------------------------------
@@ -618,9 +622,12 @@ class FakeOutcome(BaseModel):
     outcome: Literal["paid", "failed", "returned", "expired"]
 
 
-def fake_row(request: Request, conn: psycopg.Connection[Any], payment_id: UUID) -> Row:
+def fake_row(request: Request, conn: psycopg.Connection[Any], payment_id: UUID) -> Any:
+    """A tenant's or an owner's payment at the fake partner (owner_payments.Row for an owner's)."""
+    from pms.api import owner_payments  # it reads this module's helpers; owners pay in online too
+
     partner = partner_of(request)
-    row = row_of(conn, payment_id)
+    row = row_of(conn, payment_id) or owner_payments.row_of(conn, payment_id)
     if partner is None or partner.name != "fake" or row is None or row.partner != "fake":
         raise HTTPException(404, "no such payment at the fake partner")
     return row
@@ -628,8 +635,12 @@ def fake_row(request: Request, conn: psycopg.Connection[Any], payment_id: UUID) 
 
 @router.get("/fake/{payment_id}")
 def fake_checkout(request: Request, conn: Conn, payment_id: UUID) -> FakeCheckout:
-    """The fake partner's page (development and tests only): what the tenant is paying."""
+    """The fake partner's page (development and tests only): what the tenant or owner is paying."""
+    from pms.api import owner_payments  # it reads this module's helpers; owners pay in online too
+
     row = fake_row(request, conn, payment_id)
+    if isinstance(row, owner_payments.Row):
+        return owner_payments.fake_checkout(conn, row)
     return FakeCheckout(
         amount=rent.cents(row.amount),
         tenant_fee=rent.cents(row.tenant_fee),
@@ -644,9 +655,15 @@ def fake_report(request: Request, conn: Conn, payment_id: UUID, body: FakeOutcom
     """The fake partner's report, from its page's buttons: the bank paid it, it failed, it came
     back, or the tenant left without paying. A paid payment's fee is what Stripe charges for a bank
     payment."""
+    from pms.api import owner_payments  # it reads this module's helpers; owners pay in online too
+
     row = fake_row(request, conn, payment_id)
-    fee = payments.ach_fee(row.amount + row.tenant_fee) if body.outcome == "paid" else None
+    owners = isinstance(row, owner_payments.Row)
+    total = row.amount if owners else row.amount + row.tenant_fee
+    fee = payments.ach_fee(total) if body.outcome == "paid" else None
     event = payments.Event(row.id, body.outcome, f"fake_{uuid4().hex}", datetime.now(UTC), fee)
+    if owners:
+        return Received(recorded=owner_payments.apply(conn, event, "fake"))
     return Received(recorded=apply(conn, event, "fake"))
 
 
@@ -655,7 +672,9 @@ def fake_report(request: Request, conn: Conn, payment_id: UUID, body: FakeOutcom
 
 class Waiting(BaseModel):
     payment_id: UUID
-    lease_id: UUID
+    # A tenant's payment's lease, or the owner of an owner's payment (owner_payments).
+    lease_id: UUID | None
+    owner_id: UUID | None = None
     memo: str
     amount: str
     # What waits: the payment itself (a payment hold, or the books refused it), its return (an
@@ -719,6 +738,9 @@ def waiting(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Waiting]:
             )
             for what, owes in items
         ]
+    from pms.api import owner_payments  # it reads this module's helpers; owners pay in online too
+
+    found += owner_payments.waiting(conn, pmc_id)
     for bank in {item.bank_account_id for item in found}:
         here = [item for item in found if item.bank_account_id == bank]
         owed = sum((Decimal(i.company_owes) for i in here if i.company_owes is not None), ZERO)
@@ -742,8 +764,16 @@ class Record(BaseModel):
 def record(session: Staff, conn: Conn, payment_id: UUID, body: Record) -> None:
     """Staff record what waits for a payment, once the books take it: the payment (past a hold if
     they accept it), its return, its partner's fee."""
+    from pms.api import owner_payments  # it reads this module's helpers; owners pay in online too
+
     row = row_of(conn, payment_id)
-    if row is None or row.pmc_id != session.pmc_id:
+    if row is None:
+        owners = owner_payments.row_of(conn, payment_id)
+        if owners is None or owners.pmc_id != session.pmc_id:
+            raise HTTPException(404, "no such online payment")
+        owner_payments.record(conn, owners)
+        return
+    if row.pmc_id != session.pmc_id:
         raise HTTPException(404, "no such online payment")
     events = events_of(conn, row.id)
     if "paid" not in events:
@@ -811,9 +841,15 @@ def cover(session: Staff, conn: Conn, body: Cover) -> Covered:
     )
     if done is None:
         raise HTTPException(409, "this request id was used for something else")
+    from pms.api import owner_payments  # it reads this module's helpers; owners pay in online too
+
     for payment in dict.fromkeys(item.payment_id for item in owed_here()):
         row = row_of(conn, payment)
-        assert row is not None
+        if row is None:
+            owners = owner_payments.row_of(conn, payment)
+            assert owners is not None
+            owner_payments.settle(conn, owners, on=rent.today())
+            continue
         rent.lock_lease(conn, row.lease_id)
         settle(conn, row, on=rent.today())
     return Covered(still_waiting=len(owed_here()))
