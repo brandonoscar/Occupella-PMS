@@ -440,6 +440,15 @@ tests = [
 ]
 
 [[invariant]]
+id = "a-late-fee-run-works-out-only-rents-left-open"
+statement = "A late fee run charges a rent a late fee exactly when what is open of it at the end of its grace (trust_open_charges at that moment, payments, bounces, credits and waivers all counted) is above zero, the terms' fee on what was open, once. It works out what is open only of the rents whose own payments by then, less what of them bounced by then, left them uncovered (migration 20261031000200): a rent its payments covered is open of nothing then, so every rent ever paid on time costs a run no more than a look at its payments."
+tests = [
+  "tests/properties/test_late_fee_properties.py::test_a_rent_is_charged_a_late_fee_exactly_when_open_at_the_end_of_its_grace",
+  "tests/test_rent_automation.py::test_a_run_works_out_only_the_rents_their_own_payments_left_open",
+  "tests/test_rent_automation.py::test_a_payment_counts_only_if_dated_before_the_grace_runs_out",
+]
+
+[[invariant]]
 id = "lease-end-keeps-charged-months-at-their-days"
 statement = "When a lease's end is set, moved or cleared, every charge the rent run makes for it (rent, and a recurring charge's fee or credit) that, with what followed earlier ends, stood at its month's days under the old end gets a credit or a fee, due on its own day, so it stands at its month's days under the new end (a month wholly after the end at nothing); a charge standing at anything else is left as it is. Setting the same end changes nothing, and a rent run and an end wait for each other, so no charged month misses an end."
 tests = [
@@ -1284,6 +1293,24 @@ tests = [
   "tests/test_nightly.py::test_a_night_charges_the_months_rent_late_fees_and_bills_once",
   "tests/test_nightly.py::test_one_company_that_fails_leaves_the_others_to_run",
   "tests/api/test_rent_runs_api.py::test_only_an_admin_runs_rent_by_hand",
+]
+
+[[invariant]]
+id = "every-night-over-years"
+statement = "Night after night for months (tools/fast_forward.py; five years nightly), with everything the PMS does by itself turned on and tenants paying late, in part, ahead or with a bounce: what each night posts is dated by that night, never later; no rent is charged twice for a due date; the delinquency report is what is open of the leases' charges; the trial balance balances and every trust bank account's book cash is what it holds; each owner's statement ends at their accounts' balances; and every account under an agreement has each month's management fee taken by the month after's end."
+tests = [
+  "tests/tools/test_fast_forward.py::test_every_night_of_thirteen_months_leaves_the_books_right",
+  "tests/tools/test_fast_forward.py::test_a_charge_dated_after_the_night_fails_it",
+  "tests/tools/test_fast_forward.py::test_a_payment_dated_after_the_night_fails_it",
+  "tests/tools/test_fast_forward.py::test_a_delinquency_report_that_disagrees_with_the_leases_fails_the_night",
+]
+
+[[invariant]]
+id = "a-leases-open-charges-are-the-pmcs"
+statement = "One lease's open charges (trust_open_charges given the lease, read by its index since migration 20261028000200) are exactly the PMC's open charges (given no lease) of that lease's charges, at any moment, whatever was paid, credited, waived or bounced on any lease; together the leases' are all of the PMC's, none twice; and one lease's call reads its own charges, not the PMC's."
+tests = [
+  "tests/properties/test_open_charges_properties.py::test_each_leases_open_charges_are_the_pmcs_of_its_charges",
+  "tests/test_open_charges.py::test_one_leases_open_charges_read_its_own_charges_alone",
 ]
 
 [[invariant]]

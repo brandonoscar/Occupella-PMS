@@ -1004,6 +1004,24 @@ BEGIN
           AND NOT EXISTS (
               SELECT f.rent_charge_id FROM trust_late_fees AS f WHERE f.rent_charge_id = c.id
           )
+          -- Its own payments by the end of its grace, less what of them bounced by then, have not
+          -- covered it. Credits and waivers only take more off what is open, so a rent its own
+          -- payments covered is not open then, and is charged no late fee, whatever else holds.
+          AND c.amount
+              > coalesce((
+                  SELECT sum(cp.amount)
+                  FROM trust_charge_payments AS cp
+                  JOIN pgledger_transfers AS t ON t.id = cp.transfer_id
+                  WHERE cp.charge_id = c.id
+                    AND t.event_at < (c.due_on + p.grace_days + 1)::timestamp AT TIME ZONE 'UTC'
+              ), 0)
+              - coalesce((
+                  SELECT sum(r.amount)
+                  FROM trust_payment_reversals AS r
+                  JOIN pgledger_transfers AS t ON t.id = r.reversal_id
+                  WHERE r.charge_id = c.id
+                    AND t.event_at < (c.due_on + p.grace_days + 1)::timestamp AT TIME ZONE 'UTC'
+              ), 0)
         ORDER BY c.id
     LOOP
         PERFORM c.id FROM trust_charges AS c WHERE c.id = v_rent.id FOR NO KEY UPDATE;
@@ -5801,12 +5819,24 @@ $$;
 --
 
 CREATE FUNCTION public.trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at timestamp with time zone) RETURNS TABLE(lease_id uuid, charge_id uuid, open numeric)
-    LANGUAGE sql STABLE
+    LANGUAGE sql STABLE ROWS 20
     SET search_path TO 'public', 'pg_temp'
+    SET jit TO 'off'
     AS $$
-    WITH charged AS (
+    WITH mine AS (
+        -- One lease's charges by its index, or, given no lease, every charge of the PMC: each
+        -- branch runs only when its parameter says so.
         SELECT c.id, c.lease_id, c.kind, c.amount, c.due_on, c.created_at,
-               trust_pay_rank(c) AS pay_rank,
+               trust_pay_rank(c) AS pay_rank
+        FROM trust_charges AS c
+        WHERE p_lease_id IS NOT NULL AND c.lease_id = p_lease_id AND c.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT c.id, c.lease_id, c.kind, c.amount, c.due_on, c.created_at, trust_pay_rank(c)
+        FROM trust_charges AS c
+        WHERE p_lease_id IS NULL AND c.pmc_id = p_pmc_id
+    ),
+    charged AS (
+        SELECT c.id, c.lease_id, c.kind, c.amount, c.due_on, c.created_at, c.pay_rank,
                c.amount
                - coalesce((
                    SELECT sum(cp.amount)
@@ -5822,8 +5852,7 @@ CREATE FUNCTION public.trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at t
                ), 0) AS left_owing,
                EXISTS (SELECT 1 FROM trust_charge_waivers AS w
                        WHERE w.credit_charge_id = c.id) AS waiver
-        FROM trust_charges AS c
-        WHERE c.pmc_id = p_pmc_id AND (p_lease_id IS NULL OR c.lease_id = p_lease_id)
+        FROM mine AS c
     ),
     -- What waivers due before the moment's day take off the charge each one names.
     waived AS (
@@ -33248,4 +33277,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261025000200'),
     ('20261025000210'),
     ('20261025000220'),
-    ('20261027000155');
+    ('20261027000155'),
+    ('20261028000200'),
+    ('20261031000200');

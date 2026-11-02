@@ -129,6 +129,14 @@ def test_staff_download_their_pmcs_ledger(client, conn, app_conn, pmc):
     assert len(transfers) == 2 and transfers[1][5] == "10.00"
 
 
+@pytest.mark.parametrize("path", ["/api/ledger.zip", "/api/records.zip"])
+def test_the_schema_says_a_zip_comes_back(client, path):
+    # What a client (or OWASP ZAP, rule 100001) reads the answer by: the zip it is, not JSON.
+    answers = client.get("/openapi.json").json()["paths"][path]["get"]["responses"]
+
+    assert list(answers["200"]["content"]) == ["application/zip"]
+
+
 def test_an_admin_downloads_everything_of_their_company(client, conn, app_conn, pmc):
     """Settings, Data export (q132): every record, its files and its ledger, in one zip."""
     join_as_staff(client, conn, app_conn, pmc)

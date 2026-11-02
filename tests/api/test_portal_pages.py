@@ -28,6 +28,8 @@ def test_every_page_is_the_portal_with_a_strict_policy(portal, path):
     assert "default-src 'self'" in policy and "script-src 'self'" in policy
     assert "unsafe-inline" not in policy and "frame-ancestors 'none'" in policy
     assert answer.headers["x-frame-options"] == "DENY"
+    # No other site loads the page into its own (OWASP ZAP's Spectre isolation check, 90004).
+    assert answer.headers["cross-origin-resource-policy"] == "same-origin"
 
 
 def test_each_page_carries_a_fresh_nonce_for_react_arias_styles_and_allows_no_other(portal):

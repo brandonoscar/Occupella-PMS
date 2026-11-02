@@ -4,12 +4,12 @@ psycopg[binary]==3.3.6
 # Exports (src/pms/exports.py): Excel files, and PDFs (fpdf2 brings Pillow, MIT-CMU).
 fpdf2==2.8.9
 # A deposit statement carries its receipts' PDFs (src/pms/deposit_statement.py; BSD-3-Clause).
-pypdf==6.21.2
+pypdf==6.21.4
 openpyxl==3.1.5
 # The API and logins (src/pms/api, src/pms/accounts): argon2 hashes, authenticator codes, a
 # pooled Postgres connection per request.
 argon2-cffi==25.1.0
-fastapi==0.149.0
+fastapi==0.161.1
 psycopg-pool==3.3.3
 pyotp==2.10.0
 uvicorn==0.54.0

@@ -498,3 +498,43 @@ def test_an_ended_lease_keeps_rent_charged_before_it_ended(conn, pmc):
         (FEB_1, "credit", Decimal("696.43")),
         (FEB_1, "rent", RENT),
     ]
+
+
+def test_a_run_works_out_only_the_rents_their_own_payments_left_open(conn, pmc):
+    """Migration 20261031000200: a rent its own payments covered by the end of its grace (less
+    what of them bounced by then) is not open then, whatever credits and waivers say, so the run
+    passes it over without working out what is open of it. Each run used to work out every rent
+    ever paid on time again, and took longer with every month of rent."""
+    add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, 5, "50", "10")
+    leases = [lease_on(conn, pmc, JAN_1, name=f"Unit {n}") for n in range(1, 31)]
+    charge_rent_due(conn, pmc.pmc_id, FEB_1)
+    rents = [rent_due(conn, lease, FEB_1) for lease in leases]
+    paid_on_time, short, bounced, paid_late = rents[:27], rents[27], rents[28], rents[29]
+    for rent in paid_on_time:
+        pay(conn, pmc, rent, RENT, at(date(2026, 2, 3)))
+    pay(conn, pmc, short, Decimal("1400.00"), at(date(2026, 2, 3)))
+    moved = pay(conn, pmc, bounced, RENT, at(date(2026, 2, 3)))
+    (back,) = transfer_batch(
+        conn, [(pmc.owners[0].account, pmc.operating_cash, RENT)], at(date(2026, 2, 4))
+    )
+    reverse_payment(conn, pmc.pmc_id, bounced, moved, back, RENT)
+    pay(conn, pmc, paid_late, RENT, at(date(2026, 2, 9)))
+
+    with conn.transaction():
+        conn.execute("SET LOCAL track_functions = 'all'")
+        assert assess_late_fees(conn, pmc.pmc_id, date(2026, 2, 20)) == 3
+        worked_out = conn.execute(
+            "SELECT coalesce(sum(calls), 0) FROM pg_stat_xact_user_functions"
+            " WHERE funcname = 'trust_open_charges'"
+        ).fetchone()[0]
+
+    # The three its payments left open, not the thirty: each is charged its fee.
+    assert worked_out == 3
+    assert {
+        rent: [fee for _, fee in late_fees(conn, rent)] for rent in (short, bounced, paid_late)
+    } == {
+        short: [Decimal("60.00")],  # 50.00 + 10% of the 100.00 left
+        bounced: [Decimal("200.00")],
+        paid_late: [Decimal("200.00")],
+    }
+    assert all(late_fees(conn, rent) == [] for rent in paid_on_time)
