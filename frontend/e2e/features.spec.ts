@@ -253,7 +253,7 @@ test("staff charge this month's rent and its late fees, and the Dashboard shows 
   const late = dayOfMonth() > 6;
   await runRent();
   await expect(page.getByRole("main")).toContainText(
-    `6 rents, 1 recurring charge and ${late ? 6 : 0} late fee${late ? "s" : ""} charged.`,
+    `6 rents, 1 recurring charge and ${late ? 6 : 0} late fees charged.`,
   );
   // Once per lease and due date: the same run again charges nothing, and it is listed.
   await runRent();
