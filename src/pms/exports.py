@@ -131,7 +131,11 @@ def to_csv(table: Table) -> bytes:
 
 
 def _csv_cell(value: Any) -> str:
-    if isinstance(value, str) and value.startswith(FORMULA_START):
+    """A cell a spreadsheet would run as a formula gets an apostrophe in front. So does one that
+    already starts with apostrophes before a formula's first character ("'=1"): reading a cell
+    back takes one apostrophe off whenever a formula's character follows the apostrophes, so
+    every cell reads back as it was."""
+    if isinstance(value, str) and value.lstrip("'").startswith(FORMULA_START):
         return "'" + value
     return text(value)
 

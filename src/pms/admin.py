@@ -1,11 +1,15 @@
-"""Server-side commands for whoever runs the PMS: add a staff member, make them the PMC's first
-admin and invite them. This is how the first staff member gets in; after that, an admin adds
-and invites staff and gives them roles through the API.
+"""Server-side commands for whoever runs the PMS: start a company with its first admin, or add a
+staff member, make them the PMC's first admin and invite them. This is how the first staff member
+gets in; after that, an admin adds and invites staff and gives them roles through the API.
 
 usage:
+  python -m pms.admin setup <company name> <your name> <your email>
   python -m pms.admin add-staff <pmc_id> <name>
   python -m pms.admin make-admin <pmc_id> <staff_id>
   python -m pms.admin invite <pmc_id> {staff,owner,tenant} <person_id> <email>
+
+setup does the first install's steps in one: it adds the company (its PMC), its first staff
+member, makes them its admin and prints their invite link, all or nothing.
 
 make-admin names nobody, so the database grants it only to a PMC that has no admin yet.
 
@@ -31,6 +35,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m pms.admin", description=__doc__.split("\n")[0])
     parser.add_argument("--role", default="trust_app", help="database role to act as")
     commands = parser.add_subparsers(dest="command", required=True)
+    setup = commands.add_parser(
+        "setup", help="add a company, its first admin and print their invite link"
+    )
+    setup.add_argument("company")
+    setup.add_argument("name")
+    setup.add_argument("email")
     staff = commands.add_parser("add-staff", help="add a staff member to a PMC")
     staff.add_argument("pmc_id", type=UUID)
     staff.add_argument("name")
@@ -48,7 +58,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
         conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(options.role)))
         try:
-            if options.command == "add-staff":
+            if options.command == "setup":
+                if not options.company.strip() or not options.name.strip():
+                    print("refused: a company and a person each need a name", file=sys.stderr)
+                    return 2
+                company = conn.execute(
+                    "INSERT INTO trust_pmcs (display_name) VALUES (%s) RETURNING pmc_id",
+                    (options.company.strip(),),
+                ).fetchone()
+                assert company is not None
+                person = conn.execute(
+                    "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, %s) RETURNING id",
+                    (company[0], options.name.strip()),
+                ).fetchone()
+                assert person is not None
+                conn.execute(
+                    "INSERT INTO trust_staff_roles (pmc_id, staff_id, role, granted)"
+                    " VALUES (%s, %s, 'admin', true)",
+                    (company[0], person[0]),
+                )
+                made = accounts.create_invite(
+                    conn, company[0], "staff", person[0], options.email, None
+                )
+                print(f"company {company[0]}")
+                print(f"admin {person[0]}")
+                print(f"{public_url}/invite#{made.token}")
+                print(f"expires {made.expires_at.isoformat()}", file=sys.stderr)
+            elif options.command == "add-staff":
                 row = conn.execute(
                     "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, %s) RETURNING id",
                     (options.pmc_id, options.name),
@@ -70,6 +106,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"expires {made.expires_at.isoformat()}", file=sys.stderr)
         except (
             accounts.Refused,
+            psycopg.errors.CheckViolation,
             psycopg.errors.ForeignKeyViolation,
             psycopg.errors.InsufficientPrivilege,
         ) as refused:

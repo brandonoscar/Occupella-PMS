@@ -1,0 +1,59 @@
+# Running the PMS for a real company on one server (docs/install.md): Postgres 16 with a password
+# and its data on a volume, the migrations applied at each start, and the API and portal on
+# 127.0.0.1:8000 for an HTTPS proxy in front of it (docs/install.md, step 4).
+#
+#   cp .env.example .env        then fill it in (docs/install.md, "Keys you bring")
+#   docker compose -f compose.selfhost.yaml up -d --build
+#
+# selfhost.yml starts it in CI on every PR and every night, with test values.
+services:
+  db:
+    image: mirror.gcr.io/library/postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+    environment:
+      POSTGRES_DB: pms
+      POSTGRES_PASSWORD: ${PMS_DB_PASSWORD:?set PMS_DB_PASSWORD in .env}
+    volumes:
+      - pms-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pms"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # The image's own command: every migration not yet applied, then it exits.
+  migrate:
+    build: .
+    image: occupella-pms:local
+    environment:
+      DATABASE_URL: postgres://postgres:${PMS_DB_PASSWORD}@db:5432/pms?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    image: occupella-pms:local
+    command: ["python", "-m", "pms.api"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://postgres:${PMS_DB_PASSWORD}@db:5432/pms?sslmode=disable
+      PMS_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  pms-db:

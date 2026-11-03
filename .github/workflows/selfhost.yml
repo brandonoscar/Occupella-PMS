@@ -67,13 +67,32 @@ jobs:
           curl -fsS http://127.0.0.1:8100/ | grep -q 'id="root"' && echo "portal served"
           docker compose -f compose.demo.yaml up -d --wait app
           docker compose -f compose.demo.yaml logs demo | grep "no demo was added"
+      - name: The install guide's setup starts from .env.example, and setup makes a company
+        # docs/install.md, steps 2, 3 and 5, with test values: a password made here, plain http on
+        # localhost (so the cookie isn't held to HTTPS), no email or payments.
+        run: |
+          sed -e "s/^PMS_DB_PASSWORD=$/PMS_DB_PASSWORD=$(openssl rand -hex 24)/" \
+              -e "s|^PMS_PUBLIC_URL=.*|PMS_PUBLIC_URL=http://localhost:8000|" \
+              -e "s|^PMS_COOKIE_SECURE=true|PMS_COOKIE_SECURE=false|" .env.example > .env
+          docker compose -f compose.selfhost.yaml up -d --wait app
+          docker compose -f compose.selfhost.yaml ps
+          curl -fsS http://127.0.0.1:8000/health
+          curl -fsS http://127.0.0.1:8000/ | grep -q 'id="root"' && echo "portal served"
+          docker compose -f compose.selfhost.yaml exec -T app \
+            python -m pms.admin setup "Synthetic Install Co" "First Admin" first.admin@example.com \
+            > "$RUNNER_TEMP/setup.out"
+          grep -c "^company \|^admin " "$RUNNER_TEMP/setup.out" | grep -qx 2
+          grep -q "^http://localhost:8000/invite#" "$RUNNER_TEMP/setup.out" && echo "invite made"
       - name: Logs
         if: failure()
         run: |
           docker compose logs
           docker compose -f compose.demo.yaml logs
+          docker compose -f compose.selfhost.yaml logs
       - name: Clean up
         if: always()
         run: |
           docker compose down -v
           docker compose -f compose.demo.yaml down -v
+          docker compose -f compose.selfhost.yaml down -v || true
+          rm -f .env
