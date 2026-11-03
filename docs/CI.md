@@ -671,7 +671,7 @@ Not required, because they don't run on every PR: `selfhost (PR) / selfhost` and
 
 Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20.
 - A PR runs the 10 required checks above. `e2e` is chained after `licenses` (a job of seconds),
-  `email (Mailpit)` after `ci` (about 15 minutes), the self-host check after `migrations`, and
+  `email (Mailpit)` after `ci` (about 30 minutes), the self-host check after `migrations`, and
   coverage's two test shards after its lint (a job of about a minute, by when
   `deps-and-secrets`, a job of seconds, has finished), so a PR never has more than 8 jobs
   running at once.
