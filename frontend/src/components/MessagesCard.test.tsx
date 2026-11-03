@@ -59,11 +59,11 @@ describe("MessagesCard", () => {
   });
 
   it("says when there is nothing yet, and shows a refusal in words", async () => {
-    server([], "at most 20 messages a day; call the office if it can't wait");
+    server([], "You can send 20 messages a day. If it can't wait, call your manager.");
     render(<MessagesCard path="/api/tenant/messages" company="Synthetic PMC" person="Tenant 1" />);
     expect(await screen.findByText("No messages yet.")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Write to Synthetic PMC"), { target: { value: "hi" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    expect(await screen.findByText(/at most 20 messages a day/)).toBeTruthy();
+    expect(await screen.findByText(/You can send 20 messages a day/)).toBeTruthy();
   });
 });

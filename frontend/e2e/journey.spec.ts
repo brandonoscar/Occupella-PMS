@@ -112,7 +112,7 @@ async function done(who: Page, name: string): Promise<void> {
 async function joinAsStaff(page: Page, invite: string): Promise<void> {
   await page.goto(`/invite#${invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
   await page.getByRole("button", { name: "Set password" }).click();
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
@@ -129,7 +129,7 @@ async function portalSection(page: Page, link: string, title = link): Promise<vo
 async function joinPortal(page: Page, invite: string): Promise<void> {
   await page.goto(`/invite#${invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
   await page.getByRole("button", { name: "Set password" }).click();
   await expect(page.getByRole("navigation", { name: "Sections" })).toBeVisible();
 }
@@ -496,7 +496,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await portalSection(taylor, "Repairs");
     const requests = part(taylor, "Maintenance requests");
     await requests.getByLabel("What needs fixing?").fill("The kitchen faucet drips");
-    await requests.getByLabel("Someone may come in while I'm out").check();
+    await requests.getByLabel("OK to enter if I'm not home").check();
     await requests.getByLabel("Photos (up to 3, JPEG, PNG or PDF)").setInputFiles(PHOTO);
     await expect(requests.getByTestId("photos-chosen")).toHaveText("Photos: faucet");
     await requests.getByRole("button", { name: "Send request" }).click();

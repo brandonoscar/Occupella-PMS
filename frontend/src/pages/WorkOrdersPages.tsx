@@ -325,8 +325,7 @@ function NewRecurringForm({ books, record, opened }: { books: Portfolio; record:
         <option value="">None: staff assign each one</option>
         {books.vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
       </Select>
-      <div><Button type="submit"
-        says="A work order opens on each of its days, any already due right away. The vendor isn't emailed when one opens.">Add recurring work order</Button></div>
+      <div><Button type="submit">Add recurring work order</Button></div>
     </Form>
   );
 }
@@ -412,7 +411,7 @@ function NewWorkOrderForm({ opened }: { opened: (id: string) => void }) {
       <Field label="Title" id="work-order-summary" required maxLength={500} value={summary}
         onChange={(event) => setSummary(event.target.value)} />
       <DetailsFields draft={draft} change={(part) => setDraft({ ...draft, ...part })} />
-      <div><Button type="submit" says="Opens it with no vendor yet; assign one with Next step. Nothing is sent to anyone.">Open work order</Button></div>
+      <div><Button type="submit">Open work order</Button></div>
       <Notice tone="error">{error}</Notice>
     </Form>
   );
@@ -689,7 +688,7 @@ function DetailsForm({ order, record }: { order: WorkOrder; record: Recorder }) 
         (answer) => (answer.changed ? "Saved the details." : "Nothing changed."));
     }}>
       <DetailsFields draft={draft} change={(part) => setDraft({ ...draft, ...part })} />
-      <div><Button type="submit" says="Saves these details; the old ones stay in the history. No one is emailed.">Save</Button></div>
+      <div><Button type="submit">Save</Button></div>
     </Form>
   );
 }

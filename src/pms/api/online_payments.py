@@ -203,6 +203,7 @@ class OnlinePayment(BaseModel):
 # online, or the lease is on a payment hold. The portal says it in its own words.
 WhyNot = Literal["off", "paused"]
 OFF = "Online payments aren't available."
+PARTNER_DOWN = "We couldn't reach our payments partner. Try again in a few minutes."
 PAUSED = "Online payments are paused for this lease. Contact your property manager."
 SAID: dict[str, str] = {"off": OFF, "paused": PAUSED}
 
@@ -319,7 +320,7 @@ def checkout(session: Tenant, conn: Conn, request: Request, lease_id: UUID, body
     try:
         started = partner.checkout(payment, lines, done)
     except payments.PartnerFailed:
-        raise HTTPException(502, "the payments partner didn't answer: try again soon") from None
+        raise HTTPException(502, PARTNER_DOWN) from None
     conn.execute(
         "INSERT INTO trust_online_payments (id, pmc_id, lease_id, tenant_id, amount, tenant_fee,"
         " fee_payer, method, partner, partner_ref)"

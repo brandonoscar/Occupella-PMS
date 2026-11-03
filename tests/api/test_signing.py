@@ -128,7 +128,7 @@ def test_a_signer_reads_agrees_opens_and_signs_then_keeps_the_lease_and_certific
     assert (seen["signer"], seen["role"], seen["home"]) == (
         "Applicant A",
         "tenant",
-        "Property 1, Unit 1",
+        "Property 1",  # its only unit: the home is the property alone
     )
     assert (seen["document_title"], seen["monthly_rent"], seen["ends_on"]) == (
         "Residential lease",
@@ -561,8 +561,8 @@ def test_a_tenant_reaches_only_their_own_leases_files(
 
     assert [a.status_code for a in others] == [404] * 3
     assert [(a.status_code, a.json()["detail"]) for a in own] == [
-        (404, "this lease wasn't signed through the PMS"),
-        (404, "this lease wasn't signed through the PMS"),
+        (404, "This lease wasn't signed online."),
+        (404, "This lease wasn't signed online."),
         (404, "no such document"),
         (404, "no such document"),
     ]
@@ -599,7 +599,7 @@ def test_a_lease_signed_through_another_partner_has_no_certificate_here(
     assert other_client.get(mine["files"][0]["url"]).content == LEASE_PDF
     assert (certificate.status_code, certificate.json()["detail"]) == (
         404,
-        "this lease was signed elsewhere: it has no certificate here",
+        "This lease wasn't signed online, so it has no signing certificate.",
     )
 
 

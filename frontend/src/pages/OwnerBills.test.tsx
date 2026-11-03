@@ -157,10 +157,10 @@ describe("OwnerBills", () => {
   });
 
   it("says why a decision was refused", async () => {
-    server([200, [waiting]], [409, { detail: "this bill has its decision already" }]);
+    server([200, [waiting]], [409, { detail: "This bill was already approved or declined." }]);
     render(<OwnerBills />);
     fireEvent.click(await screen.findByRole("button", { name: "Approve…" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" }));
-    expect((await screen.findByRole("alert")).textContent).toBe("this bill has its decision already");
+    expect((await screen.findByRole("alert")).textContent).toBe("This bill was already approved or declined.");
   });
 });

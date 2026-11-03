@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import { holdBack } from "../holdBack";
 import type { Lease } from "./TenantHome";
-import { TenantHome, comingDueLabel, firstLease, leaseLabel, monthlyLabel } from "./TenantHome";
+import { TenantHome, comingDueLabel, firstLease, leaseLabel, monthlyLabel, leaseTermLabel } from "./TenantHome";
 
 afterEach(() => {
   cleanup();
@@ -23,6 +23,7 @@ const lease = (id: string, inEffect: boolean): Lease => ({
   lease_id: id,
   property: "Property 1",
   unit: `Unit ${id}`,
+  home: `Property 1, Unit ${id}`,
   starts_on: "2026-01-01",
   ends_on: inEffect ? null : "2026-06-30",
   monthly_rent: "1500.00",
@@ -257,7 +258,7 @@ describe("TenantHome", () => {
     fireEvent.change(screen.getByLabelText("What needs fixing?"), {
       target: { value: "Tap drips" },
     });
-    fireEvent.click(screen.getByLabelText("Someone may come in while I'm out"));
+    fireEvent.click(screen.getByLabelText("OK to enter if I'm not home"));
     fireEvent.click(screen.getByRole("button", { name: "Send request" }));
 
     expect(await screen.findByText("Sent to Synthetic PMC.")).toBeTruthy();
@@ -459,5 +460,12 @@ describe("TenantHome", () => {
     render(<TenantHome me={ME} />);
 
     expect(await screen.findByText("No lease is on file for you. Ask Synthetic PMC.")).toBeTruthy();
+  });
+});
+
+describe("leaseTermLabel", () => {
+  it("reads month-to-month from its first day, and a fixed term by its two days", () => {
+    expect(leaseTermLabel("2025-12-01", null)).toBe("Month-to-month since 12/01/2025");
+    expect(leaseTermLabel("2025-12-01", "2026-11-30")).toBe("12/01/2025 to 11/30/2026");
   });
 });

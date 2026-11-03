@@ -322,9 +322,7 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
       </label>
       <Notice tone="error">{problem}</Notice>
       <div>
-        <Button type="submit" disabled={problem !== "" || sharesOff} says={shared || byOwnership
-          ? "Nothing is paid; each share is held from its owner's balance from its date. Over a limit, it waits for that owner, emailed if they use the portal."
-          : "Nothing is paid; it's held from the owner's balance from its date. Over their limit, it waits for them, emailed if they use the portal."}>
+        <Button type="submit" disabled={problem !== "" || sharesOff}>
           Record bill
         </Button>
       </div>
@@ -370,7 +368,7 @@ export function ApprovalForm({ bill, record }: { bill: Bill; record: Recorder })
           onChange={(e) => setNote(e.target.value)}
           className="rounded-sm border border-line-strong bg-sunken px-3 py-2 text-base text-ink" />
       </label>
-      <div><Button type="submit" says="Nothing is paid yet. The bill can be paid once the owner's balance covers it.">Record approval</Button></div>
+      <div><Button type="submit">Record approval</Button></div>
     </Form>
   );
 }
@@ -525,8 +523,7 @@ export function ExpenseAccountForm({ bill, books, current, record }: {
         </Select>
       )}
       <div>
-        <Button type="submit" disabled={split && total !== sumMoney([bill.amount])}
-          says="Puts the bill in these expense accounts for the reports; the old choice stays in the history. No money moves.">
+        <Button type="submit" disabled={split && total !== sumMoney([bill.amount])}>
           Save
         </Button>
       </div>

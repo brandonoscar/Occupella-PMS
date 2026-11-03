@@ -31,6 +31,7 @@ import { MessagesCard } from "../components/MessagesCard";
 import type { NavEntry } from "../components/Shell";
 import { CreditCard, FileText, Home as HomeIcon, MessagesSquare, UserRound, Wrench } from "lucide-react";
 import type { MoveOutNotice } from "./TenantPortalCards";
+import { firstName } from "../directory";
 import { AnnouncementsCard, LeaseUploadForm, MoveOutNoticeCard } from "./TenantPortalCards";
 
 // What the lease charges every month: its rent, and each recurring fee or credit not stopped
@@ -49,6 +50,8 @@ export type Lease = {
   lease_id: string;
   property: string;
   unit: string;
+  // The home as the tenant reads it: "Elm Court, Unit 4", or "Cedar House" (src/pms/homes.py).
+  home: string;
   starts_on: string;
   ends_on: string | null;
   monthly_rent: string;
@@ -131,7 +134,12 @@ const AMOUNT = "text-right";
 // A lease as the picker names it: its home and first day, and whether it has ended or is to come.
 export function leaseLabel(lease: Lease, today: string): string {
   const when = lease.in_effect ? "" : lease.starts_on > today ? " (to come)" : " (ended)";
-  return `${lease.property}, ${lease.unit}, from ${usDate(lease.starts_on)}${when}`;
+  return `${lease.home}, from ${usDate(lease.starts_on)}${when}`;
+}
+
+// A lease's term as the tenant reads it: "Month-to-month since 12/01/2025", or its two days.
+export function leaseTermLabel(startsOn: string, endsOn: string | null): string {
+  return endsOn ? `${usDate(startsOn)} to ${usDate(endsOn)}` : `Month-to-month since ${usDate(startsOn)}`;
 }
 
 // The lease shown first: the one in effect, else the newest.
@@ -223,7 +231,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
 
   return (
     <Shell me={me} nav={TENANT_NAV}>
-      <PageHeader title={heading || `Welcome, ${me.name}`} description={description} />
+      <PageHeader title={heading || `Welcome, ${firstName(me.name)}`} description={description} />
       <Notice tone="error">{error}</Notice>
       {section === "overview" && <AnnouncementsCard />}
       {!leaseSection ? null : leases === null ? (
@@ -252,8 +260,8 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
             )}
             <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-base sm:grid-cols-4">
               {[
-                ["Home", `${lease.property}, ${lease.unit}`],
-                ["Term", `${usDate(lease.starts_on)} to ${lease.ends_on ? usDate(lease.ends_on) : "month to month"}`],
+                ["Home", lease.home],
+                ["Term", leaseTermLabel(lease.starts_on, lease.ends_on)],
                 ["Rent", `${money(lease.monthly_rent)} a month` + lease.rent_changes
                   .map((c) => `; ${money(c.monthly_rent)} from ${usDate(c.effective_on)} (notice given ${usDate(c.notice_given_on)})`)
                   .join("")],
@@ -475,7 +483,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                     checked={entryAllowed}
                     onChange={(e) => setEntryAllowed(e.target.checked)}
                   />
-                  Someone may come in while I'm out
+                  OK to enter if I'm not home
                 </label>
                 <label className="flex items-center gap-2 text-sm text-ink-muted">
                   <input type="checkbox" checked={emergency} onChange={(e) => setEmergency(e.target.checked)} />

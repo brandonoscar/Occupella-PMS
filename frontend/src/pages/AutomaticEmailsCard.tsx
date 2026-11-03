@@ -146,7 +146,7 @@ function EmailSettingsForm({ settings, save }: { settings: EmailSettings; save: 
         as the nightly run finds it.
       </p>
       <div>
-        <Button type="submit" says="Sets which emails go out by themselves from now on. None is sent as you save; the old settings stay in the history.">
+        <Button type="submit">
           Save
         </Button>
       </div>

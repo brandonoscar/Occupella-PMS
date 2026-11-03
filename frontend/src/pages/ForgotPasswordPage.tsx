@@ -41,8 +41,7 @@ export function ForgotPasswordPage() {
             For owners and tenants. Staff: ask an admin for a new invite.
           </p>
           <Notice tone="error">{error}</Notice>
-          <Button type="submit"
-            says="Emails a link to set a new password, if this email signs in here. Your password works until you use it.">
+          <Button type="submit">
             Email me a link
           </Button>
         </Form>

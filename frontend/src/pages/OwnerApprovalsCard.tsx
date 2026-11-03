@@ -67,7 +67,7 @@ function OwnerApprovalsForm({ settings, save }: {
       <Field label="Ask for the owner's typed name over" id="sign-over" type="number" min="0" step="0.01"
         required value={amount} onChange={(e) => setAmount(e.target.value)} />
       <div>
-        <Button type="submit" says="Applies to bills owners approve from now on.">Save</Button>
+        <Button type="submit">Save</Button>
       </div>
     </Form>
   );

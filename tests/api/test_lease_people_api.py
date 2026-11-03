@@ -173,7 +173,7 @@ def test_a_tenant_who_left_reads_the_lease_and_files_nothing_more(
     )
     for answer in (request, policy):
         assert answer.status_code == 409
-        assert answer.json()["detail"] == f"you left this lease on {TODAY:%m/%d/%Y}"
+        assert answer.json()["detail"] == f"You left this lease on {TODAY:%m/%d/%Y}."
     assert [str(lease)] == [
         found["lease_id"] for found in ok(other_client.get("/api/tenant/leases"))
     ]

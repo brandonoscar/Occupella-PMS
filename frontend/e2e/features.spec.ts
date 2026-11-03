@@ -57,7 +57,7 @@ test.afterEach(async ({ page }) => {
 async function joinAsStaff(page: Page, invite: string): Promise<string> {
   await page.goto(`/invite#${invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
   await page.getByRole("button", { name: "Set password" }).click();
   const secret = (await page.locator("code").textContent()) ?? "";
   await page.getByLabel("Code").fill(totp(secret));
@@ -70,7 +70,7 @@ async function joinAsStaff(page: Page, invite: string): Promise<string> {
 async function joinPortal(page: Page, invite: string): Promise<void> {
   await page.goto(`/invite#${invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
   await page.getByRole("button", { name: "Set password" }).click();
   await expect(page.getByRole("navigation", { name: "Sections" })).toBeVisible();
 }
@@ -1431,8 +1431,9 @@ test("a tenant sees their lease, what comes each month and two months of charges
 }) => {
   const people = seed.features["tenant-portal"]!;
   await joinPortal(page, people.taylor);
-  await expect(page.getByRole("heading", { level: 1, name: "Welcome, Taylor Demo" })).toBeVisible();
-  await expect(page.getByText("Cedar House, House")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Welcome, Taylor" })).toBeVisible();
+  // Cedar House's one unit is "House": the home reads the property alone (migration 20261104000500).
+  await expect(part(page, "Your lease").getByText("Cedar House", { exact: true })).toBeVisible();
   await expect(page.getByText("Quinn Demo, Taylor Demo", { exact: true })).toBeVisible();
   // Last month's rent is paid and this month's not charged yet: nothing is due.
   await expect(page.getByTestId("balance-due")).toHaveText("$0.00");
@@ -4266,7 +4267,7 @@ test("staff make a tenant a tenant at a second property and lease them a unit th
   // Newest first: the lease at Aspen Row, then the one at Cedar House.
   await portalSection(tenant, "Lease", "Your lease");
   await picker.selectOption({ index: 1 });
-  await expect(part(tenant, "Your lease")).toContainText("Cedar House, House");
+  await expect(part(tenant, "Your lease").getByText("Cedar House", { exact: true })).toBeVisible();
   await tenant.close();
 });
 
@@ -5580,7 +5581,7 @@ test("a tenant gives notice to move out from their lease; staff see it on the Da
   await moving.getByLabel("Anything to add (optional)").fill("Moving for work.");
   await moving.getByRole("button", { name: "Give notice" }).click();
   await expect(moving.getByTestId("notice-given")).toContainText(`You told Demo Property Management you are leaving on ${us(leaving)}`);
-  await portalSection(page, "Overview", "Welcome, Drew Sample");
+  await portalSection(page, "Overview", "Welcome, Drew");
   await expect(page.getByTestId("leaving")).toHaveText(`You gave notice: leaving ${us(leaving)}.`);
 
   const staff = await browser.newPage();

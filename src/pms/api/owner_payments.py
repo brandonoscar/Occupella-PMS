@@ -479,7 +479,7 @@ def checkout(session: Owner, conn: Conn, request: Request, body: OwnerPay) -> on
             payment, [(f"Owner contribution – {account.property}", body.amount)], done
         )
     except payments.PartnerFailed:
-        raise HTTPException(502, "the payments partner didn't answer: try again soon") from None
+        raise HTTPException(502, online.PARTNER_DOWN) from None
     conn.execute(
         "INSERT INTO trust_owner_online_payments (id, pmc_id, ledger_account_id, amount, method,"
         " partner, partner_ref) VALUES (%s, %s, %s, %s, 'ach', %s, %s)",

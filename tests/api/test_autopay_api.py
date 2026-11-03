@@ -139,7 +139,7 @@ def test_the_tenant_turns_it_off(client, tenant_client, staff, tenant, lease):
     refused(
         tenant_client.post(f"/api/payments/leases/{lease}/autopay/stop", json={}),
         404,
-        "you have no autopay of this lease on",
+        "Autopay isn't on for this lease.",
     )
 
 
@@ -168,7 +168,7 @@ def test_a_partner_that_does_not_answer_saves_no_autopay(
             f"/api/payments/leases/{lease}/autopay", json={"rule": "balance", "amount": "1500.00"}
         ),
         502,
-        "the payments partner didn't answer: try again soon",
+        "We couldn't reach our payments partner. Try again in a few minutes.",
     )
     assert conn.execute(
         "SELECT count(*) FROM trust_autopay WHERE lease_id = %s", (lease,)
@@ -318,7 +318,7 @@ def test_staff_see_a_leases_autopays_and_turn_one_off_naming_who(
     refused(
         client.post(f"/api/payments/autopay/{mine}/stop", json={}),
         409,
-        "this autopay is off already",
+        "Autopay is already off.",
     )
     refused(client.post(f"/api/payments/autopay/{uuid4()}/stop", json={}), 404)
     refused(client.get(f"/api/payments/autopay?lease={uuid4()}"), 404)

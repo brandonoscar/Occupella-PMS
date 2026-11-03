@@ -61,9 +61,9 @@ def statement_table(
     """An owner's statement over whole days (UTC): theirs in the portal, any owner's for staff
     (src/pms/api/directory.py)."""
     if end < start:
-        raise HTTPException(422, "a statement runs from a day to the same day or a later one")
+        raise HTTPException(422, "Pick an end date on or after the start date.")
     if (end - start).days > MAX_DAYS:
-        raise HTTPException(422, f"a statement covers at most {MAX_DAYS} days")
+        raise HTTPException(422, f"Pick {MAX_DAYS} days or fewer.")
     period = (
         datetime.combine(start, time(0), UTC),
         datetime.combine(end + timedelta(days=1), time(0), UTC),
@@ -185,7 +185,7 @@ SELECT d.id, d.title, d.content_type, d.size, d.created_at,
                    ELSE 'property' END,
        CASE d.kind
            WHEN 'property_document' THEN p.display_name
-           WHEN 'unit_document' THEN up.display_name || ', ' || u.display_name
+           WHEN 'unit_document' THEN up.display_name || coalesce(', ' || trust_unit_shown(u.id), '')
            WHEN 'receipt' THEN 'Bill ' || b.reference || ', ' || v.display_name
        END
 FROM trust_documents AS d
@@ -371,10 +371,10 @@ def decide(conn: psycopg.Connection[Any], query: str, params: tuple[Any, ...]) -
     try:
         conn.execute(query, params)
     except psycopg.errors.UniqueViolation:
-        raise HTTPException(409, "this bill has its decision already") from None
+        raise HTTPException(409, "This bill was already approved or declined.") from None
     except psycopg.errors.CheckViolation:  # its money was taken before the owner declined it
         raise HTTPException(
-            409, "money was taken from your account to pay this bill already"
+            409, "This bill is already being paid, so it can't be declined."
         ) from None
 
 

@@ -205,9 +205,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `11/01/2025 – Month to month`. Money leaving trust (a draw, a bill paid, the company's fees
   taken out, a deposit returned) waits for staff to confirm a question naming the amount
   (`components/Confirm.tsx`), and a row's risky actions (It bounced, Archive...) sit in its ⋯ menu
-  (`components/RowMenu.tsx`), each confirmed. Every action button has one plain line under it
-  saying what it does and what it doesn't (`Button`'s `says`; `src/buttonRules.test.ts` fails a
-  submit button without one), an action that can't be taken back asks first (`AskFirst`), and a
+  (`components/RowMenu.tsx`), each confirmed. Copy reads like Stripe's or Linear's: short,
+  sentence case, a button's label saying what it does; a line under it (`Button`'s `says`) only
+  where it stops a mistake (money leaving trust or moving between people, someone emailed or shown
+  something, a step that can't be taken back), each listed with why in `src/buttonRules.test.ts`
+  (the founder's review of 11/03). A home reads as tenants, owners, vendors and applicants see it
+  through `trust_unit_shown` (migration 20261104000500, `src/pms/homes.py`): "Cedar House", not
+  "Cedar House, House", when its unit's name is generic or it is the property's only unit; staff's
+  pages keep every unit's name. An action that can't be taken back asks first (`AskFirst`), and a
   page shows who an email goes to before it goes (ADR 0010, phase 4). What a save did shows as a toast
   (`components/Said.tsx`, which keeps an off-screen status line; `components/Toaster.tsx`), a
   refused change's reason too (`api.post`), and a form's submit button is busy while its save runs

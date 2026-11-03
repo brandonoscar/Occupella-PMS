@@ -23,6 +23,7 @@ from pms import accounts, exports, notices
 from pms.api import directory, documents, leaving, maintenance, moveout, offers, outbox, signing
 from pms.api import rent as rent_api
 from pms.api.deps import Conn, Rows, Tenant, download, refusal
+from pms.homes import home
 from pms.leasing import esign
 
 router = APIRouter(prefix="/api/tenant")
@@ -88,6 +89,9 @@ class Lease(BaseModel):
     lease_id: UUID
     property: str
     unit: str
+    # The home as the tenant reads it: "Elm Court, Unit 4", or "Cedar House" when the unit's name
+    # adds nothing (src/pms/homes.py).
+    home: str
     starts_on: date
     ends_on: date | None
     # Money as text, so no float ever rounds a cent. The rent in force today.
@@ -162,7 +166,7 @@ def still_on(conn: psycopg.Connection[Any], session: accounts.Session, lease_id:
         (session.pmc_id, lease_id, tenant, today()),
     ).fetchone()
     if row is not None:
-        raise HTTPException(409, f"you left this lease on {row[0]:%m/%d/%Y}")
+        raise HTTPException(409, f"You left this lease on {row[0]:%m/%d/%Y}.")
     return tenant
 
 
@@ -173,7 +177,8 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
     on = today()
     mine = {"on": on, "pmc": session.pmc_id, "person": session.person_id}
     rows = conn.execute(
-        "SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on,"  # noqa: S608
+        "SELECT l.id, p.display_name, u.display_name, trust_unit_shown(u.id),"  # noqa: S608
+        " l.starts_on, l.ends_on,"
         " trust_rent_on(l.id, %(on)s), trust_rent_due_day(l.id, %(on)s),"
         " array(SELECT t.display_name FROM trust_lease_tenants AS everyone"
         "       JOIN trust_tenants AS t ON t.id = everyone.tenant_id"
@@ -233,6 +238,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             lease_id=lease,
             property=prop,
             unit=unit,
+            home=home(prop, shown),
             starts_on=starts,
             ends_on=ends,
             monthly_rent=exports.text(rent),
@@ -256,7 +262,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             files=files[lease],
             move_out_notice=notices_given[lease],
         )
-        for lease, prop, unit, starts, ends, rent, due_day, names, balance, returned in rows
+        for lease, prop, unit, shown, starts, ends, rent, due_day, names, balance, returned in rows
     ]
 
 
@@ -324,9 +330,11 @@ def give_notice(
     tenant = still_on(conn, session, lease_id)
     note = None if new.note is None or not new.note.strip() else new.note.strip()
     if note is not None and "\x00" in note:
-        raise HTTPException(422, "a note is text")
+        raise HTTPException(422, "Your note has characters that can't be saved.")
     if given_today(conn, "trust_move_out_notices", "tenant_id", lease_id) >= NOTICES_PER_DAY:
-        raise HTTPException(429, f"at most {NOTICES_PER_DAY} notices a day per lease")
+        raise HTTPException(
+            429, f"You can give notice {NOTICES_PER_DAY} times a day. Try again tomorrow."
+        )
     try:
         with conn.transaction():
             conn.execute(
@@ -348,9 +356,7 @@ def file_document(session: Tenant, conn: Conn, lease_id: UUID, new: NewLeaseDocu
     tenant's. It can't be taken back from the portal: staff remove it."""
     tenant = still_on(conn, session, lease_id)
     if given_today(conn, "trust_documents", "uploaded_by_tenant", lease_id) >= UPLOADS_PER_DAY:
-        raise HTTPException(
-            429, f"at most {UPLOADS_PER_DAY} files a day per lease; call the office"
-        )
+        raise HTTPException(429, f"You can send {UPLOADS_PER_DAY} files a day. Try again tomorrow.")
     made = documents.keep(
         conn,
         session.pmc_id,
@@ -373,7 +379,7 @@ def signed_offer(
     lease_of(conn, session, lease_id)
     row = conn.execute(SIGNED, (esign.PARTNER, session.pmc_id, lease_id)).fetchone()
     if row is None:
-        raise HTTPException(404, "this lease wasn't signed through the PMS")
+        raise HTTPException(404, "This lease wasn't signed online.")
     return row[0], row[2]
 
 
@@ -389,7 +395,9 @@ def signing_certificate(session: Tenant, conn: Conn, lease_id: UUID) -> Response
     """The signing certificate of the lease, when it was signed on the PMS's own page."""
     offer, here = signed_offer(conn, session, lease_id)
     if not here:
-        raise HTTPException(404, "this lease was signed elsewhere: it has no certificate here")
+        raise HTTPException(
+            404, "This lease wasn't signed online, so it has no signing certificate."
+        )
     return signing.certificate_pdf(conn, session.pmc_id, offer)
 
 
@@ -518,7 +526,7 @@ def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Re
     """A request under one of the tenant's leases that is in effect today."""
     summary = new.summary.strip()
     if not summary:
-        raise HTTPException(422, "say what needs fixing")
+        raise HTTPException(422, "Tell us what needs fixing.")
     tenant = still_on(conn, session, new.lease_id)
     on = today()
     row = conn.execute(
@@ -527,7 +535,7 @@ def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Re
         (on, on, new.lease_id),
     ).fetchone()
     if row is None or not row[0]:
-        raise HTTPException(409, "requests are filed under a lease in effect today")
+        raise HTTPException(409, "You can send requests only for your current lease.")
     recent = conn.execute(
         "SELECT count(*) FROM trust_maintenance_requests"
         " WHERE pmc_id = %s AND lease_id = %s AND submitted_at > %s",
@@ -535,7 +543,8 @@ def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Re
     ).fetchone()
     if recent is not None and recent[0] >= REQUESTS_PER_DAY:
         raise HTTPException(
-            429, f"at most {REQUESTS_PER_DAY} requests a day per lease; call the office"
+            429,
+            f"You can send {REQUESTS_PER_DAY} requests a day. If it can't wait, call your manager.",
         )
     created = conn.execute(
         "INSERT INTO trust_maintenance_requests"

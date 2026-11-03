@@ -169,8 +169,11 @@ def test_only_an_owner_reaches_the_owner_endpoints(client, conn, app_conn, pmc, 
 @pytest.mark.parametrize(
     ("params", "detail"),
     [
-        ({"start": "2026-02-01", "end": "2026-01-01"}, "from a day to the same day or a later one"),
-        ({"start": "2000-01-01", "end": "2026-01-01"}, "at most 3660 days"),
+        (
+            {"start": "2026-02-01", "end": "2026-01-01"},
+            "Pick an end date on or after the start date.",
+        ),
+        ({"start": "2000-01-01", "end": "2026-01-01"}, "Pick 3660 days or fewer."),
         ({"start": "not a day", "end": "2026-01-01"}, None),
         ({"start": "2026-01-01"}, None),
         ({"start": "2026-01-01", "end": "2026-01-31", "format": "docx"}, None),
@@ -283,7 +286,7 @@ def test_an_owner_decides_a_bill_once(client, conn, app_conn, pmc):
     declined = client.post(f"/api/owner/bills/{roof}/decline", json={"reason": "Changed my mind"})
 
     assert [again.status_code, declined.status_code] == [409, 409]
-    assert again.json()["detail"] == "this bill has its decision already"
+    assert again.json()["detail"] == "This bill was already approved or declined."
 
 
 def test_a_bill_whose_money_was_taken_is_not_declined_in_the_portal(client, conn, app_conn, pmc):
@@ -294,7 +297,7 @@ def test_a_bill_whose_money_was_taken_is_not_declined_in_the_portal(client, conn
     answer = client.post(f"/api/owner/bills/{light}/decline", json={"reason": "Too much"})
 
     assert answer.status_code == 409
-    assert answer.json()["detail"] == "money was taken from your account to pay this bill already"
+    assert answer.json()["detail"] == "This bill is already being paid, so it can't be declined."
 
 
 def test_another_owners_bill_reads_as_not_found(client, conn, app_conn, pmc):

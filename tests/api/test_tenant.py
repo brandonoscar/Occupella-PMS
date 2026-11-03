@@ -91,6 +91,8 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "lease_id": str(home.lease),
             "property": "Property 1",
             "unit": "Unit 1",
+            # The property has more than one unit, so the home says which (src/pms/homes.py).
+            "home": "Property 1, Unit 1",
             "starts_on": "2026-01-01",
             "ends_on": None,
             "monthly_rent": "1500.00",
@@ -132,6 +134,7 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "lease_id": str(home.old_lease),
             "property": "Property 1",
             "unit": "Unit 0",
+            "home": "Property 1, Unit 0",
             "starts_on": "2025-01-01",
             "ends_on": "2025-12-31",
             "monthly_rent": "1400.00",
@@ -406,7 +409,7 @@ def test_a_request_is_filed_only_under_a_lease_in_effect(client, conn, app_conn,
     answer = client.post("/api/tenant/requests", json=new_request(home, home.old_lease))
 
     assert answer.status_code == 409
-    assert answer.json()["detail"] == "requests are filed under a lease in effect today"
+    assert answer.json()["detail"] == "You can send requests only for your current lease."
 
 
 def test_ten_requests_a_day_per_lease(client, conn, app_conn, home):

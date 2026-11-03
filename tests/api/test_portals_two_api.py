@@ -527,7 +527,7 @@ def test_a_lease_takes_so_many_files_a_day_from_its_tenants(
     ]
 
     assert [a.status_code for a in answers] == [201] * tenant_api.UPLOADS_PER_DAY + [429]
-    assert "call the office" in answers[-1].json()["detail"]
+    assert answers[-1].json()["detail"] == "You can send 10 files a day. Try again tomorrow."
     assert len(ok(other_client.get("/api/tenant/leases"))[0]["files"]) == tenant_api.UPLOADS_PER_DAY
 
 

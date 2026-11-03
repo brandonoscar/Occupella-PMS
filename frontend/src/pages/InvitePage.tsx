@@ -8,6 +8,7 @@ import { Notice } from "../components/Notice";
 import { Wordmark } from "../components/Shell";
 import { navigate } from "../router";
 import { PMC_KEY } from "./SignInPage";
+import { firstName } from "../directory";
 import { Form } from "../components/Form";
 
 type Details = { kind: string; email: string; name: string; pmc_name: string; expires_at: string };
@@ -88,7 +89,7 @@ export function InvitePage() {
       <Wordmark />
       {details && (
         <div className="flex flex-col gap-1">
-          <h1 className="font-display text-lg font-semibold">Welcome, {details.name}</h1>
+          <h1 className="font-display text-lg font-semibold">Welcome, {firstName(details.name)}</h1>
           <p className="text-sm text-ink-muted">
             {details.pmc_name} invited {details.email} to sign in.
           </p>
@@ -99,13 +100,11 @@ export function InvitePage() {
           <Field label="Choose a password (12 characters or more)" id="password" type="password"
             autoComplete="new-password" minLength={12} value={password}
             onChange={(e) => setPassword(e.target.value)} required />
-          <Field label="The same password again" id="again" type="password"
+          <Field label="Confirm password" id="again" type="password"
             autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)}
             required />
           <Notice tone="error">{error}</Notice>
-          <Button type="submit" disabled={busy} says={details.kind === "staff"
-            ? "Sets your password. Next you set up an authenticator app; you aren't signed in until then."
-            : "Sets your password and signs you in. This link then stops working, and other sign-ins of yours end."}>
+          <Button type="submit" disabled={busy}>
             Set password
           </Button>
         </Form>
@@ -121,8 +120,7 @@ export function InvitePage() {
           <Field label="Code" id="code" inputMode="numeric" autoComplete="one-time-code"
             pattern="[0-9]{6}" value={code} onChange={(e) => setCode(e.target.value)} required />
           <Notice tone="error">{error}</Notice>
-          <Button type="submit" disabled={busy}
-            says="Checks the code and signs you in. Each sign-in after this asks for a new code from the app.">
+          <Button type="submit" disabled={busy}>
             Finish
           </Button>
         </Form>

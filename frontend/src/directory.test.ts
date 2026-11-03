@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Contact } from "./directory";
-import { addressLines, contactBody, hasContact } from "./directory";
+import { addressLines, contactBody, firstName, hasContact } from "./directory";
 
 const NONE: Contact = {
   email: null, phone: null, alternate_phone: null, address_line_1: null, address_line_2: null,
@@ -26,5 +26,13 @@ describe("contact details", () => {
   it("knows whether any detail is recorded", () => {
     expect(hasContact(NONE)).toBe(false);
     expect(hasContact({ ...NONE, alternate_phone: "555-555-0100" })).toBe(true);
+  });
+});
+
+describe("firstName", () => {
+  it("greets a person by the first word of their name", () => {
+    expect(firstName("Taylor Demo")).toBe("Taylor");
+    expect(firstName("  Drew  Sample ")).toBe("Drew");
+    expect(firstName("Cher")).toBe("Cher");
   });
 });

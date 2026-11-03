@@ -13605,6 +13605,31 @@ $$;
 
 
 --
+-- Name: trust_unit_shown(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_unit_shown(p_unit_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT CASE
+        WHEN lower(btrim(u.display_name)) IN (
+            'house', 'home', 'main', 'main house', 'unit', 'whole house', 'entire home',
+            'single family', 'single-family', 'sfh', 'residence'
+        ) THEN NULL
+        WHEN NOT EXISTS (
+            SELECT 1 FROM trust_units AS o
+            WHERE o.property_id = u.property_id AND o.id <> u.id
+              AND NOT trust_is_archived(NULL, o.id)
+        ) THEN NULL
+        ELSE u.display_name
+    END
+    FROM trust_units AS u
+    WHERE u.id = p_unit_id
+$$;
+
+
+--
 -- Name: trust_unmatch_bank_lines(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -34080,4 +34105,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261104000100'),
     ('20261104000200'),
     ('20261104000300'),
-    ('20261104000400');
+    ('20261104000400'),
+    ('20261104000500');

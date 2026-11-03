@@ -460,7 +460,7 @@ def test_a_partner_that_does_not_answer_starts_no_payment(
     refused(
         tenant_client.post(f"/api/payments/leases/{lease}/checkout", json={"amount": "100.00"}),
         502,
-        "the payments partner didn't answer: try again soon",
+        "We couldn't reach our payments partner. Try again in a few minutes.",
     )
     started = conn.execute(
         "SELECT count(*) FROM trust_online_payments WHERE lease_id = %s", (lease,)

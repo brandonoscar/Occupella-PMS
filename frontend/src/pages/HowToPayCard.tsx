@@ -72,7 +72,7 @@ function HowToPayForm({ body, save }: { body: string; save: (body: unknown) => P
           className="rounded-sm border border-line-strong bg-sunken px-3 py-2 text-base text-ink" />
       </label>
       <div>
-        <Button type="submit" says="Tenants and owners see this when they can't pay online.">Save</Button>
+        <Button type="submit">Save</Button>
       </div>
     </Form>
   );

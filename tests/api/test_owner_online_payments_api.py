@@ -381,7 +381,7 @@ def test_a_partner_that_does_not_answer_starts_no_payment(
     refused(
         pay_answer(owner_client, pmc.owners[0].account),
         502,
-        "the payments partner didn't answer: try again soon",
+        "We couldn't reach our payments partner. Try again in a few minutes.",
     )
     assert (
         conn.execute(
