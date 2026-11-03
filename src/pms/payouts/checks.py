@@ -17,6 +17,8 @@ from decimal import Decimal
 
 from fpdf import FPDF
 
+from pms import pdf_fonts
+
 ONES = [
     "zero",
     "one",
@@ -84,57 +86,53 @@ class Check:
     lines: list[str] = field(default_factory=list)
 
 
-def _latin1(value: str) -> str:
-    return value.encode("latin-1", "replace").decode("latin-1")
-
-
 def _money(amount: Decimal) -> str:
     return f"${amount:,.2f}"
 
 
 def _stub(pdf: FPDF, top: float, company: str, check: Check) -> None:
     pdf.set_xy(15, top)
-    pdf.set_font("Helvetica", style="B", size=10)
-    pdf.cell(120, 6, _latin1(company))
-    pdf.cell(0, 6, _latin1(f"Check {check.number}"), align="R")
-    pdf.set_font("Helvetica", size=9)
+    pdf.set_font(pdf_fonts.FAMILY, style="B", size=10)
+    pdf.cell(120, 6, pdf_fonts.printable(company))
+    pdf.cell(0, 6, pdf_fonts.printable(f"Check {check.number}"), align="R")
+    pdf.set_font(pdf_fonts.FAMILY, size=9)
     pdf.set_xy(15, top + 8)
-    pdf.cell(120, 5, _latin1(f"Paid to {check.payee}"))
+    pdf.cell(120, 5, pdf_fonts.printable(f"Paid to {check.payee}"))
     pdf.cell(0, 5, check.on.strftime("%m/%d/%Y"), align="R")
     pdf.set_xy(15, top + 14)
     for line in check.lines[:12]:
         pdf.set_x(15)
-        pdf.cell(0, 5, _latin1(line), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 5, pdf_fonts.printable(line), new_x="LMARGIN", new_y="NEXT")
     pdf.set_xy(15, top + 76)
-    pdf.set_font("Helvetica", style="B", size=10)
-    pdf.cell(0, 6, _latin1(f"Total {_money(check.amount)}"), align="R")
+    pdf.set_font(pdf_fonts.FAMILY, style="B", size=10)
+    pdf.cell(0, 6, pdf_fonts.printable(f"Total {_money(check.amount)}"), align="R")
 
 
 def write(company: str, checks: list[Check]) -> bytes:
     """One page per check, in the order given."""
     if not checks:
         raise ValueError("no checks to print")
-    pdf = FPDF(unit="mm", format="Letter")
+    pdf = pdf_fonts.Pdf(unit="mm", format="Letter")
     pdf.set_auto_page_break(False)
-    pdf.set_title(_latin1(f"{company} checks"))
+    pdf.set_title(pdf_fonts.printable(f"{company} checks"))
     for check in checks:
         pdf.add_page()
         # The check: the top third (93 mm) of the sheet.
-        pdf.set_font("Helvetica", size=10)
+        pdf.set_font(pdf_fonts.FAMILY, size=10)
         pdf.set_xy(160, 18)
         pdf.cell(40, 6, check.on.strftime("%m/%d/%Y"), align="R")
         pdf.set_xy(32, 33)
-        pdf.cell(130, 6, _latin1(check.payee))
+        pdf.cell(130, 6, pdf_fonts.printable(check.payee))
         pdf.set_xy(170, 33)
         pdf.cell(30, 6, f"**{check.amount:,.2f}", align="R")
         pdf.set_xy(15, 43)
-        pdf.cell(185, 6, _latin1(in_words(check.amount)).ljust(90, "*"))
+        pdf.cell(185, 6, pdf_fonts.printable(in_words(check.amount)).ljust(90, "*"))
         pdf.set_xy(25, 53)
         for line in [check.payee, *check.address][:5]:
             pdf.set_x(25)
-            pdf.cell(100, 5, _latin1(line), new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(100, 5, pdf_fonts.printable(line), new_x="LMARGIN", new_y="NEXT")
         pdf.set_xy(15, 78)
-        pdf.cell(100, 6, _latin1(f"Memo: {check.memo}"))
+        pdf.cell(100, 6, pdf_fonts.printable(f"Memo: {check.memo}"))
         # The stubs: the middle and bottom thirds.
         _stub(pdf, 98, company, check)
         _stub(pdf, 191, company, check)

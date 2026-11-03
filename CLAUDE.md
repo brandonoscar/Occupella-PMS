@@ -99,7 +99,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and the general ledger page read in plain words from one word list (`src/pms/wording.py`,
   founder 2026-10-26): "Owner: ..." for `owner_property: ...`, "Company" for "PMC", days as
   MM/DD/YYYY, columns as headings. The report functions, their golden cases, what the portals
-  parse (`deps.Rows`) and the audit log's rows keep the ledger's own words.
+  parse (`deps.Rows`) and the audit log's rows keep the ledger's own words. Every PDF prints in
+  IBM Plex Sans, embedded (`src/pms/pdf_fonts.py`): names as people wrote them (Nguyễn, O’Brien,
+  Дмитрий); a letter it lacks (Arabic, Chinese...) reads "?".
 - The API (`src/pms/api`, `python -m pms.api`, FastAPI) runs every request in one transaction
   as `trust_app` (the planner's JIT off: it cost more than it saved), committed before the answer
   is sent; a staff member's request names them to the audit log. How fast it answers ten staff
