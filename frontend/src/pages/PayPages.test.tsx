@@ -18,6 +18,13 @@ describe("PayDonePage", () => {
     render(<PayDonePage />);
     expect(screen.getByTestId("pay-done").textContent).toContain("Nothing was taken");
   });
+
+  it("sends an owner back to their properties, the payment on its way to their statement", () => {
+    window.history.replaceState(null, "", "/pay/owner-done?paid=1");
+    render(<PayDonePage owner />);
+    expect(screen.getByTestId("pay-done").textContent).toContain("shows on your statement once your bank pays it");
+    expect(screen.getByRole("link", { name: "Back to your properties" }).getAttribute("href")).toBe("/");
+  });
 });
 
 describe("PayFakePage", () => {
@@ -30,7 +37,7 @@ describe("PayFakePage", () => {
         return new Response(JSON.stringify({ recorded: true }));
       }
       return new Response(JSON.stringify({
-        amount: "500.00", tenant_fee: "4.03", total: "504.03", memo: "Morgan Demo, Birch Flats Unit A", status,
+        amount: "500.00", tenant_fee: "4.03", total: "504.03", memo: "Morgan Demo, Birch Flats Unit A", status, done: "/pay/done",
       }));
     });
     vi.stubGlobal("fetch", fetch);
@@ -41,6 +48,18 @@ describe("PayFakePage", () => {
     const post = fetch.mock.calls.find(([, init]) => init?.method === "POST");
     expect(post?.[0]).toBe("/api/payments/fake/p1");
     expect(JSON.parse(String(post?.[1]?.body))).toEqual({ outcome: "paid" });
+    expect(screen.getByRole("link", { name: "Back to the portal" }).getAttribute("href")).toBe("/pay/done?paid=1");
+  });
+
+  it("sends an owner back to their own page", async () => {
+    window.history.replaceState(null, "", "/pay/fake#p1");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      amount: "125.00", tenant_fee: "0.00", total: "125.00", memo: "Owner contribution – Demo Owner A / Birch Flats",
+      status: "started", done: "/pay/owner-done",
+    }))));
+    render(<PayFakePage />);
+    expect((await screen.findByTestId("fake-total")).textContent).toBe("$125.00");
+    expect(screen.getByRole("link", { name: "Back to the portal" }).getAttribute("href")).toBe("/pay/owner-done?paid=1");
   });
 
   it("can say the tenant left without paying, which reads not finished", async () => {
@@ -52,7 +71,7 @@ describe("PayFakePage", () => {
         return new Response(JSON.stringify({ recorded: true }));
       }
       return new Response(JSON.stringify({
-        amount: "500.00", tenant_fee: "0.00", total: "500.00", memo: "Morgan Demo, Birch Flats Unit A", status,
+        amount: "500.00", tenant_fee: "0.00", total: "500.00", memo: "Morgan Demo, Birch Flats Unit A", status, done: "/pay/done",
       }));
     });
     vi.stubGlobal("fetch", fetch);

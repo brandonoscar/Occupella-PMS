@@ -15,8 +15,9 @@ import { requestId } from "../rent";
 import { useRecord } from "./useRecord";
 import { AskFirst } from "../components/Confirm";
 
-// Company setup: whether tenants may pay online, and who pays the processing fee on a bank
-// payment (the founder, 2026-10-23: the company chooses). Off until a company turns it on.
+// Company setup: whether tenants and owners may pay online, and who pays the processing fee on a
+// tenant's bank payment (the founder, 2026-10-23: the company chooses; an owner's is always the
+// company's, 2026-11-02). Off until a company turns it on.
 export function OnlinePaymentsCard() {
   const [settings, setSettings] = useState<PaymentSettings | null>(null);
   const [error, setError] = useState("");
@@ -37,9 +38,9 @@ export function OnlinePaymentsCard() {
         <>
           <p className="text-base" data-testid="online-payments">{settingsLine(settings)}</p>
           <p className="mt-1 text-sm text-ink-muted">
-            Tenants pay from their lease in the portal, on the payments partner's page. A payment reaches the books
-            once the bank pays it. The partner's fee comes out of the company's fee account; what that can't cover
-            waits on Banking.
+            Tenants pay from their lease in the portal, and owners add money to their properties' accounts from
+            theirs, on the payments partner's page. A payment reaches the books once the bank pays it. The partner's
+            fee comes out of the company's fee account; what that can't cover waits on Banking.
           </p>
           {settings.partner !== null && (
             <div className="mt-3">
@@ -71,21 +72,22 @@ function SettingsForm({ settings, save }: { settings: PaymentSettings; save: (bo
     }}>
       <label className="flex items-center gap-2 text-sm text-ink">
         <input type="checkbox" checked={online} onChange={(e) => setOnline(e.target.checked)} />
-        Tenants may pay online
+        Tenants and owners may pay online
       </label>
       <Select label="Who pays the processing fee on a bank payment" id="fee-payer" value={payer}
         onChange={(e) => setPayer(e.target.value as FeePayer)}>
         <option value="company">The company, from its fees in trust (free for tenants)</option>
         <option value="tenant">The tenant, shown before they pay</option>
       </Select>
+      <p className="text-sm text-ink-muted">An owner's payment is always free for them: the company pays its fee.</p>
       <p className="text-sm text-ink-muted">
         Some states limit what a tenant may be charged to pay, and every tenant must still be able to pay by check
         or money order for free. Check your state's rules before passing the fee on.
       </p>
       <div>
         <Button type="submit" says={online
-          ? "Saves it; tenants can pay online from their lease. Payments already started keep the fee they had."
-          : "Saves it; tenants can't start a payment online, and autopay starts none. Payments already made stay as they are."}>
+          ? "Saves it; tenants can pay online from their lease and owners from their portal. Payments already started keep the fee they had."
+          : "Saves it; tenants and owners can't start a payment online, and autopay starts none. Payments already made stay as they are."}>
           Save
         </Button>
       </div>
@@ -121,7 +123,14 @@ export function OnlinePaymentsWaiting({ refresh }: { refresh: number }) {
               {item.memo} · {money(item.amount)}
               <span className="block text-sm text-ink-muted">{waitingLine(item)}</span>
             </span>
-            {item.what === "payment" && (
+            {item.what === "payment" && item.owner_id !== null && (
+              <AskFirst variant="secondary"
+                says="Records the owner's payment as their contribution if the books now take it; if not, says why."
+                question={`Record ${money(item.amount)} the owner paid online into ${item.memo}? The bank already paid it.`}
+                onConfirm={() => record(`/api/payments/${item.payment_id}/record`, {},
+                  () => `Recorded ${money(item.amount)} paid online.`)}>Try again</AskFirst>
+            )}
+            {item.what === "payment" && item.owner_id === null && (
               <Button variant="secondary" onClick={() => ask(
                 `Record ${money(item.amount)} paid online for ${item.memo}, accepting it past the lease's payment hold?`
                   + " The bank already paid it; this puts it on the lease's balance. The hold stays for other payments.",
@@ -131,8 +140,12 @@ export function OnlinePaymentsWaiting({ refresh }: { refresh: number }) {
             )}
             {item.what === "return" && (
               <AskFirst variant="secondary"
-                says="Records the return if the owner's balance now covers it: the payment comes off the lease and any NSF fee is charged."
-                question={`Record that ${money(item.amount)} for ${item.memo} came back? The payment comes off the lease, and the property's NSF fee, if any, is charged.`}
+                says={item.owner_id !== null
+                  ? "Records the return if the owner's balance now covers it: it comes back out of their account."
+                  : "Records the return if the owner's balance now covers it: the payment comes off the lease and any NSF fee is charged."}
+                question={item.owner_id !== null
+                  ? `Record that ${money(item.amount)} the owner paid into ${item.memo} came back? It comes back out of their account.`
+                  : `Record that ${money(item.amount)} for ${item.memo} came back? The payment comes off the lease, and the property's NSF fee, if any, is charged.`}
                 onConfirm={() => record(`/api/payments/${item.payment_id}/record`, {},
                 () => "Recorded what came back.")}>Try again</AskFirst>
             )}

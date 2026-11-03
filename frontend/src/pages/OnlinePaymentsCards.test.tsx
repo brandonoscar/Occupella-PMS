@@ -29,16 +29,16 @@ describe("OnlinePaymentsCard", () => {
     const fetch = server(OFF);
     render(<OnlinePaymentsCard />);
     expect((await screen.findByTestId("online-payments")).textContent).toBe(
-      "Off: tenants pay by check, money order or in person.",
+      "Off: tenants pay by check, money order or in person, and owners send their money by check or bank transfer.",
     );
     fireEvent.click(screen.getByRole("button", { name: "Edit online payments" }));
     const panel = screen.getByRole("dialog", { name: "Online payments" });
-    fireEvent.click(within(panel).getByLabelText("Tenants may pay online"));
+    fireEvent.click(within(panel).getByLabelText("Tenants and owners may pay online"));
     fireEvent.change(within(panel).getByLabelText("Who pays the processing fee on a bank payment"), {
       target: { value: "tenant" },
     });
     fireEvent.click(within(panel).getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("On: tenants pay by bank and pay the processing fee, shown before they pay.")).toBeTruthy();
+    expect(await screen.findByText("On: tenants pay by bank and pay the processing fee, shown before they pay. Owners pay by bank for free; the company pays theirs.")).toBeTruthy();
     const post = fetch.mock.calls.find(([, init]) => init?.method === "POST");
     expect(post?.[0]).toBe("/api/payments/settings");
     expect(JSON.parse(String(post?.[1]?.body))).toEqual({ online: true, ach_fee_payer: "tenant" });
@@ -55,6 +55,7 @@ describe("OnlinePaymentsCard", () => {
 const FEE: Waiting = {
   payment_id: "p1",
   lease_id: "l1",
+  owner_id: null,
   memo: "Morgan Demo, Birch Flats Unit A",
   amount: "500.00",
   what: "partner fee",
@@ -105,6 +106,32 @@ describe("OnlinePaymentsWaiting", () => {
     expect(sent()[0]?.[0]).toBe("/api/payments/p3/record");
     expect(JSON.parse(String(sent()[0]?.[1]?.body))).toEqual({});
     await vi.waitFor(() => expect(screen.getByRole("status").textContent).toBe("Recorded what came back."));
+  });
+
+  it("asks before recording an owner's payment again, never past a hold", async () => {
+    const owners = { ...FEE, lease_id: null, owner_id: "o1", memo: "Demo Owner A / Birch Flats", company_owes: null };
+    const fetch = server([
+      { ...owners, payment_id: "p4", what: "payment" },
+      { ...owners, payment_id: "p5", what: "return" },
+    ]);
+    render(<OnlinePaymentsWaiting refresh={0} />);
+    expect(await screen.findByText("Paid online by the owner, not in the books yet: the books refused it")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Accept past the hold" })).toBeNull();
+    const [payment, back] = screen.getAllByRole("button", { name: "Try again" });
+    const sent = () => fetch.mock.calls.filter(([, init]) => init?.method === "POST");
+
+    fireEvent.click(back!);
+    const returned = "Record that $500.00 the owner paid into Demo Owner A / Birch Flats came back? It comes back out of their account.";
+    expect(screen.getByRole("alertdialog", { name: returned })).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(sent()).toEqual([]);
+
+    fireEvent.click(payment!);
+    const question = "Record $500.00 the owner paid online into Demo Owner A / Birch Flats? The bank already paid it.";
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "Try again" }));
+    await vi.waitFor(() => expect(sent()).toHaveLength(1));
+    expect(sent()[0]?.[0]).toBe("/api/payments/p4/record");
+    expect(JSON.parse(String(sent()[0]?.[1]?.body))).toEqual({});
   });
 
   it("still says what the deposit did once nothing waits", async () => {
