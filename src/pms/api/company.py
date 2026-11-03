@@ -28,6 +28,7 @@ from pms import exports
 from pms.api import documents
 from pms.api.deps import Conn, Current, Staff
 from pms.api.directory import City, PostalCode, State, Street
+from pms.api.owner import sign_over
 from pms.api.setup import Money, Name, Percent
 
 router = APIRouter(prefix="/api/company")
@@ -203,6 +204,31 @@ def save_company(session: Staff, conn: Conn, new: NewCompany) -> Company:
             (session.pmc_id, *wanted.values()),
         )
     return company_of(conn, session.pmc_id)
+
+
+class OwnerApprovals(BaseModel):
+    sign_over: str
+
+
+class NewOwnerApprovals(BaseModel):
+    sign_over: Money
+
+
+@router.get("/owner-approvals")
+def owner_approvals(session: Staff, conn: Conn) -> OwnerApprovals:
+    """Over what amount an owner types their full name to approve a bill in the portal."""
+    return OwnerApprovals(sign_over=f"{sign_over(conn, session.pmc_id):.2f}")
+
+
+@router.post("/owner-approvals")
+def save_owner_approvals(session: Staff, conn: Conn, new: NewOwnerApprovals) -> OwnerApprovals:
+    """Sets that amount from now on; the same again writes nothing."""
+    if new.sign_over != sign_over(conn, session.pmc_id):
+        conn.execute(
+            "INSERT INTO trust_owner_approval_settings (pmc_id, sign_over) VALUES (%s, %s)",
+            (session.pmc_id, new.sign_over),
+        )
+    return owner_approvals(session, conn)
 
 
 class NewLogo(BaseModel):

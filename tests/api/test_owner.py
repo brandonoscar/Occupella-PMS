@@ -243,6 +243,9 @@ def test_an_owner_sees_the_bills_waiting_for_them_and_approves_one(client, conn,
             "reason": None,
             "short": None,
             "needed": None,
+            # What the account holds now, for the confirm step; under $5,000.00, no name.
+            "balance": "1000.00",
+            "name_needed": False,
         }
     ]
     assert approved.status_code == 201

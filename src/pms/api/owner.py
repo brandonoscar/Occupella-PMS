@@ -17,7 +17,7 @@ from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, HTTPException, Query, Response
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from pms import accounts, exports
 from pms.api import documents
@@ -245,6 +245,11 @@ class OwnerBill(BaseModel):
     # and the bills due before it (ADR 0010).
     short: str | None = None
     needed: str | None = None
+    # What the property's account holds now, for the confirm step: approving it leaves this less
+    # the bill and its markup.
+    balance: str = "0.00"
+    # Whether approving it takes the owner's typed full name (over the company's amount).
+    name_needed: bool = False
 
 
 OWNER_BILLS = """
@@ -255,8 +260,9 @@ SELECT b.id, v.display_name, b.reference, p.display_name, b.bill_date, b.due_on,
             WHEN dc.bill_id IS NOT NULL THEN 'declined' END,
        CASE WHEN dc.void THEN dc.declined_on ELSE coalesce(ap.approved_on, dc.declined_on) END,
        CASE WHEN dc.void THEN dc.declined_by ELSE coalesce(ap.approved_by, dc.declined_by) END,
-       dc.reason, mk.amount, mk.percent, h.short, h.needed
+       dc.reason, mk.amount, mk.percent, h.short, h.needed, acct.balance
 FROM trust_bills AS b
+JOIN pgledger_accounts AS acct ON acct.id = b.ledger_account_id
 JOIN trust_ledger_accounts AS t ON t.ledger_account_id = b.ledger_account_id
 JOIN trust_vendors AS v ON v.id = b.vendor_id
 JOIN trust_properties AS p ON p.id = t.property_id
@@ -285,6 +291,7 @@ def owner_bills(session: Owner, conn: Conn) -> list[OwnerBill]:
     """The owner's bills over the approval limit, by due date: those waiting for their decision
     and those decided, by them or as staff recorded it; and those their balance is short of."""
     rows = conn.execute(OWNER_BILLS, (session.pmc_id, session.pmc_id, session.person_id)).fetchall()
+    over = sign_over(conn, session.pmc_id)
     return [
         OwnerBill(
             id=row[0],
@@ -304,9 +311,41 @@ def owner_bills(session: Owner, conn: Conn) -> list[OwnerBill]:
             markup_percent=None if row[14] is None else f"{row[14].normalize():f}",
             short=cents(row[15]) if row[15] else None,
             needed=cents(row[16]) if row[16] else None,
+            balance=cents(row[17]),
+            name_needed=row[6] + (row[13] or 0) > over,
         )
         for row in rows
     ]
+
+
+# A bill over this amount (with its markup) takes the owner's typed full name to approve in the
+# portal, unless the company sets another amount (migration 20261104000100).
+SIGN_OVER = Decimal("5000.00")
+
+
+def sign_over(conn: psycopg.Connection[Any], pmc_id: UUID) -> Decimal:
+    """The amount over which an owner types their name to approve a bill: the latest setting."""
+    row = conn.execute(
+        "SELECT sign_over FROM trust_owner_approval_settings WHERE pmc_id = %s"
+        " ORDER BY created_at DESC, id DESC LIMIT 1",
+        (pmc_id,),
+    ).fetchone()
+    return SIGN_OVER if row is None else Decimal(row[0])
+
+
+class Approval(BaseModel):
+    """What the owner sends to approve: their typed full name, when the bill takes it. Who
+    approves always comes from the session, so nothing else may be sent."""
+
+    model_config = ConfigDict(extra="forbid")
+    typed_name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] | None = (
+        None
+    )
+
+
+def same_name(typed: str, name: str) -> bool:
+    """A typed name matches the owner's, whatever its case and spacing."""
+    return " ".join(typed.split()).casefold() == " ".join(name.split()).casefold()
 
 
 class Decline(BaseModel):
@@ -340,14 +379,36 @@ def decide(conn: psycopg.Connection[Any], query: str, params: tuple[Any, ...]) -
 
 
 @router.post("/bills/{bill_id}/approval", status_code=201)
-def approve_bill(session: Owner, conn: Conn, bill_id: UUID) -> None:
-    """The owner approves one of their bills: staff may then pay it."""
+def approve_bill(session: Owner, conn: Conn, bill_id: UUID, approval: Approval) -> None:
+    """The owner approves one of their bills: staff may then pay it. Over the company's amount
+    (with its markup), the owner types their full name, which must be theirs."""
     name = your_bill(conn, session, bill_id)
+    total = conn.execute(
+        "SELECT b.amount + coalesce(m.amount, 0) FROM trust_bills AS b"
+        " LEFT JOIN trust_bill_markups AS m ON m.bill_id = b.id WHERE b.id = %s",
+        (bill_id,),
+    ).fetchone()
+    assert total is not None
+    over = sign_over(conn, session.pmc_id)
+    typed = approval.typed_name or None
+    if total[0] > over:
+        if typed is None:
+            raise HTTPException(422, f"Type your full name to approve a bill over ${over:,.2f}.")
+        if not same_name(typed, name):
+            raise HTTPException(422, "That name doesn't match the name on your account.")
     decide(
         conn,
-        "INSERT INTO trust_bill_approvals (pmc_id, bill_id, approved_on, approved_by, owner_id)"
-        " VALUES (%s, %s, %s, %s, %s)",
-        (session.pmc_id, bill_id, today(), f"{name}, in the owner portal", session.person_id),
+        "INSERT INTO trust_bill_approvals"
+        " (pmc_id, bill_id, approved_on, approved_by, owner_id, signed_name)"
+        " VALUES (%s, %s, %s, %s, %s, %s)",
+        (
+            session.pmc_id,
+            bill_id,
+            today(),
+            f"{name}, in the owner portal",
+            session.person_id,
+            typed if total[0] > over else None,
+        ),
     )
 
 

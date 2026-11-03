@@ -588,7 +588,8 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await joinPortal(owner, people.owner_a);
     const waiting = owner.getByRole("list", { name: "Waiting for you" }).getByRole("listitem").filter({ hasText: "PLB-J101" });
     await expect(waiting).toContainText("$640.00");
-    await waiting.getByRole("button", { name: "Approve" }).click();
+    await waiting.getByRole("button", { name: "Approve…" }).click();
+    await owner.getByRole("dialog", { name: "Approve this bill?" }).getByRole("button", { name: "Approve" }).click();
     await expect(owner.getByText(`Approved ${PLUMBER}'s PLB-J101.`)).toBeVisible();
 
     // Staff pay it from its page (ADR 0010: the owner's money is held for it, no step between);

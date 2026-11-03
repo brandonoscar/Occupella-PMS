@@ -987,6 +987,15 @@ test("a bill over the owner's limit emails them; they decline one and approve an
   await page.getByRole("alertdialog").getByRole("button", { name: "Void" }).click();
   await expect(page.getByText("plb 2002 is void.")).toBeVisible();
 
+  // Over $600.00 the owner types their full name to approve (Settings, Company setup).
+  await page.goto("/settings/setup");
+  await part(page, "Owner approvals").getByRole("button", { name: "Edit owner approvals" }).click();
+  const approvals = page.getByRole("dialog", { name: "Owner approvals" });
+  await approvals.getByLabel("Ask for the owner's typed name over").fill("600.00");
+  await approvals.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("sign-over")).toHaveText("Owners type their full name to approve bills over $600.00.");
+  await section(page, "Bills");
+
   // The owner decides both in the portal.
   await owner.reload();
   const waiting = owner.getByRole("list", { name: "Waiting for you" });
@@ -995,7 +1004,18 @@ test("a bill over the owner's limit emails them; they decline one and approve an
   await first.getByLabel("Why you decline it").fill("Get a second quote");
   await first.getByRole("button", { name: "Decline", exact: true }).click();
   await expect(owner.getByText("Declined Demo Plumbing Co's PLB-2001.")).toBeVisible();
-  await waiting.getByRole("listitem").filter({ hasText: "PLB-2002" }).getByRole("button", { name: "Approve" }).click();
+  // Approving asks first, with the bill and the balance before and after; over $600.00 it takes
+  // the owner's own name.
+  await waiting.getByRole("listitem").filter({ hasText: "PLB-2002" }).getByRole("button", { name: "Approve…" }).click();
+  const approving = owner.getByRole("dialog", { name: "Approve this bill?" });
+  await expect(approving).toContainText("Bill #PLB-2002");
+  await expect(approving).toContainText("Amount$650.00");
+  await expect(approving).toContainText("Balance now");
+  await approving.getByLabel("Type your full name to approve").fill("Somebody Else");
+  await approving.getByRole("button", { name: "Approve" }).click();
+  await expect(approving.getByRole("alert")).toHaveText("That name doesn't match the name on your account.");
+  await approving.getByLabel("Type your full name to approve").fill("Demo Owner A");
+  await approving.getByRole("button", { name: "Approve" }).click();
   await expect(owner.getByText("Approved Demo Plumbing Co's PLB-2002.")).toBeVisible();
   const decided = owner.getByRole("list", { name: "Decided" });
   await expect(decided.getByRole("listitem").filter({ hasText: "PLB-2001" })).toContainText("declined");

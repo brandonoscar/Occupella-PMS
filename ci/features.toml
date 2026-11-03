@@ -340,7 +340,7 @@ browser = [
 
 [[feature]]
 id = "bills"
-statement = "Staff list bills a page at a time (Unpaid, Paid, Recurring, Void; by property group, vendor and due day; each Entered, Waiting for owner, Ready to pay, Short, Partly paid, Paid or Void, and overdue) and record one in a side panel, maybe with its invoice, warned of a vendor's bill with nearly the same reference; one over the owner's limit emails the owner, who approves or declines it in their portal (or staff record their answer); a bill not paid holds its amount from the owner's balance, and a Short one says what the owner must send and emails them for it after staff see who gets it; a bill's own page has its expense account lines, files, emails, payments and history, records a payment (all of it or a part, by check with its number or ACH, with a receipt) and voids one entered by mistake; Pay bills pays several at once, all or none, showing each property's cash first; a void bill is never paid."
+statement = "Staff list bills a page at a time (Unpaid, Paid, Recurring, Void; by property group, vendor and due day; each Entered, Waiting for owner, Ready to pay, Short, Partly paid, Paid or Void, and overdue) and record one in a side panel, maybe with its invoice, warned of a vendor's bill with nearly the same reference; one over the owner's limit emails the owner, who approves or declines it in their portal (approving asks first, showing the bill and the property's balance before and after; over the company's amount, $5,000.00 unless staff set another in Company setup, the owner types their full name, which the server checks against theirs) (or staff record their answer); a bill not paid holds its amount from the owner's balance, and a Short one says what the owner must send and emails them for it after staff see who gets it; a bill's own page has its expense account lines, files, emails, payments and history, records a payment (all of it or a part, by check with its number or ACH, with a receipt) and voids one entered by mistake; Pay bills pays several at once, all or none, showing each property's cash first; a void bill is never paid."
 operations = [
   "GET /api/payables/bills",
   "GET /api/payables/bills/{bill_id}",
@@ -355,6 +355,8 @@ operations = [
   "GET /api/owner/bills",
   "POST /api/owner/bills/{bill_id}/approval",
   "POST /api/owner/bills/{bill_id}/decline",
+  "GET /api/company/owner-approvals",
+  "POST /api/company/owner-approvals",
 ]
 browser = [
   "features.spec.ts › a bill over the owner's limit emails them; they decline one and approve another in the portal, and staff pay it",

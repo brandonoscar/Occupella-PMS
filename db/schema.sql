@@ -14668,7 +14668,9 @@ CREATE TABLE public.trust_bill_approvals (
     approved_by text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     owner_id uuid,
-    CONSTRAINT trust_bill_approvals_approved_by_check CHECK ((approved_by <> ''::text))
+    signed_name text,
+    CONSTRAINT trust_bill_approvals_approved_by_check CHECK ((approved_by <> ''::text)),
+    CONSTRAINT trust_bill_approvals_signed_name CHECK (((signed_name IS NULL) OR ((signed_name ~ '\S'::text) AND (length(signed_name) <= 200))))
 );
 
 
@@ -16353,6 +16355,20 @@ CREATE TABLE public.trust_opening_balances (
     CONSTRAINT trust_opening_balances_book_cash_check CHECK ((book_cash > (0)::numeric)),
     CONSTRAINT trust_opening_balances_entered_by_check CHECK ((entered_by <> ''::text)),
     CONSTRAINT trust_opening_balances_transfer_ids_check CHECK ((cardinality(transfer_ids) > 0))
+);
+
+
+--
+-- Name: trust_owner_approval_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_owner_approval_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    sign_over numeric(12,2) NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_owner_approval_settings_sign_over_check CHECK ((sign_over >= (0)::numeric))
 );
 
 
@@ -19938,6 +19954,14 @@ ALTER TABLE ONLY public.trust_opening_balances
 
 
 --
+-- Name: trust_owner_approval_settings trust_owner_approval_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_approval_settings
+    ADD CONSTRAINT trust_owner_approval_settings_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_owner_contributions trust_owner_contributions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22658,6 +22682,20 @@ CREATE INDEX trust_online_payments_tenant ON public.trust_online_payments USING 
 
 
 --
+-- Name: trust_owner_approval_settings_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_approval_settings_pmc ON public.trust_owner_approval_settings USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_owner_approval_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_approval_settings_recorded_by ON public.trust_owner_approval_settings USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_owner_draw_settings_pmc; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -24555,6 +24593,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_owner_approval_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_owner_approval_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_owner_contributions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26109,6 +26154,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_open
 
 
 --
+-- Name: trust_owner_approval_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owner_approval_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_owner_contributions trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27646,6 +27698,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notices FOR EACH 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_on_call_staff FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_owner_approval_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_owner_approval_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -31740,6 +31799,22 @@ ALTER TABLE ONLY public.trust_opening_balances
 
 
 --
+-- Name: trust_owner_approval_settings trust_owner_approval_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_approval_settings
+    ADD CONSTRAINT trust_owner_approval_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_owner_approval_settings trust_owner_approval_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_approval_settings
+    ADD CONSTRAINT trust_owner_approval_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_owner_contributions trust_owner_contributions_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -33893,4 +33968,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261028000200'),
     ('20261031000200'),
     ('20261102000150'),
-    ('20261103000100');
+    ('20261103000100'),
+    ('20261104000100');

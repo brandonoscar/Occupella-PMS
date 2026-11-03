@@ -508,7 +508,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   owner's approval recorded first. `trust_set_aside_bill` moves its amount from the owner's
   account to the vendor's (`vendor_payable`); `trust_pay_bill` then sends it out through the
   trust bank account's cash, no earlier than it was set aside. Each step once per bill, at READ
-  COMMITTED. A bill takes one owner's decision (migration 0041): an approval or a decline
+  COMMITTED. An owner approving in the portal confirms first, seeing the bill and the property's balance
+  before and after; over the company's amount (`trust_owner_approval_settings`, $5,000.00 without
+  one, Settings, Company setup) they type their full name, which the API checks against theirs and
+  keeps (`trust_bill_approvals.signed_name`, migration 20261104000100); who approves always comes
+  from the session. A bill takes one owner's decision (migration 0041): an approval or a decline
   (`trust_bill_declines`, with a reason), a decline only before it is set aside, and one taken
   in the owner portal only by the owner of its property account. A declined bill is never set
   aside or paid, and from the day it was declined it holds nothing back from draws and is not
