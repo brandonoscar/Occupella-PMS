@@ -5,7 +5,7 @@ import uuid
 
 import psycopg
 import pytest
-from helpers import add_staff, make_pmc
+from helpers import add_staff, make_pmc, roles_of
 from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
@@ -152,6 +152,51 @@ def test_the_command_line_adds_staff_and_prints_their_invite(
     with psycopg.connect(database_url, autocommit=True) as app_conn:
         app_conn.execute("SET ROLE trust_app")
         assert accounts.view_invite(app_conn, token).email == "first@example.com"
+
+
+def test_setup_starts_a_company_with_its_first_admin_and_their_invite(
+    conn, database_url, monkeypatch, capsys
+):
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    monkeypatch.setenv("PMS_PUBLIC_URL", "https://pms.example.com/")
+    name = f"Synthetic Setup Co {uuid.uuid4().hex[:8]}"
+
+    assert admin.main(["setup", f"  {name} ", "First Admin", "First.Admin@Example.com"]) == 0
+
+    printed = capsys.readouterr()
+    company_line, admin_line, link = printed.out.strip().splitlines()
+    pmc_id = uuid.UUID(company_line.removeprefix("company "))
+    staff_id = uuid.UUID(admin_line.removeprefix("admin "))
+    assert link.startswith("https://pms.example.com/invite#")
+    assert printed.err.startswith("expires ")
+    assert conn.execute(
+        "SELECT display_name FROM trust_pmcs WHERE pmc_id = %s", (pmc_id,)
+    ).fetchone() == (name,)
+    assert conn.execute(
+        "SELECT pmc_id, display_name FROM trust_staff WHERE id = %s", (staff_id,)
+    ).fetchone() == (pmc_id, "First Admin")
+    assert roles_of(conn, pmc_id, staff_id) == {"admin"}
+    with psycopg.connect(database_url, autocommit=True) as app_conn:
+        app_conn.execute("SET ROLE trust_app")
+        invite = accounts.view_invite(app_conn, link.split("#", 1)[1])
+    assert invite.email == "first.admin@example.com"
+
+
+def test_setup_is_all_or_nothing(conn, database_url, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    name = f"Synthetic Refused Co {uuid.uuid4().hex[:8]}"
+
+    bad_email = admin.main(["setup", name, "First Admin", "not an email"])
+    no_name = admin.main(["setup", name, "  ", "first@example.com"])
+    no_company = admin.main(["setup", " ", "First Admin", "first@example.com"])
+
+    assert (bad_email, no_name, no_company) == (2, 2, 2)
+    err = capsys.readouterr().err
+    assert err.count("refused: ") == 3
+    assert "a company and a person each need a name" in err
+    assert conn.execute(
+        "SELECT count(*) FROM trust_pmcs WHERE display_name = %s", (name,)
+    ).fetchone() == (0,)
 
 
 def test_the_command_line_says_why_it_refused(conn, database_url, monkeypatch, capsys, pmc):
