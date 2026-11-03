@@ -13,6 +13,7 @@ from helpers import PDF, add_tenant, add_unit, add_work_order, make_pmc, open_le
 from people import join_as, join_as_owner, join_as_staff, join_as_tenant, tenant_of
 
 from pms.api import messages
+from pms.api import tenant as tenant_api
 
 
 def ok(answer, status=200):
@@ -320,6 +321,71 @@ def test_a_notice_far_ahead_or_for_a_lease_not_theirs_is_refused(
     assert bad.status_code == 422
 
 
+def test_a_notice_with_a_note_that_isnt_text_is_refused(other_client, conn, app_conn, pmc, home):
+    join_as_tenant(other_client, conn, app_conn, pmc)
+
+    answer = other_client.post(
+        f"/api/tenant/leases/{home['lease']}/move-out-notice",
+        json={"leaving_on": (today() + timedelta(days=30)).isoformat(), "note": "a\x00b"},
+    )
+
+    assert answer.status_code == 422
+    assert ok(other_client.get("/api/tenant/leases"))[0]["move_out_notice"] is None
+
+
+def test_a_lease_takes_so_many_notices_a_day(other_client, conn, app_conn, pmc, home):
+    join_as_tenant(other_client, conn, app_conn, pmc)
+    path = f"/api/tenant/leases/{home['lease']}/move-out-notice"
+    days = [today() + timedelta(days=30 + n) for n in range(tenant_api.NOTICES_PER_DAY + 1)]
+
+    answers = [other_client.post(path, json={"leaving_on": d.isoformat()}) for d in days]
+
+    assert [a.status_code for a in answers] == [201] * tenant_api.NOTICES_PER_DAY + [429]
+    seen = ok(other_client.get("/api/tenant/leases"))[0]["move_out_notice"]
+    assert seen["leaving_on"] == days[-2].isoformat()
+
+
+def test_the_database_takes_no_notice_on_an_ended_lease_or_from_a_tenant_who_left(conn, pmc):
+    import psycopg
+
+    ended_unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "Ended")
+    ended = open_lease(
+        conn,
+        pmc.pmc_id,
+        ended_unit,
+        today() - timedelta(days=60),
+        today() - timedelta(days=10),
+        "900.00",
+        [tenant_of(conn, pmc)],
+    )
+    shared_unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "Shared")
+    leaving = add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, "Leaving")
+    staying = add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, "Staying")
+    shared = open_lease(
+        conn,
+        pmc.pmc_id,
+        shared_unit,
+        today() - timedelta(days=30),
+        None,
+        "900.00",
+        [leaving, staying],
+    )
+    conn.execute(
+        "SELECT trust_remove_lease_tenant(%s, %s, %s, %s, NULL)",
+        (pmc.pmc_id, shared, leaving, today()),
+    )
+    notice = (
+        "INSERT INTO trust_move_out_notices (pmc_id, lease_id, tenant_id, leaving_on)"
+        " VALUES (%s, %s, %s, %s)"
+    )
+
+    with pytest.raises(psycopg.errors.CheckViolation, match="ended on"), conn.transaction():
+        conn.execute(notice, (pmc.pmc_id, ended, tenant_of(conn, pmc), today()))
+    with pytest.raises(psycopg.errors.CheckViolation, match="has left"), conn.transaction():
+        conn.execute(notice, (pmc.pmc_id, shared, leaving, today() + timedelta(days=5)))
+    conn.execute(notice, (pmc.pmc_id, shared, staying, today() + timedelta(days=5)))
+
+
 # --- announcements --------------------------------------------------------------------------
 
 
@@ -447,6 +513,22 @@ def test_a_tenants_file_must_be_what_it_says_and_of_their_lease(
     assert not_a_pdf.status_code == 422
     assert not_mine.status_code == 404
     assert no_title.status_code == 422
+
+
+def test_a_lease_takes_so_many_files_a_day_from_its_tenants(
+    other_client, conn, app_conn, pmc, home
+):
+    join_as_tenant(other_client, conn, app_conn, pmc)
+    path = f"/api/tenant/leases/{home['lease']}/documents"
+
+    answers = [
+        other_client.post(path, json=document(title=f"Certificate {n}"))
+        for n in range(tenant_api.UPLOADS_PER_DAY + 1)
+    ]
+
+    assert [a.status_code for a in answers] == [201] * tenant_api.UPLOADS_PER_DAY + [429]
+    assert "call the office" in answers[-1].json()["detail"]
+    assert len(ok(other_client.get("/api/tenant/leases"))[0]["files"]) == tenant_api.UPLOADS_PER_DAY
 
 
 def test_the_database_holds_a_tenants_document_to_a_tenant_on_that_lease(conn, pmc, home):
