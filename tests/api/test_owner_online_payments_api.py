@@ -121,10 +121,7 @@ def test_an_owner_sees_their_accounts_and_pays_only_once_the_company_takes_it(
 ):
     add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 30 * DAY, reserve="250.00")
     view = ok(owner_client.get("/api/payments/owner"))
-    assert (view["available"], view["why_not"]) == (
-        False,
-        "your manager doesn't take payments online",
-    )
+    assert (view["available"], view["why_not"], view["how_to_pay"]) == (False, "off", None)
     (account,) = view["accounts"]  # their own account only, not the other owner's
     assert account["account_id"] == pmc.owners[0].account
     assert (account["balance"], account["reserve"], account["short"]) == (
@@ -138,7 +135,7 @@ def test_an_owner_sees_their_accounts_and_pays_only_once_the_company_takes_it(
             json={"account_id": pmc.owners[0].account, "amount": "250.00"},
         ),
         409,
-        "your manager doesn't take payments online",
+        "Online payments aren't available.",
     )
     turn_on(client)
     assert ok(owner_client.get("/api/payments/owner"))["available"] is True

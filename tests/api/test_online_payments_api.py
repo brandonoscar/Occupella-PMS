@@ -158,15 +158,12 @@ def test_a_tenant_pays_online_only_once_the_company_takes_it(
     client, tenant_client, staff, tenant, lease
 ):
     view = ok(tenant_client.get(f"/api/payments/leases/{lease}"))
-    assert (view["available"], view["why_not"]) == (
-        False,
-        "your manager doesn't take payments online",
-    )
+    assert (view["available"], view["why_not"], view["how_to_pay"]) == (False, "off", None)
     assert view["owed"] == "1200.00"
     refused(
         tenant_client.post(f"/api/payments/leases/{lease}/checkout", json={"amount": "100.00"}),
         409,
-        "your manager doesn't take payments online",
+        "Online payments aren't available.",
     )
     turn_on(client)
     assert ok(tenant_client.get(f"/api/payments/leases/{lease}"))["available"] is True
@@ -234,11 +231,11 @@ def test_a_lease_on_a_payment_hold_takes_no_payment_online(
         " VALUES (%s, %s, %s, 'filed')",
         (pmc.pmc_id, lease, TODAY - DAY),
     )
-    assert ok(tenant_client.get(f"/api/payments/leases/{lease}"))["why_not"] == (
-        "this lease takes no payment online now: ask your manager"
-    )
+    assert ok(tenant_client.get(f"/api/payments/leases/{lease}"))["why_not"] == "paused"
     refused(
-        tenant_client.post(f"/api/payments/leases/{lease}/checkout", json={"amount": "1.00"}), 409
+        tenant_client.post(f"/api/payments/leases/{lease}/checkout", json={"amount": "1.00"}),
+        409,
+        "Online payments are paused for this lease. Contact your property manager.",
     )
 
 
@@ -646,12 +643,10 @@ def test_a_server_without_a_partner_takes_no_payment_online(
         turn_on(browser)
         assert ok(browser.get("/api/payments/settings"))["partner"] is None
         join_as_tenant(tenant_browser, conn, app_conn, pmc)
-        assert ok(tenant_browser.get(f"/api/payments/leases/{lease}"))["why_not"] == (
-            "this server takes no payments online"
-        )
+        assert ok(tenant_browser.get(f"/api/payments/leases/{lease}"))["why_not"] == "off"
         refused(
             tenant_browser.post(f"/api/payments/leases/{lease}/checkout", json={"amount": "1.00"}),
             409,
-            "this server takes no payments online",
+            "Online payments aren't available.",
         )
         refused(browser.post("/api/payments/webhook/stripe", json={}), 404)

@@ -132,7 +132,7 @@ def submit(pool: ConnectionPool[Any], partner: payments.Partner) -> None:
 class AutopayView(BaseModel):
     # Whether the tenant may set up autopay of this lease now, and if not, why.
     available: bool
-    why_not: str | None
+    why_not: op.WhyNot | None
     fee_payer: op.FeePayer
     # The lease's next rent due date, from tomorrow; None once the lease has no more.
     next_due: date | None
@@ -183,7 +183,7 @@ def set_up(session: Tenant, conn: Conn, request: Request, lease_id: UUID, body: 
     reason = op.why_not(conn, request, session.pmc_id, lease_id, chosen)
     partner = op.partner_of(request)
     if reason is not None or partner is None:
-        raise HTTPException(409, reason or "this server takes no payments online")
+        raise HTTPException(409, op.SAID[reason] if reason else op.OFF)
     for before in autopays(conn, session.pmc_id, lease_id, payer):
         if before.stopped is None:
             autopay.stop(conn, session.pmc_id, before.id, "replaced")

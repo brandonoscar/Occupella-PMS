@@ -16693,6 +16693,20 @@ CREATE TABLE public.trust_payment_holds (
 
 
 --
+-- Name: trust_payment_instructions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_instructions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    body text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_payment_instructions_body_check CHECK (((body IS NULL) OR ((body ~ '\S'::text) AND (length(body) <= 2000))))
+);
+
+
+--
 -- Name: trust_payment_notes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -20231,6 +20245,14 @@ ALTER TABLE ONLY public.trust_payment_holds
 
 
 --
+-- Name: trust_payment_instructions trust_payment_instructions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_instructions
+    ADD CONSTRAINT trust_payment_instructions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_payment_notes trust_payment_notes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22877,6 +22899,20 @@ CREATE INDEX trust_payment_holds_lease_id ON public.trust_payment_holds USING bt
 
 
 --
+-- Name: trust_payment_instructions_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_instructions_pmc ON public.trust_payment_instructions USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_payment_instructions_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_instructions_recorded_by ON public.trust_payment_instructions USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_payment_notes_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -24739,6 +24775,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_payment_instructions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_instructions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_payment_notes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26307,6 +26350,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_paym
 
 
 --
+-- Name: trust_payment_instructions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_instructions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_payment_notes trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27788,6 +27838,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_file_skip
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_files FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_payment_instructions trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_instructions FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -32234,6 +32291,22 @@ ALTER TABLE ONLY public.trust_payment_holds
 
 
 --
+-- Name: trust_payment_instructions trust_payment_instructions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_instructions
+    ADD CONSTRAINT trust_payment_instructions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payment_instructions trust_payment_instructions_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_instructions
+    ADD CONSTRAINT trust_payment_instructions_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_payment_notes trust_payment_notes_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34006,4 +34079,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261103000100'),
     ('20261104000100'),
     ('20261104000200'),
-    ('20261104000300');
+    ('20261104000300'),
+    ('20261104000400');

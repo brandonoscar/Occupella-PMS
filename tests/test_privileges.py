@@ -54,6 +54,7 @@ TABLES = {
     "trust_email_deliveries": {"SELECT", "INSERT"},
     "trust_email_settings": {"SELECT", "INSERT"},
     "trust_owner_approval_settings": {"SELECT", "INSERT"},
+    "trust_payment_instructions": {"SELECT", "INSERT"},
     "trust_bill_payments": {"SELECT"},  # written only by trust_set_aside_bill, trust_pay_bill
     "trust_work_orders": {"SELECT", "INSERT"},
     "trust_work_order_steps": {"SELECT", "INSERT"},
@@ -432,6 +433,8 @@ AI_NEVER_READS = {
     "trust_announcement_removals",
     # The company's mailing address, with the fee terms new properties start with (ADR 0006).
     "trust_company_profiles",
+    # How to pay us (migration 20261104000400), like the company's profile.
+    "trust_payment_instructions",
     # Who else lives in a home, their pets (an assistance animal speaks to a disability) and
     # vehicles, and the lease's guarantors with their contact details (migration 0080).
     "trust_lease_occupants",

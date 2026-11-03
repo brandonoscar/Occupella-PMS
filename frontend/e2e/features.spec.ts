@@ -5047,15 +5047,23 @@ test("an owner adds money to a property's account online once the company takes 
   page,
 }) => {
   const people = seed.features["owners-pay-online"]!;
-  const owner = await (await browser.newContext()).newPage();
-  await joinPortal(owner, people.owner_a);
-  // Off until the company takes payments online: the owner is told how else to send money.
-  await expect(owner.getByTestId("owner-pay-off")).toHaveText(
-    "Your manager doesn't take payments online. Send money by check or bank transfer to your manager.",
-  );
-
+  // Off until the company takes payments online: the owner reads the company's own words on how
+  // else to send money (Company setup, How to pay us).
   await joinAsStaff(page, people.manager);
   await page.goto("/settings/setup");
+  const howToPay = part(page, "How to pay us");
+  await expect(howToPay.getByTestId("how-to-pay")).toHaveText(
+    'Not set. Tenants and owners see "Contact your property manager to pay."',
+  );
+  await howToPay.getByRole("button", { name: "Edit how to pay us" }).click();
+  const writing = page.getByRole("dialog", { name: "How to pay us" });
+  await writing.getByLabel("How to pay us").fill("Checks to Demo Property Co.\nDrop them at the office.");
+  await writing.getByRole("button", { name: "Save" }).click();
+  await expect(howToPay.getByTestId("how-to-pay")).toHaveText("Checks to Demo Property Co.\nDrop them at the office.");
+  const owner = await (await browser.newContext()).newPage();
+  await joinPortal(owner, people.owner_a);
+  await expect(owner.getByTestId("owner-pay-off")).toHaveText("Checks to Demo Property Co.\nDrop them at the office.");
+
   const card = part(page, "Online payments");
   await card.getByRole("button", { name: "Edit online payments" }).click();
   const settings = page.getByRole("dialog", { name: "Online payments" });

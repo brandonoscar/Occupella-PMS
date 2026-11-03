@@ -869,6 +869,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and what the company's fee account can't (Record the company's deposit, never more than what
   waits needs, area rent). Each posting has a key of its own (`metadata ->> 'key'`, indexed), so
   a partner reporting twice moves nothing twice. The AI role reads these tables; it moves no money.
+  While a tenant or owner can't pay online, the API says why as a word ("off", or "paused" on a
+  payment hold), never in the server's words, and their Pay online and Add money show the
+  company's How to pay us instead (Company setup, `/api/company/how-to-pay`, migration
+  20261104000400, `trust_payment_instructions`: append-only, the latest holding, naming who; the AI
+  role never reads it), else "Contact your property manager to pay."; Autopay isn't shown then,
+  unless one is on to turn off.
 - Owners pay in online (migration 20261102000150, `src/pms/api/owner_payments.py`, ADR 0009,
   `docs/law.md`, readiness q054): while the company takes payments online (the same switch,
   Tenants and owners may pay online), an owner adds money to one of their property accounts of a

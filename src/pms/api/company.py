@@ -22,7 +22,7 @@ from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from pms import exports
 from pms.api import documents
@@ -229,6 +229,49 @@ def save_owner_approvals(session: Staff, conn: Conn, new: NewOwnerApprovals) -> 
             (session.pmc_id, new.sign_over),
         )
     return owner_approvals(session, conn)
+
+
+def how_to_pay(conn: psycopg.Connection[Any], pmc_id: UUID) -> str | None:
+    """What the company tells its tenants and owners about paying it (migration 20261104000400):
+    the latest it wrote, or None."""
+    row = conn.execute(
+        "SELECT body FROM trust_payment_instructions WHERE pmc_id = %s"
+        " ORDER BY created_at DESC, id DESC LIMIT 1",
+        (pmc_id,),
+    ).fetchone()
+    return None if row is None else row[0]
+
+
+class HowToPay(BaseModel):
+    # What the company tells its tenants and owners about paying it; None until it says.
+    body: str | None
+
+
+class NewHowToPay(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Empty or None clears it.
+    body: str | None = Field(default=None, max_length=2000)
+
+
+@router.get("/how-to-pay")
+def how_to_pay_view(session: Staff, conn: Conn) -> HowToPay:
+    """How to pay us: the company's own words, which the tenant's Pay online and the owner's Add
+    money show when it takes no payment online."""
+    return HowToPay(body=how_to_pay(conn, session.pmc_id))
+
+
+@router.post("/how-to-pay")
+def save_how_to_pay(session: Staff, conn: Conn, new: NewHowToPay) -> HowToPay:
+    """Sets it from now on, or clears it; the same again writes nothing."""
+    body = None if new.body is None or not new.body.strip() else new.body.strip()
+    if body is not None and "\x00" in body:
+        raise HTTPException(422, "How to pay us is text.")
+    if body != how_to_pay(conn, session.pmc_id):
+        conn.execute(
+            "INSERT INTO trust_payment_instructions (pmc_id, body) VALUES (%s, %s)",
+            (session.pmc_id, body),
+        )
+    return how_to_pay_view(session, conn)
 
 
 class NewLogo(BaseModel):

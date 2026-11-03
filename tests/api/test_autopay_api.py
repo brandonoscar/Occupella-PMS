@@ -186,22 +186,26 @@ def test_a_lease_with_no_rent_due_ahead_shows_no_next_due_day(
 def test_no_autopay_while_payments_online_are_off_or_the_lease_is_on_hold(
     client, conn, tenant_client, staff, tenant, lease, pmc
 ):
-    assert view(tenant_client, lease)["why_not"] == "your manager doesn't take payments online"
+    assert view(tenant_client, lease)["why_not"] == "off"
     refused(
         tenant_client.post(
             f"/api/payments/leases/{lease}/autopay", json={"rule": "fixed", "amount": "1.00"}
         ),
         409,
-        "your manager doesn't take payments online",
+        "Online payments aren't available.",
     )
     turn_on(client)
     hold_payments(conn, pmc.pmc_id, lease, TODAY - DAY)
-    assert view(tenant_client, lease)["available"] is False
+    assert (view(tenant_client, lease)["available"], view(tenant_client, lease)["why_not"]) == (
+        False,
+        "paused",
+    )
     refused(
         tenant_client.post(
             f"/api/payments/leases/{lease}/autopay", json={"rule": "fixed", "amount": "1.00"}
         ),
         409,
+        "Online payments are paused for this lease. Contact your property manager.",
     )
 
 

@@ -1044,10 +1044,12 @@ browser = [
 
 [[feature]]
 id = "owners-pay-online"
-statement = "Owners pay in online (migration 20261102000150, ADR 0009, readiness q054): once the company takes payments online, an owner adds money to one of their property accounts from the owner portal (Add money), starting with what brings it back up to its reserve, on the payments partner's page (the fake partner's in development and CI); it becomes their contribution only once the partner says the bank paid, once however often it says so, and a return comes back out of their account; the processing fee is always the company's, from its fees in trust, never the owner's (the founder, 2026-11-02); what the books can't take yet waits on Banking with the tenants' payments."
+statement = "Owners pay in online (migration 20261102000150, ADR 0009, readiness q054): once the company takes payments online, an owner adds money to one of their property accounts from the owner portal (Add money), starting with what brings it back up to its reserve, on the payments partner's page (the fake partner's in development and CI); it becomes their contribution only once the partner says the bank paid, once however often it says so, and a return comes back out of their account; the processing fee is always the company's, from its fees in trust, never the owner's (the founder, 2026-11-02); what the books can't take yet waits on Banking with the tenants' payments. Until then staff's How to pay us (Company setup, migration 20261104000400) is what the owner reads on Add money, and a tenant on Pay online, in the company's own words."
 operations = [
   "GET /api/payments/owner",
   "POST /api/payments/owner/checkout",
+  "GET /api/company/how-to-pay",
+  "POST /api/company/how-to-pay",
 ]
 browser = [
   "features.spec.ts › an owner adds money to a property's account online once the company takes payments online, and the bank's payment reaches it with no fee",

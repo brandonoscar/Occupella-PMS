@@ -17,6 +17,7 @@ import { AutomaticEmailsCard } from "./AutomaticEmailsCard";
 import { AutomaticFeesCard } from "./AutomaticFeesCard";
 import { DrawDayCard } from "./DrawDayCard";
 import { AutomaticPrepaidCard } from "./AutomaticPrepaidCard";
+import { HowToPayCard } from "./HowToPayCard";
 import { OnlinePaymentsCard } from "./OnlinePaymentsCards";
 import { OwnerApprovalsCard } from "./OwnerApprovalsCard";
 import { ScreeningCriteriaCard } from "./ScreeningCriteriaCard";
@@ -86,6 +87,7 @@ export function SetupPage({ me }: { me: Me }) {
           <OwnerApprovalsCard />
           <AutomaticPrepaidCard />
           <OnlinePaymentsCard />
+          <HowToPayCard />
           <AutomaticEmailsCard />
           <ScreeningCriteriaCard />
           {open === "company" && (
