@@ -23,8 +23,16 @@ from helpers import (
     transfer_batch,
 )
 
-NOW = datetime.now(UTC)
-TODAY = NOW.date()
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global NOW, TODAY
+    NOW = datetime.now(UTC)
+    TODAY = NOW.date()
+
+
+on_this_day()
 DAY = timedelta(days=1)
 
 

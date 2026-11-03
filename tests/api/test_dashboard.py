@@ -20,10 +20,19 @@ from people import join_as_owner, join_as_staff, join_as_tenant
 
 from pms.api.dashboard import month_before
 
-TODAY = datetime.now(UTC).date()
-THEN = month_before(TODAY)
 DAY = timedelta(days=1)
-START = TODAY - timedelta(days=120)
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, THEN, START
+    TODAY = datetime.now(UTC).date()
+    THEN = month_before(TODAY)
+    START = TODAY - timedelta(days=120)
+
+
+on_this_day()
 
 
 def noon(day: date) -> datetime:

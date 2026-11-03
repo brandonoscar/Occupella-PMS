@@ -305,6 +305,56 @@ jobs:
           timeout --signal=INT --kill-after=2m 50m \
             pytest -v -p no:cacheprovider --hypothesis-seed="$SEED" tests/api/test_api_fuzz.py
 
+  started-yesterday:
+    # A run that starts before midnight UTC and goes past it loads the test modules on one day
+    # and runs the tests on the next; a test that keeps a day from when it loaded and compares it
+    # with the database's clock then fails (PR #197's coverage shards, 11/02). Every night the
+    # whole suite runs so (tools/started_yesterday.py: the modules load at 23:59 UTC the day
+    # before), in two halves, so such a test is found here first, not on a PR at midnight.
+    name: tests as if begun the day before (nightly, ${{ matrix.shard }}/2)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dbmate
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: pip install -r requirements-dev.txt
+      - name: Every test, loaded the day before and run today
+        env:
+          PMS_TEST_STARTED_YESTERDAY: "1"
+          PMS_TEST_SHARD: ${{ matrix.shard }}/2
+        run: pytest -q -p no:cacheprovider
+
   contention:
     # Many staff at once on one company's books (tools/contention.py): 16 workers taking
     # payments, bouncing them, paying bills and owners, taking fees and running rent for five

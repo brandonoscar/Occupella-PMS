@@ -21,11 +21,19 @@ from helpers import (
 )
 from people import join_as_owner, join_as_staff, join_as_tenant, tenant_of
 
-TODAY = datetime.now(UTC).date()
-STARTED = TODAY - timedelta(days=200)
-# Rent owed from last month: a lease that ends yesterday keeps all of it. (Twenty days back fell in
-# this month from its 21st on, when the end rightly credits the days after the move.)
-OWED_ON = (TODAY.replace(day=1) - timedelta(days=1)).replace(day=1)
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, STARTED, OWED_ON
+    TODAY = datetime.now(UTC).date()
+    STARTED = TODAY - timedelta(days=200)
+    # Rent owed from last month: a lease that ends yesterday keeps all of it. (Twenty days back
+    # fell in this month from its 21st on, when the end rightly credits the days after the move.)
+    OWED_ON = (TODAY.replace(day=1) - timedelta(days=1)).replace(day=1)
+
+
+on_this_day()
 
 
 def at(day):

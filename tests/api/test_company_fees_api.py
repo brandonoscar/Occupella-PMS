@@ -8,11 +8,19 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import balance, make_pmc, post
+from helpers import balance, fresh, make_pmc, post
 from people import join_as_owner, join_as_staff
 
-NOW = datetime.now(UTC)
-TODAY = NOW.date()
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global NOW, TODAY
+    NOW = datetime.now(UTC)
+    TODAY = NOW.date()
+
+
+on_this_day()
 DAY = timedelta(days=1)
 
 
@@ -150,10 +158,11 @@ def test_only_staff_see_or_take_the_companys_fees(client, app_conn, pmc, caller)
         {"request_id": "x"},
         {"bank_account_id": "x"},
         {"on": "soon"},
-        {"on": str(TODAY + DAY)},
+        {"on": lambda: str(TODAY + DAY)},
     ],
 )
 def test_bad_input_is_refused(client, conn, staff, pmc, change):
+    change = fresh(change)
     earn(conn, pmc, Decimal("150.00"), 3)
     refused(take(client, pmc.operating_bank_id, **change), 422)
     refused(client.get("/api/payables/company-fees", params={"on": "soon"}), 422)

@@ -7,11 +7,19 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import add_tenant, add_unit, make_pmc, open_account, open_lease, transfer_batch
+from helpers import add_tenant, add_unit, fresh, make_pmc, open_account, open_lease, transfer_batch
 from people import join_as_owner, join_as_staff, join_as_tenant, tenant_of
 
-TODAY = datetime.now(UTC).date()
-ENDED = TODAY - timedelta(days=5)
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, ENDED
+    TODAY = datetime.now(UTC).date()
+    ENDED = TODAY - timedelta(days=5)
+
+
+on_this_day()
 
 
 @pytest.fixture
@@ -49,7 +57,8 @@ def listed(client):
     return {m["lease_id"]: m for m in ok(client.get("/api/move-out"))}
 
 
-def give_back(client, lease, on=TODAY, request_id=None, **more):
+def give_back(client, lease, on=None, request_id=None, **more):
+    on = TODAY if on is None else on
     body = {"request_id": str(request_id or uuid.uuid4()), "on": str(on)} | more
     return client.post(f"/api/move-out/{lease}/return", json=body)
 
@@ -240,14 +249,15 @@ def test_only_staff_handle_move_outs(client, conn, app_conn, pmc, caller, method
     ("path", "body"),
     [
         ("end", {"ends_on": "soon"}),
-        ("deductions", {"amount": "0", "due_on": str(TODAY), "memo": "x"}),
-        ("deductions", {"amount": "1.001", "due_on": str(TODAY), "memo": "x"}),
-        ("deductions", {"amount": "5.00", "due_on": str(TODAY), "memo": "  "}),
-        ("return", {"request_id": "x", "on": str(TODAY)}),
+        ("deductions", {"amount": "0", "due_on": lambda: str(TODAY), "memo": "x"}),
+        ("deductions", {"amount": "1.001", "due_on": lambda: str(TODAY), "memo": "x"}),
+        ("deductions", {"amount": "5.00", "due_on": lambda: str(TODAY), "memo": "  "}),
+        ("return", {"request_id": "x", "on": lambda: str(TODAY)}),
         ("return", {"request_id": str(uuid.uuid4())}),
     ],
 )
 def test_bad_input_is_refused(client, staff, path, body):
+    body = fresh(body)
     refused(client.post(f"/api/move-out/{uuid.uuid4()}/{path}", json=body), 422)
 
 

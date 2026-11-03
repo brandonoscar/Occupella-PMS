@@ -20,6 +20,7 @@ from helpers import (
     charge,
     charge_recurring_due,
     enter_bill,
+    fresh,
     open_lease,
     post,
     step_work_order,
@@ -28,8 +29,16 @@ from people import join_as_owner, join_as_staff, join_as_tenant
 
 from pms import accounts, email, nightly
 
-NOW = datetime.now(UTC)
-TODAY = NOW.date()
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global NOW, TODAY
+    NOW = datetime.now(UTC)
+    TODAY = NOW.date()
+
+
+on_this_day()
 DAY = timedelta(days=1)
 
 
@@ -241,12 +250,13 @@ def test_a_bill_paid_in_part_is_not_declined_by_staff_either(client, conn, staff
     "body",
     [
         {"declined_by": "Owner 1", "reason": "No"},
-        {"declined_on": str(TODAY), "declined_by": "", "reason": "No"},
-        {"declined_on": str(TODAY), "declined_by": "Owner 1", "reason": " "},
-        {"declined_on": str(TODAY), "declined_by": "Owner 1", "reason": "x" * 1001},
+        {"declined_on": lambda: str(TODAY), "declined_by": "", "reason": "No"},
+        {"declined_on": lambda: str(TODAY), "declined_by": "Owner 1", "reason": " "},
+        {"declined_on": lambda: str(TODAY), "declined_by": "Owner 1", "reason": "x" * 1001},
     ],
 )
 def test_a_decline_says_when_who_and_why(client, conn, staff, pmc, body):
+    body = fresh(body)
     bill = ok(new_bill(client, pmc, "800.00"))["id"]
 
     refused(client.post(f"/api/payables/bills/{bill}/decline", json=body), 422)
@@ -390,8 +400,9 @@ def test_owners_money_shows_what_a_draw_may_take(client, conn, staff, pmc):
     assert (second["available"], second["has_agreement"]) == ("0.00", False)
 
 
-def draw(client, account, amount=None, request_id=None, on=TODAY):
+def draw(client, account, amount=None, request_id=None, on=None):
     """Pay owners, one account: everything available unless an amount is given."""
+    on = TODAY if on is None else on
     return call(
         client,
         "draws/batch",

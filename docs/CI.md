@@ -281,6 +281,16 @@ Measured locally: 4 tests in 7.7 s, 20 of 20 runs passed in random order. They a
 each of the 50 timing runs (the job took 19 min 22 s on 10/24), so its limit went from 30 to 40
 minutes.
 
+Nightly too, every test runs as if its run had begun the day before (`tools/started_yesterday.py`,
+two jobs): the modules load with the clock at 23:59 UTC the day before (time-machine, MIT, tests
+only) and the tests run on the real clock. A run that crosses midnight UTC does that, and a test
+that keeps a day worked out when its module loaded (`TODAY = datetime.now(UTC).date()`) and
+compares it with the database's clock fails then though the PMS is right: PR #197's coverage
+shards did on 11/02. `PMS_TEST_STARTED_YESTERDAY=1 pytest` runs it anywhere. So a test module
+works out its days of today in `on_this_day()`, which `tests/conftest.py` calls again before each
+of its tests, and a parametrize decorator writes a day of today as a lambda the test resolves
+with `helpers.fresh()` once it runs.
+
 Nightly too, a company lives through five years of nights (`tools/fast_forward.py`, the founder's
 request of 2026-10-25): the demo's books from five years back, with everything the PMS does by
 itself turned on (the monthly management fees, prepaid rent paying new charges, every email it
@@ -667,7 +677,8 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   running at once.
 - Nightly runs are staggered, though the property jobs now run into the later ones' hours:
   - 03:17 UTC ledger-invariants (8 property jobs of up to 4.5 hours; 6 API fuzz jobs, timing,
-    many-staff, fast-forward and speed, all done within the hour: 18 at first, 8 after 04:17).
+    many-staff, fast-forward, speed and the 2 jobs begun the day before, all done within the
+    hour: 20 at first, 8 after 04:17).
     The property jobs overlap mutation (2 to 3 hours from 04:17, measured 10/21 to 10/23), so up
     to 18 jobs run at once, and on a Monday the security jobs can bring that to 22: GitHub queues what is
     past 20 until one ends, and a PR's checks then wait too;

@@ -13,9 +13,18 @@ from helpers import add_unit, charge, make_pmc, open_lease
 from people import join_as_owner, join_as_staff, join_as_tenant, tenant_of
 from pypdf import PdfReader
 
-TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
-START = TODAY - timedelta(days=60)
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, START
+    TODAY = datetime.now(UTC).date()
+    START = TODAY - timedelta(days=60)
+
+
+on_this_day()
 
 
 @pytest.fixture
@@ -40,7 +49,8 @@ def post(client, path, **body):
     return client.post(path, json=json.loads(json.dumps(body, default=str)))
 
 
-def pay(client, lease, amount, reference, on=TODAY):
+def pay(client, lease, amount, reference, on=None):
+    on = TODAY if on is None else on
     return ok(
         post(
             client,
@@ -59,7 +69,8 @@ def undeposited(client, pmc):
     return ok(client.get(f"/api/bank-accounts/{pmc.operating_bank_id}/undeposited"))
 
 
-def deposit(client, pmc, transfer_ids, on=TODAY):
+def deposit(client, pmc, transfer_ids, on=None):
+    on = TODAY if on is None else on
     return post(
         client,
         f"/api/bank-accounts/{pmc.operating_bank_id}/deposits",

@@ -8,14 +8,23 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from helpers import add_late_fee_policy, add_tenant, add_unit, charge, make_pmc, open_lease
+from helpers import add_late_fee_policy, add_tenant, add_unit, charge, fresh, make_pmc, open_lease
 from people import join_as_staff
 
 from pms import nightly
 
-TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
-FIRST = TODAY.replace(day=1)
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, FIRST
+    TODAY = datetime.now(UTC).date()
+    FIRST = TODAY.replace(day=1)
+
+
+on_this_day()
 
 
 @pytest.fixture
@@ -188,10 +197,11 @@ def test_another_companys_runs_are_not_listed(client, conn, app_conn, staff):
 @pytest.mark.parametrize(
     "body",
     [
-        {"late_fees_as_of": str(TODAY)},  # no due date
-        {"due_on": "the first", "late_fees_as_of": str(TODAY)},
-        {"due_on": str(FIRST)},  # no day for late fees
+        {"late_fees_as_of": lambda: str(TODAY)},  # no due date
+        {"due_on": "the first", "late_fees_as_of": lambda: str(TODAY)},
+        {"due_on": lambda: str(FIRST)},  # no day for late fees
     ],
 )
 def test_a_run_takes_its_days(client, staff, body):
+    body = fresh(body)
     assert client.post("/api/rent/run", json=body).status_code == 422
