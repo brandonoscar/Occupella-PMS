@@ -236,16 +236,17 @@ jobs:
     # generated requests (tests/api/test_api_fuzz.py, in ci.yml's tests); nightly sends
     # nightly_examples, with a new seed each night. A server error fails the job. All 331
     # operations in one job no longer fit its hour (every night from 10/11 to 10/23 was
-    # cancelled at it), so four jobs each take the operations a hash of "METHOD /path" gives
-    # them (PMS_FUZZ_SHARD, tools/run_rules.py), together every operation once.
-    name: API fuzz (nightly, shard ${{ matrix.shard }}/4)
+    # cancelled at it), so jobs each take the operations a hash of "METHOD /path" gives them
+    # (PMS_FUZZ_SHARD, tools/run_rules.py), together every operation once: six since four, at
+    # 382 operations, ran 47 to 50 minutes (one stopped at 50 every night, 10/30 to 11/03).
+    name: API fuzz (nightly, shard ${{ matrix.shard }}/6)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -276,10 +277,27 @@ jobs:
           chmod +x "$RUNNER_TEMP/bin/dbmate"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: pip install -r requirements-dev.txt
+      # Postgres logs each refused statement (thousands a night, all answered in words), which
+      # the job log prints after the tests and buried pytest's report of a failure beyond what
+      # the log tools reach. It logs only what is fatal here; the tests' own report says the rest.
+      - name: Postgres logs only what is fatal
+        run: |
+          python - <<'PY'
+          import os
+
+          import psycopg
+
+          server = os.environ["DATABASE_URL"].replace("/pms?", "/postgres?")
+          with psycopg.connect(server, autocommit=True) as conn:
+              conn.execute("ALTER SYSTEM SET log_min_messages = fatal")
+              conn.execute("ALTER SYSTEM SET log_min_error_statement = panic")
+              conn.execute("ALTER SYSTEM SET log_checkpoints = off")
+              conn.execute("SELECT pg_reload_conf()")
+          PY
       - name: This job's API operations, nightly depth
         env:
           HYPOTHESIS_PROFILE: nightly
-          PMS_FUZZ_SHARD: ${{ matrix.shard }}/4
+          PMS_FUZZ_SHARD: ${{ matrix.shard }}/6
           SEED: ${{ github.run_id }}${{ matrix.shard }}
         # Stopped ten minutes before the job's limit, the run fails (not cancelled) and says
         # where it was, so a night that runs long is seen.

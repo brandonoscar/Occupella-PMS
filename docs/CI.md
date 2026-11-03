@@ -249,10 +249,11 @@ app's own OpenAPI schema and sends every operation its boundary cases and reques
 makes up, valid and broken, as a signed-in staff member. None may get a server error (5xx): what
 the API can't take is refused in words. Every PR sends `[fuzz] pr_examples` per operation with
 the other tests (measured: about 10,400 requests in 2 min 40 s locally, none a 5xx); nightly
-sends `nightly_examples` with a new seed, in 4 jobs that each take the operations a hash of
+sends `nightly_examples` with a new seed, in 6 jobs that each take the operations a hash of
 `METHOD /path` gives them (`PMS_FUZZ_SHARD`), each stopped at 50 minutes so a run too long
 fails instead of being cancelled (in one job, every night from 10/11 to 10/23 was cancelled at
-its hour). A route made to raise on a long name failed it within
+its hour; in four, at 382 operations, one stopped at 50 minutes every night from 10/30 to
+11/03). Their Postgres logs only what is fatal, so the job log ends with pytest's own report. A route made to raise on a long name failed it within
 seconds. Those counts are floors in `ci/thresholds.toml`.
 
 The portal has its own property tests (`frontend/src/properties.test.ts`, fast-check, MIT): for
@@ -665,8 +666,8 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   `deps-and-secrets`, a job of seconds, has finished), so a PR never has more than 8 jobs
   running at once.
 - Nightly runs are staggered, though the property jobs now run into the later ones' hours:
-  - 03:17 UTC ledger-invariants (8 property jobs of up to 4.5 hours; 4 API fuzz jobs, timing,
-    many-staff, fast-forward and speed, all done within the hour: 16 at first, 8 after 04:17).
+  - 03:17 UTC ledger-invariants (8 property jobs of up to 4.5 hours; 6 API fuzz jobs, timing,
+    many-staff, fast-forward and speed, all done within the hour: 18 at first, 8 after 04:17).
     The property jobs overlap mutation (2 to 3 hours from 04:17, measured 10/21 to 10/23), so up
     to 18 jobs run at once, and on a Monday the security jobs can bring that to 22: GitHub queues what is
     past 20 until one ends, and a PR's checks then wait too;
