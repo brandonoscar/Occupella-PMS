@@ -100,8 +100,9 @@ asks for. The link lasts 7 days; `python -m pms.admin invite` makes another.
 
 In the PMS, as that admin:
 
-1. **Settings, Company setup:** your name, mailing address and logo, and the late and NSF fee
-   terms new properties start with.
+1. **Settings, Company setup:** your name, mailing address and logo, the late and NSF fee terms
+   new properties start with, and links to your own terms of use and privacy notice (your
+   lawyer's words: the PMS writes none). Owners, tenants, applicants and signers see the links.
 2. **Banking, Add bank account:** your operating trust account and your security deposit trust
    account (each kind of money stays in its own).
 3. **Settings, Staff:** invite your team from their rows and give them roles (admin, approve,

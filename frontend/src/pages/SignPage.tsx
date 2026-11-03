@@ -5,6 +5,7 @@ import { Button } from "../components/Button";
 import { useConfirm } from "../components/Confirm";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
+import { LegalLinks } from "../components/LegalLinks";
 import { Notice } from "../components/Notice";
 import { Card, Wordmark } from "../components/Shell";
 import { SignaturePad } from "../components/SignaturePad";
@@ -57,6 +58,7 @@ export function SignPage() {
       ) : (
         <>
           <h1 className="font-display text-xl text-ink">Sign your lease with {view.company}</h1>
+          <LegalLinks company={view.company} legal={view} />
           <Card title={view.document_title}>
             <section aria-label="The lease" className="flex flex-col gap-2 text-base text-ink">
               <p>{view.home}</p>

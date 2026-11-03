@@ -1092,7 +1092,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   rename; its mailing address (whole or none) and the late fee and NSF fee terms a property added
   from then on starts with, from its first day (UTC), are `trust_company_profiles`
   (append-only, the latest row holding, naming who recorded it; saving the same again writes
-  nothing). A default changes no property already there. The AI role never reads it.
+  nothing). A default changes no property already there. The AI role never reads it. Since
+  migration 0210 a profile row also holds the company's own terms of use and privacy notice as
+  https links (the founder, 11/03: the words are the company's and its lawyer's, never the PMS's),
+  shown on the portals' company card, the apply page and the signing page (`components/LegalLinks.tsx`).
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
   `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing and holds no
   tax IDs. Since migration 0113 (q060) it is the 1099 summary: a vendor whose latest profile marks

@@ -82,7 +82,26 @@ def test_an_applicant_sees_what_the_link_is_for(client, listing):
         "monthly_rent": "1500.00",
         # The company set no screening criteria in words (migration 0089).
         "criteria": None,
+        # Nor its own terms or privacy notice (migration 0210).
+        "terms_url": None,
+        "privacy_url": None,
     }
+
+
+def test_an_applicant_sees_the_companys_terms_and_privacy_notice(client, conn, listing):
+    conn.execute(
+        "INSERT INTO trust_company_profiles (pmc_id, terms_url, privacy_url)"
+        " SELECT pmc_id, 'https://example.com/terms', 'https://example.com/privacy'"
+        " FROM trust_application_links WHERE token_sha256 = sha256(convert_to(%s, 'UTF8'))",
+        (listing.token,),
+    )
+
+    seen = client.post("/api/apply/view", json={"token": listing.token}).json()
+
+    assert (seen["terms_url"], seen["privacy_url"]) == (
+        "https://example.com/terms",
+        "https://example.com/privacy",
+    )
 
 
 def test_an_applicant_applies_and_follows_the_application(client, conn, listing):

@@ -14856,6 +14856,8 @@ CREATE TABLE public.trust_company_profiles (
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     reply_to text,
+    terms_url text,
+    privacy_url text,
     CONSTRAINT trust_company_profiles_address_line_1_check CHECK (((btrim(address_line_1) <> ''::text) AND (char_length(address_line_1) <= 200))),
     CONSTRAINT trust_company_profiles_address_line_2_check CHECK (((btrim(address_line_2) <> ''::text) AND (char_length(address_line_2) <= 200))),
     CONSTRAINT trust_company_profiles_check CHECK (((num_nonnulls(address_line_1, city, state, postal_code) = ANY (ARRAY[0, 4])) AND ((address_line_2 IS NULL) OR (address_line_1 IS NOT NULL)))),
@@ -14867,8 +14869,10 @@ CREATE TABLE public.trust_company_profiles (
     CONSTRAINT trust_company_profiles_late_percent_check CHECK (((late_percent >= (0)::numeric) AND (late_percent <= (100)::numeric))),
     CONSTRAINT trust_company_profiles_nsf_fee_check CHECK (((nsf_fee >= (0)::numeric) AND (nsf_fee = round(nsf_fee, 2)))),
     CONSTRAINT trust_company_profiles_postal_code_check CHECK (((btrim(postal_code) <> ''::text) AND (char_length(postal_code) <= 20))),
+    CONSTRAINT trust_company_profiles_privacy_url_check CHECK (((privacy_url ~ '^https://[^[:space:]]+$'::text) AND (char_length(privacy_url) <= 500))),
     CONSTRAINT trust_company_profiles_reply_to_check CHECK (((reply_to ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'::text) AND (char_length(reply_to) <= 254))),
-    CONSTRAINT trust_company_profiles_state_check CHECK (((btrim(state) <> ''::text) AND (char_length(state) <= 50)))
+    CONSTRAINT trust_company_profiles_state_check CHECK (((btrim(state) <> ''::text) AND (char_length(state) <= 50))),
+    CONSTRAINT trust_company_profiles_terms_url_check CHECK (((terms_url ~ '^https://[^[:space:]]+$'::text) AND (char_length(terms_url) <= 500)))
 );
 
 
@@ -33503,4 +33507,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261027000155'),
     ('20261028000200'),
     ('20261031000200'),
-    ('20261102000150');
+    ('20261102000150'),
+    ('20261103000210');

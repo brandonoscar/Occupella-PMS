@@ -67,6 +67,9 @@ class Cosigner(BaseModel):
 
 class SigningView(BaseModel):
     company: str
+    # The company's own terms of use and privacy notice, as links (migration 0210).
+    terms_url: str | None
+    privacy_url: str | None
     document_title: str
     home: str
     starts_on: date
@@ -206,8 +209,11 @@ def view_of(conn: psycopg.Connection[Any], link: Link) -> SigningView:
     assert row is not None  # a link names a signer of its offer
     title, home, starts, ends, rent, sha256, name, role = row
     text = disclosure_of(conn, link.pmc_id)
+    legal = company.legal_of(conn, link.pmc_id)
     return SigningView(
         company=company.name_of(conn, link.pmc_id),
+        terms_url=legal.terms_url,
+        privacy_url=legal.privacy_url,
         document_title=title,
         home=home,
         starts_on=starts,

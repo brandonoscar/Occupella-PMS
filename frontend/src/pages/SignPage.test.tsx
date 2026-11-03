@@ -16,6 +16,8 @@ afterEach(() => {
 
 const VIEW: SigningView = {
   company: "Synthetic PMC",
+  terms_url: null,
+  privacy_url: "https://example.com/privacy",
   document_title: "Residential lease",
   home: "Property 1, Unit 1",
   starts_on: "2027-01-01",
@@ -64,6 +66,9 @@ describe("SignPage", () => {
     expect(lease.textContent).toContain("For Applicant A, as a tenant");
     expect(lease.textContent).toContain("Applicant BSigned");
     expect(screen.getByTestId("disclosure").textContent).toBe(VIEW.disclosure);
+    // The company's own privacy notice; it set no terms of use.
+    expect(screen.getByRole("link", { name: "privacy notice" }).getAttribute("href")).toBe("https://example.com/privacy");
+    expect(screen.queryByRole("link", { name: "terms of use" })).toBeNull();
     const go = screen.getByRole("button", { name: "Continue" });
     expect(go.hasAttribute("disabled")).toBe(true);
     fireEvent.click(screen.getByLabelText("I have read this and agree to receive and sign this lease electronically"));

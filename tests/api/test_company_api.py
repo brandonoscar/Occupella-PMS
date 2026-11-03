@@ -5,6 +5,7 @@ tenants see its name, address and logo. Always the session's PMC. Every address 
 import base64
 from datetime import UTC, datetime
 
+import psycopg
 import pytest
 from helpers import PDF, PNG, make_pmc
 from people import join_as_owner, join_as_staff, join_as_tenant
@@ -54,6 +55,8 @@ def test_a_company_starts_with_its_name_alone(client, staff, pmc, conn):
         "late_fees": None,
         "nsf_fee": None,
         "reply_to": None,
+        "terms_url": None,
+        "privacy_url": None,
         "logo": None,
     }
 
@@ -66,6 +69,42 @@ def test_replies_to_the_companys_emails_go_to_its_own_email(client, staff, pmc, 
     assert rows(conn, pmc) == 1  # the same again writes nothing
     assert ok(save(client))["reply_to"] is None
     assert rows(conn, pmc) == 2
+
+
+TERMS = "https://example.com/terms"
+PRIVACY = "https://example.com/privacy"
+
+
+def test_the_companys_terms_and_privacy_notice_are_its_own_links_shown_to_its_people(
+    client, other_client, staff, pmc, conn, app_conn
+):
+    saved = ok(save(client, terms_url=f" {TERMS} ", privacy_url=PRIVACY))
+    assert (saved["terms_url"], saved["privacy_url"]) == (TERMS, PRIVACY)
+    assert rows(conn, pmc) == 1
+    ok(save(client, terms_url=TERMS, privacy_url=PRIVACY))
+    assert rows(conn, pmc) == 1  # the same again writes nothing
+
+    # Owners and tenants see them on their property manager's card.
+    join_as_owner(other_client, app_conn, pmc)
+    card = ok(other_client.get("/api/company/card"))
+    assert (card["terms_url"], card["privacy_url"]) == (TERMS, PRIVACY)
+    other_client.post("/api/sign-out")
+    join_as_tenant(other_client, conn, app_conn, pmc)
+    assert ok(other_client.get("/api/company/card"))["privacy_url"] == PRIVACY
+
+    # Taken off, a new row; the card has none.
+    assert ok(save(client))["terms_url"] is None
+    assert rows(conn, pmc) == 2
+    assert ok(other_client.get("/api/company/card"))["terms_url"] is None
+
+
+def test_the_database_keeps_only_an_https_link(conn, pmc):
+    for bad in ("http://example.com/terms", "https://example.com/two words", "ftp://x"):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute(
+                "INSERT INTO trust_company_profiles (pmc_id, terms_url) VALUES (%s, %s)",
+                (pmc.pmc_id, bad),
+            )
 
 
 def test_staff_rename_it_keep_its_address_and_default_fees_and_a_same_save_writes_nothing(
@@ -171,6 +210,8 @@ def test_the_logo_is_kept_shown_to_owners_and_tenants_and_removed(
         "name": "Synthetic PMC 1",
         "address": ADDRESS,
         "logo": True,
+        "terms_url": None,
+        "privacy_url": None,
     }
     assert other_client.get("/api/company/logo").content == PNG
     other_client.post("/api/sign-out")
@@ -230,6 +271,10 @@ def test_nobody_signed_out_sees_the_card_or_logo(client, pmc):
         {"nsf_fee": "1.001"},
         {"reply_to": "not an email"},
         {"reply_to": "x" * 250 + "@example.com"},
+        {"terms_url": "http://example.com/terms"},
+        {"terms_url": "javascript:alert(1)"},
+        {"privacy_url": "https://example.com/a privacy notice"},
+        {"privacy_url": "https://example.com/" + "p" * 500},
     ],
 )
 def test_a_bad_company_is_refused(client, staff, pmc, conn, body):

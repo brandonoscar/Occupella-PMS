@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { Button } from "../components/Button";
 import { Field } from "../components/Field";
+import { LegalLinks } from "../components/LegalLinks";
 import { Notice } from "../components/Notice";
 import { Card, Wordmark } from "../components/Shell";
 import type { Listing } from "../leasing";
@@ -80,6 +81,10 @@ export function ApplyPage() {
             company may ask each of you for more by email, such as a Social Security number; this
             form asks only for what is below.
           </p>
+          <div className="mb-6">
+            <LegalLinks company={listing.pmc}
+              legal={{ terms_url: listing.terms_url ?? null, privacy_url: listing.privacy_url ?? null }} />
+          </div>
           {listing.criteria && (
             <div className="mb-6 rounded-sm border border-line px-4 py-3" data-testid="screening-criteria">
               <p className="text-sm font-medium text-ink">How {listing.pmc} screens every applicant</p>

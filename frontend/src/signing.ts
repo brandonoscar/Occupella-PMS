@@ -8,6 +8,9 @@ export type SigningStatus = "open" | "signed" | "paper" | "expired" | "void";
 
 export type SigningView = {
   company: string;
+  // The company's own terms of use and privacy notice, as links (migration 0210).
+  terms_url: string | null;
+  privacy_url: string | null;
   document_title: string;
   home: string;
   starts_on: string;

@@ -16,10 +16,19 @@ export type Company = {
   nsf_fee: string | null;
   // Where replies to the company's emails go; none, to the server's From address.
   reply_to: string | null;
+  // The company's own terms of use and privacy notice, as links; none, none.
+  terms_url: string | null;
+  privacy_url: string | null;
   logo: Logo | null;
 };
 // What an owner or a tenant sees of their property manager.
-export type ManagerCard = { name: string; address: Address | null; logo: boolean };
+export type ManagerCard = {
+  name: string;
+  address: Address | null;
+  logo: boolean;
+  terms_url: string | null;
+  privacy_url: string | null;
+};
 
 // An address as it is written on an envelope: its street lines, then "City, ST 00000".
 export function addressLines(address: Address): string[] {

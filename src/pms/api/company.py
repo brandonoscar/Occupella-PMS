@@ -35,8 +35,13 @@ router = APIRouter(prefix="/api/company")
 LogoType = Literal["image/png", "image/jpeg"]
 ADDRESS = ("address_line_1", "address_line_2", "city", "state", "postal_code")
 LATE = ("late_grace_days", "late_flat_fee", "late_percent", "late_maximum")
+LEGAL = ("terms_url", "privacy_url")
 
 
+# The company's terms of use or privacy notice, where it keeps them (migration 0210): an https link.
+Link = Annotated[
+    str, StringConstraints(strip_whitespace=True, max_length=500, pattern=r"^https://\S+$")
+]
 ReplyTo = Annotated[
     str,
     StringConstraints(strip_whitespace=True, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$"),
@@ -79,6 +84,9 @@ class Company(BaseModel):
     nsf_fee: str | None
     # Where replies to the company's emails go (q086); none, to the server's From address.
     reply_to: str | None
+    # The company's own terms of use and privacy notice, as links (migration 0210); none, none.
+    terms_url: str | None
+    privacy_url: str | None
     logo: Logo | None
 
 
@@ -88,11 +96,13 @@ class Card(BaseModel):
     name: str
     address: Address | None
     logo: bool
+    terms_url: str | None
+    privacy_url: str | None
 
 
 def profile(conn: psycopg.Connection[Any], pmc_id: UUID) -> dict[str, Any]:
     """The latest profile row's fields (all None when there is none)."""
-    fields = (*ADDRESS, *LATE, "nsf_fee", "reply_to")
+    fields = (*ADDRESS, *LATE, "nsf_fee", "reply_to", *LEGAL)
     row = conn.execute(
         f"SELECT {', '.join(fields)} FROM trust_company_profiles WHERE pmc_id = %s"  # noqa: S608
         " ORDER BY created_at DESC, id DESC LIMIT 1",
@@ -158,6 +168,8 @@ def company_of(conn: psycopg.Connection[Any], pmc_id: UUID) -> Company:
         ),
         nsf_fee=None if found["nsf_fee"] is None else exports.text(found["nsf_fee"]),
         reply_to=found["reply_to"],
+        terms_url=found["terms_url"],
+        privacy_url=found["privacy_url"],
         logo=logo_of(conn, pmc_id),
     )
 
@@ -174,6 +186,8 @@ class NewCompany(BaseModel):
     late_fees: LateFeeTerms | None = None
     nsf_fee: Money | None = None
     reply_to: ReplyTo | None = None
+    terms_url: Link | None = None
+    privacy_url: Link | None = None
 
 
 @router.post("")
@@ -194,6 +208,8 @@ def save_company(session: Staff, conn: Conn, new: NewCompany) -> Company:
         "late_maximum": late.maximum if late else None,
         "nsf_fee": new.nsf_fee,
         "reply_to": new.reply_to,
+        "terms_url": new.terms_url,
+        "privacy_url": new.privacy_url,
     }
     if wanted != profile(conn, session.pmc_id):
         columns = list(wanted)
@@ -269,9 +285,25 @@ def logo(session: Current, conn: Conn) -> Response:
 
 @router.get("/card")
 def card(session: Current, conn: Conn) -> Card:
-    """The company's name, address and whether it has a logo, as owners and tenants see them."""
+    """The company's name, address, whether it has a logo, and its terms and privacy notice, as
+    owners and tenants see them."""
+    found = profile(conn, session.pmc_id)
     return Card(
         name=name_of(conn, session.pmc_id),
-        address=address_of(profile(conn, session.pmc_id)),
+        address=address_of(found),
         logo=logo_of(conn, session.pmc_id) is not None,
+        terms_url=found["terms_url"],
+        privacy_url=found["privacy_url"],
     )
+
+
+class Legal(BaseModel):
+    """The company's own terms of use and privacy notice, as links; none, none."""
+
+    terms_url: str | None
+    privacy_url: str | None
+
+
+def legal_of(conn: psycopg.Connection[Any], pmc_id: UUID) -> Legal:
+    found = profile(conn, pmc_id)
+    return Legal(terms_url=found["terms_url"], privacy_url=found["privacy_url"])
