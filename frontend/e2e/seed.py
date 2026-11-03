@@ -638,6 +638,7 @@ FEATURES = (
     "tax-credit",
     "unit-details",
     "online-payments",
+    "owners-pay-online",
     "autopay",
     "payouts",
     "receive-payment",

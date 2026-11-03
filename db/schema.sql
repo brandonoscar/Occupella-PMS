@@ -3235,6 +3235,76 @@ $$;
 
 
 --
+-- Name: trust_check_owner_online_payment(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_owner_online_payment() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT a.ledger_account_id FROM trust_ledger_accounts AS a
+        WHERE a.ledger_account_id = NEW.ledger_account_id AND a.kind = 'owner_property'
+    ) THEN
+        RAISE EXCEPTION 'trust: % is not an owner''s property account; an owner pays only into one',
+            NEW.ledger_account_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_owner_online_payment_event(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_owner_online_payment_event() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtext('trust_owner_online_payment_events'), hashtext(NEW.payment_id::text)
+    );
+    IF NEW.kind = 'paid' AND EXISTS (
+        SELECT e.id FROM trust_owner_online_payment_events AS e
+        WHERE e.payment_id = NEW.payment_id AND e.kind = 'failed'
+    ) THEN
+        RAISE EXCEPTION 'trust: owner payment % failed; it is not paid too', NEW.payment_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.kind = 'failed' AND EXISTS (
+        SELECT e.id FROM trust_owner_online_payment_events AS e
+        WHERE e.payment_id = NEW.payment_id AND e.kind = 'paid'
+    ) THEN
+        RAISE EXCEPTION 'trust: owner payment % was paid; a payment paid comes back, it does not '
+            'fail', NEW.payment_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.kind = 'expired' AND EXISTS (
+        SELECT e.id FROM trust_owner_online_payment_events AS e
+        WHERE e.payment_id = NEW.payment_id AND e.kind IN ('paid', 'failed')
+    ) THEN
+        RAISE EXCEPTION 'trust: owner payment % reached the bank; it did not expire',
+            NEW.payment_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.kind = 'returned' AND NOT EXISTS (
+        SELECT e.id FROM trust_owner_online_payment_events AS e
+        WHERE e.payment_id = NEW.payment_id AND e.kind = 'paid'
+    ) THEN
+        RAISE EXCEPTION 'trust: owner payment % was not paid, so it can''t come back',
+            NEW.payment_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_ownership_share_line(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16252,6 +16322,46 @@ CREATE TABLE public.trust_owner_fees (
 
 
 --
+-- Name: trust_owner_online_payment_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_owner_online_payment_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    payment_id uuid NOT NULL,
+    kind text NOT NULL,
+    partner_event text NOT NULL,
+    partner_fee numeric,
+    happened_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_owner_online_payment_events_check CHECK (((kind = 'paid'::text) = (partner_fee IS NOT NULL))),
+    CONSTRAINT trust_owner_online_payment_events_kind_check CHECK ((kind = ANY (ARRAY['paid'::text, 'failed'::text, 'returned'::text, 'expired'::text]))),
+    CONSTRAINT trust_owner_online_payment_events_partner_event_check CHECK (((length(partner_event) >= 1) AND (length(partner_event) <= 200))),
+    CONSTRAINT trust_owner_online_payment_events_partner_fee_check CHECK (((partner_fee >= (0)::numeric) AND (partner_fee <= (1000)::numeric) AND (partner_fee = round(partner_fee, 2))))
+);
+
+
+--
+-- Name: trust_owner_online_payments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_owner_online_payments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    ledger_account_id text NOT NULL,
+    amount numeric NOT NULL,
+    method text NOT NULL,
+    partner text NOT NULL,
+    partner_ref text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_owner_online_payments_amount_check CHECK (((amount > (0)::numeric) AND (amount <= (100000)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_owner_online_payments_method_check CHECK ((method = 'ach'::text)),
+    CONSTRAINT trust_owner_online_payments_partner_check CHECK ((partner = ANY (ARRAY['fake'::text, 'stripe'::text]))),
+    CONSTRAINT trust_owner_online_payments_partner_ref_check CHECK (((length(partner_ref) >= 1) AND (length(partner_ref) <= 200)))
+);
+
+
+--
 -- Name: trust_owner_payout_methods; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19725,6 +19835,46 @@ ALTER TABLE ONLY public.trust_owner_fees
 
 
 --
+-- Name: trust_owner_online_payment_events trust_owner_online_payment_events_payment_id_kind_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_online_payment_events
+    ADD CONSTRAINT trust_owner_online_payment_events_payment_id_kind_key UNIQUE (payment_id, kind);
+
+
+--
+-- Name: trust_owner_online_payment_events trust_owner_online_payment_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_online_payment_events
+    ADD CONSTRAINT trust_owner_online_payment_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_owner_online_payments trust_owner_online_payments_partner_partner_ref_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_online_payments
+    ADD CONSTRAINT trust_owner_online_payments_partner_partner_ref_key UNIQUE (partner, partner_ref);
+
+
+--
+-- Name: trust_owner_online_payments trust_owner_online_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_online_payments
+    ADD CONSTRAINT trust_owner_online_payments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_owner_online_payments trust_owner_online_payments_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_online_payments
+    ADD CONSTRAINT trust_owner_online_payments_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_owner_payout_methods trust_owner_payout_methods_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22349,6 +22499,13 @@ CREATE INDEX trust_owner_fees_recorded_by ON public.trust_owner_fees USING btree
 
 
 --
+-- Name: trust_owner_online_payments_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_online_payments_account ON public.trust_owner_online_payments USING btree (pmc_id, ledger_account_id, created_at);
+
+
+--
 -- Name: trust_owner_payout_methods_owner; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -24197,6 +24354,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_owner_online_payment_events trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_owner_online_payment_events FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_owner_online_payments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_owner_online_payments FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_owner_payout_methods trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25709,6 +25880,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owne
 
 
 --
+-- Name: trust_owner_online_payment_events trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owner_online_payment_events FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_owner_online_payments trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owner_online_payments FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_owner_payout_methods trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26462,6 +26647,20 @@ CREATE TRIGGER trust_check_hold_release BEFORE INSERT ON public.trust_payment_ho
 --
 
 CREATE TRIGGER trust_check_online_payment_event BEFORE INSERT ON public.trust_online_payment_events FOR EACH ROW EXECUTE FUNCTION public.trust_check_online_payment_event();
+
+
+--
+-- Name: trust_owner_online_payments trust_check_owner_online_payment; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_owner_online_payment BEFORE INSERT ON public.trust_owner_online_payments FOR EACH ROW EXECUTE FUNCTION public.trust_check_owner_online_payment();
+
+
+--
+-- Name: trust_owner_online_payment_events trust_check_owner_online_payment_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_owner_online_payment_event BEFORE INSERT ON public.trust_owner_online_payment_events FOR EACH ROW EXECUTE FUNCTION public.trust_check_owner_online_payment_event();
 
 
 --
@@ -31248,6 +31447,30 @@ ALTER TABLE ONLY public.trust_owner_fees
 
 
 --
+-- Name: trust_owner_online_payment_events trust_owner_online_payment_events_pmc_id_payment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_online_payment_events
+    ADD CONSTRAINT trust_owner_online_payment_events_pmc_id_payment_id_fkey FOREIGN KEY (pmc_id, payment_id) REFERENCES public.trust_owner_online_payments(pmc_id, id);
+
+
+--
+-- Name: trust_owner_online_payments trust_owner_online_payments_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_online_payments
+    ADD CONSTRAINT trust_owner_online_payments_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_owner_online_payments trust_owner_online_payments_pmc_id_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_online_payments
+    ADD CONSTRAINT trust_owner_online_payments_pmc_id_ledger_account_id_fkey FOREIGN KEY (pmc_id, ledger_account_id) REFERENCES public.trust_ledger_accounts(pmc_id, ledger_account_id);
+
+
+--
 -- Name: trust_owner_payout_methods trust_owner_payout_methods_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -33279,4 +33502,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261025000220'),
     ('20261027000155'),
     ('20261028000200'),
-    ('20261031000200');
+    ('20261031000200'),
+    ('20261102000150');

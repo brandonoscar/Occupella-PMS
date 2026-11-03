@@ -12,6 +12,7 @@ import { StatementView } from "../components/StatementView";
 import { OwnerBills } from "./OwnerBills";
 import { OwnerDocuments } from "./OwnerDocuments";
 import { OwnerIncomeStatement } from "./OwnerIncomeStatement";
+import { OwnerPayCard } from "./OwnerPayCard";
 import { OwnerYearEnd } from "./OwnerYearEnd";
 import { Form } from "../components/Form";
 import { ManagerCard } from "./ManagerCard";
@@ -81,6 +82,7 @@ export function OwnerHome({ me }: { me: Me }) {
         )}
       </Card>
 
+      <OwnerPayCard />
       <OwnerBills />
 
       <Card title="Statement">
