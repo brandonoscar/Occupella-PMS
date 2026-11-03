@@ -224,7 +224,7 @@ def test_a_lease_on_a_payment_hold_waits_until_staff_accept_it_past_the_hold(
     came = ok(bring(client, a_file(f"{TODAY},1200.00,Property 1,1A,,,")), 201)
     waiting = came["items"][0]
     assert (waiting["status"], waiting["lease_id"]) == ("waiting", str(first.id))
-    hold = "the lease is on a payment hold: accept the payment past the hold, or set it aside"
+    hold = "the lease is on a payment hold: accept the payment past the hold, or skip the line"
     assert waiting["note"] == hold
     assert first.owed(conn) == Decimal("1200.00")
 
@@ -280,9 +280,9 @@ def test_staff_set_a_line_aside_with_why(client, conn, staff, pmc, homes):
         "A refund from the utility, not rent",
         "Staff 1",
     )
-    refused(post(client, aside, reason="Again"), 409, "this line is set aside")
+    refused(post(client, aside, reason="Again"), 409, "this line was skipped")
     to = f"/api/rent/payment-files/lines/{waiting['id']}/record"
-    refused(post(client, to, lease_id=homes[0].id), 409, "this line is set aside")
+    refused(post(client, to, lease_id=homes[0].id), 409, "this line was skipped")
     detail = ok(client.get(f"/api/rent/payment-files/{came['id']}"))
     assert (detail["recorded"], detail["waiting"], detail["set_aside"]) == (0, 0, 1)
     assert rows_of(conn, pmc) == (1, 1, 0, 1)

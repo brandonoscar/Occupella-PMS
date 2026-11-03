@@ -34,7 +34,11 @@ export function InsuranceForms({ lease, record }: { lease: RentLease; record: Re
         )}
         <Field label="Asked from" id={`insurance-from-${lease.id}`} type="date" required value={from}
           onChange={(e) => setFrom(e.target.value)} />
-        <Button type="submit" variant="secondary">Set insurance terms</Button>
+        <Button type="submit" variant="secondary" says={required
+          ? "The lease asks for renters insurance from that day; the tenant sees it in their portal. Nothing is charged."
+          : "From that day the lease doesn't ask for renters insurance; earlier terms stay. Nothing is charged."}>
+          Set insurance terms
+        </Button>
       </Form>
       <PolicyForm path={`/api/rent/leases/${lease.id}/renters-insurance`} id={lease.id} record={record} />
     </div>
@@ -80,7 +84,10 @@ export function PolicyForm({ path, id, record }: { path: string; id: string; rec
         <input type="checkbox" checked={named} onChange={(e) => setNamed(e.target.checked)} />
         The landlord is named an interested party
       </label>
-      <Button type="submit" variant="secondary">Record policy</Button>
+      <Button type="submit" variant="secondary"
+        says="Adds this policy to the lease; earlier ones stay on file. Nothing is charged, and the insurer isn't contacted.">
+        Record policy
+      </Button>
     </Form>
   );
 }

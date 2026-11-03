@@ -266,3 +266,194 @@ Screens before and after: `docs/design-pass/2/`. Migration 0155.
 the 1099 summary's "1099 export, with tax IDs"; the application's Phone, Where you live now, Your
 previous landlord, Employer, Emergency contact, Proof of income and Your household; the tenant
 page's Emergency contact and From their application; the application page's Household.
+
+## Phase 3: the screens (parts H to O)
+
+Screens before and after: `docs/design-pass/3/`. No migration: every part reads what the books
+already keep, or writes through write paths that already exist.
+
+**The Dashboard (H)**
+
+- **Only numbers that change, each beside the same day a month before** ("Up 2 from 09/25/2026"):
+  occupancy, rent collected against rent due this month, what is past due and how many tenants
+  owe it (the delinquency report's own total), leases ending in the next 60 days, vacant units and
+  their average days vacant, the next draw day with what a draw would pay then (and the last
+  draw's), and trust bank accounts with a month ended and not reconciled. Each opens the page where
+  that work is done (`src/pms/api/dashboard.py`). An archived unit counts in no occupancy.
+- **Needs attention is one list**, the longest overdue first, then what comes due soonest, each
+  row with its action right there: Send reminder (a past-due tenant), Pay bill, Approve draws,
+  Approve reconciliation, Review application, or its page. **Send reminder** names who gets it,
+  their emails, the count and anyone left out (no email on file) before it goes (rule 3), and
+  goes once a day per lease (`/api/emails/rent-reminders/{lease}`).
+
+**A tenant's page (I) and an owner's (J)**
+
+- **A tenant's page** opens on their home, a `tel:` phone and a `mailto:` email (rule 6), and on
+  Summary their lease: rent and due day, start and end (Change end date), the deposit held, their
+  autopay and the balance, with Receive payment and Renew lease right there; then their household,
+  emergency contact, notes, files and what their application gave, read only. Archive shows only
+  once they have moved out or never had a lease (rule 4).
+- **An owner's page** opens on how to reach them, how they are paid, their tax ID's last four (phase
+  2), their balance, and the next draw day with what it would pay.
+- **Invites in one click**, to the email in their contact details, named before it goes; with none
+  on file the portal says so and opens their contact details. No email box.
+- *Forced by the code:* **a lease's start date is not editable.** The app role only reads
+  `trust_leases`; a lease's days move only through `trust_end_lease`, which adjusts every charge
+  already made to the days in effect. Moving a start would need a new write path that re-prorates
+  the first month's rent and recurring charges and moves a deposit's and a payment's dates. That
+  touches money, so it waits for the founder's call (asked in this PR). The end date is editable.
+
+**Email tenants (K)**
+
+- Opens on the tenants living at the property today, each with their email and a box, all
+  ticked; the count; who has no email on file; and "Current tenants only, not past or future."
+  Only the ticked are written to (`GET /api/emails/property/{id}`, the preview; the email names the
+  tenants chosen, each living there today, or is refused).
+
+**Renewals (L)**
+
+- **Renew lease** on the tenant's page and in the lease's ⋯ menu opens one side panel: the new
+  rent and term, starting the day after the lease ends (the first of next month for month to
+  month; a year long by default when the lease had an end), the company's lease template filled in
+  or its own PDF, and the tenants who sign, with their emails; one with no email on file stops it
+  and says where to add one. **Send for signing** asks first, naming everyone it goes to (rule 3).
+  It goes through the PMS's own signing page (ADR 0008), and once everyone has signed it becomes
+  the lease. The Renewals page loses "Draft a renewal"; an ended lease offers no Renew lease.
+- **The notice warning**: before sending, the panel and its confirm say so when the new rent
+  starts sooner than the written notice the property's state asks (`src/pms/rent_notice.py`; the
+  property's address gives the state). Only the rules `docs/law.md` records are used, and nothing
+  is invented: California Civil Code 827 (30 days, or 90 when the rent is more than 10% over the
+  lowest charged in the 12 months before it starts), Oregon ORS 90.323 (90), Washington RCW
+  59.18.140 (90), Nevada NRS 118A.300 (60), and New York Real Property Law 226-c (for 5% or more:
+  30, 60 or 90 days by how long the tenant has lived there). Any other state gets no warning. A
+  threshold compares the exact increase, so 4.99% is never taken for 5%. Left out, as `law.md`
+  records them: Colorado's 60 days applies only without a written lease, and a renewal is one;
+  West Virginia has no statute. Rent caps are not checked. The warning stops nothing: staff can
+  Send anyway.
+- *Forced by the code:* **"the lease updates" is a new lease.** A renewal offer becomes the lease
+  from its first day and ends the one it renews the day before (`trust_complete_lease_offer`);
+  its tenants, due day and assistance carry over. Rewriting a lease's terms in place would change
+  charges already made, which the ledger rules forbid; the new lease keeps the old one's history
+  whole.
+
+**Ledgers (M)**
+
+- **A lease's Ledger tab**: From and To (empty: from its first line, through today) with the
+  balance brought forward; every line opens what is behind it in a side panel, a charge (what is
+  still open of it, with Waive) or a payment (its receipt, It bounced; a bounce opens the payment
+  that bounced); Export CSV of the lines shown; and "Updated hh:mm". The report's own download is
+  still the whole ledger.
+- **A trust bank account's register**: each move opens its lease, bill, owner or tenant; Export
+  CSV of every move of the days, oldest first; and the same stamp.
+- Both are **read again when the browser tab comes back into view**. A CSV's amounts are numbers,
+  so a credit's minus sign isn't escaped as a formula; text still is.
+- The owner's statement is left as it is: it already has its period and its downloads, and its
+  lines are totals with no single payment or bill behind them to open.
+
+**Utilities (N)**
+
+- Accounting's "Utility billing" page becomes each **property's own Utilities page**
+  (`/properties/<id>/utilities`, linked from the property's page), the only place a utility is
+  billed back. No bill offers it: the portal never linked a vendor's bill to a bill-back, and
+  still doesn't.
+
+**Housing authorities (O)**
+
+- **No Housing authorities menu page.** A lease's housing assistance stays on its Summary with the
+  rent's split. Set housing assistance offers "A new housing authority" (the choice when none is
+  on file), added by its name as the assistance is saved and kept chosen should the assistance be
+  refused, so a retry adds no second one. Each authority the lease names links its own page (its
+  leases, late fee and payments). Its checks go in through Receive payment (part D), on the rent
+  roll or that page.
+
+**Renamed labels (rule 2)**: "Draft a renewal" (Renewals) is gone; Renew lease opens a panel
+instead of Draft leases. Accounting's "Utility billing" is the property's "Utilities". Rentals'
+"Housing authorities" is gone. "Download the ledger" reads "The whole ledger, as a report". New:
+the Dashboard's tiles and Needs attention actions (Send reminder, Pay bill, Approve draws, Approve
+reconciliation, Review application); Renew lease's New rent a month, Send for signing and Send
+anyway; the ledgers' From, To, Export CSV and Updated; the tenant's Lease card; the owner's top;
+Email tenants' boxes; "A new housing authority".
+
+## Phase 4: the finish (copy sweep, browser tests, goldens, property tests)
+
+Screens before and after: `docs/design-pass/4/`. No migration.
+
+**Rule 1, a plain line under every action button.** `Button` takes `says`, the line under it
+saying what pressing it does and what it doesn't; the button is described by it, so a screen reader
+reads it too. Every submit button in the portal has one (a report's Show and a Preview change
+nothing and have none), and so does every button that changes something on click without asking
+first. `src/buttonRules.test.ts` reads every `<Button>` in the portal's source and fails on a
+submit button without a line. Each line was checked against the API route and the database
+function it calls before it was written: one never says "nothing is sent" of a step that emails,
+or "nothing is charged" of one that charges. A confirm question that only asked now says what
+happens too. *Forced by the code:* `Button` defaults to `type="button"`, so only the submit
+button submits its form: the notice card's Cancel, a button with no type inside its form, could
+make the notice it was cancelling.
+
+**Rule 2, no internal jargon.** Payment files' "Set aside" is Skip, Skipped and "Skip this line"
+(the API's own messages too). A day inside a memo reads MM/DD/YYYY wherever a memo shows ("Rent
+due 10/01/2026", "Management fee 09/01/2026 to 09/30/2026"): the lease ledger, the owner's
+statement, Move-outs, the tenant's portal, month-end and the open charges. The owner's statement
+on screen reads "Bill RF-1" where the ledger's memo says "Bill RF-1 set aside" (*forced by the
+code:* phase 1a kept that write path and its memo, and a ledger memo is never rewritten). Month-end
+reads "In the books" for what it called transfers; switching says "money recorded" for postings.
+The browser sweep that checks every page of the demo for accessibility also fails a page whose
+text carries a name from the code, "set aside", "PMC", "EFT", a value printed as nothing or a day
+as YYYY-MM-DD (`frontend/e2e/words.ts`). **Left to the founder:** the reports, the general ledger
+page and every download print the ledger's own words (`bank_cash:`, `owner_property:`, "PMC",
+"posting", "Bill X set aside", times in UTC). An earlier decision kept a report's text as the
+report writes it, so the sweep leaves those pages out here. **The founder's answer (2026-10-26):
+translate them everywhere**, on screen and in every download, from one word list, with the report
+functions and their golden cases unchanged; a follow-up PR does it and takes the exception out
+of the sweep.
+
+**The follow-up (report words).** `src/pms/wording.py` is the one word list. It reads an
+account's kind as a word ("Bank: ", "Owner: ", "Company fees: ", "Deposit: ", "Prepaid rent: ",
+"Vendor: "), a deposit account as "(security deposit)", the heading word "PMC" as "Company" and
+"posting" as "transaction", "Bill X set aside" as "Bill X", "set aside for vendors' bills" as
+"held for vendors' bills" and "bills not yet set aside" as "bills held, nothing paid yet", a day
+as MM/DD/YYYY (an owner's statement's period "from midnight to midnight UTC" as its first and
+last day), and a column's name as its heading ("Monthly rent"; a few by hand, "1-30 days",
+"Held for the vendor", "W-9 on file"). Reports on screen (the API sends the headings with the
+rows, so the page has no list of its own), the general ledger page and every CSV, Excel and PDF
+download read through it; Excel keeps days as dates, shown MM/DD/YYYY. *Left as written:* the
+report functions and their golden cases; what the owner's and tenant's pages parse, which
+already say it their own way; the audit log, whose cells are the database's own rows; the
+ledger and records zips and the QuickBooks file, which are data for another system; and "UTC",
+because the reports' days end at midnight UTC. The sweep now leaves out only the audit log.
+
+**Rule 3, who gets it before it sends.** Write email names the address it goes to, or says the
+person has no email on file and sends nothing (`GET /api/emails/to`). A portal invite says whether
+it is emailed or only a link to hand over, as the server sends email or not. A work order's Next
+step names the vendor's email before an assignment or a visit emails them, or why none goes (no
+email on file, work order emails off, a server that sends none). A decision resting on a screening
+names each applicant and their email, counted, before the adverse action notice goes. *Not done:*
+a payment's receipt and an over-limit bill's approval email still go to the address on file
+without the screen naming it first; both are written by themselves as the payment or bill is
+recorded, and naming each address needs the API to answer it first.
+
+**Rule 4, ask before what can't be taken back.** `AskFirst` asks a question naming what happens
+before Post (a journal entry), Sign off the tie-out, Approve through (month-end), This is them (one
+tenant at two properties), Remove logo, a file's and a listing photo's Remove, Unlist, Take away
+(a signer) and Try again (an online payment that came back); a showing's outcome, ending a lease
+from Move-outs and a vendor's The work is done ask too. Each shows only where it applies, as
+before. *Not done:* they stay where they were rather than moving into a ⋯ menu (Unlist and a
+file's Remove sit beside one; a signer's Take away, a photo's Remove and Remove logo have none to
+go in). Undo on a month-end match stays a plain button: it changes nothing that can't be matched
+again.
+
+**Golden files for what the PMS hands people** (`tests/golden/test_golden_files.py`): a payment
+receipt, an owner's statement as the PDF they download, the ACH file and the printed checks, each
+from a fixed synthetic fixture and compared as the text it shows. *Found by them:* an ACH file
+taken again read the company's bank details as they are now; it now reads them as the run had
+them, as it already read each payee's account, so a file taken again is the file uploaded.
+
+**Property tests for holds and draws** (`tests/properties/test_payables_properties.py`): holds
+never come to more than the balance, a draw never pays held money, and now a void releases its
+hold (the bill holds nothing, no other bill holds less, and a draw may take at least what it could
+before).
+
+**Renamed labels (rule 2)**: payment files' "Set aside" (⋯ menu), "Set it aside" and "Set aside"
+(column, status) are Skip, Skip this line and Skipped; month-end's "Transfers not matched" is "In
+the books, not matched", "Lines … · Transfers …" is "Bank lines … · Books …", and "No transfer" is
+"Nothing in the books". New: the line under each action button; the confirm questions above.

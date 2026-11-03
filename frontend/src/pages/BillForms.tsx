@@ -321,7 +321,13 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
           }} />
       </label>
       <Notice tone="error">{problem}</Notice>
-      <div><Button type="submit" disabled={problem !== "" || sharesOff}>Record bill</Button></div>
+      <div>
+        <Button type="submit" disabled={problem !== "" || sharesOff} says={shared || byOwnership
+          ? "Nothing is paid; each share is held from its owner's balance from its date. Over a limit, it waits for that owner, emailed if they use the portal."
+          : "Nothing is paid; it's held from the owner's balance from its date. Over their limit, it waits for them, emailed if they use the portal."}>
+          Record bill
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -341,7 +347,7 @@ export function ApprovalForm({ bill, record }: { bill: Bill; record: Recorder })
         onChange={(e) => setBy(e.target.value)} />
       <Field label="Approved on" id={`approved-on-${bill.id}`} type="date" required value={on}
         onChange={(e) => setOn(e.target.value)} />
-      <div><Button type="submit">Record approval</Button></div>
+      <div><Button type="submit" says="Nothing is paid now; the bill is ready to pay once the owner's balance covers it.">Record approval</Button></div>
     </Form>
   );
 }
@@ -363,7 +369,9 @@ export function DeclineForm({ bill, record }: { bill: Bill; record: Recorder }) 
         onChange={(e) => setOn(e.target.value)} />
       <Field label="Why" id={`declined-why-${bill.id}`} required maxLength={1000} value={why}
         onChange={(e) => setWhy(e.target.value)} />
-      <div><Button type="submit">Record decline</Button></div>
+      <div>
+        <Button type="submit" says={`The bill is void and never paid; its hold goes back to ${bill.owner}'s balance.`}>Record decline</Button>
+      </div>
     </Form>
   );
 }
@@ -423,11 +431,15 @@ export function PayForm({ bill, record }: { bill: Bill; record: Recorder }) {
           }} />
       </label>
       <Notice tone="error">{problem}</Notice>
-      <div><Button type="submit" disabled={problem !== "" || !valid}>Pay {money(valid ? amount : "0")}</Button></div>
-      <p className="text-sm text-ink-subtle">
-        Records what the bank paid out of trust{part ? `; ${money(after)} stays left to pay` : ""}. The PMS sends no money.
-        {method === "check" ? " With its number, the check matches its bank statement line by itself." : ""}
-      </p>
+      <div>
+        <Button type="submit" disabled={problem !== "" || !valid}
+          says={`Records what the bank paid out of trust${part ? `; ${money(after)} stays left to pay` : ""}. The PMS sends no money.`}>
+          Pay {money(valid ? amount : "0")}
+        </Button>
+      </div>
+      {method === "check" && (
+        <p className="text-sm text-ink-subtle">With its number, the check matches its bank statement line by itself.</p>
+      )}
       {prompt}
     </Form>
   );
@@ -446,10 +458,12 @@ export function VoidForm({ bill, record }: { bill: Bill; record: Recorder }) {
     }}>
       <Field label="Why" id={`void-why-${bill.id}`} required maxLength={1000} value={why}
         onChange={(e) => setWhy(e.target.value)} />
-      <div><Button type="submit" variant="danger">Void</Button></div>
-      <p className="text-sm text-ink-subtle">
-        Nothing was paid; the hold goes back to {bill.owner}'s balance. A void bill is never paid.
-      </p>
+      <div>
+        <Button type="submit" variant="danger"
+          says={`Nothing was paid; the hold goes back to ${bill.owner}'s balance. A void bill is never paid.`}>
+          Void
+        </Button>
+      </div>
       {prompt}
     </Form>
   );
@@ -488,7 +502,10 @@ export function ExpenseAccountForm({ bill, books, current, record }: {
         </Select>
       )}
       <div>
-        <Button type="submit" disabled={split && total !== sumMoney([bill.amount])}>Save</Button>
+        <Button type="submit" disabled={split && total !== sumMoney([bill.amount])}
+          says="Puts the bill in these expense accounts for the reports; the old choice stays in the history. No money moves.">
+          Save
+        </Button>
       </div>
     </Form>
   );

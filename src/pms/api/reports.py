@@ -19,7 +19,7 @@ from uuid import UUID
 import psycopg
 from pydantic import BaseModel
 
-from pms import exports
+from pms import exports, wording
 from pms.api import scope
 
 # The most rows a preview sends; Export has them all.
@@ -31,17 +31,22 @@ HEADINGS = frozenset({"PMC", "as of", "period"})
 class Preview(BaseModel):
     title: str
     columns: list[str]
+    # Each column's heading, as a download has it (`wording.heading`).
+    headings: list[str]
     rows: list[list[str]]
     # Every row the report has; the preview sends at most PREVIEW_ROWS of them.
     total_rows: int
 
 
 def preview(table: exports.Table) -> Preview:
-    """The table as text, as CSV writes each cell, the first PREVIEW_ROWS rows."""
+    """The table as text in plain words, as CSV writes each cell, the first PREVIEW_ROWS rows.
+    Its columns keep their names, which the page finds them by, beside their headings."""
+    plain = wording.days_as_text(wording.plain_table(table))
     return Preview(
-        title=table.title,
+        title=plain.title,
         columns=list(table.columns),
-        rows=[[exports.text(cell) for cell in row] for row in table.rows[:PREVIEW_ROWS]],
+        headings=[wording.heading(column) for column in table.columns],
+        rows=[[exports.text(cell) for cell in row] for row in plain.rows[:PREVIEW_ROWS]],
         total_rows=len(table.rows),
     )
 

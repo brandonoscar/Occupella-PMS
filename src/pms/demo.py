@@ -761,7 +761,7 @@ def showcase(conn: psycopg.Connection[Any], demo: Demo, today: date, public_url:
 
 def lead_and_housing_authority(b: Builder, demo: Demo, units: dict[str, UUID], today: date) -> None:
     """A lead who asked about a vacant unit at Harbor Tower, to be shown it next week, and a
-    housing authority on file, so Leads and Housing authorities have something to open."""
+    housing authority on file, so Leads and a housing authority's page have something to open."""
     conn = b.conn
     harbor = property_of(conn, demo, "Harbor Tower")
     with b.as_staff(demo.manager) as s:

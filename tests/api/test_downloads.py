@@ -33,7 +33,7 @@ def test_every_report_takes_the_pmc_first(conn):
 @pytest.mark.parametrize(
     ("fmt", "media", "magic"),
     [
-        ("csv", "text/csv; charset=utf-8", b"line,item"),
+        ("csv", "text/csv; charset=utf-8", b"Line,Item"),
         ("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", b"PK"),
         ("pdf", "application/pdf", b"%PDF-"),
     ],
@@ -66,7 +66,7 @@ def test_the_report_is_always_the_sessions_pmc(client, conn, app_conn, pmc):
     pmc_name = conn.execute(
         "SELECT display_name FROM trust_pmcs WHERE pmc_id = %s", (pmc.pmc_id,)
     ).fetchone()[0]
-    assert ours[1] == ["1", "PMC", pmc_name, "", ""]
+    assert ours[1] == ["1", "Company", pmc_name, "", ""]
     assert smuggled.status_code == 422
     assert "takes 2 arguments" in smuggled.json()["detail"]
 

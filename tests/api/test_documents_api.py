@@ -62,7 +62,7 @@ def test_staff_keep_each_kind_of_document_and_download_it(client, conn, staff, p
     assert library["documents"] == []
     assert library["subjects"]["w9"] == [{"id": str(pmc.vendor_id), "label": "Vendor 1"}]
     assert library["subjects"]["receipt"] == [
-        {"id": str(bill), "label": "Vendor 1 INV-7, 2026-03-02"}
+        {"id": str(bill), "label": "Vendor 1 INV-7, 03/02/2026"}
     ]
     assert [s["label"] for s in library["subjects"]["owner_document"]] == ["Owner 1", "Owner 2"]
 
@@ -73,7 +73,7 @@ def test_staff_keep_each_kind_of_document_and_download_it(client, conn, staff, p
     assert [
         (d["id"], d["kind"], d["about"], d["title"], d["size"], d["uploaded_by"]) for d in listed
     ] == [
-        (receipt["id"], "receipt", "Vendor 1 INV-7, 2026-03-02", "Receipt", len(JPEG), "Clerk 1"),
+        (receipt["id"], "receipt", "Vendor 1 INV-7, 03/02/2026", "Receipt", len(JPEG), "Clerk 1"),
         (w9["id"], "w9", "Vendor 1", "W-9 2026", len(PDF), "Clerk 1"),
     ]
     got = client.get(f"/api/documents/{w9['id']}/file")

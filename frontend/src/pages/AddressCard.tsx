@@ -57,7 +57,8 @@ export function AddressCard({ propertyId, address, location, canLocate, onChange
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => setEditing(true)}>{address ? "Edit address" : "Add address"}</Button>
           {address !== null && canLocate && (
-            <Button variant="secondary" onClick={() => record(`/api/properties/${propertyId}/locate`, {}, () => "Found on the map.")}>
+            <Button variant="secondary" says="Sends this address alone to the map lookup and keeps the point it finds. Nothing else is shared."
+              onClick={() => record(`/api/properties/${propertyId}/locate`, {}, () => "Found on the map.")}>
               Find on map
             </Button>
           )}
@@ -87,7 +88,7 @@ function AddressForm({ propertyId, address, record }: {
       const body = { line_1: line1, line_2: line2.trim() || null, city, state, zip };
       return record(`/api/properties/${propertyId}/address`, body, () => "Address saved.");
     }}>
-      <p className="text-sm text-ink-muted">The home's street address, whole. A new address is found on a map again.</p>
+      <p className="text-sm text-ink-muted">The home's street address, whole.</p>
       <Field label="Street" id="address-line-1" required maxLength={200} autoComplete="address-line1" value={line1}
         onChange={(e) => setLine1(e.target.value)} />
       <Field label="Building or unit (optional)" id="address-line-2" maxLength={200} autoComplete="address-line2"
@@ -98,7 +99,13 @@ function AddressForm({ propertyId, address, record }: {
         value={state} onChange={(e) => setState(e.target.value)} />
       <Field label="ZIP code" id="address-zip" required maxLength={10} inputMode="numeric" autoComplete="postal-code"
         value={zip} onChange={(e) => setZip(e.target.value)} />
-      <div><Button type="submit">Save address</Button></div>
+      <div>
+        <Button type="submit" says={address === null
+          ? "Saves the address. It goes to no map lookup until someone chooses Find on map."
+          : "Saves it; the earlier address stays in the history. A changed address is off the map until found again."}>
+          Save address
+        </Button>
+      </div>
     </Form>
   );
 }

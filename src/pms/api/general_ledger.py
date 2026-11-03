@@ -15,6 +15,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from pms import wording
 from pms.api.deps import Conn, Staff
 from pms.api.rent import cents
 from pms.api.rentals import Page, Paged, Search
@@ -69,8 +70,8 @@ def general_ledger(
         if item == "opening balance":
             accounts.append(
                 LedgerAccount(
-                    bank=bank,
-                    account=account,
+                    bank=wording.plain_text(bank),
+                    account=wording.plain_text(account),
                     prior_balance=money(balance),
                     entries=[],
                     debits=money(None),
@@ -82,7 +83,7 @@ def general_ledger(
             accounts[-1].entries.append(
                 Entry(
                     posted_at=posted_at,
-                    description=description,
+                    description=wording.plain_text(description),
                     debit=money(debit),
                     credit=money(credit),
                     balance=money(balance),

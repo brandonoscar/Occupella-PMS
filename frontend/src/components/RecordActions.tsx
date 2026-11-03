@@ -18,12 +18,15 @@ export function RecordActions({
   path,
   name,
   archived,
+  archivable = true,
   onChange,
 }: {
   path: string;
   name: string;
   // Undefined: the record is renamed, never archived.
   archived?: boolean;
+  // False hides Archive while it doesn't apply (ADR 0010, rule 4); Bring back always shows.
+  archivable?: boolean;
   onChange: (said: string) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
@@ -48,7 +51,7 @@ export function RecordActions({
         <Button variant="secondary" size="sm" onClick={() => { setDraft(name); setRenaming(!renaming); }}>
           Edit
         </Button>
-        {archived !== undefined && (
+        {archived !== undefined && (archived || archivable) && (
           <RowMenu label={name} actions={[
             archived
               ? { label: "Bring back", confirm: `Bring back ${name}? It comes back into lists.`,
@@ -68,7 +71,7 @@ export function RecordActions({
         >
           <Field label="Name" id={`rename-${path}`} required maxLength={200} value={draft}
             onChange={(event) => setDraft(event.target.value)} />
-          <Button type="submit" size="sm">Save</Button>
+          <Button type="submit" size="sm" says="The new name shows everywhere; its history stays.">Save</Button>
         </Form>
       )}
       <Notice tone="error">{error}</Notice>

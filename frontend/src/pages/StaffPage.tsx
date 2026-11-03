@@ -126,7 +126,7 @@ export function StaffPage({ me }: { me: Me }) {
             }}
           >
             <Field label="Name" id="staff-name" required value={name} onChange={(e) => setName(e.target.value)} />
-            <Button type="submit">Add</Button>
+            <Button type="submit" says="Adds them with no roles and no login. Nothing is sent; invite them from their row.">Add</Button>
           </Form>
         </Card>
       )}
@@ -134,7 +134,7 @@ export function StaffPage({ me }: { me: Me }) {
         <SidePanel title={`Invite ${inviting.name}`} onClose={() => setInviting(null)}>
           <InviteForm kind="staff" personId={inviting.staff_id} name={inviting.name}
             portal={logins[inviting.staff_id]?.status ?? "no login"} email={logins[inviting.staff_id]?.email ?? null}
-            refresh={refresh} />
+            emailOn={me.email_on ?? false} refresh={refresh} />
         </SidePanel>
       )}
     </Shell>

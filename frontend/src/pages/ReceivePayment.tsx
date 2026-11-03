@@ -98,7 +98,7 @@ function AuthorityCheckForm({ record, authority, onRecorded }: {
 
   if (authorities === null) return <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>;
   if (authorities.length === 0) {
-    return <Notice tone="info">No housing authority yet: add one under Rentals, Housing authorities.</Notice>;
+    return <Notice tone="info">No housing authority yet: one is added when a lease's housing assistance is set, on the lease's page.</Notice>;
   }
   return (
     <div className="flex flex-col gap-3">
@@ -175,10 +175,12 @@ function AuthorityLines({ page, record, onRecorded }: {
       )}
       <p className="text-sm text-ink" data-testid="authority-pay-total">{`Total ${money(total)}`}</p>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" disabled={total === "0.00"} onClick={() => { another.current = false; }}>
+        <Button type="submit" disabled={total === "0.00"} onClick={() => { another.current = false; }}
+          says={`Records ${money(total)} from ${page.name}. The tenants' balances stay as they are, and nothing is sent.`}>
           Record payment
         </Button>
-        <Button type="submit" variant="secondary" disabled={total === "0.00"} onClick={() => { another.current = true; }}>
+        <Button type="submit" variant="secondary" disabled={total === "0.00"} onClick={() => { another.current = true; }}
+          says="Records it the same way, then starts another check.">
           Save and add another
         </Button>
       </div>

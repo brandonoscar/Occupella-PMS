@@ -75,16 +75,20 @@ def statement_table(
     )
 
 
+def titled_statement(
+    conn: psycopg.Connection[object], pmc_id: UUID, owner_id: UUID, start: date, end: date
+) -> exports.Table:
+    """The statement as the owner reads and downloads it, titled by its days."""
+    table = statement_table(conn, pmc_id, owner_id, start, end)
+    title = f"Owner statement, {start.isoformat()} to {end.isoformat()}"
+    return exports.Table(title, table.columns, table.rows)
+
+
 @router.get("/statement")
 def statement(
     session: Owner, conn: Conn, start: Annotated[date, Query()], end: Annotated[date, Query()]
 ) -> Rows:
-    table = statement_table(conn, session.pmc_id, session.person_id, start, end)
-    return Rows.of(
-        exports.Table(
-            f"Owner statement, {start.isoformat()} to {end.isoformat()}", table.columns, table.rows
-        )
-    )
+    return Rows.of(titled_statement(conn, session.pmc_id, session.person_id, start, end))
 
 
 @router.get("/statement/download")
@@ -95,10 +99,7 @@ def statement_download(
     end: Annotated[date, Query()],
     fmt: Annotated[Literal["csv", "xlsx", "pdf"], Query(alias="format")] = "pdf",
 ) -> Response:
-    table = statement_table(conn, session.pmc_id, session.person_id, start, end)
-    titled = exports.Table(
-        f"Owner statement, {start.isoformat()} to {end.isoformat()}", table.columns, table.rows
-    )
+    titled = titled_statement(conn, session.pmc_id, session.person_id, start, end)
     name = f"owner-statement-{start.isoformat()}-{end.isoformat()}"
     return download(exports.export(titled, fmt), name, fmt)
 

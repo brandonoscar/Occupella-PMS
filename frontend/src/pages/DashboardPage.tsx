@@ -9,25 +9,27 @@ import type { Today } from "../today";
 import { GoLink, NeedsAttention } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 
-// Staff's first page (ADR 0005): the company's figures, each opening its page, and what needs
-// someone today. It changes nothing.
+// Staff's first page (ADR 0005; ADR 0010 phase 3): the company's figures that change, each beside
+// what it was a month before and opening its page, and what needs someone today, most urgent
+// first, each with its action.
 export function DashboardPage({ me }: { me: Me }) {
   const [figures, setFigures] = useState<Dashboard | null>(null);
   const [today, setToday] = useState<Today | null>(null);
   const [error, setError] = useState("");
+  const [runs, setRuns] = useState(0);
   useEffect(() => {
     const failed = (reason: unknown) =>
       setError(reason instanceof ApiError ? reason.detail : String(reason));
     api.get<Dashboard>("/api/dashboard").then(setFigures).catch(failed);
     api.get<Today>("/api/today").then(setToday).catch(failed);
-  }, []);
+  }, [runs]);
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Dashboard" />
       <Notice tone="error">{error}</Notice>
       {figures && (
-        <ul aria-label="Figures" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <ul aria-label="Figures" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {tiles(figures).map((tile) => (
             <li key={tile.label}>
               <GoLink
@@ -48,7 +50,7 @@ export function DashboardPage({ me }: { me: Me }) {
         {today === null ? (
           !error && <Notice tone="info">Loading</Notice>
         ) : (
-          <NeedsAttention today={today} />
+          <NeedsAttention today={today} me={me} refresh={() => setRuns((n) => n + 1)} />
         )}
       </Card>
     </Shell>

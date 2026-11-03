@@ -343,7 +343,11 @@ function NewRecurringForm({ books, record }: { books: Portfolio; record: Recorde
           ))}
         </Select>
       )}
-      <div><Button type="submit">Add recurring bill</Button></div>
+      <div>
+        <Button type="submit" says="Enters a bill each month on its day, any already due now. Nothing is paid until you record a payment.">
+          Add recurring bill
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -360,7 +364,12 @@ function StopForm({ recurring, record }: { recurring: Recurring; record: Recorde
       <p className="text-base text-ink">{recurring.vendor}, {recurring.reference_prefix}</p>
       <Field label="Last day" id={`recurring-end-${recurring.id}`} type="date" required value={on}
         onChange={(e) => setOn(e.target.value)} />
-      <div><Button type="submit" variant="danger">Stop it</Button></div>
+      <div>
+        <Button type="submit" variant="danger"
+          says="No bill is entered after the last day; bills already entered stay. A stop can't be changed later.">
+          Stop it
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -383,7 +392,11 @@ function RecurringAccountForm({ recurring, books, record }: { recurring: Recurri
           <option key={a.id} value={a.id}>{expenseAccountLabel(a, books.schedule_e_lines)}</option>
         ))}
       </Select>
-      <div><Button type="submit">Save</Button></div>
+      <div>
+        <Button type="submit" says="Each month's bill goes in this account from now on; bills already entered keep theirs. No money moves.">
+          Save
+        </Button>
+      </div>
     </Form>
   );
 }

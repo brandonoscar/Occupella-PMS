@@ -123,8 +123,19 @@ workflow and lists the required checks.
 
 ## Running it yourself
 
-A company runs the PMS on its own server with its own Postgres 16: [docs/release.md](docs/release.md)
-says how a release reaches it and how to upgrade (fixed forward, never rolled back once money is
-posted), [docs/backup.md](docs/backup.md) how to back up the books and restore them
-(`scripts/backup.sh`), and [docs/support.md](docs/support.md) who looks when something fails and
-where.
+**[docs/install.md](docs/install.md)** installs it for a real company, about an hour the first time:
+
+```sh
+git clone https://github.com/brandonoscar/Occupella-PMS.git && cd Occupella-PMS
+git checkout v2026.11.0
+cp .env.example .env        # your keys: docs/install.md, "Keys you bring"
+docker compose -f compose.selfhost.yaml up -d --build
+docker compose -f compose.selfhost.yaml exec app \
+  python -m pms.admin setup "Your Company LLC" "Your Name" you@example.com
+```
+
+Then put HTTPS in front of `127.0.0.1:8000` and open the invite link it prints. What each release
+changed: [CHANGELOG.md](CHANGELOG.md). [docs/release.md](docs/release.md) says how a release reaches
+a company and how to upgrade (fixed forward, never rolled back once money is posted),
+[docs/backup.md](docs/backup.md) how to back up the books and restore them (`scripts/backup.sh`),
+and [docs/support.md](docs/support.md) who looks when something fails and where.

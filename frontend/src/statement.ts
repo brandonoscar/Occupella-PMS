@@ -84,8 +84,8 @@ export function group(data: StatementData): Grouped {
 // A posting as an owner reads it. The report names the other side of each posting by its ledger
 // kind, then its name, then the posting's memo ("bank_cash: Demo operating trust account -
 // Owner draw"); the page says what it was ("Owner draw") and with whom (the bank, the vendor,
-// the management company). Without a memo, the kind says what it was. The report's own text
-// stays as it is in the downloads.
+// the management company). Without a memo, the kind says what it was. A download says it in
+// the API's plain words (src/pms/wording.py).
 const WITHOUT_MEMO: Record<string, (amount: string) => string> = {
   bank_cash: (amount) => (amount.startsWith("-") ? "Paid out" : "Received"),
   pmc_income: () => "Management company",
@@ -102,7 +102,13 @@ export function describePosting(detail: string, amount: string): { what: string;
   const rest = match[2] ?? "";
   const dash = rest.indexOf(" - ");
   if (dash < 0) return { what: said(amount), with: rest };
-  return { what: rest.slice(dash + 3), with: rest.slice(0, dash) };
+  return { what: plainMemo(rest.slice(dash + 3)), with: rest.slice(0, dash) };
+}
+
+// A bill's money leaving the owner's balance is written "Bill RF-1 set aside" in the ledger (the
+// step's old name, ADR 0010 phase 1a); the owner reads the bill it paid for.
+function plainMemo(memo: string): string {
+  return memo.replace(/^(Bill .+) set aside$/, "$1");
 }
 
 // The report's period ("2026-09-01 00:00:00 to 2026-10-01 00:00:00 UTC", its end not included)

@@ -132,6 +132,10 @@ async function joinPortal(page: Page, invite: string): Promise<void> {
 const part = (page: Page, title: string) =>
   page.locator("section", { has: page.getByRole("heading", { level: 2, name: title, exact: true }) });
 
+// One item of the Dashboard's Needs attention list, by what it is about.
+const attention = (page: Page, what: string) =>
+  page.getByRole("list", { name: "Needs attention" }).getByRole("listitem", { name: what });
+
 async function section(page: Page, name: string): Promise<void> {
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name, exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name, exact: true })).toBeVisible();
@@ -384,6 +388,11 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await drew.getByText("Move-out for Unit 1").click();
     await drew.getByLabel("Last day").fill(lastMonthEnd);
     await drew.getByRole("button", { name: "End the lease" }).click();
+    // Ending a lease asks first, naming the day (ADR 0010 phase 4, rule 4).
+    await expect(page.getByRole("alertdialog")).toContainText(
+      `End Aspen Row, Unit 1's lease on ${us(lastMonthEnd)}? Rent is charged only through that day.`,
+    );
+    await page.getByRole("alertdialog").getByRole("button", { name: "End the lease" }).click();
     await expect(drew).toContainText(`The lease ends on ${us(lastMonthEnd)}.`);
     await expect(drew.getByText("Ended, deposit to return")).toBeVisible();
     await expect(drew).toContainText("owes $0.00");
@@ -542,6 +551,11 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await expect(job.getByTestId("visit")).toHaveText(`Visit on ${us(visit)}, 9-11 am`);
     await job.getByLabel("What you did (optional)").fill("Replaced the cartridge");
     await job.getByRole("button", { name: "The work is done" }).click();
+    // Closing it asks first: it can't be reopened (ADR 0010 phase 4, rule 4).
+    await expect(plumber.getByRole("alertdialog")).toContainText(
+      /Mark #\d+ done\? It closes the work order and leaves your list; it can't be reopened\./,
+    );
+    await plumber.getByRole("alertdialog").getByRole("button", { name: "The work is done" }).click();
     await expect(plumber.getByText(/is done\. Thank you\./)).toBeVisible();
     await done(plumber, "the plumber's work order link");
 
@@ -630,7 +644,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     // Those fees are the company's, still in the operating trust account: the Dashboard says so,
     // and Banking holds exactly them.
     await section(page, "Dashboard");
-    const waiting = page.getByRole("region", { name: "Company fees in trust" });
+    const waiting = attention(page, "Company fees in trust");
     await expect(waiting).toContainText(`${OPERATING}: ${money(taken)} of the company's fees`);
     const before = await bookBalance(page, OPERATING);
     const row = page.getByRole("row", { name: OPERATING, exact: true });
@@ -649,7 +663,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
 
     await section(page, "Dashboard");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    await expect(page.getByRole("region", { name: "Company fees in trust" })).toHaveCount(0);
+    await expect(attention(page, "Company fees in trust")).toHaveCount(0);
   });
 
   await test.step("Pay owners pays Demo Owner A everything available; the Owners list then shows them holding only their reserves and the bill not yet paid", async () => {
@@ -673,25 +687,44 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
   });
 
   await test.step("Cedar House's lease is renewed at a new rent: staff send it, Taylor signs from the portal and Quinn from their link, staff activate it, and the rent roll shows both leases", async () => {
+    // Each of the lease's tenants signs at the email on file (ADR 0010 phase 3, part L): Taylor's
+    // is their portal login's; Quinn's goes on their page first.
+    await section(page, "Tenants");
+    await page.getByRole("row", { name: "Quinn Demo", exact: true }).getByRole("link", { name: "Quinn Demo" }).click();
+    const contact = page.getByRole("group", { name: "Contact details, Quinn Demo" });
+    await contact.getByRole("button", { name: "Edit contact details" }).click();
+    await contact.getByLabel("Email").fill("quinn.journey@example.com");
+    await contact.getByRole("button", { name: "Save contact details" }).click();
+    await expect(contact).toContainText("Contact details saved.");
+
+    // Renew lease, from the lease's ⋯ menu: the new rent and term in a side panel, the company's
+    // own PDF, and a confirm naming who gets it.
     await openLease(page, "Cedar House, House");
     await page.getByRole("button", { name: "Actions for this lease" }).click();
     await page.getByRole("menuitem", { name: "Renew lease" }).click();
-    const draft = page.getByRole("dialog", { name: "New draft lease" });
-    await expect(draft.getByRole("combobox", { name: "For", exact: true }).locator("option:checked")).toHaveText(
-      /^Cedar House, House: /,
-    );
-    await expect(draft.getByLabel("Rent a month")).toHaveValue("2250.00");
-    await draft.getByLabel("Starts").fill(nextMonth);
-    await draft.getByLabel("Rent a month").fill("2300.00");
-    await draft.getByLabel("Lease document (PDF, your own)").setInputFiles(RENEWAL);
-    await draft.getByLabel("Who signs, one a line: Name, email").fill(
-      `Taylor Demo, ${people.emails.taylor}\nQuinn Demo, quinn.journey@example.com`,
-    );
-    await draft.getByRole("button", { name: "Save draft" }).click();
+    const renew = page.getByRole("dialog", { name: "Renew lease" });
+    await expect(renew.getByLabel("New rent a month")).toHaveValue("2250.00");
+    const signers = renew.getByRole("list", { name: "Who signs" });
+    await expect(signers).toContainText(`Taylor Demo, ${people.emails.taylor}`);
+    await expect(signers).toContainText("Quinn Demo, quinn.journey@example.com");
+    await renew.getByLabel("Starts").fill(nextMonth);
+    await renew.getByLabel("New rent a month").fill("2300.00");
+    await renew.getByLabel("The lease").selectOption({ label: "Your own PDF" });
+    await renew.getByLabel("Lease document (PDF, your own)").setInputFiles(RENEWAL);
+    await renew.getByRole("button", { name: "Send for signing" }).click();
+    const sending = page.getByRole("alertdialog");
+    await expect(sending).toContainText(`$2,300.00 a month from ${us(nextMonth)}`);
+    await expect(sending).toContainText("Quinn Demo (quinn.journey@example.com)");
+    await sending.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(renew).toHaveCount(0);
+    await expect(page.getByText(/Sent to 2 signers\./).first()).toBeVisible();
+
+    // The renewal waits for its signatures on its own page; Resend gives each signer a new link.
+    await section(page, "Draft leases");
+    await page.getByRole("row", { name: "Renewal for Cedar House, House" }).click();
     await expect(page.getByRole("heading", { level: 1, name: "Renewal for Cedar House, House" })).toBeVisible();
-    await page.getByRole("button", { name: "Send", exact: true }).click();
-    await expect(page.getByText(/^Sent to 2 signers\./)).toBeVisible();
     await expect(page.getByText("0 of 2 signed", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Resend" }).click();
     const quinnLink = new URL(
       (await page.getByRole("list", { name: "Signing links" }).getByRole("listitem").filter({ hasText: "Quinn Demo" })
         .getByTestId("signing-link").textContent()) ?? "",
@@ -845,7 +878,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await bookkeeper.getByRole("tab", { name: "Reconciliations" }).click();
     await bookkeeper.getByRole("button", { name: "Match the sure ones" }).click();
     await expect(bookkeeper.getByText(`${lines.length} lines matched.`)).toBeVisible();
-    for (const side of ["Bank lines not matched", "Transfers not matched"]) {
+    for (const side of ["Bank lines not matched", "In the books, not matched"]) {
       await expect(bookkeeper.getByRole("group", { name: side })).toContainText("None.");
     }
 
@@ -889,6 +922,11 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await page.getByRole("row", { name: OPERATING, exact: true }).getByRole("link").click();
     await expect(page.getByRole("heading", { level: 1, name: OPERATING })).toBeVisible();
     await page.getByRole("button", { name: `Approve through ${us(through)}` }).click();
+    // Approving closes the account through the day, so it asks first (ADR 0010 phase 4, rule 4).
+    await expect(page.getByRole("alertdialog")).toContainText(
+      `Approve through ${us(through)}? The account closes through that day: nothing dated on or before it can be added after.`,
+    );
+    await page.getByRole("alertdialog").getByRole("button", { name: `Approve through ${us(through)}` }).click();
     await expect(page.getByText(`Approved through ${us(through)}; the account is closed through it.`)).toBeVisible();
     await expect(
       page.getByRole("table", { name: "Approved" }).getByRole("row", {
@@ -947,7 +985,8 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     const amount = (bank: string, item: string) =>
       sheet.getByRole("row").filter({ hasText: bank }).filter({ hasText: item }).getByRole("cell").last();
     await expect(amount(OPERATING, "cash less what is held")).toHaveText(/\d/);
-    for (const [name, kind] of [[OPERATING, "operating"], [DEPOSITS, "security_deposit"]] as const) {
+    // The balance sheet in the portal's words: a bank's kind in plain words, bills held for vendors.
+    for (const [name, kind] of [[OPERATING, "operating"], [DEPOSITS, "security deposit"]] as const) {
       const bank = `${name} (${kind})`;
       const cash = await amountIn(amount(bank, "cash in the bank, by the books"));
       expect(cash, bank).toBe(balances[name]);
@@ -958,7 +997,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     expect(await amountIn(amount(operatingBank, "owners' funds"))).toBe(owners);
     // Nothing waits paid out to a vendor (the $120.00 bill is held, not paid yet), and the
     // company's fees left trust.
-    expect(await amountIn(amount(operatingBank, "set aside for vendors' bills"))).toBe(0);
+    expect(await amountIn(amount(operatingBank, "held for vendors' bills"))).toBe(0);
     expect(await amountIn(amount(operatingBank, "the company's fees not yet taken"))).toBe(0);
     const all = (item: string) =>
       sheet.getByRole("row").filter({ hasText: "all trust bank accounts" }).filter({ hasText: item }).getByRole("cell").last();

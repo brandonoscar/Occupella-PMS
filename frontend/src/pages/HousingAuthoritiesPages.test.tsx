@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Authority, AuthorityPage } from "../assistance";
 import { holdBack } from "../holdBack";
-import { HousingAuthoritiesPage, HousingAuthorityPage } from "./HousingAuthoritiesPages";
+import { HousingAuthorityPage } from "./HousingAuthoritiesPages";
 
 beforeEach(() => window.history.replaceState(null, "", "/housing-authorities"));
 afterEach(() => {
@@ -62,50 +62,6 @@ function server(answers: Record<string, unknown> = {}, refuse = "") {
 
 const posted = (fetch: ReturnType<typeof server>) =>
   fetch.mock.calls.filter(([, init]) => init?.method === "POST").map(([path, init]) => [path, JSON.parse(String(init?.body))]);
-
-describe("HousingAuthoritiesPage", () => {
-  it("lists each authority with the leases it assists and what it owes; a row opens its page", async () => {
-    server({ "/api/assistance/authorities": ROWS });
-    render(<HousingAuthoritiesPage me={ME} />);
-
-    const row = await screen.findByRole("row", { name: "Synthetic Housing Authority" });
-    expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Synthetic Housing Authority", "2", "$1,200.50",
-    ]);
-    fireEvent.click(row);
-    expect(window.location.pathname).toBe("/housing-authorities/h1");
-  });
-
-  it("says when there are none, and adds one in a side panel", async () => {
-    const fetch = server({ "/api/assistance/authorities": [] });
-    render(<HousingAuthoritiesPage me={ME} />);
-    expect(await screen.findByText("No housing authorities yet")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Add housing authority" }));
-    const form = screen.getByRole("dialog", { name: "Add housing authority" });
-    fireEvent.change(within(form).getByLabelText("Housing authority's name"), { target: { value: "Demo County Housing" } });
-    fireEvent.click(within(form).getByRole("button", { name: "Add housing authority" }));
-
-    await vi.waitFor(() => expect(window.location.pathname).toBe("/housing-authorities/h9"));
-    expect(posted(fetch)).toEqual([["/api/assistance/authorities", { name: "Demo County Housing" }]]);
-  });
-
-  it("shows a refused name in the panel, and a list that didn't load", async () => {
-    server({ "/api/assistance/authorities": [] }, "a housing authority by that name is on file already");
-    render(<HousingAuthoritiesPage me={ME} />);
-    await screen.findByText("No housing authorities yet");
-    fireEvent.click(screen.getByRole("button", { name: "Add housing authority" }));
-    const form = screen.getByRole("dialog", { name: "Add housing authority" });
-    fireEvent.change(within(form).getByLabelText("Housing authority's name"), { target: { value: "Demo County Housing" } });
-    fireEvent.click(within(form).getByRole("button", { name: "Add housing authority" }));
-    expect(await within(form).findByText("a housing authority by that name is on file already")).toBeTruthy();
-
-    cleanup();
-    server();
-    render(<HousingAuthoritiesPage me={ME} />);
-    expect(await screen.findByText("no such housing authority")).toBeTruthy();
-  });
-});
 
 describe("HousingAuthorityPage", () => {
   it("lists each lease it assists or owes on, linked to the lease", async () => {

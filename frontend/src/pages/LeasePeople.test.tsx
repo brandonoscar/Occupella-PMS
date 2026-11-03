@@ -69,6 +69,9 @@ describe("RemoveTenantForm", () => {
       "Moves to Tenant 2",
     ]);
     fireEvent.change(deposit, { target: { value: "t2" } });
+    expect(screen.getByTestId("button-says").textContent).toBe(
+      "Their $1,500.00 deposit moves to Tenant 2; nothing is paid out. They can still read the lease in the portal.",
+    );
     fireEvent.change(screen.getByLabelText("Left on"), { target: { value: "2026-04-30" } });
     fireEvent.click(screen.getByRole("button", { name: "Take Tenant 1 off the lease" }));
     await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(1));
@@ -96,6 +99,10 @@ describe("EndLeaseForm", () => {
     const charge = await screen.findByLabelText("Charge the lease-break fee: $2,050.00");
     expect(fetch.mock.calls.map(([path]) => path)).toContain("/api/move-out/l1/break-fee?ends_on=2026-08-31");
     fireEvent.click(charge);
+    expect(screen.getByTestId("button-says").textContent).toBe(
+      "The lease ends on 08/31/2026; rent is charged only through that day, and the $2,050.00 lease-break fee is"
+        + " charged. The deposit is returned from Move-outs.",
+    );
     fireEvent.click(screen.getByRole("button", { name: "End lease" }));
     await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(1));
     expect(record.mock.calls[0]?.slice(0, 2)).toEqual([
@@ -173,7 +180,9 @@ describe("HouseholdCards", () => {
     const vehicle = "Make 1 Model 1, Blue, SYN-001 (State 1)";
     fireEvent.click(screen.getByRole("button", { name: `Actions for ${vehicle}` }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Take off the lease" }));
-    const asked = screen.getByRole("alertdialog", { name: `Take ${vehicle} off this lease?` });
+    const asked = screen.getByRole("alertdialog", {
+      name: `Take ${vehicle} off this lease? Nothing is charged, refunded or sent. To put them back, add them again.`,
+    });
     fireEvent.click(within(asked).getByRole("button", { name: "Take off the lease" }));
     await screen.findByText(`${vehicle} is off the lease.`);
     expect(posts()[1]?.[0]).toBe("/api/leases/l1/vehicles/v1/remove");

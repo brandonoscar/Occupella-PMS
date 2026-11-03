@@ -1,5 +1,6 @@
 """A trust bank account's own pages (ADR 0006, Banking): its register, every move of its cash in
-or out with what it was, who paid or was paid, its memo, the property and the balance after it;
+or out with what it was, who paid or was paid, its memo, the property, the balance after it and
+the page it opens (ADR 0010 phase 3, part M), on screen or as CSV;
 and what it holds broken down: each owner's property account with what it holds, keeps back and
 may pay out, and everything else held in it by kind. Read only; always the session's PMC.
 
@@ -12,15 +13,16 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel
 
+from pms import exports
 from pms.api import payables
-from pms.api.deps import Conn, Staff
+from pms.api.deps import Conn, Staff, download
 from pms.api.rent import cents, today
 from pms.api.rentals import Page, Paged, PerPage
 
@@ -41,6 +43,9 @@ class RegisterLine(BaseModel):
     withdrawal: str | None
     # The account's balance after it, in the order the moves happened.
     balance: str
+    # The page the move opens (ADR 0010 phase 3, part M): its lease, bill, owner or tenant; None
+    # for the company's own fees and what names none of them.
+    opens: str | None = None
 
 
 # What a move of a trust bank account's cash was, and who paid or was paid, from the move `m`
@@ -77,9 +82,23 @@ PARTY = """
        END
 """
 
+# The page a move opens: the lease a tenant's payment, deposit or bounce names, the bill paid,
+# else the owner or tenant whose money it moved.
+OPENS = """
+       CASE
+           WHEN m.metadata ? 'lease_id' THEN '/leases/' || (m.metadata ->> 'lease_id')
+           WHEN EXISTS (SELECT 1 FROM trust_bill_payments AS b
+                        WHERE b.transfer_id = m.transfer_id AND b.step = 'paid') THEN '/bills/' || (
+               SELECT b.bill_id::text FROM trust_bill_payments AS b
+               WHERE b.transfer_id = m.transfer_id AND b.step = 'paid' LIMIT 1)
+           WHEN o.kind = 'owner_property' THEN '/owners/' || ow.id
+           WHEN o.kind IN ('tenant_deposit', 'prepaid_rent') THEN '/tenants/' || tn.id
+       END
+"""
+
 # Every move of the account's cash, its running balance taken in the order they happened (by
 # day, then as posted), so a day posted late still lands where it belongs.
-REGISTER = f"""
+REGISTER_MOVES = f"""
 WITH cash AS (
     SELECT a.ledger_account_id FROM trust_ledger_accounts AS a
     WHERE a.pmc_id = %(pmc)s AND a.bank_account_id = %(bank)s AND a.kind = 'bank_cash'
@@ -102,7 +121,7 @@ SELECT m.transfer_id, (m.event_at AT TIME ZONE 'UTC')::date,
            JOIN trust_ledger_accounts AS ba ON ba.ledger_account_id = bl.ledger_account_id
            JOIN trust_properties AS bp ON bp.id = ba.property_id
            WHERE b.transfer_id = m.transfer_id LIMIT 1)),
-       m.amount, m.balance, count(*) OVER ()
+       m.amount, m.balance, {OPENS}, count(*) OVER ()
 FROM moves AS m
 JOIN trust_ledger_accounts AS o ON o.ledger_account_id = m.other
 LEFT JOIN trust_owners AS ow ON ow.id = o.owner_id
@@ -112,9 +131,16 @@ LEFT JOIN trust_properties AS tp ON tp.id = tn.property_id
 LEFT JOIN trust_vendors AS vn ON vn.id = o.vendor_id
 WHERE m.event_at >= %(start)s::timestamp AT TIME ZONE 'UTC'
   AND m.event_at < (%(end)s::date + 1)::timestamp AT TIME ZONE 'UTC'
-ORDER BY m.event_at DESC, m.created_at DESC, m.entry_id DESC
-LIMIT %(per_page)s OFFSET %(offset)s
 """  # noqa: S608
+# A page of them, newest first, as the register shows them.
+REGISTER = (
+    REGISTER_MOVES
+    + "ORDER BY m.event_at DESC, m.created_at DESC, m.entry_id DESC"
+    + " LIMIT %(per_page)s OFFSET %(offset)s"
+)
+# All of them, oldest first, as the register downloads them.
+REGISTER_ALL = REGISTER_MOVES + "ORDER BY m.event_at, m.created_at, m.entry_id"
+REGISTER_COLUMNS = ("date", "type", "party", "memo", "property", "deposit", "withdrawal", "balance")
 
 
 def bank_of(conn: psycopg.Connection[Any], pmc_id: UUID, bank_id: UUID) -> None:
@@ -127,7 +153,7 @@ def bank_of(conn: psycopg.Connection[Any], pmc_id: UUID, bank_id: UUID) -> None:
         raise HTTPException(404, "no such trust bank account")
 
 
-@router.get("/{bank_account_id}/register")
+@router.get("/{bank_account_id}/register", response_model=Paged[RegisterLine])
 def register(
     session: Staff,
     conn: Conn,
@@ -136,25 +162,41 @@ def register(
     end: Annotated[date | None, Query()] = None,
     page: Page = 1,
     per_page: PerPage = 50,
-) -> Paged[RegisterLine]:
+    fmt: Annotated[Literal["json", "csv"], Query(alias="format")] = "json",
+) -> Paged[RegisterLine] | Response:
     """A trust bank account's register over days (UTC; the last ninety to today by default),
     newest first, a page at a time: each move of its cash with what it was, who paid or was
-    paid, its memo, the property, and the balance after it."""
+    paid, its memo, the property, the balance after it and the page it opens. `format=csv`
+    downloads every move of those days, oldest first."""
     bank_of(conn, session.pmc_id, bank_account_id)
     last = end or today()
     first = start or date.fromordinal(last.toordinal() - 90)
     if last < first:
         raise HTTPException(422, "a register runs from a day to the same day or a later one")
+    asked = {"pmc": session.pmc_id, "bank": bank_account_id, "start": first, "end": last}
+    if fmt == "csv":
+        moves = conn.execute(REGISTER_ALL, asked).fetchall()
+        table = exports.Table(
+            f"Register, {first.isoformat()} to {last.isoformat()}",
+            REGISTER_COLUMNS,
+            tuple(
+                # Amounts as numbers, never text: a spreadsheet reads them as written.
+                (
+                    on,
+                    kind,
+                    party,
+                    memo,
+                    prop,
+                    -amount if amount < 0 else None,
+                    amount if amount > 0 else None,
+                    balance,
+                )
+                for _, on, kind, party, memo, prop, amount, balance, _, _ in moves
+            ),
+        )
+        return download(exports.to_csv(table), f"register-{first}-to-{last}", "csv")
     rows = conn.execute(
-        REGISTER,
-        {
-            "pmc": session.pmc_id,
-            "bank": bank_account_id,
-            "start": first,
-            "end": last,
-            "per_page": per_page,
-            "offset": (page - 1) * per_page,
-        },
+        REGISTER, {**asked, "per_page": per_page, "offset": (page - 1) * per_page}
     ).fetchall()
     return Paged(
         items=[
@@ -168,8 +210,9 @@ def register(
                 deposit=cents(-amount) if amount < 0 else None,
                 withdrawal=cents(amount) if amount > 0 else None,
                 balance=cents(balance),
+                opens=opens,
             )
-            for transfer, on, kind, party, memo, prop, amount, balance, _ in rows
+            for transfer, on, kind, party, memo, prop, amount, balance, opens, _ in rows
         ],
         total=rows[0][-1] if rows else 0,
         page=page,

@@ -19,7 +19,10 @@ import type { Keep } from "../latest";
 import { keepAll, latest } from "../latest";
 import { day, money, sumMoney, usDate } from "../money";
 import type { Recorder } from "./useRecord";
+import { GoLink } from "./NeedsAttention";
 import { useRecord } from "./useRecord";
+
+const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
 type Panel =
   | { kind: "terms" } | { kind: "charge" } | { kind: "credit"; charge: AuthorityCharge }
@@ -32,8 +35,10 @@ const KINDS = { "move-in": "Move-in", annual: "Annual", interim: "Interim" } as 
 
 // A lease's housing assistance (Section 8; migration 0095, the founder's review q034): what its
 // housing authority pays of the rent from each month, and what the authority owes for the lease.
-// The tenant's balance, late fees and deposit are the tenant's part alone; the authority's
-// payments are recorded on its own page.
+// The tenant's balance, late fees and deposit are the tenant's part alone. Housing authorities
+// have no page in the menu (ADR 0010 phase 3, part O): a new one is added right here, as its
+// assistance is set; its checks are recorded through Receive payment, and its own page (linked
+// here) keeps its leases, late fee and payments.
 export function AssistanceCard({ leaseId, unit }: { leaseId: string; unit: string }) {
   const [assistance, setAssistance] = useState<LeaseAssistance | null>(null);
   const [authorities, setAuthorities] = useState<Authority[]>([]);
@@ -68,6 +73,17 @@ export function AssistanceCard({ leaseId, unit }: { leaseId: string; unit: strin
         ) : (
           <>
             <p className="text-base" data-testid="assistance-split">{splitLine(assistance)}.</p>
+            {authoritiesNamed(assistance).length > 0 && (
+              <p className="text-sm text-ink-muted" data-testid="authority-pages">
+                {authoritiesNamed(assistance).map(([id, name], n) => (
+                  <span key={id}>
+                    {n > 0 && ", "}
+                    <GoLink href={`/housing-authorities/${id}`} className={LINK}>{name}</GoLink>
+                  </span>
+                ))}
+                : what it owes on every lease, its late fee and its payments. Its checks go in through Receive payment.
+              </p>
+            )}
             {assistance.terms.length > 0 && (
               <ul className="text-sm text-ink-muted" aria-label={`Housing assistance, ${unit}`}>
                 {assistance.terms.map((t: AssistanceTerms) => <li key={t.id}>{termsLine(t)}</li>)}
@@ -126,7 +142,9 @@ export function AssistanceCard({ leaseId, unit }: { leaseId: string; unit: strin
       </div>
       {panel !== null && (
         <SidePanel title={TITLES[panel.kind]} onClose={() => setPanel(null)}>
-          {panel.kind === "terms" && <TermsForm leaseId={leaseId} authorities={authorities} record={recordThenClose} />}
+          {panel.kind === "terms" && (
+            <TermsForm leaseId={leaseId} authorities={authorities} record={recordThenClose} onAdded={() => refresh()} />
+          )}
           {panel.kind === "charge" && <ChargeForm leaseId={leaseId} authorities={authorities} record={recordThenClose} />}
           {panel.kind === "credit" && <CreditForm leaseId={leaseId} charge={panel.charge} record={recordThenClose} />}
           {panel.kind === "certification" && <CertificationForm leaseId={leaseId} record={recordThenClose} />}
@@ -138,33 +156,60 @@ export function AssistanceCard({ leaseId, unit }: { leaseId: string; unit: strin
   );
 }
 
+// Each housing authority the lease's assistance names, once, by id: each links its own page.
+function authoritiesNamed(assistance: LeaseAssistance): [string, string][] {
+  return [...new Map(assistance.terms.map((t): [string, string] => [t.authority_id, t.authority])).entries()];
+}
+
 // What an authority's charge comes to, with what a lease's end or a credit changed.
 function sumCharged(charge: AuthorityCharge): string {
   return sumMoney([charge.charged, charge.adjusted]);
 }
 
-function AuthorityPicker({ id, authorities, value, onChange }: {
-  id: string; authorities: Authority[]; value: string; onChange: (id: string) => void;
+// "A new housing authority": the picker's choice to add one by its name.
+const NEW = "new";
+
+function AuthorityPicker({ id, authorities, value, onChange, adds = false }: {
+  id: string; authorities: Authority[]; value: string; onChange: (id: string) => void; adds?: boolean;
 }) {
-  if (authorities.length === 0) {
-    return <Notice tone="info">Add the housing authority first, under Rentals, Housing authorities.</Notice>;
+  if (authorities.length === 0 && !adds) {
+    return <Notice tone="info">Set the lease's housing assistance first: it names the housing authority.</Notice>;
   }
   return (
     <Select label="Housing authority" id={id} value={value} required onChange={(e) => onChange(e.target.value)}>
       {authorities.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+      {adds && <option value={NEW}>A new housing authority</option>}
     </Select>
   );
 }
 
-function TermsForm({ leaseId, authorities, record }: { leaseId: string; authorities: Authority[]; record: Recorder }) {
-  const [authority, setAuthority] = useState(authorities[0]?.id ?? "");
+// Set housing assistance: the authority on file, or a new one added by its name as it is saved.
+// Added once: should the assistance then be refused, the form keeps the new authority chosen.
+function TermsForm({ leaseId, authorities, record, onAdded }: {
+  leaseId: string; authorities: Authority[]; record: Recorder; onAdded: () => void;
+}) {
+  const [authority, setAuthority] = useState(authorities[0]?.id ?? NEW);
+  const [name, setName] = useState("");
   const [startsOn, setStartsOn] = useState(nextFirst(new Date()));
   const [amount, setAmount] = useState("");
   const [contract, setContract] = useState("");
+  const [problem, setProblem] = useState("");
   return (
-    <Form className="flex flex-col gap-3" onSubmit={(event) => {
+    <Form className="flex flex-col gap-3" onSubmit={async (event) => {
       event.preventDefault();
-      const body = { housing_authority_id: authority, starts_on: startsOn, amount, contract: contract.trim() || null };
+      setProblem("");
+      let chosen = authority;
+      if (chosen === NEW) {
+        try {
+          chosen = (await api.post<{ id: string }>("/api/assistance/authorities", { name: name.trim() })).id;
+        } catch (failed) {
+          setProblem(failed instanceof ApiError ? failed.detail : String(failed));
+          return;
+        }
+        setAuthority(chosen);
+        onAdded();
+      }
+      const body = { housing_authority_id: chosen, starts_on: startsOn, amount, contract: contract.trim() || null };
       return record(`/api/assistance/leases/${leaseId}/terms`, body, () =>
         Number(amount) === 0
           ? `Housing assistance ends from ${usDate(startsOn)}.`
@@ -174,14 +219,24 @@ function TermsForm({ leaseId, authorities, record }: { leaseId: string; authorit
         From the first of a month whose rent isn't charged yet. Each month's rent is then split as it is
         charged: the authority's part is its own, and the tenant owes the rest. 0 ends it.
       </p>
-      <AuthorityPicker id="assist-authority" authorities={authorities} value={authority} onChange={setAuthority} />
+      <AuthorityPicker id="assist-authority" authorities={authorities} value={authority} onChange={setAuthority} adds />
+      {authority === NEW && (
+        <Field label="The new housing authority's name" id="assist-authority-name" required maxLength={200} value={name}
+          onChange={(e) => setName(e.target.value)} />
+      )}
+      <Notice tone="error">{problem}</Notice>
       <Field label="From (the first of a month)" id="assist-from" type="date" required value={startsOn}
         onChange={(e) => setStartsOn(e.target.value)} />
       <Field label="The authority pays each month" id="assist-amount" inputMode="decimal" required value={amount}
         onChange={(e) => setAmount(e.target.value)} />
       <Field label="HAP contract (optional)" id="assist-contract" maxLength={100} value={contract}
         onChange={(e) => setContract(e.target.value)} />
-      <div><Button type="submit" disabled={authorities.length === 0}>Save assistance</Button></div>
+      <div>
+        <Button type="submit"
+          says={`${authority === NEW ? "Adds the housing authority and saves" : "Saves"} this from ${usDate(startsOn)}; earlier terms stay listed. Nothing is sent to the authority or the tenant.`}>
+          Save assistance
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -207,7 +262,12 @@ function ChargeForm({ leaseId, authorities, record }: { leaseId: string; authori
         onChange={(e) => setDueOn(e.target.value)} />
       <Field label="What it is for" id="authority-charge-memo" required maxLength={200} value={memo}
         onChange={(e) => setMemo(e.target.value)} />
-      <div><Button type="submit" disabled={authorities.length === 0}>Charge the authority</Button></div>
+      <div>
+        <Button type="submit" disabled={authorities.length === 0}
+          says={`Adds it to what the authority owes on this lease, due ${usDate(dueOn)}. The tenant's balance doesn't change.`}>
+          Charge the authority
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -228,7 +288,11 @@ function CreditForm({ leaseId, charge, record }: { leaseId: string; charge: Auth
         onChange={(e) => setAmount(e.target.value)} />
       <Field label="Why" id="authority-credit-memo" required maxLength={200} value={memo}
         onChange={(e) => setMemo(e.target.value)} />
-      <div><Button type="submit">Credit the authority</Button></div>
+      <div>
+        <Button type="submit" says="Takes it off what the authority owes on this charge. No money moves and the tenant's balance doesn't change.">
+          Credit the authority
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -347,7 +411,11 @@ export function CertificationForm({ leaseId, record, note = HOUSING_NOTE }: {
       <p className="text-sm text-ink-muted">
         Left empty, it is due a year after a move-in or annual one, and an interim one keeps the due day of the one before.
       </p>
-      <div><Button type="submit">Record certification</Button></div>
+      <div>
+        <Button type="submit" says="Adds it to the household's certifications; earlier ones stay as recorded. No rent or charge changes.">
+          Record certification
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -383,7 +451,11 @@ function InspectionForm({ leaseId, record }: { leaseId: string; record: Recorder
       {result === "passed" && (
         <p className="text-sm text-ink-muted">Left empty, the next is due two years on, the longest HUD allows.</p>
       )}
-      <div><Button type="submit">Record inspection</Button></div>
+      <div>
+        <Button type="submit" says="Adds it to the home's inspections; earlier ones stay as recorded. Nothing is sent to the authority.">
+          Record inspection
+        </Button>
+      </div>
     </Form>
   );
 }

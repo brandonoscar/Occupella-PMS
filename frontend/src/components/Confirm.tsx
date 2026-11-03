@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { useState } from "react";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
 import { Button } from "./Button";
@@ -34,6 +35,31 @@ export function ConfirmDialog({
         </Dialog>
       </Modal>
     </ModalOverlay>
+  );
+}
+
+// A button whose action can't be taken back (ADR 0010, rule 4): pressing it asks `question`
+// first, and nothing is sent until staff confirm with the button's own words.
+export function AskFirst({ question, onConfirm, danger = false, children, ...button }:
+  Omit<ComponentProps<typeof Button>, "onClick"> & {
+    question: string;
+    onConfirm: () => unknown;
+    danger?: boolean;
+    children: string;
+  }) {
+  const [asking, setAsking] = useState(false);
+  return (
+    <>
+      <Button {...button} onClick={() => setAsking(true)}>{children}</Button>
+      {asking && (
+        <ConfirmDialog question={question} confirmLabel={children} danger={danger}
+          onConfirm={() => {
+            setAsking(false);
+            void onConfirm();
+          }}
+          onCancel={() => setAsking(false)} />
+      )}
+    </>
   );
 }
 

@@ -1,0 +1,29 @@
+02/02/2026
+Owner 1 **2,010.00
+Two thousand ten and 00/100 dollars*******************************************************
+Owner 1
+1 Example Road
+Suite 2
+Sampletown, ZZ 00000
+Memo: Owner draw, January
+Golden PMC Check 1001
+Paid to Owner 1 02/02/2026
+Owner draw, Property 1, $2,010.00
+Total $2,010.00
+Golden PMC Check 1001
+Paid to Owner 1 02/02/2026
+Owner draw, Property 1, $2,010.00
+Total $2,010.00
+02/02/2026
+Vendor 1 **240.00
+Two hundred forty and 00/100 dollars******************************************************
+Vendor 1
+Memo: Bill PLB-1001
+Golden PMC Check 1002
+Paid to Vendor 1 02/02/2026
+Bill PLB-1001, $240.00
+Total $240.00
+Golden PMC Check 1002
+Paid to Vendor 1 02/02/2026
+Bill PLB-1001, $240.00
+Total $240.00

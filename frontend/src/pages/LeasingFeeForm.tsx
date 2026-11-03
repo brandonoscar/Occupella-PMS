@@ -52,7 +52,12 @@ export function LeasingFeeForm({ lease, record }: { lease: LeaseDetail; record: 
       </Select>
       <Field label="Taken on" id="leasing-on" type="date" required value={on}
         onChange={(event) => setOn(event.target.value)} />
-      <div><Button type="submit">Take leasing fee</Button></div>
+      <div>
+        <Button type="submit"
+          says="Moves the agreement's leasing fee from this owner's balance to the company's fees. Once per lease; the tenant isn't charged.">
+          Take leasing fee
+        </Button>
+      </div>
     </Form>
   );
 }

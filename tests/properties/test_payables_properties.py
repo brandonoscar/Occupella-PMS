@@ -13,8 +13,9 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
   - its unpaid bills are the database's own (trust_unpaid_bills), which a draw keeps back;
   - each bill's status, what it holds, what it is short and what the owner must send are the
     model's: the balance laid over the bills not paid yet in the order they are due; holds never
-    come to more than the balance, a void bill holds nothing, and a draw never pays held money
-    (every hold is the same after it);
+    come to more than the balance, a void releases its hold (the bill holds nothing, no other bill
+    holds less, a draw may take at least what it could), and a draw never pays held money (every
+    hold is the same after it);
   - a bill's first payment takes it whole from the owner, each pays at most what is left, a
     short bill pays nothing, and sent again a payment records nothing new;
   - a void is refused once money was taken for the bill, and a void bill is never paid;
@@ -257,8 +258,17 @@ class PayablesMachine(RuleBasedStateMachine):
             self.refused(said, payables.void, bill.id, why)
         else:
             event("void")
+            before = self.database_holds()
+            (was,) = [r for r in self.call(payables.owners) if r.account == self.account]
             self.call(payables.void, bill.id, why)
             bill.void = True
+            # A void releases its hold: the bill holds nothing, no other bill holds less, and a
+            # draw may take at least what it could before.
+            after = self.database_holds()
+            assert bill.id not in after
+            assert all(after[i][0] >= held for i, (held, _, _) in before.items() if i in after)
+            (now,) = [r for r in self.call(payables.owners) if r.account == self.account]
+            assert Decimal(now.available) >= Decimal(was.available)
 
     @precondition(lambda self: any(b.open and not b.dated_ahead for b in self.bills))
     @rule(data=st.data(), method=st.sampled_from(["check", "EFT"]))

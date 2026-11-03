@@ -6,6 +6,7 @@ const SETTINGS: PaymentSettings = { online: true, ach_fee_payer: "company", part
 const WAITING: Waiting = {
   payment_id: "p1",
   lease_id: "l1",
+  owner_id: null,
   memo: "Morgan Demo, Birch Flats Unit A",
   amount: "1200.00",
   what: "partner fee",
@@ -17,11 +18,11 @@ const WAITING: Waiting = {
 
 describe("online payments", () => {
   it("says whether tenants pay online and who pays the fee", () => {
-    expect(settingsLine(SETTINGS)).toBe("On: tenants pay by bank for free, and the company pays the processing fee.");
+    expect(settingsLine(SETTINGS)).toBe("On: tenants and owners pay by bank for free, and the company pays the processing fee.");
     expect(settingsLine({ ...SETTINGS, ach_fee_payer: "tenant" })).toBe(
-      "On: tenants pay by bank and pay the processing fee, shown before they pay.",
+      "On: tenants pay by bank and pay the processing fee, shown before they pay. Owners pay by bank for free; the company pays theirs.",
     );
-    expect(settingsLine({ ...SETTINGS, online: false })).toBe("Off: tenants pay by check, money order or in person.");
+    expect(settingsLine({ ...SETTINGS, online: false })).toBe("Off: tenants pay by check, money order or in person, and owners send their money by check or bank transfer.");
     expect(settingsLine({ ...SETTINGS, partner: null })).toBe(
       "This server takes no payments online: its payments partner isn't set up.",
     );
@@ -46,6 +47,17 @@ describe("online payments", () => {
     );
     expect(waitingLine({ ...WAITING, what: "payment", company_owes: null })).toContain("payment hold");
     expect(waitingLine({ ...WAITING, what: "return", company_owes: null })).toContain("owner's account");
+  });
+
+  it("says what waits of an owner's payment in its own words", () => {
+    const owners = { ...WAITING, lease_id: null, owner_id: "o1", memo: "Demo Owner A / Birch Flats" };
+    expect(waitingLine({ ...owners, what: "payment", company_owes: null })).toBe(
+      "Paid online by the owner, not in the books yet: the books refused it",
+    );
+    expect(waitingLine({ ...owners, what: "return", company_owes: null })).toBe(
+      "The owner's payment came back, not taken back out yet: their account holds too little",
+    );
+    expect(waitingLine(owners)).toBe("The processor kept $5.00; the company's fee account holds $1.25");
   });
 });
 

@@ -81,7 +81,10 @@ export function PayOnlineCard({ leaseId }: { leaseId: string }) {
             onChange={(e) => setAmount(e.target.value)} />
           <p className="text-base" data-testid="pay-fee">{quote ? feeLine(quote) : " "}</p>
           <div>
-            <Button type="submit" disabled={!payable(amount)}>Pay online</Button>
+            <Button type="submit" disabled={!payable(amount)}
+              says="Takes you to our payments partner's page to pay by bank. Nothing is paid until you finish there.">
+              Pay online
+            </Button>
           </div>
         </Form>
       )}

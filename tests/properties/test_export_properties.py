@@ -18,7 +18,7 @@ import io
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from hypothesis import given
+from hypothesis import example, given
 from hypothesis import strategies as st
 from openpyxl import load_workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
@@ -55,10 +55,17 @@ def tables(draw):
 
 
 def unescaped(cell: str) -> str:
-    return cell[1:] if cell.startswith("'") and cell[1:].startswith(exports.FORMULA_START) else cell
+    """A cell as it was before export: one apostrophe off one that has a formula's character
+    after its apostrophes (exports._csv_cell)."""
+    escaped = cell.startswith("'") and cell.lstrip("'").startswith(exports.FORMULA_START)
+    return cell[1:] if escaped else cell
 
 
 @given(tables())
+# Found by Hypothesis on 11/02: a cell already starting with an apostrophe before "=" read back
+# without it. Each of these reads back as it was.
+@example(exports.Table(title="", columns=("a", "b"), rows=(("'=", "''=1+1"),)))
+@example(exports.Table(title="", columns=("a", "b"), rows=(("'plain", "'"),)))
 def test_csv_holds_every_cell(table):
     read = list(csv.reader(io.StringIO(exports.to_csv(table).decode(), newline="")))
 
@@ -107,4 +114,4 @@ def test_the_pdf_always_builds(table):
     pages = PdfReader(io.BytesIO(exports.to_pdf(table, GENERATED))).pages
 
     assert len(pages) >= 1
-    assert "Generated 2026-03-02 08:30:00 UTC" in pages[0].extract_text()
+    assert "Generated 03/02/2026 08:30:00 UTC" in pages[0].extract_text()

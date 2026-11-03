@@ -169,7 +169,7 @@ function AddLeadForm() {
         <textarea id="lead-note" rows={3} maxLength={2000} value={note} onChange={(e) => setNote(e.target.value)}
           className="rounded-sm border border-line-strong bg-sunken px-3 py-2 text-base text-ink" />
       </label>
-      <div><Button type="submit">Add lead</Button></div>
+      <div><Button type="submit" says="Adds them to Leads and opens their page. Nothing is sent to them.">Add lead</Button></div>
       <Notice tone="error">{error}</Notice>
     </Form>
   );

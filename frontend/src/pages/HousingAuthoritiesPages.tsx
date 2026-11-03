@@ -2,7 +2,7 @@ import { Landmark } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
-import type { Authority, AuthorityPage, AuthorityPayment } from "../assistance";
+import type { AuthorityPage, AuthorityPayment } from "../assistance";
 import { lateFeeLine } from "../assistance";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
@@ -19,7 +19,6 @@ import type { Keep } from "../latest";
 import { keepAll, latest } from "../latest";
 import { day, money, usDate } from "../money";
 import { methodLabel } from "../rent";
-import { navigate } from "../router";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { ReceivePayment } from "./ReceivePayment";
@@ -31,79 +30,9 @@ function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
 }
 
-// Rentals → Housing authorities (Section 8; migration 0095, the founder's review q034): each
-// authority the company works with, the leases it assists today and what it owes; a row opens
-// its page. Add housing authority opens a side panel.
-export function HousingAuthoritiesPage({ me }: { me: Me }) {
-  const [rows, setRows] = useState<Authority[] | null>(null);
-  const [error, setError] = useState("");
-  const [adding, setAdding] = useState(false);
-
-  useEffect(() => {
-    api.get<Authority[]>("/api/assistance/authorities").then(setRows).catch((failed) => setError(detail(failed)));
-  }, []);
-
-  return (
-    <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Housing authorities"
-        actions={<Button onClick={() => setAdding(true)}>Add housing authority</Button>} />
-      <Notice tone="error">{error}</Notice>
-      {rows === null ? (
-        !error && <Notice tone="info">Loading</Notice>
-      ) : rows.length === 0 ? (
-        <EmptyState icon={Landmark} title="No housing authorities yet" />
-      ) : (
-        <Wide>
-          <table className="w-full text-base">
-            <thead>
-              <tr>
-                <th className="text-left">Housing authority</th>
-                <th className="text-right">Leases assisted</th>
-                <th className="text-right">Owes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} aria-label={row.name} className="cursor-pointer hover:bg-raised"
-                  onClick={() => navigate(`/housing-authorities/${row.id}`)}>
-                  <td><GoLink href={`/housing-authorities/${row.id}`} className={LINK}>{row.name}</GoLink></td>
-                  <td className="text-right">{row.leases}</td>
-                  <td className="text-right">{money(row.owed)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Wide>
-      )}
-      {adding && (
-        <SidePanel title="Add housing authority" onClose={() => setAdding(false)}>
-          <AddAuthorityForm added={(id) => navigate(`/housing-authorities/${id}`)} />
-        </SidePanel>
-      )}
-    </Shell>
-  );
-}
-
-function AddAuthorityForm({ added }: { added: (id: string) => void }) {
-  const [name, setName] = useState("");
-  const { error, record } = useRecord(() => undefined);
-  return (
-    <Form className="flex flex-col gap-3" onSubmit={(event) => {
-      event.preventDefault();
-      return record<{ id: string }>("/api/assistance/authorities", { name }, (made) => {
-        added(made.id);
-        return `${name.trim()} added.`;
-      });
-    }}>
-      <Field label="Housing authority's name" id="authority-name" required maxLength={200} value={name}
-        onChange={(e) => setName(e.target.value)} />
-      <div><Button type="submit">Add housing authority</Button></div>
-      <Notice tone="error">{error}</Notice>
-    </Form>
-  );
-}
-
-// A housing authority: each lease it assists or owes on, what it pays of the rent today and what
+// A housing authority (no page in the menu since ADR 0010 phase 3, part O; a lease's Housing
+// assistance links here, and a new one is added there): each lease it assists or owes on, what it
+// pays of the rent today and what
 // it owes. Receive payment (ADR 0010 phase 1c: the same panel as the rent roll's, the authority
 // chosen) takes its one payment (a check, or a deposit by EFT) for many leases, each lease's part
 // paying what the authority owes on it, oldest first, into its owners' accounts.
@@ -234,7 +163,7 @@ function AuthorityPaymentRow({ payment, record }: { payment: AuthorityPayment; r
         ) : (
           <RowMenu label={`${usDate(payment.received_on)} payment of ${money(payment.amount)}`} actions={[{
             label: "It bounced", danger: true,
-            confirm: `Mark the ${money(payment.amount)} payment bounced today? Its money moves back out of the owners' accounts and the authority owes it again.`,
+            confirm: `Mark the ${money(payment.amount)} payment bounced today? Its money moves back out of the owners' accounts and the authority owes it again. Tenants' balances don't change.`,
             onSelect: () => record(`/api/assistance/payments/${encodeURIComponent(payment.transfer_id)}/bounce`,
               { on: day(new Date()) }, () => `The ${money(payment.amount)} payment bounced; the authority owes it again.`),
           }]} />
@@ -263,7 +192,14 @@ function LateFeeForm({ authority, record }: { authority: string; record: ReturnT
       <Field label="In force from" id="authority-fee-from" type="date" required value={from} onChange={(e) => setFrom(e.target.value)} />
       <Field label="Grace days" id="authority-fee-grace" inputMode="numeric" required value={grace} onChange={(e) => setGrace(e.target.value)} />
       <Field label="Late payment fee" id="authority-fee" inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} />
-      <div><Button type="submit">Set late fee</Button></div>
+      <div>
+        <Button type="submit"
+          says={Number(fee.trim() || "0") > 0
+            ? `From ${usDate(from)}, the authority is charged this fee once per rent it leaves unpaid past the grace days. Nothing is charged now.`
+            : `No late payment fee from ${usDate(from)}. Nothing is charged now.`}>
+          Set late fee
+        </Button>
+      </div>
     </Form>
   );
 }

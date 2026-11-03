@@ -74,7 +74,14 @@ export function DepositInterestForm({ lease, record }: { lease: RentLease; recor
               {found.owner_accounts.map((a) => <option key={a.id} value={a.id}>{a.owner}</option>)}
             </Select>
           )}
-          <div><Button type="submit" disabled={Number(found.due) <= 0}>Pay interest</Button></div>
+          <div>
+            <Button type="submit" disabled={Number(found.due) <= 0}
+              says={paidAs === "rent_credit"
+                ? `Credits ${money(found.due)} against the lease's rent. No money moves; these days' interest is paid once.`
+                : `Adds ${money(found.due)} to the deposits from the owner's balance; its cash moves to the deposit account.`}>
+              Pay interest
+            </Button>
+          </div>
         </Form>
       )}
       {found.paid.length > 0 && (

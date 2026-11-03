@@ -11,6 +11,8 @@ export type RegisterLine = {
   deposit: string | null;
   withdrawal: string | null;
   balance: string;
+  // The page the move opens: its lease, bill, owner or tenant (null: none, as the company's fees).
+  opens: string | null;
 };
 export type Held = { kind: string; label: string; amount: string };
 export type Breakdown = { book_cash: string; held: Held[]; owners: OwnerMoney[] };

@@ -256,7 +256,7 @@ def test_the_ledger_runs_through_today_by_default(client, conn, app_conn, home):
     assert ledger["rows"][-1][-1] == "1500.00"
 
 
-@pytest.mark.parametrize(("fmt", "magic"), [("pdf", b"%PDF-"), ("csv", b"line,"), ("xlsx", b"PK")])
+@pytest.mark.parametrize(("fmt", "magic"), [("pdf", b"%PDF-"), ("csv", b"Line,"), ("xlsx", b"PK")])
 def test_the_tenant_downloads_their_ledger(client, conn, app_conn, home, fmt, magic):
     join_as_tenant(client, conn, app_conn, home.pmc)
 

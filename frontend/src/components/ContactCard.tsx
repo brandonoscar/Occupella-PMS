@@ -37,16 +37,26 @@ function ContactDetails({
   refresh,
   name,
   note,
+  editRequest = 0,
 }: {
   path: string;
   contact: Contact;
   refresh: () => void;
   name: string;
   note?: string;
+  // Raised by another part of the page (the portal's "Edit contact details") to open Edit.
+  editRequest?: number;
 }) {
   const { said, error, record } = useRecord(refresh);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => draftOf(contact));
+  useEffect(() => {
+    if (editRequest > 0) {
+      setDraft(draftOf(contact));
+      setEditing(true);
+    }
+    // Only a new request opens it, not a refreshed contact.
+  }, [editRequest]);
   const address = addressLines(contact);
   return (
     <div className="flex flex-col gap-3" aria-label={`Contact details, ${name}`} role="group">
@@ -104,7 +114,7 @@ function ContactDetails({
               onChange={(event) => setDraft({ ...draft, [field]: event.target.value })} />
           ))}
           <div className="flex gap-2 sm:col-span-2">
-            <Button type="submit" size="sm">Save contact details</Button>
+            <Button type="submit" size="sm" says="Saves these details; the old ones stay in the history. Nothing is sent to them.">Save contact details</Button>
             <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
           </div>
         </Form>
@@ -123,6 +133,7 @@ export function ContactCard(props: {
   refresh: () => void;
   name: string;
   byTenantAt?: string | null;
+  editRequest?: number;
 }) {
   const { byTenantAt, ...details } = props;
   return (

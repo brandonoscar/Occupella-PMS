@@ -82,6 +82,8 @@ function server(found: Offer = OFFER, refuse: Record<string, string> = {}) {
 
 const posted = (fetch: ReturnType<typeof server>) =>
   fetch.mock.calls.filter(([, init]) => init?.method === "POST").map(([path, init]) => [path, JSON.parse(String(init?.body))]);
+// The plain line under a button (ADR 0010, rule 1): what describes it.
+const says = (button: HTMLElement) => document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent;
 
 const PDF = () => new File([new TextEncoder().encode("%PDF-1.4 a synthetic lease")], "lease.pdf", { type: "application/pdf" });
 
@@ -273,6 +275,9 @@ describe("DraftLeasePage", () => {
       "Applicant B Guarantor", "b@example.com", "", "Not sent",
     ]);
     expect(screen.queryByRole("button", { name: "Activate lease" })).toBeNull();
+    // This server sends no email: the links are for staff to give.
+    expect(says(screen.getByRole("button", { name: "Send" })))
+      .toBe("Makes each signer below a signing link, shown here to give them. This server sends no email.");
 
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
@@ -296,6 +301,10 @@ describe("DraftLeasePage", () => {
     expect(within(screen.getByLabelText("Summary")).getByRole("link", { name: "Signing certificate (PDF)" })
       .getAttribute("href")).toBe("/api/leasing/offers/o1/certificate");
     expect(screen.queryByRole("button", { name: "Check signatures" })).toBeNull();
+    expect(says(screen.getByRole("button", { name: "Resend" })))
+      .toBe("Makes a new link for each signer who hasn't signed, shown here; old ones still work. No email is sent.");
+    expect(says(screen.getByRole("button", { name: "Activate lease" })))
+      .toBe("Makes it the lease once all have signed, with its monthly charges. Nothing is collected or emailed.");
     fireEvent.click(screen.getByRole("button", { name: "Resend" }));
     await screen.findByText("A new link for 2 signers.");
     expect(screen.getAllByTestId("signing-link").length).toBe(2);
@@ -317,6 +326,20 @@ describe("DraftLeasePage", () => {
 
     await within(panel).findByText("this offer is a lease already");
     expect(posted(fetch)).toEqual([["/api/leasing/offers/o1/void", { reason: "Terms changed" }]]);
+  });
+
+  it("says Send emails the signers on a server that sends email, and Activate ends the lease a renewal renews", async () => {
+    server();
+    render(<DraftLeasePage me={{ ...ME, email_on: true }} id="o1" />);
+    expect(says(await screen.findByRole("button", { name: "Send" })))
+      .toBe("Emails each signer below their own signing link; the links show here too. No lease is made yet.");
+    cleanup();
+
+    server({ ...OFFER, kind: "renewal", application_id: null, renews_lease_id: "l1", status: "signed", sent: true });
+    render(<DraftLeasePage me={ME} id="o1" />);
+    expect(says(await screen.findByRole("button", { name: "Activate lease" }))).toBe(
+      "Makes it the lease once all have signed; the old lease ends the day before. Nothing is collected or emailed.",
+    );
   });
 
   it("shows a void offer's void and a leased one's lease, with no work left", async () => {

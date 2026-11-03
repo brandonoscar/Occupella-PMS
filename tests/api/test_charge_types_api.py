@@ -115,9 +115,9 @@ def test_a_fee_of_a_type_counts_on_its_own_line_of_the_income_statement(
     )
     assert report.status_code == 200, report.text
     lines = {
-        r["item"]: r["amount"]
+        r["Item"]: r["Amount"]
         for r in csv.DictReader(io.StringIO(report.text))
-        if r["property"] == "Property 1"
+        if r["Property"] == "Property 1"
     }
 
     assert [(r["memo"], r["charge_type"]) for r in row["recurring"]] == [("Dog", "Pet rent")]

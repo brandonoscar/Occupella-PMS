@@ -46,7 +46,7 @@ export function SignPage() {
     }
   }
   const paper = () =>
-    ask("Sign on paper instead? This link will no longer sign the lease.",
+    ask(`Sign on paper instead? This link will no longer sign the lease; ${view?.company ?? "your manager"} sees that you asked for paper.`,
       () => step("paper"), "Sign on paper");
 
   return (
@@ -141,7 +141,10 @@ function Consent({ view, step, paper }: { view: SigningView; step: Step; paper: 
           I have read this and agree to receive and sign this lease electronically
         </label>
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" disabled={!agreed}>Continue</Button>
+          <Button type="submit" disabled={!agreed}
+            says="Records that you agree to sign electronically. Nothing is signed yet; you can still ask for paper.">
+            Continue
+          </Button>
           <Button type="button" variant="secondary" onClick={paper}>I'd rather sign on paper</Button>
         </div>
       </Form>
@@ -161,7 +164,8 @@ function Signing({ view, step, save, paper }: { view: SigningView; step: Step; s
       }}>
         <div className="flex flex-col gap-2">
           <div>
-            <Button type="button" variant="secondary" onClick={() => void save("document", "lease.pdf")}>
+            <Button type="button" variant="secondary" onClick={() => void save("document", "lease.pdf")}
+              says="Downloads the lease to read, and records that you opened it. Nothing is signed yet.">
               Open the lease (PDF)
             </Button>
           </div>
@@ -178,7 +182,10 @@ function Signing({ view, step, save, paper }: { view: SigningView; step: Step; s
           I have read the lease and I sign it
         </label>
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" disabled={!view.opened || !intent}>Sign the lease</Button>
+          <Button type="submit" disabled={!view.opened || !intent}
+            says="Signs the lease you opened, with the name you typed. It can't be taken back, and nothing is paid now.">
+            Sign the lease
+          </Button>
           <Button type="button" variant="secondary" onClick={paper}>I'd rather sign on paper</Button>
         </div>
       </Form>

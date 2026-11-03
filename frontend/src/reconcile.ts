@@ -1,6 +1,6 @@
 // Staff's month-end as the API sends it (src/pms/api/reconcile.py), and how it reads.
 import type { Me } from "./api";
-import { day, money, usDate } from "./money";
+import { day, money, usDate, usDatesIn } from "./money";
 
 export type StatementRow = {
   id: string;
@@ -160,7 +160,7 @@ export function lineLabel(line: OpenLine): string {
 
 export function transferLabel(transfer: OpenTransfer): string {
   const deposit = transfer.deposited_on ? ` · deposit of ${usDate(transfer.deposited_on)}` : "";
-  return `${usDate(transfer.on)} ${transfer.memo ?? "No memo"}: ${money(transfer.amount)}${deposit}`;
+  return `${usDate(transfer.on)} ${usDatesIn(transfer.memo ?? "No memo")}: ${money(transfer.amount)}${deposit}`;
 }
 
 // Ticking a transfer in a bank deposit ticks (or unticks) the whole deposit with it.

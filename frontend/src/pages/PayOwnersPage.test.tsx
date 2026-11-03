@@ -4,7 +4,8 @@ import type { Me } from "../api";
 import { holdBack } from "../holdBack";
 import type { OwnerMoney } from "../payables";
 import type { DrawRun } from "../payouts";
-import { drawChoices, PayOwnersPage } from "./PayOwnersPage";
+import { drawChoices } from "../payouts";
+import { PayOwnersPage } from "./PayOwnersPage";
 
 afterEach(() => {
   cleanup();

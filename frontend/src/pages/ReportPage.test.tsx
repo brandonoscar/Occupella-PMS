@@ -22,8 +22,9 @@ const ME: Me = {
 const ROLL: Preview = {
   title: "rent roll",
   columns: ["line", "item", "property", "unit", "unit_id", "monthly_rent"],
+  headings: ["Line", "Item", "Property", "Unit", "Unit id", "Monthly rent"],
   rows: [
-    ["1", "PMC", "", "", "", ""],
+    ["1", "Company", "", "", "", ""],
     ["2", "lease", "Property 1", "Unit A", "00000000-0000-4000-8000-000000000001", "1000.00"],
   ],
   total_rows: 2,
@@ -50,6 +51,23 @@ function server(answers: Record<string, unknown> = {}) {
 const asked = (fetch: ReturnType<typeof server>) => fetch.mock.calls.map(([p]) => p as string);
 
 describe("ReportPage", () => {
+  it("heads each column as the API's word list does, the same as in a download", async () => {
+    const aging: Preview = {
+      title: "delinquency",
+      columns: ["line", "item", "days_1_30", "over_90"],
+      headings: ["Line", "Item", "1-30 days", "Over 90 days"],
+      rows: [["1", "Company", "", ""]],
+      total_rows: 1,
+    };
+    window.history.replaceState(null, "", "/reports/delinquency");
+    server({ [`/api/reports/trust_report_delinquency?arg=${day(new Date())}&format=json`]: aging });
+    render(<ReportPage me={ME} name="delinquency" />);
+    const table = await screen.findByRole("table", { name: "Delinquency" });
+    expect(within(table).getAllByRole("columnheader").map((c) => c.textContent)).toEqual([
+      "Item", "1-30 days", "Over 90 days",
+    ]);
+  });
+
   it("previews a report as of today, narrows it to a group, and exports it the same way", async () => {
     const fetch = server();
     render(<ReportPage me={ME} name="rent_roll" />);

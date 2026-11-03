@@ -76,10 +76,14 @@ export function CalendarCard({ path, intro, groups }: {
                 {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
               </Select>
             )}
-            <Button type="submit" variant="secondary">{standing ? "Make a new link" : "Make a calendar link"}</Button>
+            <Button type="submit" variant="secondary" says={standing
+              ? "Makes a new link, shown here once. The old one stops working, so your calendar app needs the new one."
+              : "Makes a link your calendar app subscribes to, shown here once. Nothing is emailed or shared."}>
+              {standing ? "Make a new link" : "Make a calendar link"}
+            </Button>
             {standing && (
               <Button type="button" variant="secondary" onClick={() => ask(
-                "Take your calendar link back? Your calendar app stops getting updates.",
+                "Take your calendar link back? Your calendar app stops getting updates. You can make a new link any time.",
                 () => record<null>(`${path}/revoke`, {}, () => {
                   setUrl("");
                   return "Took your calendar link back.";

@@ -39,7 +39,7 @@ describe("Shell", () => {
 
     const links = within(sections()).getAllByRole("link");
     expect(links.map((link) => link.textContent)).toEqual([
-      "Dashboard", "Properties", "Rent roll", "Payment files", "Tenants", "Owners", "Housing authorities", "Move-outs", "Listings", "Leads", "Applicants", "Draft leases", "Renewals", "Banking", "Bills", "Utility billing",
+      "Dashboard", "Properties", "Rent roll", "Payment files", "Tenants", "Owners", "Move-outs", "Listings", "Leads", "Applicants", "Draft leases", "Renewals", "Banking", "Bills",
       "General ledger", "Pay owners", "Management fees", "Budgets", "Work orders", "Vendors", "Files", "Reports", "Settings",
     ]);
     const groups = within(sections()).getAllByRole("group");
@@ -48,7 +48,7 @@ describe("Shell", () => {
     ]);
     const accounting = within(sections()).getByRole("group", { name: "Accounting" });
     expect(within(accounting).getAllByRole("link").map((link) => link.textContent)).toEqual([
-      "Banking", "Bills", "Utility billing", "General ledger", "Pay owners", "Management fees", "Budgets",
+      "Banking", "Bills", "General ledger", "Pay owners", "Management fees", "Budgets",
     ]);
     // Each group and each page outside one has its icon.
     expect(groups.every((group) => group.querySelector("svg"))).toBe(true);
@@ -162,6 +162,17 @@ describe("PageHeader", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Rent" }).className).toContain("font-display");
     expect(screen.getByText("Each lease's charges.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Run" })).toBeTruthy();
+  });
+
+  it("keeps room for its title: actions with long plain lines wrap under it, never squeeze it away", () => {
+    render(<PageHeader title="Renewal for Cedar House, House" actions={<button type="button">Resend</button>} />);
+    const header = screen.getByRole("banner");
+    expect(header.className).toContain("flex-wrap");
+    const title = screen.getByRole("heading", { level: 1 }).parentElement as HTMLElement;
+    expect(title.className).toContain("min-w-64");
+    const actions = screen.getByRole("button", { name: "Resend" }).parentElement as HTMLElement;
+    expect(actions.className).not.toContain("shrink-0");
+    expect(actions.className).toContain("max-w-full");
   });
 });
 

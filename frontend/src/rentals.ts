@@ -253,9 +253,13 @@ export type LedgerLine = {
   paid: string | null;
   balance: string;
   bounced: boolean;
+  // What the line opens: its charge, or its payment (a bounce's: the payment that bounced).
+  charge_id: string | null;
+  transfer_id: string | null;
 };
-// A lease's ledger through today (GET /api/leases/{id}/ledger).
-export type Ledger = { lines: LedgerLine[]; balance: string };
+// A lease's ledger over days (GET /api/leases/{id}/ledger): from `start` (null: its first line)
+// through `end`, with the balance brought forward from before it.
+export type Ledger = { start: string | null; end: string; opening: string; lines: LedgerLine[]; balance: string };
 
 // "Ann Owner 60% · Ben Owner 40%": owners' shares as they read.
 export function sharesLine(shares: { owner: string; percent: string | null }[]): string {

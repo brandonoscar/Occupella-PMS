@@ -294,6 +294,8 @@ TABLES = {
     "trust_payment_settings": {"SELECT", "INSERT"},
     "trust_online_payments": {"SELECT", "INSERT"},
     "trust_online_payment_events": {"SELECT", "INSERT"},
+    "trust_owner_online_payments": {"SELECT", "INSERT"},
+    "trust_owner_online_payment_events": {"SELECT", "INSERT"},
     "trust_autopay": {"SELECT", "INSERT"},
     "trust_autopay_accounts": {"SELECT", "INSERT"},
     "trust_autopay_stops": {"SELECT", "INSERT"},
@@ -572,6 +574,8 @@ FUNCTIONS = {
     "trust_check_charge_waiver()": set(),
     "trust_check_rent_due_day()": set(),
     "trust_check_online_payment_event()": set(),  # a trigger's: no one calls it
+    "trust_check_owner_online_payment()": set(),  # a trigger's: no one calls it
+    "trust_check_owner_online_payment_event()": set(),  # a trigger's: no one calls it
     "trust_check_autopay()": set(),  # a trigger's: no one calls it
     "trust_check_autopay_run()": set(),  # a trigger's: no one calls it
     "trust_lock_autopay_stop()": set(),  # a trigger's: no one calls it

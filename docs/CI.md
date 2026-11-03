@@ -330,7 +330,10 @@ attention 15.8 s and a PDF 113 s. Run it with `python -m tools.speed`.
 under `tests/golden/cases/`. Each case builds a fixed synthetic fixture and must produce exactly
 its checked-in `.expected.txt`. A PR that changes an expected file fails until a maintainer adds
 the `golden-update` label; the diff is in the job summary. Owners and auditors read these
-reports, so a change to one has to be on purpose. Reports so far:
+reports, so a change to one has to be on purpose. What the PMS hands people has golden files too
+(`tests/golden/test_golden_files.py`, `tests/golden/files/`, ADR 0010 phase 4): a payment
+receipt, an owner's statement as the PDF they download, the ACH file and the printed checks, a PDF
+by the text it shows. Reports so far:
 `trust_report_three_way_reconciliation` (bank statement, trust journal and beneficiary ledgers of
 one approved reconciliation, with every difference listed) and `trust_report_owner_statement`
 (per property an opening balance, each posting in date order with the balance after it and a

@@ -7,9 +7,10 @@ can't be taken back once its migrations have run and money has moved on them.
 
 What the repo does today: every change reaches `main` through a PR whose checks are green
 (docs/CI.md); `Dockerfile` and `compose.yaml` build the self-host image from the source; the
-image's default command applies the migrations (`dbmate --wait up`). Not yet: no version has
-been tagged, there is no `CHANGELOG.md`, no image is published to a registry, and branch
-protection on `main` is off (below). The first release starts the tags and the changelog.
+image's default command applies the migrations (`dbmate --wait up`); `compose.selfhost.yaml` and
+docs/install.md run it for a real company. The first release, `v2026.11.0`, started the tags and
+`CHANGELOG.md`. Not yet: no image is published to a registry, and branch protection on `main` is
+off (below).
 
 ## A release
 

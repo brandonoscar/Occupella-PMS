@@ -189,7 +189,12 @@ function RunRent({ record }: { record: Recorder }) {
           onChange={(event) => setDue(event.target.value)} />
         <Field label="Late fees as of" id="late-as-of" type="date" required value={asOf}
           onChange={(event) => setAsOf(event.target.value)} />
-        <div><Button type="submit">Run rent now</Button></div>
+        <div>
+          <Button type="submit"
+            says="Does now what the nightly run does: rent, monthly charges, late fees, autopay and their emails. Nothing is charged twice.">
+            Run rent now
+          </Button>
+        </div>
       </Form>
       {runs !== null && runs.length > 0 && (
         <ul aria-label="Latest rent runs" className="flex flex-col gap-1 text-sm text-ink-muted">

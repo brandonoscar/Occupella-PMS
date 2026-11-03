@@ -34,6 +34,7 @@ import { EmailsCard } from "../components/EmailsCard";
 import { FilesCard } from "./FilesCard";
 import { PayeeCard } from "./PayeeCard";
 import { TaxIdCard } from "./TaxIdCard";
+import { OwnerTop } from "./OwnerTop";
 import { PortalCard } from "./PortalCard";
 import { TermsPanel } from "./SetupPanels";
 import { GoLink } from "./NeedsAttention";
@@ -144,7 +145,7 @@ function AddOwner() {
     }}>
       <Field label="Name" id="new-owner" required maxLength={100} value={name}
         onChange={(event) => setName(event.target.value)} />
-      <div><Button type="submit">Add owner</Button></div>
+      <div><Button type="submit" says="Adds them by name and opens their page. Nothing is sent to them.">Add owner</Button></div>
       <Notice tone="error">{error}</Notice>
     </Form>
   );
@@ -160,7 +161,9 @@ const OWNER_TABS: { value: OwnerTab; label: string }[] = [
   { value: "files", label: "Files" },
 ];
 
-// An owner (ADR 0006): Summary (contact details, portal login, the agreements' terms), Properties
+// An owner (ADR 0006; ADR 0010 phase 3, part J): on top how to reach them, how they are paid,
+// their tax ID's last four, their balance and the next draw; Summary (contact details, portal
+// login in one click, the agreements' terms), Properties
 // (what each account holds, keeps back and may pay out), Financials (their statement, and a
 // contribution recorded), Statements (each month's, and the year's income statement) and Files.
 export function OwnerPage({ me, id }: { me: Me; id: string }) {
@@ -191,10 +194,11 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
         <RecordActions path={`/api/owners/${id}`} name={owner.name} archived={owner.archived}
           onChange={(done) => { setSaid(done); refresh(); }} />
       } />
+      <OwnerTop owner={owner} today={day(new Date())} />
       <Said>{said}</Said>
       <div>
         <Tabs label="Owner" tabs={OWNER_TABS} value={tab} onChange={setTab} />
-        {tab === "summary" && <OwnerSummary owner={owner} refresh={refresh} />}
+        {tab === "summary" && <OwnerSummary owner={owner} emailOn={me.email_on ?? false} refresh={refresh} />}
         {tab === "properties" && <OwnerProperties accounts={owner.accounts} />}
         {tab === "financials" && <OwnerFinancials owner={owner} refresh={refresh} />}
         {tab === "statements" && (
@@ -210,15 +214,18 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
   );
 }
 
-function OwnerSummary({ owner, refresh }: { owner: Owner; refresh: () => void }) {
+function OwnerSummary({ owner, emailOn, refresh }: { owner: Owner; emailOn: boolean; refresh: () => void }) {
   const [setting, setSetting] = useState(false);
   const [said, setSaid] = useState("");
+  const [editContact, setEditContact] = useState(0);
   const property = (account: string) => owner.accounts.find((a) => a.account === account)?.property ?? account;
   return (
     <div className="flex flex-col gap-6">
-      <ContactCard path={`/api/owners/${owner.id}`} contact={owner.contact} refresh={refresh} name={owner.name} />
+      <ContactCard path={`/api/owners/${owner.id}`} contact={owner.contact} refresh={refresh} name={owner.name}
+        editRequest={editContact} />
       <PortalCard kind="owner" personId={owner.id} name={owner.name} portal={owner.portal}
-        loginEmail={owner.login_email} email={owner.contact.email} refresh={refresh} />
+        loginEmail={owner.login_email} contactEmail={owner.contact.email} emailOn={emailOn} refresh={refresh}
+        onEditContact={() => setEditContact((n) => n + 1)} />
       <PayeeCard kind="owner" id={owner.id} name={owner.name} />
       <TaxIdCard kind="owner" id={owner.id} name={owner.name} />
       <Card title="Management agreements">
@@ -393,7 +400,11 @@ function ContributionForm({ owner, record }: { owner: Owner; record: Recorder })
         onChange={(event) => setOn(event.target.value)} />
       <Field label="For" id="contribution-memo" maxLength={200} value={memo}
         onChange={(event) => setMemo(event.target.value)} />
-      <div><Button type="submit">Record contribution</Button></div>
+      <div>
+        <Button type="submit" says="Adds it to the owner's balance, as money already received. The PMS collects nothing from them.">
+          Record contribution
+        </Button>
+      </div>
     </Form>
   );
 }
@@ -434,10 +445,11 @@ function OwnerFeeForm({ owner, record }: { owner: Owner; record: Recorder }) {
         onChange={(event) => setMemo(event.target.value)} />
       <Field label="Taken on" id="owner-fee-on" type="date" required value={on}
         onChange={(event) => setOn(event.target.value)} />
-      <p className="text-sm text-ink-muted">
-        It moves from the owner's account to the company's fee account, inside trust, and shows on their statement.
-      </p>
-      <div><Button type="submit">Take fee</Button></div>
+      <div>
+        <Button type="submit" says="Moves it from the owner's balance to the company's fees and shows on their statement. Nothing leaves trust.">
+          Take fee
+        </Button>
+      </div>
     </Form>
   );
 }

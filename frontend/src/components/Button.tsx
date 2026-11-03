@@ -1,6 +1,6 @@
 import { Loader2 } from "lucide-react";
 import type { ButtonHTMLAttributes, MouseEvent } from "react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useFormBusy } from "./Form";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
@@ -21,14 +21,22 @@ const VARIANTS: Record<Variant, string> = {
 const SIZES = { md: "h-9 px-3.5 text-base", sm: "h-8 px-3 text-sm" };
 
 // A button is busy while what it started runs: its form's save (<Form>), or the promise its own
-// click returned. Busy, it shows a spinner and can't be pressed again.
+// click returned. Busy, it shows a spinner and can't be pressed again. It submits its form only
+// when it says type="submit": a Cancel inside a form once made what it was cancelling.
+//
+// `says` is the one plain line under an action button (ADR 0010, rule 1): what pressing it does
+// and what it doesn't ("Records the payment. Nothing is sent to the tenant."). The button is
+// described by it, so a screen reader reads it too. buttonRules.test.ts holds every submit button
+// to having one.
 export function Button({
+  type = "button",
   variant = "primary",
   size = "md",
   className = "",
   busy,
   onClick,
   disabled,
+  says,
   children,
   ...props
 }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "onClick"> & {
@@ -36,19 +44,23 @@ export function Button({
   size?: keyof typeof SIZES;
   busy?: boolean;
   onClick?: (event: MouseEvent<HTMLButtonElement>) => unknown;
+  says?: string;
 }) {
   const formBusy = useFormBusy();
   const [clicked, setClicked] = useState(false);
-  const working = busy ?? (clicked || (props.type === "submit" && formBusy));
+  const saysId = useId();
+  const working = busy ?? (clicked || (type === "submit" && formBusy));
   const base =
     "inline-flex items-center justify-center gap-1.5 rounded-sm font-medium whitespace-nowrap" +
     " transition-colors duration-100 disabled:border-disabled-bg disabled:bg-disabled-bg" +
     " disabled:text-disabled-ink";
-  return (
+  const button = (
     <button
+      type={type}
       className={`${base} ${SIZES[size]} ${VARIANTS[variant]} ${className}`}
       disabled={disabled || working}
       aria-busy={working || undefined}
+      aria-describedby={says ? saysId : undefined}
       onClick={(event) => {
         const result = onClick?.(event);
         if (result instanceof Promise) {
@@ -61,6 +73,13 @@ export function Button({
       {working && <Loader2 size={14} strokeWidth={2} aria-hidden="true" className="animate-spin" />}
       {children}
     </button>
+  );
+  if (!says) return button;
+  return (
+    <span className="inline-flex flex-col items-start gap-1">
+      {button}
+      <span id={saysId} data-testid="button-says" className="text-sm text-ink-muted">{says}</span>
+    </span>
   );
 }
 

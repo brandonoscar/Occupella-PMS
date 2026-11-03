@@ -75,7 +75,13 @@ function DrawDayForm({ day, save }: { day: DrawDay; save: (body: unknown) => Pro
         <option value="">None: pay owners by hand</option>
         {DAYS.map((n) => <option key={n} value={n}>{ordinal(n)} of each month</option>)}
       </Select>
-      <div><Button type="submit">Save</Button></div>
+      <div>
+        <Button type="submit" says={chosen === ""
+          ? "No draws are prepared; pay owners when you choose on Pay owners. Nothing is paid now."
+          : `The night of the ${ordinal(Number(chosen))}, each owner's draw is prepared. Nothing is paid until staff pay them.`}>
+          Save
+        </Button>
+      </div>
     </Form>
   );
 }

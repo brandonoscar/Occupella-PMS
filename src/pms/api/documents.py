@@ -111,7 +111,7 @@ LEASES = (
 SUBJECTS: dict[Kind, str] = {
     "w9": VENDORS,
     "receipt": "SELECT b.id, v.display_name || ' ' || b.reference || ', '"
-    " || to_char(b.bill_date, 'YYYY-MM-DD') FROM trust_bills AS b"
+    " || to_char(b.bill_date, 'MM/DD/YYYY') FROM trust_bills AS b"
     " JOIN trust_vendors AS v ON v.id = b.vendor_id WHERE b.pmc_id = %(pmc)s"
     ' ORDER BY b.bill_date DESC, v.display_name COLLATE "C", b.id',
     "move_out_photo": LEASES,

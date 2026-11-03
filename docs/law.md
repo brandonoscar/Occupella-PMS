@@ -913,6 +913,15 @@ counts as received for its state's deposit deadline (a bank payment takes days t
 forbids a broker's own money in trust and Iowa requires the broker to cover bank charges from its
 own: a company in Oregon should keep its fee account able to pay the processor without a deposit.
 
+**Owners paying in online** (migration 20261102000150, ADR 0009, readiness q054). The same switch
+lets owners add money to their property accounts from the owner portal, by bank. ADR 0009's first
+rule says a processor's fee is never the owner's; the founder chose on 2026-11-02 that the company
+always pays it on an owner's payment: nothing is added to what the owner pays, and the fee leaves
+trust only from the company's fee account, as for rent. The whole payment is the owner's
+contribution; a return comes back out of the owner's account, with no fee charged to them. No rule
+was found on owners paying into a trust account online (NOT VERIFIED); it is the owner's own money
+coming in, recorded as a contribution by check is.
+
 
 ## Autopay (migration 0151, ADR 0009)
 

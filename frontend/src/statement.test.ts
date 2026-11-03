@@ -69,7 +69,7 @@ describe("describePosting", () => {
         "-243.20",
         { what: "Management fee 2026-09-01 to 2026-09-30", with: "Synthetic PMC" },
       ],
-      ["vendor_payable: Vendor 1 - Bill RF-1 set aside", "-650.00", { what: "Bill RF-1 set aside", with: "Vendor 1" }],
+      ["vendor_payable: Vendor 1 - Bill RF-1 set aside", "-650.00", { what: "Bill RF-1", with: "Vendor 1" }],
       ["pmc_income: Synthetic PMC", "-10.00", { what: "Management company", with: "Synthetic PMC" }],
       ["vendor_payable: Vendor 1", "-10.00", { what: "Vendor", with: "Vendor 1" }],
       ["owner_property: Owner 2 / Property 2", "10.00", { what: "Transfer", with: "Owner 2 / Property 2" }],

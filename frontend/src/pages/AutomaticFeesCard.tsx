@@ -89,7 +89,13 @@ function AutomaticFeesForm({ fees, save }: { fees: AutomaticFees; save: (body: u
           {DAYS.map((n) => <option key={n} value={n}>{ordinal(n)}</option>)}
         </Select>
       )}
-      <div><Button type="submit">Save</Button></div>
+      <div>
+        <Button type="submit" says={automatic
+          ? `From the ${ordinal(day)} each month, the nightly run takes last month's fees. They stay in trust until taken out.`
+          : "Fees are taken only when staff collect them on Management fees. Nothing is taken as you save."}>
+          Save
+        </Button>
+      </div>
     </Form>
   );
 }
