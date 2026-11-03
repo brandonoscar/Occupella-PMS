@@ -510,10 +510,21 @@ def import_bill(names: Names, row: Row) -> None:
         (pmc, vendor, account, reference, billed, due, amount, memo),
     )
     if approved_by:
+        # The old system's approval, kept as it was, naming the bill's owner: carried over, with
+        # who approved it there (migration 20261104000200).
         conn.execute(
-            "INSERT INTO trust_bill_approvals (pmc_id, bill_id, approved_on, approved_by)"
-            " VALUES (%s, %s, %s, %s)",
-            (pmc, bill, approved_on, approved_by),
+            "INSERT INTO trust_bill_approvals"
+            " (pmc_id, bill_id, approved_on, approved_by, owner_id, method, note)"
+            " SELECT %s, %s, %s, %s, t.owner_id, 'carried_over', %s"
+            " FROM trust_ledger_accounts AS t WHERE t.ledger_account_id = %s",
+            (
+                pmc,
+                bill,
+                approved_on,
+                approved_by,
+                f"Approved in the old system by {approved_by}",
+                account,
+            ),
         )
     else:
         # Over the owner's limit: the email asking them to decide it (ADR 0004).

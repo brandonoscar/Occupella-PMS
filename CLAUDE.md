@@ -512,7 +512,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   before and after; over the company's amount (`trust_owner_approval_settings`, $5,000.00 without
   one, Settings, Company setup) they type their full name, which the API checks against theirs and
   keeps (`trust_bill_approvals.signed_name`, migration 20261104000100); who approves always comes
-  from the session. A bill takes one owner's decision (migration 0041): an approval or a decline
+  from the session. An approval staff record names the bill's own owner by id, how they approved
+  (phone, email or in person; an approval carried over by the switching tool says so) and a note,
+  and the staff member from the session (`recorded_by`; migration 20261104000200): the database
+  refuses one a named staff member records without them. A bill takes one owner's decision (migration 0041): an approval or a decline
   (`trust_bill_declines`, with a reason), a decline only before it is set aside, and one taken
   in the owner portal only by the owner of its property account. A declined bill is never set
   aside or paid, and from the day it was declined it holds nothing back from draws and is not

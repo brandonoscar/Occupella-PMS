@@ -180,8 +180,24 @@ def test_a_bill_over_the_limit_needs_the_owners_approval_once(client, conn, staf
 
     waiting = statuses(client)
     early = call(client, f"bills/{bill}/pay", on=TODAY)
-    ok(call(client, f"bills/{bill}/approval", approved_on=TODAY, approved_by="Owner 1, by phone"))
-    twice = call(client, f"bills/{bill}/approval", approved_on=TODAY, approved_by="Owner 1")
+    ok(
+        call(
+            client,
+            f"bills/{bill}/approval",
+            approved_on=TODAY,
+            owner_id=str(pmc.owners[0].owner_id),
+            method="phone",
+            note="Called to approve it",
+        )
+    )
+    twice = call(
+        client,
+        f"bills/{bill}/approval",
+        approved_on=TODAY,
+        owner_id=str(pmc.owners[0].owner_id),
+        method="phone",
+        note="Called",
+    )
     approved = statuses(client)
     ok(call(client, f"bills/{bill}/pay", on=TODAY))
 
@@ -212,7 +228,14 @@ def test_staff_record_an_owners_decline_and_the_bill_is_never_paid(client, conn,
     )
     after = ok(client.get("/api/payables/owners"), 200)[0]
     aside = call(client, f"bills/{bill}/pay", on=TODAY)
-    approval = call(client, f"bills/{bill}/approval", approved_on=TODAY, approved_by="Owner 1")
+    approval = call(
+        client,
+        f"bills/{bill}/approval",
+        approved_on=TODAY,
+        owner_id=str(pmc.owners[0].owner_id),
+        method="phone",
+        note="Called",
+    )
     again = call(
         client, f"bills/{bill}/decline", declined_on=TODAY, declined_by="Owner 1", reason="No"
     )
@@ -608,7 +631,14 @@ def test_another_pmcs_records_are_not_found(client, conn, staff, pmc):
             "no such bill",
         ),
         (
-            call(client, f"bills/{theirs}/approval", approved_on=TODAY, approved_by="X"),
+            call(
+                client,
+                f"bills/{theirs}/approval",
+                approved_on=TODAY,
+                owner_id=str(uuid.uuid4()),
+                method="phone",
+                note="x",
+            ),
             "no such bill",
         ),
         (draw(client, other.owners[0].account), "no such owner account"),

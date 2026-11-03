@@ -14669,7 +14669,13 @@ CREATE TABLE public.trust_bill_approvals (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     owner_id uuid,
     signed_name text,
+    recorded_by uuid,
+    method text,
+    note text,
     CONSTRAINT trust_bill_approvals_approved_by_check CHECK ((approved_by <> ''::text)),
+    CONSTRAINT trust_bill_approvals_method CHECK (((method IS NULL) OR (method = ANY (ARRAY['phone'::text, 'email'::text, 'in_person'::text, 'carried_over'::text])))),
+    CONSTRAINT trust_bill_approvals_note CHECK (((note IS NULL) OR ((note ~ '\S'::text) AND (length(note) <= 1000)))),
+    CONSTRAINT trust_bill_approvals_recorded_whole CHECK (((recorded_by IS NULL) OR ((owner_id IS NOT NULL) AND (method IS NOT NULL) AND (note IS NOT NULL)))),
     CONSTRAINT trust_bill_approvals_signed_name CHECK (((signed_name IS NULL) OR ((signed_name ~ '\S'::text) AND (length(signed_name) <= 200))))
 );
 
@@ -21506,6 +21512,13 @@ CREATE INDEX trust_bank_payout_settings_recorded_by ON public.trust_bank_payout_
 
 
 --
+-- Name: trust_bill_approvals_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bill_approvals_recorded_by ON public.trust_bill_approvals USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_bill_declines_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -27428,6 +27441,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bank_payout_setti
 
 
 --
+-- Name: trust_bill_approvals trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bill_approvals FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_bill_declines trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -29148,6 +29168,14 @@ ALTER TABLE ONLY public.trust_bill_approvals
 
 ALTER TABLE ONLY public.trust_bill_approvals
     ADD CONSTRAINT trust_bill_approvals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bill_approvals trust_bill_approvals_recorder; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_approvals
+    ADD CONSTRAINT trust_bill_approvals_recorder FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -33969,4 +33997,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261031000200'),
     ('20261102000150'),
     ('20261103000100'),
-    ('20261104000100');
+    ('20261104000100'),
+    ('20261104000200');

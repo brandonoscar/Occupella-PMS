@@ -422,7 +422,10 @@ def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
             conn,
             roof,
             payables.Approval(
-                approved_on=last_month + 9 * DAY, approved_by="Demo Owner A, by email"
+                approved_on=last_month + 9 * DAY,
+                owner_id=demo.owners["Demo Owner A"],
+                method="email",
+                note="Replied to the quote: go ahead with the flashing repair.",
             ),
         )
         demo.outstanding = payables.pay(
@@ -1285,7 +1288,15 @@ def bills_of_every_status(b: Builder, demo: Demo, today: date, public_url: str) 
             ),
         ).id
         payables.approve(
-            s, conn, roof, payables.Approval(approved_on=today, approved_by="Demo Owner, by phone")
+            s,
+            conn,
+            roof,
+            payables.Approval(
+                approved_on=today,
+                owner_id=demo.owners["Demo Owner A"],
+                method="phone",
+                note="Called to approve the replacement; will send funds for the balance.",
+            ),
         )
         # The company's draw day came this month, so tonight's run prepares the owners' draws
         # for staff to pay (ADR 0010 phase 1b); Demo Owner C is paid by ACH. No bank account is

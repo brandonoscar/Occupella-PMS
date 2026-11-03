@@ -585,8 +585,15 @@ test("staff record a vendor's bill with its invoice, record the owner's approval
   await expect(page.getByRole("heading", { level: 1, name: "Vendor E2E E2E-INV-1" })).toBeVisible();
   await expect(page.getByRole("list", { name: "Files, Vendor E2E E2E-INV-1" })).toContainText("invoice-e2e");
   await page.getByRole("button", { name: "Record approval" }).click();
-  await page.getByRole("dialog", { name: "Record approval" }).getByLabel("Approved by").fill("Payee E2E");
-  await page.getByRole("dialog", { name: "Record approval" }).getByRole("button", { name: "Record approval" }).click();
+  // The bill's own owner, how they approved and a note; staff are named from their sign-in.
+  const approval = page.getByRole("dialog", { name: "Record approval" });
+  await expect(approval.getByLabel("Owner")).toHaveText("Payee E2E");
+  await approval.getByLabel("How they approved").selectOption({ label: "Phone" });
+  await approval.getByLabel("Note").fill("Called at 2pm, OK to proceed");
+  await approval.getByRole("button", { name: "Record approval" }).click();
+  await expect(page.getByRole("list", { name: "History" })).toContainText(
+    /Approved by Payee E2E, by phone\. Recorded by .+: Called at 2pm, OK to proceed/,
+  );
   await expect(page.getByTestId("status")).toHaveText("Ready to pay");
   await expect(page.getByTestId("hold")).toHaveText("$300.00 held from Payee E2E's balance for this bill.");
   await page.getByRole("button", { name: "Record payment" }).click();
