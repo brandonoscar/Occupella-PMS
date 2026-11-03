@@ -145,7 +145,9 @@ function MakeKeyPanel({ onClose, onMade }: { onClose: () => void; onMade: (key: 
           </p>
           <Notice tone="error">{error}</Notice>
           <div className="flex gap-2">
-            <Button type="submit">Make key</Button>
+            <Button type="submit" says="Makes a key that reads the company's books and shows its secret this once. It can't move money or change a record.">
+              Make key
+            </Button>
             <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
           </div>
         </Form>

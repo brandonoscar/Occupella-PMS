@@ -76,6 +76,11 @@ describe("AiKeysPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Make a key" }));
     const panel = screen.getByRole("dialog", { name: "Make a key" });
     fireEvent.change(within(panel).getByLabelText("Name"), { target: { value: "Occupella AI" } });
+    // Before pressing it: what it does and what it doesn't (ADR 0010, rule 1).
+    expect(within(panel).getByRole("button", { name: "Make key" }).getAttribute("aria-describedby")).toBeTruthy();
+    expect(within(panel).getByTestId("button-says").textContent).toBe(
+      "Makes a key that reads the company's books and shows its secret this once. It can't move money or change a record.",
+    );
     fireEvent.click(within(panel).getByRole("button", { name: "Make key" }));
 
     expect((await within(panel).findByLabelText("Secret key") as HTMLInputElement).value).toBe(SECRET);
