@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 import psycopg
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from helpers import acting_as, add_staff, give_roles, make_pmc
 from people import join_as, join_as_owner, join_as_staff, tenant_of
@@ -159,6 +160,54 @@ def test_a_key_is_taken_back_once(client, admin):
         409,
         "this key was taken back already",
     )
+
+
+class TakenBackMeanwhile:
+    """An admin's connection whose check ran just before another admin's revocation of the same
+    key committed: the race played in order on two real connections, with no thread or wait."""
+
+    def __init__(self, conn, other, other_admin, key_id, pmc_id):
+        self.conn, self.other, self.other_admin = conn, other, other_admin
+        self.key_id, self.pmc_id = key_id, pmc_id
+
+    def execute(self, query, params=()):
+        answer = self.conn.execute(query, params)
+        if query.startswith("SELECT EXISTS"):
+            with acting_as(self.other, self.other_admin):
+                self.other.execute(
+                    "INSERT INTO trust_api_key_revocations (key_id, pmc_id) VALUES (%s, %s)",
+                    (self.key_id, self.pmc_id),
+                )
+        return answer
+
+
+def test_two_admins_taking_a_key_back_at_once_take_it_back_once(
+    client, conn, database_url, pmc, admin
+):
+    made = make_key(client)
+    key_id = uuid.UUID(made["id"])
+    other_admin = add_staff(conn, pmc.pmc_id, "Admin 2")
+    give_roles(conn, pmc.pmc_id, other_admin, ["admin"])
+    session = accounts.Session(admin.login_id, pmc.pmc_id, "staff", admin.person_id, admin.email)
+
+    with (
+        psycopg.connect(database_url, autocommit=True) as mine,
+        psycopg.connect(database_url, autocommit=True) as theirs,
+    ):
+        for connection in (mine, theirs):
+            connection.execute("SET ROLE trust_app")
+        acting = acting_as(mine, admin.person_id)
+        racing = TakenBackMeanwhile(mine, theirs, other_admin, key_id, pmc.pmc_id)
+        with acting, pytest.raises(HTTPException) as answer:
+            ai_keys.revoke_key(session, racing, key_id)
+
+    assert (answer.value.status_code, answer.value.detail) == (
+        409,
+        "this key was taken back already",
+    )
+    assert conn.execute(
+        "SELECT recorded_by FROM trust_api_key_revocations WHERE key_id = %s", (key_id,)
+    ).fetchall() == [(other_admin,)]
 
 
 def test_only_an_admin_sees_makes_and_takes_back_keys(
