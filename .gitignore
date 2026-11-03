@@ -4,6 +4,8 @@ __pycache__/
 .ruff_cache/
 # dbmate reads DATABASE_URL from .env; keep any local one out of git.
 .env
+# The daily backups compose.selfhost.yaml writes: they hold everything the PMS keeps.
+/backups/
 coverage/
 .coverage
 mutation/

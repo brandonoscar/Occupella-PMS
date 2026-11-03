@@ -48,7 +48,10 @@ secrets. Treat every copy as you would the database itself.
 
 - **Every day**, after the nightly run (06:00 UTC, `src/pms/nightly.py`) has posted the day's
   rent and fees: say 07:00 UTC. A daily backup loses at most a day: whatever staff recorded after
-  it was taken has to be entered again from the bank's records and the day's paperwork.
+  it was taken has to be entered again from the bank's records and the day's paperwork. With
+  `compose.selfhost.yaml` the `backup` service does it by itself at 07:00 UTC
+  (`scripts/backup_daily.sh`: this script's dump into `backups/`, the newest 14 kept); copying
+  them off the server, encrypted, is still yours to set up (below).
 - **Before every upgrade**, whatever the time (docs/release.md, step 3).
 - **More often** if a day's work is too much to enter again: the dump runs while the PMS keeps
   serving. Measured on a laptop for the demo company plus 50 doors (1.6 MB): 0.3 s to dump,

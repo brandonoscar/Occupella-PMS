@@ -45,6 +45,7 @@ from fastapi.staticfiles import StaticFiles
 from psycopg import sql
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from pms import accounts, email, exports, geocoding, nightly, payments
 from pms.api import (
@@ -140,6 +141,11 @@ class Settings:
     # The nightly run (pms.nightly): rent, late fees and recurring bills post by themselves at
     # start and every day at 06:00 UTC. On unless PMS_NIGHTLY is "off".
     nightly: bool = False
+    # The HTTPS proxy in front of the app (docs/install.md, step 4), whose X-Forwarded-For names
+    # the visitor: its address, a comma list of them, or "*" (compose.selfhost.yaml, where only
+    # the server itself reaches the app). Then a signature's evidence keeps the signer's address,
+    # not the proxy's. Empty trusts no proxy: each address is the connection's.
+    trusted_proxies: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -156,6 +162,7 @@ class Settings:
             geocoder=os.environ.get("PMS_GEOCODER", ""),
             payments=os.environ.get("PMS_PAYMENTS", ""),
             nightly=os.environ.get("PMS_NIGHTLY", "on").lower() != "off",
+            trusted_proxies=os.environ.get("PMS_TRUSTED_PROXIES", "").strip(),
         )
 
     @property
@@ -284,6 +291,10 @@ def create_app(settings: Settings) -> FastAPI:
             pool.close()
 
     app = FastAPI(title="Occupella PMS", lifespan=lifespan, docs_url=None, redoc_url=None)
+    if settings.trusted_proxies:
+        # uvicorn's own: from a trusted proxy only, the visitor's address (and the scheme) come
+        # from X-Forwarded-For (and -Proto); from anyone else the headers are ignored.
+        app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.trusted_proxies)
     app.state.settings = settings
     app.state.pool = pool
     app.state.screening = screening.partner_named(settings.screening_partner)

@@ -83,6 +83,9 @@ jobs:
             > "$RUNNER_TEMP/setup.out"
           grep -c "^company \|^admin " "$RUNNER_TEMP/setup.out" | grep -qx 2
           grep -q "^http://localhost:8000/invite#" "$RUNNER_TEMP/setup.out" && echo "invite made"
+          # The daily backup service, once now: a dump that reads back, under its day's name.
+          docker compose -f compose.selfhost.yaml run --rm backup /backups --now
+          sudo test -s "backups/pms-$(date -u +%F).dump" && echo "backup made"
       - name: Logs
         if: failure()
         run: |
@@ -96,3 +99,4 @@ jobs:
           docker compose -f compose.demo.yaml down -v
           docker compose -f compose.selfhost.yaml down -v || true
           rm -f .env
+          sudo rm -rf backups

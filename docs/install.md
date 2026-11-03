@@ -82,8 +82,14 @@ pms.example.com {
 }
 ```
 
-Any proxy works (nginx, your host's load balancer) as long as it serves HTTPS and passes requests
-to `127.0.0.1:8000`. Sign-in needs HTTPS: the session cookie is never sent over plain HTTP.
+Any proxy works (nginx, your host's load balancer) as long as it serves HTTPS, passes requests
+to `127.0.0.1:8000` and names each visitor in `X-Forwarded-For` (Caddy does by itself; with
+nginx, `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` and
+`proxy_set_header X-Forwarded-Proto $scheme;`). The app takes the visitor's address from it
+(`PMS_TRUSTED_PROXIES` in `compose.selfhost.yaml`), so the evidence of a lease signed on the PMS's
+page keeps the signer's address, not the proxy's. Keep the app's port on `127.0.0.1`: only a
+proxy on the server itself may name visitors. Sign-in needs HTTPS: the session cookie is never
+sent over plain HTTP.
 
 ## 5. Make your company and its first admin
 
@@ -128,23 +134,28 @@ payment of your own first (NOT VERIFIED).
 
 ## Every day: backups
 
-Nothing backs up by itself. Once a day, after the nightly run (06:00 UTC), for example from cron
-at 07:00 UTC:
+The `backup` service backs the database up by itself every day at 07:00 UTC, after the nightly
+run, into `backups/` next to `compose.selfhost.yaml` (`pms-2026-11-04.dump`, one a day). Each is
+kept only once it reads back, and the newest 14 are kept (`PMS_BACKUP_KEEP` in `.env` changes
+it). A backup that fails says so in `docker compose -f compose.selfhost.yaml logs backup`, and the
+next day's still runs. Take one at once, before an upgrade say:
 
 ```sh
-docker compose -f compose.selfhost.yaml exec -T db pg_dump -U postgres -Fc pms > pms-$(date +%F).dump
+docker compose -f compose.selfhost.yaml run --rm backup /backups --now
 ```
 
-Copy each dump off the server (it holds everything, so keep it as safe as the database), and test
-a restore now and then. [docs/backup.md](backup.md) has the full procedure, `scripts/backup.sh`,
-which checks a restore ties out.
+The backups sit on the same server as the database, so they don't survive losing it: copy each
+off the server (it holds everything, so keep it as safe as the database, encrypted), and test a
+restore now and then. [docs/backup.md](backup.md) has the full procedure: encrypting with `age`,
+copying off-site, and `scripts/backup.sh restore`, which checks a restore ties out.
 
 Also point an uptime check at `https://pms.example.com/health`; [docs/support.md](support.md)
 says what to look at when something fails.
 
 ## Upgrading
 
-Read [CHANGELOG.md](../CHANGELOG.md), back up, then:
+Read [CHANGELOG.md](../CHANGELOG.md), take a backup (`docker compose -f compose.selfhost.yaml run
+--rm backup /backups --now`), then:
 
 ```sh
 git fetch --tags

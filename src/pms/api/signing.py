@@ -159,8 +159,9 @@ def disclosure_of(conn: psycopg.Connection[Any], pmc_id: UUID) -> str:
 
 
 def origin(request: Request) -> tuple[str | None, str | None]:
-    """The address the request came from (as the server saw it; behind a proxy, the proxy's),
-    and its browser, as the evidence of a step keeps them."""
+    """The address the request came from, and its browser, as the evidence of a step keeps them.
+    Behind a proxy the app trusts (PMS_TRUSTED_PROXIES), the visitor's address as the proxy
+    names it; behind one it doesn't, the proxy's."""
     ip = None
     if request.client is not None:
         try:

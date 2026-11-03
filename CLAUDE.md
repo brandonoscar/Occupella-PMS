@@ -102,7 +102,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   parse (`deps.Rows`) and the audit log's rows keep the ledger's own words.
 - The API (`src/pms/api`, `python -m pms.api`, FastAPI) runs every request in one transaction
   as `trust_app` (the planner's JIT off: it cost more than it saved), committed before the answer
-  is sent; a staff member's request names them to the audit log. How fast it answers ten staff
+  is sent; a staff member's request names them to the audit log. Behind a proxy it trusts
+  (`PMS_TRUSTED_PROXIES`, as `compose.selfhost.yaml` sets it) a visitor's address is the one the
+  proxy names, as a signature's evidence keeps it. How fast it answers ten staff
   at once on a 1,000-unit company is timed nightly (`tools/speed.py`, `[speed]` ceilings). Every endpoint gets tests in `tests/api/` for success, a caller who isn't
   allowed and bad input. A report's PMC always comes from the session (every report takes
   `p_pmc_id` first; a test pins it). Changes must be JSON from the app's own origin (a browser's
