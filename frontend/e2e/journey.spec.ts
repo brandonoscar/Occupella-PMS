@@ -586,8 +586,9 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
 
     // Demo Owner A approves it in the portal, where it waits for them.
     await joinPortal(owner, people.owner_a);
-    const waiting = owner.getByRole("list", { name: "Waiting for you" }).getByRole("listitem").filter({ hasText: "PLB-J101" });
+    const waiting = owner.getByRole("table", { name: "Your bills" }).getByRole("row", { name: `${PLUMBER} PLB-J101` });
     await expect(waiting).toContainText("$640.00");
+    await expect(waiting.getByRole("cell").nth(5)).toHaveText("Waiting for you");
     await waiting.getByRole("button", { name: "Approve…" }).click();
     await owner.getByRole("dialog", { name: "Approve this bill?" }).getByRole("button", { name: "Approve" }).click();
     await expect(owner.getByText(`Approved ${PLUMBER}'s PLB-J101.`)).toBeVisible();

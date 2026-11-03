@@ -28,6 +28,7 @@ const waiting: OwnerBill = {
   needed: null,
   balance: "3290.00",
   name_needed: false,
+  status: "waiting",
 };
 const declined: OwnerBill = {
   ...waiting,
@@ -37,6 +38,7 @@ const declined: OwnerBill = {
   decided_on: "2026-01-11",
   decided_by: "Owner 1, in the owner portal",
   reason: "Get a second quote",
+  status: "declined",
 };
 
 // Answers each request in turn, recording what was asked.
@@ -50,48 +52,56 @@ function server(...answers: [number, unknown][]) {
 }
 
 describe("OwnerBills", () => {
-  it("says what the owner's balance is short of, and what to send", async () => {
-    const short = { ...waiting, id: "b3", reference: "GUTTER-1", amount: "300.00", decision: "approved" as const,
-      decided_on: "2026-01-11", decided_by: "Owner 1", short: "120.00", needed: "120.00" };
-    server([200, [{ ...waiting, short: "100.00", needed: "100.00" }, short]]);
+  // A row of the table as its cells read.
+  const cells = (row: HTMLElement) => within(row).getAllByRole("cell").map((cell) => cell.textContent);
+
+  it("lists each bill with where it stands: waiting, approved, paid, short on funds and declined", async () => {
+    const approved = { ...waiting, id: "b4", reference: "TAP-1", amount: "650.00", decision: "approved" as const, status: "approved" as const };
+    const paid = { ...approved, id: "b5", reference: "DOOR-1", status: "paid" as const };
+    const short = { ...approved, id: "b3", reference: "GUTTER-1", amount: "300.00", short: "120.00", needed: "120.00",
+      status: "short" as const };
+    server([200, [waiting, approved, paid, short, declined]]);
     render(<OwnerBills />);
-    expect((await screen.findByTestId("needed")).textContent).toBe("Your balance is $100.00 short of it: please send $100.00.");
-    expect(screen.getByTestId("short-bill").textContent).toBe(
-      "Vendor 1, GUTTER-1 ($300.00, Property 1, due 01/20/2026): your balance is $120.00 short of it. Please send"
-        + " $120.00 so we can pay it. Nothing is paid or charged until it arrives.",
+    const table = await screen.findByRole("table", { name: "Your bills" });
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(
+      ["Vendor", "Bill #", "Property", "Amount", "Due", "Status", "Action"],
     );
+    expect(cells(within(table).getByRole("row", { name: "Vendor 1 ROOF-1" }))).toEqual(
+      ["Vendor 1Roof repair", "ROOF-1", "Property 1", "$600.00", "01/20/2026", "Waiting for you", "Approve…Decline…"],
+    );
+    expect(cells(within(table).getByRole("row", { name: "Vendor 1 TAP-1" }))[5]).toBe("Approved");
+    expect(cells(within(table).getByRole("row", { name: "Vendor 1 DOOR-1" }))[5]).toBe("Paid");
+    expect(cells(within(table).getByRole("row", { name: "Vendor 1 GUTTER-1" }))[5]).toBe("Short on fundsSend $120.00");
+    expect(cells(within(table).getByRole("row", { name: "Vendor 1 PAINT-1" }))[5]).toBe("DeclinedGet a second quote");
+    // Only a bill waiting for them has anything to press.
+    expect(within(table).getAllByRole("button", { name: "Approve…" })).toHaveLength(1);
+    expect(screen.getByTestId("waiting-count").textContent).toBe("1 bill waits for your approval.");
+  });
+
+  it("says what a bill waiting for them is short of", async () => {
+    server([200, [{ ...waiting, short: "100.00", needed: "100.00" }]]);
+    render(<OwnerBills />);
+    expect((await screen.findByTestId("needed")).textContent).toBe("Send $100.00");
   });
 
   it("shows a bill staff voided as void", async () => {
-    server([200, [{ ...waiting, decision: "void", decided_on: "2026-01-12", decided_by: "Staff 1", reason: "Entered twice" }]]);
+    server([200, [{ ...waiting, decision: "void", decided_on: "2026-01-12", decided_by: "Staff 1", reason: "Entered twice",
+      status: "void" }]]);
     render(<OwnerBills />);
-    expect((await screen.findByRole("list", { name: "Decided" })).textContent).toBe(
-      "voidVendor 1, ROOF-1 ($600.00) on 01/12/2026 by Staff 1. Entered twice",
-    );
+    const row = await screen.findByRole("row", { name: "Vendor 1 ROOF-1" });
+    expect(cells(row)[5]).toBe("Void");
   });
 
-  it("says the markup the owner's agreement adds to a bill", async () => {
+  it("shows what a bill takes with the markup the owner's agreement adds", async () => {
     server([200, [{ ...waiting, markup: "60.00", markup_percent: "10" }]]);
     render(<OwnerBills />);
-    expect((await screen.findByTestId("markup")).textContent).toBe(
-      "Our markup of 10%, $60.00, as your management agreement sets, is taken with it.",
-    );
+    expect(cells(await screen.findByRole("row", { name: "Vendor 1 ROOF-1" }))[3]).toBe("$660.00incl. $60.00 markup");
   });
 
-  it("lists the bills waiting for the owner and those decided", async () => {
-    server([200, [waiting, declined]]);
+  it("says when no bill needs them", async () => {
+    server([200, []]);
     render(<OwnerBills />);
-    const list = await screen.findByRole("list", { name: "Waiting for you" });
-    expect(list.textContent).toContain("Vendor 1, ROOF-1: $600.00");
-    expect(list.textContent).toContain("Over your approval limit of $500.00.");
-    // No markup on it: nothing said of one.
-    expect(screen.queryByTestId("markup")).toBeNull();
-    // A decided bill: its decision as a badge, then what, when and by whom.
-    const decided = screen.getByRole("list", { name: "Decided" });
-    expect(decided.querySelector("[data-tone]")?.getAttribute("data-tone")).toBe("neutral");
-    expect(decided.textContent).toBe(
-      "declinedVendor 1, PAINT-1 ($600.00) on 01/11/2026 by Owner 1, in the owner portal. Get a second quote",
-    );
+    expect((await screen.findByTestId("empty-state")).textContent).toContain("No bills need you.");
   });
 
   it("works out what the bill takes and what the account holds after", () => {
@@ -102,10 +112,10 @@ describe("OwnerBills", () => {
   });
 
   it("asks first, showing the bill and the balance before and after, then approves it", async () => {
-    const fetch = server([200, [waiting]], [201, null], [200, [{ ...waiting, decision: "approved" }]]);
+    const fetch = server([200, [waiting]], [201, null], [200, [{ ...waiting, decision: "approved", status: "approved" }]]);
     render(<OwnerBills />);
-    const list = await screen.findByRole("list", { name: "Waiting for you" });
-    fireEvent.click(within(list).getByRole("button", { name: "Approve…" }));
+    const table = await screen.findByRole("table", { name: "Your bills" });
+    fireEvent.click(within(table).getByRole("button", { name: "Approve…" }));
     const dialog = screen.getByRole("dialog", { name: "Approve this bill?" });
     expect(dialog.textContent).toContain("VendorVendor 1Bill #ROOF-1PropertyProperty 1Amount$600.00");
     expect(dialog.textContent).toContain("Balance now$3,290.00Balance after$2,690.00");
@@ -147,9 +157,11 @@ describe("OwnerBills", () => {
     const fetch = server([200, [waiting]], [201, null], [200, [declined]]);
     render(<OwnerBills />);
     fireEvent.click(await screen.findByRole("button", { name: "Decline…" }));
-    const decline = screen.getByRole("button", { name: "Decline" }) as HTMLButtonElement;
+    const dialog = screen.getByRole("dialog", { name: "Decline this bill?" });
+    expect(dialog.textContent).toContain("Vendor 1, ROOF-1, $600.00 for Property 1. It is never paid from your account.");
+    const decline = within(dialog).getByRole("button", { name: "Decline" }) as HTMLButtonElement;
     expect(decline.disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText("Why you decline it"), { target: { value: "Get a second quote" } });
+    fireEvent.change(within(dialog).getByLabelText("Why you decline it"), { target: { value: "Get a second quote" } });
     fireEvent.click(decline);
     expect(await screen.findByText("Declined Vendor 1's ROOF-1.")).toBeTruthy();
     expect(fetch.mock.calls[1]?.[0]).toBe("/api/owner/bills/b1/decline");

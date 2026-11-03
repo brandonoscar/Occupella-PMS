@@ -8,7 +8,7 @@ from decimal import Decimal
 
 import psycopg
 import pytest
-from helpers import add_agreement, enter_bill, make_pmc, set_aside_bill, transfer_batch
+from helpers import add_agreement, enter_bill, make_pmc, pay_bill, set_aside_bill, transfer_batch
 from people import join_as_owner, join_as_staff, join_as_tenant
 
 JAN_3 = datetime(2026, 1, 3, 12, tzinfo=UTC)
@@ -249,17 +249,22 @@ def test_an_owner_sees_the_bills_waiting_for_them_and_approves_one(client, conn,
             # What the account holds now, for the confirm step; under $5,000.00, no name.
             "balance": "1000.00",
             "name_needed": False,
+            "status": "waiting",
         }
     ]
     assert approved.status_code == 201
-    assert (after[0]["decision"], after[0]["decided_by"]) == (
+    assert (after[0]["decision"], after[0]["decided_by"], after[0]["status"]) == (
         "approved",
         "Owner 1, in the owner portal",
+        "approved",
     )
     assert conn.execute(
         "SELECT owner_id FROM trust_bill_approvals WHERE bill_id = %s", (roof,)
     ).fetchone() == (pmc.owners[0].owner_id,)
     set_aside_bill(conn, pmc.pmc_id, roof, datetime(2026, 1, 11, tzinfo=UTC))  # staff may now
+    assert client.get("/api/owner/bills").json()[0]["status"] == "approved"  # set aside, not paid
+    pay_bill(conn, pmc.pmc_id, roof, datetime(2026, 1, 12, tzinfo=UTC))
+    assert client.get("/api/owner/bills").json()[0]["status"] == "paid"
 
 
 def test_an_owner_declines_a_bill_and_it_is_never_paid(client, conn, app_conn, pmc):
@@ -272,7 +277,11 @@ def test_an_owner_declines_a_bill_and_it_is_never_paid(client, conn, app_conn, p
 
     assert declined.status_code == 201
     shown = client.get("/api/owner/bills").json()[0]
-    assert (shown["decision"], shown["reason"]) == ("declined", "Get a second quote")
+    assert (shown["decision"], shown["reason"], shown["status"]) == (
+        "declined",
+        "Get a second quote",
+        "declined",
+    )
     with pytest.raises(psycopg.errors.CheckViolation, match="declined"):
         set_aside_bill(conn, pmc.pmc_id, roof, datetime(2026, 1, 11, tzinfo=UTC))
 
@@ -337,3 +346,24 @@ def test_a_decision_needs_a_bill_and_a_decline_a_reason(client, conn, app_conn, 
     answer = client.post(f"/api/owner/bills/{target}/{path}", json=body or {})
 
     assert answer.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("decision", "over_limit", "paid", "short", "status"),
+    [
+        (None, True, False, False, "waiting"),
+        (None, True, False, True, "waiting"),  # theirs to decide first, whatever it is short of
+        ("approved", True, False, True, "short"),
+        (None, False, False, True, "short"),  # under the limit: no decision, only money to send
+        ("approved", True, False, False, "approved"),
+        ("approved", True, True, False, "paid"),
+        ("declined", True, False, False, "declined"),
+        ("void", True, True, False, "void"),
+    ],
+)
+def test_a_bill_stands_where_its_decision_payment_and_money_put_it(
+    decision, over_limit, paid, short, status
+):
+    from pms.api.owner import owner_status
+
+    assert owner_status(decision, over_limit, paid, short) == status

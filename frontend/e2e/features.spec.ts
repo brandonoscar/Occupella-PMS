@@ -998,15 +998,19 @@ test("a bill over the owner's limit emails them; they decline one and approve an
 
   // The owner decides both in the portal.
   await owner.reload();
-  const waiting = owner.getByRole("list", { name: "Waiting for you" });
-  const first = waiting.getByRole("listitem").filter({ hasText: "PLB-2001" });
-  await first.getByRole("button", { name: "Decline…" }).click();
-  await first.getByLabel("Why you decline it").fill("Get a second quote");
-  await first.getByRole("button", { name: "Decline", exact: true }).click();
+  // Each bill is a row of the owner's table: vendor, bill #, property, amount, due, where it stands.
+  const yours = owner.getByRole("table", { name: "Your bills" });
+  const row = (reference: string) => yours.getByRole("row", { name: `Demo Plumbing Co ${reference}` });
+  // Waiting for them, and Birch Flats holds only its reserve: what it would take is said too.
+  await expect(row("PLB-2001").getByRole("cell").nth(5)).toHaveText("Waiting for youSend $800.00");
+  await row("PLB-2001").getByRole("button", { name: "Decline…" }).click();
+  const declining = owner.getByRole("dialog", { name: "Decline this bill?" });
+  await declining.getByLabel("Why you decline it").fill("Get a second quote");
+  await declining.getByRole("button", { name: "Decline", exact: true }).click();
   await expect(owner.getByText("Declined Demo Plumbing Co's PLB-2001.")).toBeVisible();
   // Approving asks first, with the bill and the balance before and after; over $600.00 it takes
   // the owner's own name.
-  await waiting.getByRole("listitem").filter({ hasText: "PLB-2002" }).getByRole("button", { name: "Approve…" }).click();
+  await row("PLB-2002").getByRole("button", { name: "Approve…" }).click();
   const approving = owner.getByRole("dialog", { name: "Approve this bill?" });
   await expect(approving).toContainText("Bill #PLB-2002");
   await expect(approving).toContainText("Amount$650.00");
@@ -1017,10 +1021,10 @@ test("a bill over the owner's limit emails them; they decline one and approve an
   await approving.getByLabel("Type your full name to approve").fill("Demo Owner A");
   await approving.getByRole("button", { name: "Approve" }).click();
   await expect(owner.getByText("Approved Demo Plumbing Co's PLB-2002.")).toBeVisible();
-  const decided = owner.getByRole("list", { name: "Decided" });
-  await expect(decided.getByRole("listitem").filter({ hasText: "PLB-2001" })).toContainText("declined");
-  await expect(decided.getByRole("listitem").filter({ hasText: "Demo Plumbing Co, PLB-2002" })).toContainText("approved");
-  await expect(owner.getByText("No bill waits for your approval.")).toBeVisible();
+  await expect(row("PLB-2001").getByRole("cell").nth(5)).toHaveText("DeclinedGet a second quote");
+  // Approved, and Birch Flats holds only its reserve: short all of it.
+  await expect(row("PLB-2002").getByRole("cell").nth(5)).toHaveText("Short on fundsSend $650.00");
+  await expect(owner.getByTestId("waiting-count")).toHaveText("No bill waits for your approval.");
 
   // Staff see both decisions: the declined bill is void; Birch Flats holds only its $250.00
   // reserve, which stays in the account, so the approved one is short all of its $650.00 and
@@ -1041,7 +1045,7 @@ test("a bill over the owner's limit emails them; they decline one and approve an
   await expect(page.getByText("Demo Owner A was asked for it today; you can ask again tomorrow.")).toBeVisible();
   // The owner sees what to send in the portal.
   await owner.reload();
-  await expect(owner.getByTestId("short-bill")).toContainText("your balance is $650.00 short of it. Please send $650.00");
+  await expect(row("PLB-2002").getByTestId("needed")).toHaveText("Send $650.00");
   // The owner sends the money; it covers the approved bill, so nothing more is available to draw.
   await recordContribution(page, "Demo Owner A", "Birch Flats", "650.00", "Shower valve");
   const birch = await ownerProperty(page, "Demo Owner A", "Birch Flats");
@@ -1064,6 +1068,9 @@ test("a bill over the owner's limit emails them; they decline one and approve an
   await expect(bill("PLB-2002").getByTestId("status")).toHaveText("Paid");
   await bill("PLB-2002").getByRole("cell").first().click();
   await expect(page.getByRole("list", { name: "History" })).toContainText("Paid $650.00 by ACH");
+  // The owner sees it paid.
+  await owner.reload();
+  await expect(row("PLB-2002").getByRole("cell").nth(5)).toHaveText("Paid");
   await section(page, "Bills");
   await page.getByRole("tab", { name: "Void", exact: true }).click();
   await expect(bill("PLB-2001").getByTestId("status")).toHaveText("Void");

@@ -321,7 +321,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the account the money left and crediting the one it went to; read only). A lease's inspections are on its move-out row
   (`src/pms/api/inspections.py`).
   npm packages are pinned exactly and their
-  licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
+  licenses checked like Python's. An owner's bills (Bills waiting for you) are a table: vendor, bill #, property, amount, due day, status (Waiting for you, Approved, Paid, Short on funds, Declined; `owner_status`, paid meaning paid in full) and what they can do. An owner's pages (`src/pms/api/owner.py`) show the session's
   owner only: no request names an owner, a property or a PMC, and a bill named in a path is
   answered only if it is theirs (they approve or decline those over their limit). A tenant's pages
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered

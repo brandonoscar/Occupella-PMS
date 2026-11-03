@@ -250,6 +250,10 @@ class OwnerBill(BaseModel):
     balance: str = "0.00"
     # Whether approving it takes the owner's typed full name (over the company's amount).
     name_needed: bool = False
+    # Where it stands for the owner (the founder's review of 11/03, item 7): waiting for their
+    # decision; approved and not paid yet; paid in full; short of money in their account; declined
+    # by them or as staff recorded it; or void (staff entered it by mistake).
+    status: Literal["waiting", "approved", "paid", "short", "declined", "void"] = "approved"
 
 
 OWNER_BILLS = """
@@ -260,7 +264,11 @@ SELECT b.id, v.display_name, b.reference, p.display_name, b.bill_date, b.due_on,
             WHEN dc.bill_id IS NOT NULL THEN 'declined' END,
        CASE WHEN dc.void THEN dc.declined_on ELSE coalesce(ap.approved_on, dc.declined_on) END,
        CASE WHEN dc.void THEN dc.declined_by ELSE coalesce(ap.approved_by, dc.declined_by) END,
-       dc.reason, mk.amount, mk.percent, h.short, h.needed, acct.balance
+       dc.reason, mk.amount, mk.percent, h.short, h.needed, acct.balance,
+       -- Paid in full: what the vendor was paid of it, part by part, comes to the bill.
+       coalesce((SELECT sum(x.amount) FROM trust_bill_payments AS s
+                 JOIN pgledger_transfers AS x ON x.id = s.transfer_id
+                 WHERE s.bill_id = b.id AND s.step = 'paid'), 0) >= b.amount
 FROM trust_bills AS b
 JOIN pgledger_accounts AS acct ON acct.id = b.ledger_account_id
 JOIN trust_ledger_accounts AS t ON t.ledger_account_id = b.ledger_account_id
@@ -313,9 +321,24 @@ def owner_bills(session: Owner, conn: Conn) -> list[OwnerBill]:
             needed=cents(row[16]) if row[16] else None,
             balance=cents(row[17]),
             name_needed=row[6] + (row[13] or 0) > over,
+            status=owner_status(row[9], row[6] > row[8], row[18], bool(row[15])),
         )
         for row in rows
     ]
+
+
+def owner_status(
+    decision: str | None, over_limit: bool, paid: bool, short: bool
+) -> Literal["waiting", "approved", "paid", "short", "declined", "void"]:
+    """Where a bill stands for its owner: a decision first, then paid, then waiting for them,
+    then short of their money; else it may be paid when staff pay it."""
+    if decision in ("void", "declined"):
+        return "void" if decision == "void" else "declined"
+    if paid:
+        return "paid"
+    if decision is None and over_limit:
+        return "waiting"
+    return "short" if short else "approved"
 
 
 # A bill over this amount (with its markup) takes the owner's typed full name to approve in the
