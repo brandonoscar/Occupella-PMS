@@ -21,6 +21,7 @@ import { useRecord } from "./useRecord";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
 import { AskFirst } from "../components/Confirm";
+import { fileText } from "../fileText";
 
 // The switching tool: a PMC moving from another system brings its roster in from CSV files,
 // opens each trust bank account with the balances it held there, lists the checks and deposits
@@ -56,7 +57,7 @@ export function SwitchPage({ me }: { me: Me }) {
   );
 }
 
-// A file input that reads its file as text.
+// A file input that reads its file as text, UTF-8 or as Excel on Windows saves it (fileText).
 function FileField({ id, label, onRead }: { id: string; label: string; onRead: (text: string | null) => void }) {
   return (
     <label htmlFor={id} className="flex flex-col gap-1.5 text-sm text-ink-muted">
@@ -64,7 +65,7 @@ function FileField({ id, label, onRead }: { id: string; label: string; onRead: (
       <input id={id} type="file" accept=".csv,text/csv" className="text-sm text-ink"
         onChange={async (e) => {
           const file = e.target.files?.[0];
-          onRead(file ? await file.text() : null);
+          onRead(file ? await fileText(file) : null);
         }} />
     </label>
   );

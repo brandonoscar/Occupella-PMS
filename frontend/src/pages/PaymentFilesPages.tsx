@@ -25,6 +25,7 @@ import { LeaseFinder } from "./LeaseFinder";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { fileText } from "../fileText";
 
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
@@ -153,7 +154,7 @@ function BringIn({ onCame }: { onCame: (file: FileDetail) => void }) {
         <input id="payment-file" type="file" accept=".csv,text/csv" className="text-sm text-ink"
           onChange={async (event) => {
             const chosen = event.target.files?.[0];
-            setFile(chosen ? { name: chosen.name, content: await chosen.text() } : null);
+            setFile(chosen ? { name: chosen.name, content: await fileText(chosen) } : null);
           }} />
       </label>
       <Notice tone="error">{error}</Notice>
