@@ -6,7 +6,7 @@ import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
 import { money } from "../money";
 import type { YearEnd, YearEndData } from "../yearEnd";
-import { groupYearEnd, lastYear, partLabel } from "../yearEnd";
+import { groupYearEnd, partLabel, thisYear } from "../yearEnd";
 import { Form } from "../components/Form";
 
 // Cells take the table style's padding (less of it on a phone); only their alignment is set here.
@@ -16,7 +16,7 @@ const AMOUNT = "text-right";
 // The signed-in owner's year-end package: the year per property and across them, the rents for
 // their 1099-MISC, and the year's whole statement to download. The PMS files nothing.
 export function OwnerYearEnd() {
-  const [year, setYear] = useState(String(lastYear(new Date())));
+  const [year, setYear] = useState(String(thisYear(new Date())));
   const [shown, setShown] = useState<YearEnd | null>(null);
   const [error, setError] = useState("");
 
@@ -28,7 +28,7 @@ export function OwnerYearEnd() {
       .then((data) => setShown(groupYearEnd(data)))
       .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
   }
-  useEffect(() => load(year), []); // last year's first; "Show" loads another
+  useEffect(() => load(year), []); // this year's first; "Show" loads another
 
   const download = (format: string) => `/api/owner/year-end/download?${new URLSearchParams({ year, format })}`;
   const statement = `/api/owner/statement/download?${new URLSearchParams({
