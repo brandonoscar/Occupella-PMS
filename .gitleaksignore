@@ -1,0 +1,53 @@
+# Findings in old commits that gitleaks may pass, one fingerprint each: commit:file:rule:line.
+# A fingerprint names one line of one commit, so the same text in any other commit is still a
+# finding. tools/check_gitleaks_ignore.py reads each line back from git, before every scan of
+# the whole history, and fails unless it holds only example text. History is never rewritten,
+# so without this the scans of every commit (security.yml, daily-scan.yml) failed each day.
+#
+# 10/25: tax IDs' help text and its tests showed the EIN and SSN formats as example digits, not
+# anyone's number. main writes the never-issued forms instead since.
+3d914b89b85e9df4c27be39833043a944d8d02f8:frontend/src/pages/TaxIdCard.test.tsx:us-ein:95
+3d914b89b85e9df4c27be39833043a944d8d02f8:frontend/src/pages/TaxIdCard.test.tsx:us-ssn:95
+3d914b89b85e9df4c27be39833043a944d8d02f8:frontend/src/pages/TaxIdCard.tsx:us-ein:101
+3d914b89b85e9df4c27be39833043a944d8d02f8:frontend/src/pages/TaxIdCard.tsx:us-ein:112
+3d914b89b85e9df4c27be39833043a944d8d02f8:frontend/src/pages/TaxIdCard.tsx:us-ssn:101
+3d914b89b85e9df4c27be39833043a944d8d02f8:frontend/src/pages/TaxIdCard.tsx:us-ssn:112
+51ac515a1492eb203a777fa57edfea012b40f932:frontend/src/pages/TaxIdCard.test.tsx:us-ein:95
+51ac515a1492eb203a777fa57edfea012b40f932:frontend/src/pages/TaxIdCard.test.tsx:us-ssn:95
+51ac515a1492eb203a777fa57edfea012b40f932:frontend/src/pages/TaxIdCard.tsx:us-ein:101
+51ac515a1492eb203a777fa57edfea012b40f932:frontend/src/pages/TaxIdCard.tsx:us-ein:112
+51ac515a1492eb203a777fa57edfea012b40f932:frontend/src/pages/TaxIdCard.tsx:us-ssn:101
+51ac515a1492eb203a777fa57edfea012b40f932:frontend/src/pages/TaxIdCard.tsx:us-ssn:112
+888717ff7bb12565a729e93733ee2412663e3938:frontend/src/pages/TaxIdCard.test.tsx:us-ein:95
+888717ff7bb12565a729e93733ee2412663e3938:frontend/src/pages/TaxIdCard.test.tsx:us-ssn:95
+888717ff7bb12565a729e93733ee2412663e3938:frontend/src/pages/TaxIdCard.tsx:us-ein:101
+888717ff7bb12565a729e93733ee2412663e3938:frontend/src/pages/TaxIdCard.tsx:us-ein:112
+888717ff7bb12565a729e93733ee2412663e3938:frontend/src/pages/TaxIdCard.tsx:us-ssn:101
+888717ff7bb12565a729e93733ee2412663e3938:frontend/src/pages/TaxIdCard.tsx:us-ssn:112
+888cd1313ae8f4390843c7b1928ee576ca1b7575:src/pms/api/tax_ids.py:us-ein:129
+888cd1313ae8f4390843c7b1928ee576ca1b7575:src/pms/api/tax_ids.py:us-ein:42
+888cd1313ae8f4390843c7b1928ee576ca1b7575:src/pms/api/tax_ids.py:us-ein:67
+888cd1313ae8f4390843c7b1928ee576ca1b7575:src/pms/api/tax_ids.py:us-ssn:129
+888cd1313ae8f4390843c7b1928ee576ca1b7575:src/pms/api/tax_ids.py:us-ssn:42
+888cd1313ae8f4390843c7b1928ee576ca1b7575:src/pms/api/tax_ids.py:us-ssn:67
+888cd1313ae8f4390843c7b1928ee576ca1b7575:tests/api/test_tax_ids_api.py:us-ein:182
+888cd1313ae8f4390843c7b1928ee576ca1b7575:tests/api/test_tax_ids_api.py:us-ssn:182
+9f3bc8ab2e046d678fc830f1a2511737c145c559:src/pms/api/tax_ids.py:us-ein:129
+9f3bc8ab2e046d678fc830f1a2511737c145c559:src/pms/api/tax_ids.py:us-ein:42
+9f3bc8ab2e046d678fc830f1a2511737c145c559:src/pms/api/tax_ids.py:us-ein:67
+9f3bc8ab2e046d678fc830f1a2511737c145c559:src/pms/api/tax_ids.py:us-ssn:129
+9f3bc8ab2e046d678fc830f1a2511737c145c559:src/pms/api/tax_ids.py:us-ssn:42
+9f3bc8ab2e046d678fc830f1a2511737c145c559:src/pms/api/tax_ids.py:us-ssn:67
+9f3bc8ab2e046d678fc830f1a2511737c145c559:tests/api/test_tax_ids_api.py:us-ein:182
+9f3bc8ab2e046d678fc830f1a2511737c145c559:tests/api/test_tax_ids_api.py:us-ssn:182
+bbd9a89cb6551d39e0176f85fe0952be8b8a9512:src/pms/api/tax_ids.py:us-ein:129
+bbd9a89cb6551d39e0176f85fe0952be8b8a9512:src/pms/api/tax_ids.py:us-ein:42
+bbd9a89cb6551d39e0176f85fe0952be8b8a9512:src/pms/api/tax_ids.py:us-ein:67
+bbd9a89cb6551d39e0176f85fe0952be8b8a9512:src/pms/api/tax_ids.py:us-ssn:129
+bbd9a89cb6551d39e0176f85fe0952be8b8a9512:src/pms/api/tax_ids.py:us-ssn:42
+bbd9a89cb6551d39e0176f85fe0952be8b8a9512:src/pms/api/tax_ids.py:us-ssn:67
+bbd9a89cb6551d39e0176f85fe0952be8b8a9512:tests/api/test_tax_ids_api.py:us-ein:182
+bbd9a89cb6551d39e0176f85fe0952be8b8a9512:tests/api/test_tax_ids_api.py:us-ssn:182
+
+# 10/23: a comment in the jurisdiction rules showing what a rule's key looks like.
+11c516a28210f7612f75f8f032343f97ac5ca41b:src/pms/jurisdiction_rules.toml:generic-api-key:16

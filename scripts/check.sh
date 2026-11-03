@@ -174,6 +174,7 @@ else
 fi
 skip "portal in a browser" "needs the API serving a build on a seeded database; CI's e2e job runs it, then checks every feature in ci/features.toml against the run"
 # security.yml
+step "gitleaks' ignore list" python -m tools.check_gitleaks_ignore
 if command -v gitleaks >/dev/null; then
   step "gitleaks on this branch" gitleaks git --config .gitleaks.toml --redact --no-banner \
     --log-opts="$base..HEAD" .
