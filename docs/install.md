@@ -19,11 +19,12 @@ company with synthetic books on your own computer (README, "Try the demo").
 ## Keys you bring
 
 Every key goes in a file named `.env` next to `compose.selfhost.yaml` (step 2). Only the first
-three are needed to start; add the others when you turn those parts on.
+four are needed to start; add the others when you turn those parts on.
 
 | Key | What it does | Where you get it | Needed? |
 |---|---|---|---|
-| `PMS_DB_PASSWORD` | The database's password | Make one: `openssl rand -hex 24` | Yes |
+| `PMS_DB_PASSWORD` | The database's password, for its owner (the migrations and backups) | Make one: `openssl rand -hex 24` | Yes |
+| `PMS_APP_DB_PASSWORD` | The app's own database password: it logs in as `pms_app`, which may only act as the app, never as the database's owner | Make another: `openssl rand -hex 24` | Yes |
 | `PMS_PUBLIC_URL` | The address people open the PMS at, like `https://pms.example.com` | Your web address | Yes |
 | `PMS_DATA_KEY` | Seals owners' and vendors' bank account numbers and tax IDs | Make one: `openssl rand -base64 32`. **Keep a copy safe and never change it**: what it sealed can't be read without it | Yes, for ACH payout files and tax IDs |
 | `PMS_EMAIL_SENDER=smtp`, `PMS_SMTP_HOST`, `PMS_SMTP_PORT`, `PMS_SMTP_USERNAME`, `PMS_SMTP_PASSWORD`, `PMS_EMAIL_FROM` | Sends invites, password resets, receipts, notices and owners' statements | Your email provider's SMTP settings (any provider that offers SMTP with STARTTLS) | Strongly recommended. Without it, emails wait in the PMS and you hand invite links over yourself |
@@ -52,11 +53,15 @@ Always run a tagged release (`git tag` lists them; CHANGELOG.md says what each c
 ```sh
 cp .env.example .env
 openssl rand -hex 24       # paste as PMS_DB_PASSWORD
+openssl rand -hex 24       # paste as PMS_APP_DB_PASSWORD (a different one)
 openssl rand -base64 32    # paste as PMS_DATA_KEY
 ```
 
-Open `.env` and fill in `PMS_DB_PASSWORD`, `PMS_PUBLIC_URL` and `PMS_DATA_KEY`, and email and
-payments if you have them now. Each line in `.env.example` says what it is for.
+Open `.env` and fill in `PMS_DB_PASSWORD`, `PMS_APP_DB_PASSWORD`, `PMS_PUBLIC_URL` and
+`PMS_DATA_KEY`, and email and payments if you have them now. Each line in `.env.example` says what
+it is for. Each start makes or updates the app's login (`pms_app`) with `PMS_APP_DB_PASSWORD`: the
+app connects as it and acts as the app's role alone, so the database's owner password stays out
+of the app's container.
 
 ## 3. Start it
 
@@ -151,6 +156,9 @@ git fetch --tags
 git checkout v2026.12.0           # the new release's tag
 docker compose -f compose.selfhost.yaml up -d --build
 ```
+
+From v2026.11.0, add `PMS_APP_DB_PASSWORD` to `.env` first (`openssl rand -hex 24`): from the next
+release the app no longer connects as the database's owner, and it won't start without it.
 
 The database changes run before the new app starts. A release is never rolled back once money is
 posted on it: a fix is the next release ([docs/release.md](release.md)).

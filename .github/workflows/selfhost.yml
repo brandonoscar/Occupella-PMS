@@ -72,12 +72,19 @@ jobs:
         # localhost (so the cookie isn't held to HTTPS), no email or payments.
         run: |
           sed -e "s/^PMS_DB_PASSWORD=$/PMS_DB_PASSWORD=$(openssl rand -hex 24)/" \
+              -e "s/^PMS_APP_DB_PASSWORD=$/PMS_APP_DB_PASSWORD=$(openssl rand -hex 24)/" \
               -e "s|^PMS_PUBLIC_URL=.*|PMS_PUBLIC_URL=http://localhost:8000|" \
               -e "s|^PMS_COOKIE_SECURE=true|PMS_COOKIE_SECURE=false|" .env.example > .env
           docker compose -f compose.selfhost.yaml up -d --wait app
           docker compose -f compose.selfhost.yaml ps
           curl -fsS http://127.0.0.1:8000/health
           curl -fsS http://127.0.0.1:8000/ | grep -q 'id="root"' && echo "portal served"
+          # The app connects as pms_app, never the superuser (src/pms/app_login.py).
+          app_logins() {
+            docker compose -f compose.selfhost.yaml exec -T db psql -U postgres -d pms -Atc \
+              "SELECT count(*) FROM pg_stat_activity WHERE client_addr IS NOT NULL AND usename = '$1'"
+          }
+          [ "$(app_logins pms_app)" -ge 1 ] && [ "$(app_logins postgres)" -eq 0 ] && echo "app logs in as pms_app"
           docker compose -f compose.selfhost.yaml exec -T app \
             python -m pms.admin setup "Synthetic Install Co" "First Admin" first.admin@example.com \
             > "$RUNNER_TEMP/setup.out"

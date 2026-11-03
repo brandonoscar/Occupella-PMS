@@ -117,7 +117,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
   password. Staff invite from the person's own page (staff from the staff page) and disable a
   login from Settings, Logins, for good: its sessions end and it takes no new invite. `trust_login_secrets` is never audited. The first staff member, their first admin
-  role and their invite come from `python -m pms.admin`. A demo PMC to show the PMS with
+  role and their invite come from `python -m pms.admin`. A self-hosted install's app logs in as
+  `pms_app` (`python -m pms.app_login`, run after the migrations), which holds nothing of its own
+  and may only act as trust_app, never as the database's owner. A demo PMC to show the PMS with
   comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
   route functions as its staff, with last month's reconciliation waiting for approval and
   something on every other page, the founder's seed among it (six properties, one of 48 units,
