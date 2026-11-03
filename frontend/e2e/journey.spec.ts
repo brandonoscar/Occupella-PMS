@@ -119,6 +119,12 @@ async function joinAsStaff(page: Page, invite: string): Promise<void> {
   await expect(page.getByRole("navigation", { name: "Sections" })).toBeVisible();
 }
 
+// A portal's section from its sidebar, by its link and its page's title.
+async function portalSection(page: Page, link: string, title = link): Promise<void> {
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: link, exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
+}
+
 // An owner or a tenant takes their invite: a password, and they are in.
 async function joinPortal(page: Page, invite: string): Promise<void> {
   await page.goto(`/invite#${invite}`);
@@ -471,6 +477,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     // Taylor sees the same in the portal: the balance, both checks, the bounce and the receipt.
     await joinPortal(taylor, people.taylor);
     await expect(taylor.getByTestId("balance-due")).toHaveText(money(cedarOwes));
+    await portalSection(taylor, "Payments");
     await expect(taylor.getByRole("row", { name: /^Balance at the end of/ }).getByRole("cell").last()).toHaveText(money(cedarOwes));
     const theirs = taylor.getByRole("list", { name: "Payments" });
     await expect(theirs.getByRole("listitem").filter({ hasText: "Check 2101" })).toContainText("$1,200.00");
@@ -486,6 +493,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
 
   await test.step("a repair: the tenant asks with a photo, a vendor with an email and insurance takes it through their link, and its bill over the owner's limit is approved in the portal and paid", async () => {
     // Taylor asks for the repair from the portal, with a photo.
+    await portalSection(taylor, "Repairs");
     const requests = part(taylor, "Maintenance requests");
     await requests.getByLabel("What needs fixing?").fill("The kitchen faucet drips");
     await requests.getByLabel("Someone may come in while I'm out").check();
@@ -812,6 +820,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     // Drew downloads the same statement from the portal.
     const drew = await someone(browser);
     await joinPortal(drew, people.drew);
+    await portalSection(drew, "Lease", "Your lease");
     const theirs = await drew.request.get(
       (await drew.getByRole("link", { name: "Deposit statement (PDF)" }).getAttribute("href")) ?? "",
     );
@@ -940,7 +949,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
 
   await test.step("Demo Owner A reads the month's statement: opening plus money in less money out is the closing, which is what staff see on the Owners list and the owner's Financials tab", async () => {
     const card = part(owner, "Statement");
-    await owner.reload();
+    await owner.goto("/statements");
     await card.getByLabel("From", { exact: true }).fill(month);
     await card.getByLabel("To", { exact: true }).fill(today());
     await card.getByRole("button", { name: "Show" }).click();
@@ -958,6 +967,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     expect([...cedar.postings].sort((a, b) => a - b)).toEqual([-105_000, -64_000, -44_000, 105_000, 120_000]);
     expect(Object.values(theirs.properties).reduce((sum, p) => sum + p.closing, 0)).toBe(theirs.closing);
     // What each property holds today is its closing.
+    await portalSection(owner, "Overview", "Your properties");
     const holdings = part(owner, "What each property holds today");
     for (const [name, property] of Object.entries(theirs.properties)) {
       await expect(holdings.getByRole("row", { name: new RegExp(`^${name}`) }).getByRole("cell").last()).toHaveText(money(property.closing));

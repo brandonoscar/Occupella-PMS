@@ -37,6 +37,12 @@ const day = (fromNow: number) => new Date(Date.now() + fromNow * 86_400_000).toI
 // A day as the portal shows it: MM/DD/YYYY.
 const us = (iso: string) => `${iso.slice(5, 7)}/${iso.slice(8, 10)}/${iso.slice(0, 4)}`;
 
+// A portal's section from its sidebar, by its link and its page's title.
+async function portalSection(page: Page, link: string, title = link): Promise<void> {
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: link, exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
+}
+
 // The pages are served under a strict Content-Security-Policy (src/pms/api/app.py). Anything it
 // blocks, such as a script or an image from another origin, fails the test that loaded it.
 test.beforeEach(async ({ page }) => {
@@ -70,6 +76,7 @@ test("an owner joins from the invite, reads their statement and signs back in", 
   await expect(holdings.getByRole("row", { name: /E2E Property 2/ })).toContainText("$1,250.00");
 
   // By its heading: the year-end card below also says "statement" (case-insensitive hasText).
+  await portalSection(page, "Statements and reports");
   const statement = page.locator("section", {
     has: page.getByRole("heading", { name: "Statement", exact: true }),
   });
@@ -105,10 +112,12 @@ test("a tenant joins, sees what is due and asks for a repair", async ({ page }) 
 
   await expect(page.getByRole("heading", { name: "Welcome, Tenant Two E2E" })).toBeVisible();
   await expect(page.getByTestId("balance-due")).toHaveText("$950.00");
+  await portalSection(page, "Payments");
   const ledger = page.locator("section", { hasText: "Charges and payments" });
   await expect(ledger.getByRole("row", { name: /Check 101/ })).toContainText("$950.00");
   await expect(ledger.getByRole("row", { name: /Balance at the end of/ })).toContainText("$950.00");
 
+  await portalSection(page, "Repairs");
   await page.getByLabel("What needs fixing?").fill("The hallway light is out");
   await page.getByLabel("Someone may come in while I'm out").check();
   await page.getByRole("button", { name: "Send request" }).click();
@@ -431,6 +440,7 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
   await tenant.reload();
   await expect(tenant.getByRole("heading", { name: "Welcome, Renewer E2E" })).toBeVisible();
   await expect(tenant.getByRole("heading", { name: "Lease renewal" })).toHaveCount(0);
+  await portalSection(tenant, "Lease", "Your lease");
   // The tenant keeps the renewal as signed, its signing certificate and its addendum (q120).
   await tenant.getByRole("combobox", { name: /^Lease/ }).first().selectOption({ label: `E2E Property 3, E2E Unit 3, from ${us(day(60))} (to come)` });
   const files = tenant.getByRole("list", { name: "Your lease's files" });
@@ -683,6 +693,7 @@ test("staff keep an owner's document and a property's, and the owner downloads t
   await owner.getByLabel("Email").fill(seed.owner_email);
   await owner.getByLabel("Password").fill(PASSWORD);
   await owner.getByRole("button", { name: "Sign in" }).click();
+  await portalSection(owner, "Documents");
   const link = owner.getByRole("list", { name: "Your documents" }).getByRole("link", { name: "Management agreement 2026" });
   const file = await owner.request.get((await link.getAttribute("href")) ?? "");
   expect(file.status()).toBe(200);
@@ -1033,10 +1044,18 @@ test("every page of the demo meets WCAG 2.2 AA as axe checks it, in plain words:
     await portal.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
     await portal.getByLabel("The same password again").fill(PASSWORD);
     await portal.getByRole("button", { name: "Set password" }).click();
-    await expect(portal.getByRole("navigation", { name: "Sections" })).toBeVisible();
-    await portal.waitForLoadState("networkidle");
-    await expectAccessible(portal, `the ${who === demo.owner ? "owner" : "tenant"}'s portal`);
-    await expectPlainWords(portal, `the ${who === demo.owner ? "owner" : "tenant"}'s portal`);
+    const portalSections = portal.getByRole("navigation", { name: "Sections" });
+    await expect(portalSections.getByRole("link", { name: "Overview" })).toBeVisible();
+    // Every section of the portal (the portals' second version), and an owner's property.
+    const paths = [...new Set(await hrefs(portal, portalSections))];
+    expect(paths.length).toBeGreaterThanOrEqual(6);
+    for (const path of paths) await scanned(portal, path);
+    if (who === demo.owner) {
+      await scanned(portal, "/properties");
+      const property = (await hrefs(portal, portal.getByRole("main"))).find((href) => /^\/properties\/[^/]+$/.test(href));
+      expect(property, "a link to one of the owner's properties").toBeTruthy();
+      await scanned(portal, property!);
+    }
     await portal.context().close();
   }
 });

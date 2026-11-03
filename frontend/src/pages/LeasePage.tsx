@@ -214,6 +214,13 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           <GoLink href={`/leases/${lease.moved_to.lease_id}`} className={LINK}>Open the new lease</GoLink>
         </p>
       )}
+      {lease.move_out_notice && (
+        <Notice tone="info">
+          {`Notice to move out: ${lease.move_out_notice.given_by} said in the portal on ${usDate(lease.move_out_notice.given_at)} they are leaving ${usDate(lease.move_out_notice.leaving_on)}`
+            + (lease.move_out_notice.note ? ` ("${lease.move_out_notice.note}")` : "")
+            + ". End the lease from its ⋯ menu when it's settled."}
+        </Notice>
+      )}
       {lease.on_hold && (
         <Notice tone="error">
           {`On a payment hold. ${lease.holds.filter((h) => h.in_force).map(holdLine).join(". ")}. A payment is refused unless you accept it past the hold.`}

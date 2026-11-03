@@ -79,12 +79,21 @@ async function theMenuFolds(page: Page): Promise<void> {
   await expect(nav).not.toBeInViewport();
 }
 
+// A portal's section from the folded menu, by its link and its page's title; the menu closes.
+async function sectionOnAPhone(page: Page, link: string, title = link): Promise<void> {
+  await page.getByRole("button", { name: "Open menu" }).tap();
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: link, exact: true }).tap();
+  await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Sections" })).not.toBeInViewport();
+}
+
 test("an owner reads their properties and statement on a phone", async ({ page }, info) => {
   await join(page, seed.features.phone!.owner_a, "Your properties");
   await theMenuFolds(page);
   await expect(page.getByRole("row", { name: /^Birch Flats/ })).toContainText("$250.00");
   // The statement's table for a property scrolls sideways in its own frame, which takes focus
   // so the keyboard can scroll it too.
+  await sectionOnAPhone(page, "Statements and reports");
   const birch = page.getByRole("table", { name: "Birch Flats" }).first();
   await birch.scrollIntoViewIfNeeded();
   await expect(birch).toBeVisible();
@@ -99,6 +108,7 @@ test("a tenant reads their lease and what they owe, and files a repair request o
   await looksRightOnAPhone(page, info, "the tenant's page");
 
   // A repair request, typed and sent with the phone's keyboard and touch.
+  await sectionOnAPhone(page, "Repairs");
   const request = page.locator("section", { has: page.getByRole("heading", { level: 2, name: "Maintenance requests" }) });
   await request.getByLabel("What needs fixing").fill("The kitchen tap drips");
   await request.getByRole("button", { name: "Send request" }).tap();

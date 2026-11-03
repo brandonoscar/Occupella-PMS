@@ -27,6 +27,11 @@ import { TenantAutopayCard } from "./AutopayCards";
 import { PayOnlineCard } from "./PayOnlineCard";
 import { CalendarCard } from "./CalendarCard";
 import { MyContactCard } from "../components/ContactCard";
+import { MessagesCard } from "../components/MessagesCard";
+import type { NavEntry } from "../components/Shell";
+import { CreditCard, FileText, Home as HomeIcon, MessagesSquare, UserRound, Wrench } from "lucide-react";
+import type { MoveOutNotice } from "./TenantPortalCards";
+import { AnnouncementsCard, LeaseUploadForm, MoveOutNoticeCard } from "./TenantPortalCards";
 
 // What the lease charges every month: its rent, and each recurring fee or credit not stopped
 // (ends_on is the first due date it is no longer charged for).
@@ -64,9 +69,46 @@ export type Lease = {
   deposit_asked: DepositAsked | null;
   // Each payment to it, newest first, each with its receipt to download.
   payments: Paid[];
-  // The lease as signed, its signing certificate and the lease's documents (q120).
-  files: { kind: "signed lease" | "signing certificate" | "lease document"; title: string; url: string }[];
+  // The lease as signed, its signing certificate and the lease's documents (q120), the tenant's
+  // own among them.
+  files: {
+    kind: "signed lease" | "signing certificate" | "lease document";
+    title: string;
+    url: string;
+    from_tenant?: boolean;
+  }[];
+  // The latest notice to move out a tenant on it gave, if any.
+  move_out_notice?: MoveOutNotice | null;
 };
+
+// The tenant portal's sections (the portals' second version): each a page of its own in the
+// sidebar, all reading the same leases.
+export type TenantSection = "overview" | "payments" | "lease" | "repairs" | "messages" | "profile";
+const TENANT_NAV: NavEntry[] = [
+  { href: "/", label: "Overview", icon: HomeIcon },
+  { href: "/payments", label: "Payments", icon: CreditCard },
+  { href: "/lease", label: "Lease", icon: FileText },
+  { href: "/repairs", label: "Repairs", icon: Wrench },
+  { href: "/messages", label: "Messages", icon: MessagesSquare },
+  { href: "/profile", label: "Profile", icon: UserRound },
+];
+export const TENANT_SECTIONS: Record<string, TenantSection> = {
+  "/": "overview",
+  "/payments": "payments",
+  "/lease": "lease",
+  "/repairs": "repairs",
+  "/messages": "messages",
+  "/profile": "profile",
+};
+const HEADERS: Record<TenantSection, [string, string]> = {
+  overview: ["", "Your home, what is due and what is coming up."],
+  payments: ["Payments", "What you were charged and paid, paying online, and your receipts."],
+  lease: ["Your lease", "Your lease, its files, renters insurance, renewals and moving out."],
+  repairs: ["Repairs", "Ask for a repair and follow how it's going."],
+  messages: ["Messages", "Write to your manager and read their answers."],
+  profile: ["Your profile", "Your contact details, your calendar and your manager's."],
+};
+
 
 // "Pet rent: $35.00", "Parking: $25.00 off" for a credit, with when it starts or stops.
 export function monthlyLabel(item: Monthly, today: string): string {
@@ -102,7 +144,7 @@ type Photo = { title: string; type: ContentType | null; size: number; base64: st
 
 // A tenant's lease, what they owe, its charges and payments, and their maintenance requests.
 // Rent is paid to the PMC as before: the portal takes no payments.
-export function TenantHome({ me }: { me: Me }) {
+export function TenantHome({ me, section = "overview" }: { me: Me; section?: TenantSection }) {
   const [leases, setLeases] = useState<Lease[] | null>(null);
   const [chosen, setChosen] = useState<string>("");
   const [ledger, setLedger] = useState<Ledger | null>(null);
@@ -175,11 +217,16 @@ export function TenantHome({ me }: { me: Me }) {
   const download = (format: string) =>
     lease ? `/api/tenant/leases/${encodeURIComponent(lease.lease_id)}/ledger/download?format=${format}` : "";
 
+  const refreshLeases = () => api.get<Lease[]>("/api/tenant/leases").then(setLeases).catch(show);
+  const [heading, description] = HEADERS[section];
+  const leaseSection = section === "overview" || section === "payments" || section === "lease" || section === "repairs";
+
   return (
-    <Shell me={me}>
-      <PageHeader title={`Welcome, ${me.name}`} description="Your lease, what comes up, and what you have been charged and paid." />
+    <Shell me={me} nav={TENANT_NAV}>
+      <PageHeader title={heading || `Welcome, ${me.name}`} description={description} />
       <Notice tone="error">{error}</Notice>
-      {leases === null ? (
+      {section === "overview" && <AnnouncementsCard />}
+      {!leaseSection ? null : leases === null ? (
         <Notice tone="info">Loading</Notice>
       ) : lease === null ? (
         <Card title="Your lease">
@@ -187,6 +234,7 @@ export function TenantHome({ me }: { me: Me }) {
         </Card>
       ) : (
         <>
+          {(section === "overview" || section === "lease") && (
           <Card title="Your lease">
             {leases.length > 1 && (
               <label className="mb-4 flex flex-col gap-1.5 text-sm text-ink-muted">
@@ -218,32 +266,41 @@ export function TenantHome({ me }: { me: Me }) {
                 </div>
               ))}
             </dl>
+            {section === "overview" && (
             <div className="mt-6 border-t border-line-strong pt-4">
               <p className="text-sm text-ink-subtle">Balance due today</p>
               <p className="text-xl leading-tight font-semibold" data-testid="balance-due">
                 {money(lease.balance_due)}
               </p>
               <p className="mt-1 text-sm text-ink-subtle">
-                Pay {me.pmc_name} the way you always have; payments can't be made here yet.
+                See what makes it up, and pay online when {me.pmc_name} takes payments online, on{" "}
+                <a className="text-iris underline hover:text-iris-hover" href="/payments">Payments</a>.
               </p>
+              {lease.move_out_notice && (
+                <p className="mt-2 text-sm text-ink" data-testid="leaving">
+                  You gave notice: leaving {usDate(lease.move_out_notice.leaving_on)}.
+                </p>
+              )}
             </div>
-            {lease.files.length > 0 && (
+            )}
+            {section === "lease" && lease.files.length > 0 && (
               <ul className="mt-4 flex flex-col gap-1 text-base" aria-label="Your lease's files">
                 {lease.files.map((f) => (
                   <li key={f.url}>
                     <a className="font-medium text-iris hover:text-iris-hover hover:underline" href={f.url}>
                       {f.kind === "signed lease" ? `${f.title} (as signed, PDF)` : f.title}
                     </a>
+                    {f.from_tenant && <span className="text-sm text-ink-subtle"> (sent by you)</span>}
                   </li>
                 ))}
               </ul>
             )}
-            {lease.deposit_asked && (
+            {section === "lease" && lease.deposit_asked && (
               <p className="mt-4 text-base" data-testid="deposit-asked">
                 {tenantDepositLine(lease.deposit_asked)}
               </p>
             )}
-            {lease.deposit_returned && (
+            {section === "lease" && lease.deposit_returned && (
               <div className="mt-4">
                 <LinkButton
                   href={`/api/tenant/leases/${encodeURIComponent(lease.lease_id)}/deposit-statement`}
@@ -252,9 +309,13 @@ export function TenantHome({ me }: { me: Me }) {
                 </LinkButton>
               </div>
             )}
+            {section === "lease" && lease.in_effect && (
+              <LeaseUploadForm leaseId={lease.lease_id} company={me.pmc_name} onFiled={refreshLeases} />
+            )}
           </Card>
+          )}
 
-          {(lease.each_month.length > 0 || lease.coming_due.length > 0) && (
+          {section === "overview" && (lease.each_month.length > 0 || lease.coming_due.length > 0) && (
             <Card title="Coming up">
               {lease.each_month.length > 0 && (
                 <>
@@ -279,13 +340,37 @@ export function TenantHome({ me }: { me: Me }) {
             </Card>
           )}
 
-          {lease.renters_insurance && (
+          {section === "lease" && lease.renters_insurance && (
             <InsuranceCard leaseId={lease.lease_id} insurance={lease.renters_insurance}
-              refresh={() => api.get<Lease[]>("/api/tenant/leases").then(setLeases).catch(show)} />
+              refresh={refreshLeases} />
           )}
 
-          <RenewalsCard me={me} />
+          {/* A renewal waiting to be signed shows on the Overview too; with none it shows nothing. */}
+          {(section === "lease" || section === "overview") && <RenewalsCard me={me} />}
 
+          {section === "lease" && (lease.ends_on === null || lease.ends_on >= day(new Date())) && (
+            <MoveOutNoticeCard leaseId={lease.lease_id} company={me.pmc_name}
+              notice={lease.move_out_notice ?? null}
+              onGiven={(given) => setLeases((all) => all && all.map((l) =>
+                l.lease_id === lease.lease_id ? { ...l, move_out_notice: given } : l))} />
+          )}
+
+          {(section === "payments" || section === "repairs") && leases.length > 1 && (
+            <label className="mb-4 flex max-w-md flex-col gap-1.5 text-sm text-ink-muted">
+              Lease
+              <select
+                className="h-9 rounded-sm border border-line-strong bg-sunken px-3 text-base text-ink"
+                value={chosen}
+                onChange={(e) => setChosen(e.target.value)}
+              >
+                {leases.map((l) => (
+                  <option key={l.lease_id} value={l.lease_id}>{leaseLabel(l, day(new Date()))}</option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {section === "payments" && (
           <Card title="Charges and payments">
             <div className="mb-4 flex flex-wrap gap-2">
               <LinkButton href={download("pdf")}>PDF</LinkButton>
@@ -335,10 +420,12 @@ export function TenantHome({ me }: { me: Me }) {
               </Wide>
             )}
           </Card>
+          )}
 
-          <PayOnlineCard leaseId={lease.lease_id} />
-          <TenantAutopayCard leaseId={lease.lease_id} />
+          {section === "payments" && <PayOnlineCard leaseId={lease.lease_id} />}
+          {section === "payments" && <TenantAutopayCard leaseId={lease.lease_id} />}
 
+          {section === "payments" && (
           <Card title="Payments">
             {lease.payments.length === 0 ? (
               <p className="text-sm text-ink-subtle">No payment recorded yet.</p>
@@ -364,7 +451,9 @@ export function TenantHome({ me }: { me: Me }) {
               </ul>
             )}
           </Card>
+          )}
 
+          {section === "repairs" && (
           <Card title="Maintenance requests">
             {lease.in_effect ? (
               <Form className="mb-6 flex flex-col gap-3" onSubmit={send}>
@@ -456,12 +545,20 @@ export function TenantHome({ me }: { me: Me }) {
               </ul>
             )}
           </Card>
+          )}
         </>
       )}
-      <MyContactCard name={me.name} />
-      <CalendarCard path="/api/tenant/calendar"
-        intro="Your rent due days, repair visits and your lease's last day, in your own calendar app (Google, Apple, Outlook). It updates by itself." />
-      <ManagerCard />
+      {section === "messages" && (
+        <MessagesCard path="/api/tenant/messages" company={me.pmc_name} person={me.name} />
+      )}
+      {section === "profile" && (
+        <>
+          <MyContactCard name={me.name} />
+          <CalendarCard path="/api/tenant/calendar"
+            intro="Your rent due days, repair visits and your lease's last day, in your own calendar app (Google, Apple, Outlook). It updates by itself." />
+        </>
+      )}
+      {(section === "profile" || section === "overview") && <ManagerCard />}
     </Shell>
   );
 }
