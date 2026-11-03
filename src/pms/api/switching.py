@@ -538,14 +538,25 @@ def import_file(session: Staff, conn: Conn, new: Import) -> Counted:
     names = Names(conn, session.pmc_id)
     try:
         if new.kind in HISTORY:
-            return import_history(
+            counted = import_history(
                 names, HISTORY[new.kind], new.content, rows(new.content, NEEDS[new.kind])
             )
-        for row in rows(new.content, NEEDS[new.kind]):
-            import_row(names, new.kind, row)
+        else:
+            for row in rows(new.content, NEEDS[new.kind]):
+                import_row(names, new.kind, row)
+            counted = Counted(added=names.added, kept=names.kept)
     except Bad as bad:
         raise HTTPException(422, str(bad)) from None
-    return Counted(added=names.added, kept=names.kept)
+    if counted.added:
+        analyze(conn)
+    return counted
+
+
+def analyze(conn: psycopg.Connection[Any]) -> None:
+    """The planner learns what the import brought, in its own transaction, before the next page
+    is planned (migration 20261103000200): unanalyzed, it may take a company's thousands of rows
+    for a handful and run its reports row by row."""
+    conn.execute("SELECT trust_analyze_after_import()")
 
 
 def history_party(names: Names, who: str, row: Row) -> tuple[str, Any]:
@@ -750,6 +761,7 @@ def open_balances(session: Staff, conn: Conn, new: Opening) -> Opened:
         raise HTTPException(422, refusal(bad)) from None
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
         raise HTTPException(409, refusal(refused)) from None
+    analyze(conn)
     return Opened(accounts=len(balances))
 
 

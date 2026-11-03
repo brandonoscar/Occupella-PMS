@@ -893,3 +893,45 @@ def test_only_staff_switch(client, conn, app_conn, pmc, caller, method, path):
 )
 def test_bad_input_is_refused(client, staff, path, body):
     refused(call(client, path, **body), 422)
+
+
+# --- the planner learns what an import brought (migration 20261103000200) ----------------------
+
+
+def estimate(conn, table, pmc_id):
+    plan = conn.execute(f"EXPLAIN SELECT * FROM {table} WHERE pmc_id = %s", (pmc_id,)).fetchone()
+    return int(plan[0].split("rows=")[1].split()[0])
+
+
+def analyzed_since(conn, table, moment):
+    (since,) = conn.execute(
+        "SELECT last_analyze >= %s FROM pg_stat_user_tables WHERE relname = %s", (moment, table)
+    ).fetchone()
+    return bool(since)
+
+
+def test_an_import_leaves_the_planner_knowing_what_it_brought(client, conn, staff, pmc):
+    roster(client)
+    (before,) = conn.execute("SELECT clock_timestamp()").fetchone()
+
+    lines = [f"Property A,Tenant {n:03d}" for n in range(300)]
+    assert ok(imported(client, "tenants", "Property,Tenant", *lines)) == {"added": 300, "kept": 0}
+
+    # Analyzed by the import, in its transaction (autovacuum would set last_autoanalyze): the
+    # planner takes the company's tenants for about 300, not the handful it guesses of rows it
+    # never sampled.
+    assert analyzed_since(conn, "trust_tenants", before)
+    assert 150 <= estimate(conn, "trust_tenants", pmc.pmc_id) <= 600
+    # The same file again adds nothing and analyzes nothing.
+    (again,) = conn.execute("SELECT clock_timestamp()").fetchone()
+    assert ok(imported(client, "tenants", "Property,Tenant", *lines)) == {"added": 0, "kept": 300}
+    assert not analyzed_since(conn, "trust_tenants", again)
+
+
+def test_opening_balances_leave_the_planner_knowing_the_ledger(client, conn, staff, pmc):
+    (before,) = conn.execute("SELECT clock_timestamp()").fetchone()
+
+    assert ok(open_balances(client, pmc), 201) == {"accounts": 4}
+
+    assert analyzed_since(conn, "pgledger_entries", before)
+    assert analyzed_since(conn, "trust_ledger_accounts", before)
