@@ -18,7 +18,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from pms.api import payables, payouts, reconcile, rent
@@ -27,6 +27,10 @@ from pms.api.today import months_ended
 
 router = APIRouter(prefix="/api/dashboard")
 CENT = Decimal("0.01")
+# The days the Dashboard counts: each figure reaches a month back and the next draw day a month
+# on, which Python's dates can't do at their ends (0001-01-01 answered with a server error, found
+# by the nightly API fuzz).
+FIRST_DAY, LAST_DAY = date(1900, 1, 1), date(9999, 1, 1)
 
 
 def money(value: Decimal) -> str:
@@ -266,6 +270,8 @@ def dashboard(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = 
     """The Dashboard's figures on the day (today, UTC, by default), each beside its value the same
     day a month before."""
     day = on or rent.today()
+    if not FIRST_DAY <= day <= LAST_DAY:
+        raise HTTPException(422, "the Dashboard shows a day from 01/01/1900 to 01/01/9999")
     then = month_before(day)
     pmc = session.pmc_id
     units, vacant_now, average_now = units_on(conn, pmc, day)

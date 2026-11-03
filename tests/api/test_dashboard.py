@@ -215,3 +215,19 @@ def test_only_staff_see_the_dashboard(client, conn, app_conn, pmc, caller):
 @pytest.mark.parametrize("on", ["not a day", "2026-02-30"])
 def test_a_day_that_is_not_one_is_refused(client, staff, on):
     assert client.get("/api/dashboard", params={"on": on}).status_code == 422
+
+
+@pytest.mark.parametrize("on", ["0001-01-01", "1899-12-31", "9999-01-02", "9999-12-31"])
+def test_a_day_beyond_what_the_dashboard_counts_is_refused_in_words(client, staff, on):
+    answer = client.get("/api/dashboard", params={"on": on})
+
+    assert answer.status_code == 422
+    assert answer.json()["detail"] == "the Dashboard shows a day from 01/01/1900 to 01/01/9999"
+
+
+@pytest.mark.parametrize("on", ["1900-01-01", "9999-01-01"])
+def test_the_first_and_last_days_it_counts_are_answered(client, staff, on):
+    answer = client.get("/api/dashboard", params={"on": on})
+
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["on"] == on
