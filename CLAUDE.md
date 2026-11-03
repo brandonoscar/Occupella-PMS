@@ -523,8 +523,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - A bill's life (migration 0152, `docs/adr/0010-design-pass.md`, the founder's design pass):
   "set aside" is no longer a step staff take. A bill dated by today, not paid in full nor
   declined, *holds* its amount and markup from its owner's property account without moving money
-  (`trust_bill_holds`: each account's balance laid over its open bills, the one due first first;
-  what it can't cover is Short, and what the owner must send to cover it and those before it).
+  (`trust_bill_holds`: each account's balance less the reserve of its agreement in force today
+  laid over its open bills, the one due first first, so the reserve stays in the account
+  (migration 20261104000300); what it can't cover is Short, and what the owner must send to cover
+  it and those before it).
   Draws already leave it (`trust_unpaid_bills`), so a draw never pays held money. Paying is
   recorded by staff: `trust_pay_bill_part` (a request key, safe to retry; disburse) sets the whole
   bill and its markup aside at the first payment, as before, and pays its part from the vendor's

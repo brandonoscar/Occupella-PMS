@@ -159,7 +159,7 @@ export function holdLine(bill: Bill): string {
   const until = bill.status === "waiting for owner" ? ` until ${bill.owner} decides` : "";
   const held = Number(bill.held ?? "0") > 0
     ? `${money(bill.held ?? "0")} held from ${bill.owner}'s balance for this bill${markup}${until}.`
-    : `Nothing of ${bill.owner}'s balance is left to hold for this bill${until}.`;
+    : `Nothing above ${bill.owner}'s reserve is left to hold for this bill${until}.`;
   if (bill.needed === null) return held;
   return `${held} ${bill.owner} needs to send ${money(bill.needed)}.`;
 }

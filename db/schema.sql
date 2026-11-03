@@ -1362,7 +1362,14 @@ CREATE FUNCTION public.trust_bill_holds(p_pmc_id uuid) RETURNS TABLE(bill_id uui
           AND NOT EXISTS (SELECT 1 FROM trust_bill_declines AS d WHERE d.bill_id = b.id)
     ),
     running AS (
-        SELECT o.id, o.need, greatest(a.balance, 0) AS balance,
+        -- What the account holds above the reserve its agreement in force today keeps: the
+        -- reserve stays in the account, so a bill is never laid over it.
+        SELECT o.id, o.need,
+               greatest(a.balance - coalesce((
+                   SELECT g.reserve FROM trust_management_agreements AS g
+                   WHERE g.ledger_account_id = o.ledger_account_id
+                     AND g.starts_on <= (now() AT TIME ZONE 'UTC')::date
+                   ORDER BY g.starts_on DESC LIMIT 1), 0), 0) AS balance,
                sum(o.need) OVER (
                    PARTITION BY o.ledger_account_id
                    ORDER BY o.due_on, o.bill_date, o.reference COLLATE "C", o.id
@@ -33998,4 +34005,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261102000150'),
     ('20261103000100'),
     ('20261104000100'),
-    ('20261104000200');
+    ('20261104000200'),
+    ('20261104000300');

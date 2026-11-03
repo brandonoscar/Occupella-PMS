@@ -1023,24 +1023,25 @@ test("a bill over the owner's limit emails them; they decline one and approve an
   await expect(owner.getByText("No bill waits for your approval.")).toBeVisible();
 
   // Staff see both decisions: the declined bill is void; Birch Flats holds only its $250.00
-  // reserve, so the approved one is short and staff ask the owner for the rest. (Staff are on
+  // reserve, which stays in the account, so the approved one is short all of its $650.00 and
+  // staff ask the owner for it. (Staff are on
   // Bills still: the list reads the owner's decisions when the page loads again.)
   await page.reload();
   await expect(bill("PLB-2002").getByTestId("status")).toHaveText("Short");
   await expect(bill("PLB-2001")).toHaveCount(0); // nothing left to pay on it
   await bill("PLB-2002").getByRole("cell").first().click();
   await expect(page.getByTestId("hold")).toHaveText(
-    "$250.00 held from Demo Owner A's balance for this bill. Demo Owner A needs to send $400.00.",
+    "Nothing above Demo Owner A's reserve is left to hold for this bill. Demo Owner A needs to send $650.00.",
   );
-  await page.getByRole("button", { name: "Ask Demo Owner A for $400.00" }).click();
+  await page.getByRole("button", { name: "Ask Demo Owner A for $650.00" }).click();
   const asking = page.getByRole("alertdialog");
-  await expect(asking).toContainText(`Email Demo Owner A at ${people.emails.owner_a} asking them to send $400.00?`);
+  await expect(asking).toContainText(`Email Demo Owner A at ${people.emails.owner_a} asking them to send $650.00?`);
   await asking.getByRole("button", { name: "Send email" }).click();
-  await expect(page.getByText("Demo Owner A is asked to send $400.00.")).toBeVisible();
+  await expect(page.getByText("Demo Owner A is asked to send $650.00.")).toBeVisible();
   await expect(page.getByText("Demo Owner A was asked for it today; you can ask again tomorrow.")).toBeVisible();
   // The owner sees what to send in the portal.
   await owner.reload();
-  await expect(owner.getByTestId("short-bill")).toContainText("your balance is $400.00 short of it. Please send $400.00");
+  await expect(owner.getByTestId("short-bill")).toContainText("your balance is $650.00 short of it. Please send $650.00");
   // The owner sends the money; it covers the approved bill, so nothing more is available to draw.
   await recordContribution(page, "Demo Owner A", "Birch Flats", "650.00", "Shower valve");
   const birch = await ownerProperty(page, "Demo Owner A", "Birch Flats");
@@ -1283,6 +1284,8 @@ test("only staff holding a role do its work: an admin grants pay-out and adds st
 }) => {
   const people = seed.features.roles!;
   const secret = await joinAsStaff(page, people.bookkeeper);
+  // Aspen Row holds only its reserve, which stays in the account: the owner sends the $100.00.
+  await recordContribution(page, "Demo Owner B", "Aspen Row", "100.00", "Faucet washer");
   await section(page, "Bills");
   await recordBill(page, "Demo Plumbing Co", "Demo Owner B, Aspen Row", "PLB-3001", "100.00", "Faucet washer");
   const bill = billRow(page, "Demo Plumbing Co", "PLB-3001");
@@ -2012,6 +2015,10 @@ test("staff put bills in expense accounts on Schedule E lines, and the owner rea
   await moving.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("HOSE-1 is in one expense account.")).toBeVisible();
   await expect(page.getByRole("table", { name: "Lines" })).toContainText("Water$12.00");
+  // Aspen Row holds only its reserve, which stays in the account: the owner sends the $87.00.
+  await section(page, "Bills");
+  await expect(bill("WTR-1")).toContainText("Short");
+  await recordContribution(page, "Demo Owner B", "Aspen Row", "87.00", "Plumbing bills");
   await section(page, "Bills");
   for (const reference of ["WTR-1", "HOSE-1", "FIX-1"]) {
     const paying = await billStep(page, "Demo Plumbing Co", reference, "Record payment");
@@ -3258,6 +3265,10 @@ test("staff share a roofer's invoice across two owners' properties with the mark
   await expect(shares).toContainText("ROOF-77/1Demo Owner ABirch Flats$150.00");
   await expect(shares).toContainText("ROOF-77/2Demo Owner BAspen Row$150.00");
 
+  // Each account holds only its reserve, which stays in it: each owner sends their share first.
+  await recordContribution(page, "Demo Owner A", "Birch Flats", "165.00", "Roof repair");
+  await recordContribution(page, "Demo Owner B", "Aspen Row", "150.00", "Roof repair");
+
   // Pay bills pays both shares at once: Birch Flats gives its share and the markup.
   await section(page, "Bills");
   await page.getByRole("link", { name: "Pay bills" }).click();
@@ -3265,13 +3276,13 @@ test("staff share a roofer's invoice across two owners' properties with the mark
   await page.getByLabel("Pay Demo Roofing Co ROOF-77/2").check();
   const cash = page.getByRole("table", { name: "Each property's cash" });
   await expect(cash.getByRole("row", { name: "Demo Owner A, Birch Flats" }).getByRole("cell")).toHaveText([
-    "Demo Owner A, Birch Flats", "$250.00", "$165.00", "$85.00", "",
+    "Demo Owner A, Birch Flats", "$415.00", "$165.00", "$250.00", "",
   ]);
   await page.getByRole("button", { name: "Pay $300.00" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
   await expect(page.getByText("2 bills of $300.00 paid, by check.")).toBeVisible();
-  await expect((await ownerProperty(page, "Demo Owner A", "Birch Flats")).getByRole("cell").nth(2)).toHaveText("$85.00");
-  await expect((await ownerProperty(page, "Demo Owner B", "Aspen Row")).getByRole("cell").nth(2)).toHaveText("$50.00");
+  await expect((await ownerProperty(page, "Demo Owner A", "Birch Flats")).getByRole("cell").nth(2)).toHaveText("$250.00");
+  await expect((await ownerProperty(page, "Demo Owner B", "Aspen Row")).getByRole("cell").nth(2)).toHaveText("$200.00");
 });
 
 test("staff set Birch Flats' ownership 60/40 between two owners; a payment and a bill split between them to the cent", async ({
