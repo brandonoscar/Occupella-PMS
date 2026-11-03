@@ -24,10 +24,14 @@ SET LOCAL statement_timeout = '60s';
 
 -- An owner's own contact details, given in the portal, as a tenant's (migration 0064's rule
 -- widened): by the person means no staff member recorded them.
+-- squawk-ignore ban-drop-constraint
 ALTER TABLE trust_contacts DROP CONSTRAINT trust_contacts_by_person;
 ALTER TABLE trust_contacts ADD CONSTRAINT trust_contacts_by_person
     CHECK (NOT by_person OR (num_nonnulls(tenant_id, owner_id) = 1 AND recorded_by IS NULL))
     NOT VALID;
+-- Validated in the same transaction (dbmate runs each migration in one): it reads a small
+-- table once, under the 5 s lock timeout above.
+-- squawk-ignore constraint-missing-not-valid
 ALTER TABLE trust_contacts VALIDATE CONSTRAINT trust_contacts_by_person;
 
 CREATE TABLE trust_messages (
@@ -151,10 +155,12 @@ ALTER TABLE trust_documents ADD COLUMN uploaded_by_tenant uuid;
 ALTER TABLE trust_documents ADD CONSTRAINT trust_documents_tenant_upload
     CHECK (uploaded_by_tenant IS NULL OR (kind = 'lease_document' AND uploaded_by IS NULL))
     NOT VALID;
+-- squawk-ignore constraint-missing-not-valid
 ALTER TABLE trust_documents VALIDATE CONSTRAINT trust_documents_tenant_upload;
 ALTER TABLE trust_documents ADD CONSTRAINT trust_documents_uploaded_by_tenant_fkey
     FOREIGN KEY (lease_id, uploaded_by_tenant) REFERENCES trust_lease_tenants (lease_id, tenant_id)
     NOT VALID;
+-- squawk-ignore constraint-missing-not-valid
 ALTER TABLE trust_documents VALIDATE CONSTRAINT trust_documents_uploaded_by_tenant_fkey;
 
 CREATE TRIGGER trust_append_only
@@ -203,15 +209,25 @@ BEGIN
     END IF;
 END;
 $$;
+-- squawk-ignore ban-drop-constraint
 ALTER TABLE trust_documents DROP CONSTRAINT trust_documents_uploaded_by_tenant_fkey;
+-- squawk-ignore ban-drop-constraint
 ALTER TABLE trust_documents DROP CONSTRAINT trust_documents_tenant_upload;
+-- squawk-ignore ban-drop-column
 ALTER TABLE trust_documents DROP COLUMN uploaded_by_tenant;
+-- squawk-ignore ban-drop-table
 DROP TABLE trust_announcement_removals;
+-- squawk-ignore ban-drop-table
 DROP TABLE trust_announcements;
+-- squawk-ignore ban-drop-table
 DROP TABLE trust_move_out_notices;
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_check_move_out_notice();
+-- squawk-ignore ban-drop-table
 DROP TABLE trust_messages;
+-- squawk-ignore ban-drop-constraint
 ALTER TABLE trust_contacts DROP CONSTRAINT trust_contacts_by_person;
 ALTER TABLE trust_contacts ADD CONSTRAINT trust_contacts_by_person
     CHECK (NOT by_person OR (tenant_id IS NOT NULL AND recorded_by IS NULL)) NOT VALID;
+-- squawk-ignore constraint-missing-not-valid
 ALTER TABLE trust_contacts VALIDATE CONSTRAINT trust_contacts_by_person;
