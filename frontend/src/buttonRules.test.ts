@@ -62,6 +62,7 @@ type Why =
 const KEEP: [string, string, Why][] = [
   ["components/EmailsCard.tsx", "Send email", "sends"],
   ["components/MessagesCard.tsx", "Send message", "sends"],
+  ["pages/AiKeysPage.tsx", "Make key", "shown once"],
   ["pages/ApplicantPage.tsx", '{rejecting ? "Reject" : "Approve"}', "signing"],
   ["pages/ApplicantPage.tsx", "Record withdrawal", "for good"],
   ["pages/ApplyPage.tsx", "Send application", "for good"],

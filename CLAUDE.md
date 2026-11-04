@@ -129,7 +129,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`trust_text_consents`: append-only, the exact words shown and when, of the login's own
   person; a new password records a new answer, the latest holding). Staff are asked neither. It
   records consent for A2P 10DLC and sends no text; the AI role never reads it. The first staff member, their first admin
-  role and their invite come from `python -m pms.admin`. A demo PMC to show the PMS with
+  role and their invite come from `python -m pms.admin`. A self-hosted install's app logs in as
+  `pms_app` (`python -m pms.app_login`, run after the migrations), which holds nothing of its own
+  and may only act as trust_app, never as the database's owner. A demo PMC to show the PMS with
   comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
   route functions as its staff, with last month's reconciliation waiting for approval and
   something on every other page, the founder's seed among it (six properties, one of 48 units,
@@ -320,7 +322,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   fee terms on the property's page (`GET /api/properties/<id>` gives the terms in force); a
   lease already in place on a unit's page; terms on the owner's page too. An owner or tenant is
   invited from their own page (`pages/PortalCard.tsx`). Bringing a PMC over from another system at `/settings/import`
-  (`src/pms/api/switching.py`), and the whole ledger at `/settings/data-export`, with, for an admin, everything
+  (`src/pms/api/switching.py`; an import that adds rows, and opening balances, end by analyzing the tables a switch
+  fills, `trust_analyze_after_import`, migration 20261103000200, so the next page isn't planned blind), and the whole ledger at `/settings/data-export`, with, for an admin, everything
   (`/api/records.zip`, `exports.records_zip`, q132: each record table as CSV, its documents,
   leases and signatures as files, and the ledger; never logins' secrets, sessions or a token's
   hash, in a table or the audit log), and QuickBooks at `/settings/quickbooks`
@@ -429,6 +432,21 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   its UID. A new link takes the old back, one person's links wait for each other, and a link
   taken back or whose login is disabled reads as not found. The access log prints the token as
   "…". It is no custom-role area (each person's own); the AI role reads neither table.
+- API keys (ADR 0011's first piece, migration 0201, `src/pms/api/ai_keys.py`): software, such as
+  an AI, reads the PMS with a key and nothing else. An admin makes one at Settings, AI
+  (`/settings/ai`, `pages/AiKeysPage.tsx`) and sees its secret once (`occ_` and a random token,
+  kept as its SHA-256 in `trust_api_keys`; lists show its first twelve characters and who made
+  it), and takes one back from its row's ⋯ menu (`trust_api_key_revocations`, once); both
+  append-only, audited, naming the admin, the database refusing anyone else. Software sends
+  `Authorization: Bearer occ_...` to `GET /api/ai/me` (whose books, the key's name) and
+  `GET /api/ai/reports/<name>` (`trust_report_<name>`'s columns and rows as text, its PMC always
+  the key's, `arg` the rest): the app looks the key up as `trust_app`, then runs the rest of the
+  request's transaction as `trust_ai_agent` (`SET LOCAL ROLE`; `trust_app` may set that role and
+  never inherits it), naming no staff member. A key unknown, taken back or malformed is one 401;
+  a key opens no cookie endpoint and a session no key endpoint; a key makes at most
+  `ai_keys.PER_MINUTE` (120) requests a minute in a process (429, Retry-After). The everything
+  export leaves its hash out, and the AI role reads neither table. Drafts, events, the MCP
+  server and Enable AI come later, each its own PR.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`
