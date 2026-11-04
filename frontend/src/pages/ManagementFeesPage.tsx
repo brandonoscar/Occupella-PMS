@@ -12,7 +12,7 @@ import { Said } from "../components/Said";
 import { PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
-import { day, money, sumMoney, usDate } from "../money";
+import { companyDate, companyDay, money, sumMoney, usDate } from "../money";
 import type { Fee, FeeDue } from "../payables";
 import { lastMonthPeriod } from "../payables";
 import type { AutomaticFees } from "./AutomaticFeesCard";
@@ -26,7 +26,7 @@ import { useRecord } from "./useRecord";
 // or why it can't be taken. A company may have the nightly run take last month's by itself
 // (Settings, Company setup); the page says which.
 export function ManagementFeesPage({ me }: { me: Me }) {
-  const month = lastMonthPeriod(new Date());
+  const month = lastMonthPeriod(companyDate());
   const [start, setStart] = useState(month.start);
   const [end, setEnd] = useState(month.end);
   const [fees, setFees] = useState<FeeDue[] | null>(null);
@@ -61,7 +61,7 @@ export function ManagementFeesPage({ me }: { me: Me }) {
         <Button disabled={due.length === 0} onClick={() =>
           ask(`Collect ${money(total)} of management fees for ${usDate(start)} to ${usDate(end)}?`, async () => {
             await record<Fee[]>("/api/payables/management-fees",
-              { period_start: start, period_end: end, on: day(new Date()) },
+              { period_start: start, period_end: end, on: companyDay() },
               (taken) => {
                 const collected = taken.filter((f) => f.fee !== null);
                 return `${money(sumMoney(collected.map((f) => f.fee ?? "0")))} collected from ${collected.length} account${collected.length === 1 ? "" : "s"}.`;

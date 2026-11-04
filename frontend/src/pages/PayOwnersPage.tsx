@@ -14,7 +14,7 @@ import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
-import { day, money, sumMoney, usDate } from "../money";
+import { companyDay, money, sumMoney, usDate } from "../money";
 import type { OwnerMoney, OwnerPaid, PayoutMethod } from "../payables";
 import { paidSummary } from "../payables";
 import type { DrawRun } from "../payouts";
@@ -51,7 +51,7 @@ export function PayOwnersPage({ me }: { me: Me }) {
   const [chosen, setChosen] = useState<Record<string, string>>({});
   const [sentBy, setSentBy] = useState<SentBy>("each");
   const [output, setOutput] = useState<Output>("record");
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const [id, setId] = useState(requestId);
   const [runs, setRuns] = useState(0);
   const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));

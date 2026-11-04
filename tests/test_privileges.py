@@ -504,6 +504,10 @@ FUNCTIONS = {
     "trust_open_charges(uuid,uuid,timestamptz)": {"trust_app"},
     # Where a charge comes in the order money pays them: rent first (migration 0093).
     "trust_pay_rank(trust_charges)": {"trust_app"},
+    # A company's time zone and its day (migration 20261104000900): read from its profile, which
+    # the AI role never reads.
+    "trust_pmc_time_zone(uuid)": {"trust_app"},
+    "trust_pmc_day(uuid,timestamptz)": {"trust_app"},
     # A property's ownership shares in force on a day, and an amount split by them (0094).
     "trust_ownership_on(uuid,date)": {"trust_app"},
     "trust_split_by_ownership(uuid,date,numeric)": {"trust_app"},

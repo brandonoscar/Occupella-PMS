@@ -208,7 +208,12 @@ def property_utilities(session: Staff, conn: Conn, property_id: UUID) -> Propert
             billed=billed,
         )
         for i, starts, ends, billed in conn.execute(
-            LEASES, {"pmc": session.pmc_id, "property": property_id, "day": rent.today()}
+            LEASES,
+            {
+                "pmc": session.pmc_id,
+                "property": property_id,
+                "day": rent.today(conn, session.pmc_id),
+            },
         ).fetchall()
     ]
     bills = []

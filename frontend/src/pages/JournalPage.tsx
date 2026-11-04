@@ -12,7 +12,7 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import type { Journal, JournalEntry, JournalLine } from "../journal";
 import { accountLabel, entryTone, entryTotal, mayPost, whyNotPost } from "../journal";
-import { day, money, usDate } from "../money";
+import { companyDay, money, usDate } from "../money";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
@@ -72,7 +72,7 @@ function ProposeCard({ journal, refresh }: { journal: Journal; refresh: () => vo
   const first = journal.accounts[0]?.id ?? "";
   const second = journal.accounts[1]?.id ?? first;
   const blank = (): JournalLine => ({ from_account: first, to_account: second, amount: "" });
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const [memo, setMemo] = useState("");
   const [lines, setLines] = useState<JournalLine[]>([blank()]);
   const change = (n: number, to: Partial<JournalLine>) =>

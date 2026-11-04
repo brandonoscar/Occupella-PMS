@@ -220,7 +220,7 @@ def living_at(conn: psycopg.Connection[Any], pmc: UUID, property_id: UUID) -> li
     return [
         Living(tenant_id=tenant_id, name=name, to=address_of(conn, pmc, "tenant", tenant_id)[1])
         for tenant_id, name in conn.execute(
-            LIVING_AT, {"property": property_id, "pmc": pmc, "day": today()}
+            LIVING_AT, {"property": property_id, "pmc": pmc, "day": today(conn, pmc)}
         ).fetchall()
     ]
 
@@ -319,7 +319,7 @@ SELECT EXISTS (
 def reminder_of(conn: psycopg.Connection[Any], pmc: UUID, lease_id: UUID) -> Reminder:
     """The reminder of a lease's rent past due (rent due before today and still open, as the
     Dashboard counts it): who gets it and who doesn't, and what it says."""
-    day = today()
+    day = today(conn, pmc)
     tenants = conn.execute(LEASE_TENANTS, {"pmc": pmc, "lease": lease_id, "day": day}).fetchall()
     if not tenants:
         raise HTTPException(404, "no such lease")

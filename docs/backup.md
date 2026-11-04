@@ -48,8 +48,9 @@ secrets. Treat every copy as you would the database itself.
 
 ## How often
 
-- **Every day**, after the nightly run (06:00 UTC, `src/pms/nightly.py`) has posted the day's
-  rent and fees: say 07:00 UTC. A daily backup loses at most a day: whatever staff recorded after
+- **Every day**, after the nightly run has posted the day's rent and fees: each company's runs
+  just after midnight in its own time zone (`src/pms/nightly.py`). 07:00 UTC is after it for a
+  company in Eastern, Central or Mountain time; for Pacific, Alaska or Hawaii say 11:00 UTC. A daily backup loses at most a day: whatever staff recorded after
   it was taken has to be entered again from the bank's records and the day's paperwork.
 - **Before every upgrade**, whatever the time (docs/release.md, step 3).
 - **More often** if a day's work is too much to enter again: the dump runs while the PMS keeps

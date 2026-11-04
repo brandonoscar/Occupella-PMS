@@ -38,6 +38,11 @@ def main() -> None:
             "INSERT INTO trust_pmcs (display_name) VALUES (%s) RETURNING pmc_id",
             (f"E2E PMC {tag}",),
         )
+        # Every company seeded here keeps its day in UTC, as the tests count days; the time zone
+        # test picks another.
+        conn.execute(
+            "INSERT INTO trust_company_profiles (pmc_id, time_zone) VALUES (%s, 'UTC')", (pmc,)
+        )
         bank = one(
             "INSERT INTO trust_bank_accounts (pmc_id, kind, display_name)"
             " VALUES (%s, 'operating', 'E2E operating trust account') RETURNING id",
@@ -441,7 +446,7 @@ def main() -> None:
     # The demo PMC (src/pms/demo.py), built as staff build one: its manager and owner.
     with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as app:
         app.execute("SET ROLE trust_app")
-        made = demo.build(app)
+        made = demo.build(app, time_zone="UTC")
         seeded["demo_manager_invite"] = accounts.create_invite(
             app, made.pmc_id, "staff", made.manager, f"demo-manager.{tag}@example.com", None
         ).token
@@ -455,7 +460,7 @@ def main() -> None:
         ).token
         # Another demo for the accessibility sweep (portal.spec.ts), so it reads every page as
         # the demo first shows it: its manager, an owner and a tenant.
-        sweep = demo.build(app)
+        sweep = demo.build(app, time_zone="UTC")
         # Its housing authority's page, which no list opens (ADR 0010 phase 3, part O).
         (authority,) = app.execute(
             "SELECT id FROM trust_housing_authorities WHERE pmc_id = %s", (sweep.pmc_id,)
@@ -653,6 +658,7 @@ FEATURES = (
     "request-details",
     "signup-phone",
     "payment-keys",
+    "time-zone",
 )
 
 
@@ -662,7 +668,7 @@ def feature_pmc(
     """A demo PMC's books (as of today, or another day) and invites (with their emails) for its
     people: the manager (admin, approve, disburse), the bookkeeper (no role), both owners and two
     tenants."""
-    made = demo.books(app, today)
+    made = demo.books(app, today, "UTC")
     people = {
         "manager": ("staff", made.manager),
         "bookkeeper": ("staff", made.bookkeeper),

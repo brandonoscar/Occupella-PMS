@@ -16,6 +16,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from pms import days
 from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/year-close")
@@ -120,7 +121,7 @@ def year_close(session: Staff, conn: Conn) -> YearClose:
             (session.pmc_id,),
         ).fetchall()
     ]
-    last_year = datetime.now(UTC).year - 1
+    last_year = days.today(conn, session.pmc_id).year - 1
     done = closed and closed[0].year >= last_year
     return YearClose(
         closed=closed,

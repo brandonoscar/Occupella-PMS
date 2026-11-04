@@ -292,8 +292,8 @@ def rent_past_due(
 
 @router.get("")
 def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None) -> Today:
-    """What needs someone on the day (today, UTC, by default)."""
-    day = on or rent.today()
+    """What needs someone on the day (the company's today by default)."""
+    day = on or rent.today(conn, session.pmc_id)
     # Rent due before the day and still open, by the rent page's own open charges: only these
     # leases are read further, not every lease's whole rent page.
     due: dict[UUID, list[tuple[date, Decimal]]] = {}

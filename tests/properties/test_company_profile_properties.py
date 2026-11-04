@@ -15,7 +15,6 @@ another, and adds properties in between. A model keeps the latest save of each c
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
 
-from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -24,6 +23,7 @@ from helpers import make_pmc
 from hypothesis import event, given
 from hypothesis import strategies as st
 
+from pms import days
 from pms.api.company import Address, LateFeeTerms, NewCompany, company_of, save_company
 from pms.api.setup import with_default_fees
 
@@ -56,7 +56,8 @@ NONE = (None, None, None)
 
 @given(actions=ACTIONS)
 def check(conn, actions):
-    ours, theirs = make_pmc(conn), make_pmc(conn)
+    # No profile row of their own (make_pmc's time zone), so every row here is a save's.
+    ours, theirs = make_pmc(conn, time_zone=None), make_pmc(conn, time_zone=None)
     name = {
         pmc.pmc_id: conn.execute(
             "SELECT display_name FROM trust_pmcs WHERE pmc_id = %s", (pmc.pmc_id,)
@@ -73,7 +74,7 @@ def check(conn, actions):
                 (ours.pmc_id, f"Property {len(added) + 3}"),
             ).fetchone()[0]
             with_default_fees(conn, ours.pmc_id, prop)
-            added.append((prop, latest[ours.pmc_id], datetime.now(UTC).date()))
+            added.append((prop, latest[ours.pmc_id], days.today(conn, ours.pmc_id)))
             continue
         _, mine, address, late, nsf = action
         pmc_id = (ours if mine else theirs).pmc_id

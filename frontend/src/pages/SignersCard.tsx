@@ -7,7 +7,7 @@ import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card } from "../components/Shell";
-import { day } from "../money";
+import { companyDay } from "../money";
 import type { SignerAccount } from "../signers";
 import { signerLine, standingTone } from "../signers";
 import type { Member } from "../staff";
@@ -25,7 +25,7 @@ export function SignersCard({ me, members }: { me: Me; members: Member[] }) {
   const [accounts, setAccounts] = useState<SignerAccount[] | null>(null);
   const [error, setError] = useState("");
   const { said, error: refused, record } = useRecord(refresh);
-  const today = day(new Date());
+  const today = companyDay();
 
   function refresh() {
     api

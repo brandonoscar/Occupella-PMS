@@ -82,8 +82,9 @@ class Line:
     method: rent.Method | None
 
 
-def read(content: str) -> list[Line]:
-    """A file's lines, each a payment received by today; Bad names the first line that isn't."""
+def read(content: str, today: date) -> list[Line]:
+    """A file's lines, each a payment received by today (the company's day); Bad names the first
+    line that isn't."""
     found = switching.rows(content, ("date", "amount"))
     headers = set(found[0].cells) if found else set()
     picked = {
@@ -105,7 +106,7 @@ def read(content: str) -> list[Line]:
             )
         day = row.day("date")
         assert day is not None  # required
-        if day > rent.today():
+        if day > today:
             raise switching.Bad(f"line {row.line}: {us(day)} is still to come")
         cells = {
             what: (row.get(column, required=False) or None) if column else None
@@ -327,9 +328,9 @@ def came_in(conn: psycopg.Connection[Any], pmc_id: UUID, content: str) -> dateti
     return None if row is None else cast(datetime, row[0])
 
 
-def lines_of(content: str) -> list[Line]:
+def lines_of(conn: psycopg.Connection[Any], pmc_id: UUID, content: str) -> list[Line]:
     try:
-        return read(content)
+        return read(content, rent.today(conn, pmc_id))
     except switching.Bad as bad:
         raise HTTPException(422, str(bad)) from None
 
@@ -345,7 +346,7 @@ def money(amounts: list[Decimal]) -> str:
 @router.post("/preview")
 def preview(session: Staff, conn: Conn, new: NewFile) -> Preview:
     """What bringing the file in would do, line by line; nothing is written."""
-    lines = lines_of(new.content)
+    lines = lines_of(conn, session.pmc_id, new.content)
     shown = []
     for line in lines:
         found = find(conn, session.pmc_id, line, uuid4())
@@ -382,7 +383,7 @@ def preview(session: Staff, conn: Conn, new: NewFile) -> Preview:
 def bring_in(session: Staff, conn: Conn, new: NewFile) -> FileDetail:
     """Brings a file in once and records each line that names one lease the books take; the
     rest wait for staff, each with why."""
-    lines = lines_of(new.content)
+    lines = lines_of(conn, session.pmc_id, new.content)
     before = came_in(conn, session.pmc_id, new.content)
     if before is not None:
         raise HTTPException(409, f"this file came in on {us(before.date())}; it comes in once")

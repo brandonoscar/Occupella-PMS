@@ -169,7 +169,7 @@ def autopay_view(session: Tenant, conn: Conn, request: Request, lease_id: UUID) 
         available=reason is None,
         why_not=reason,
         fee_payer=chosen.ach_fee_payer,
-        next_due=next_due(conn, lease_id, rent.today()),
+        next_due=next_due(conn, lease_id, rent.today(conn, session.pmc_id)),
         autopays=autopays(conn, session.pmc_id, lease_id, mine),
     )
 

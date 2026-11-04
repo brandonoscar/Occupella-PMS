@@ -2,11 +2,13 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Company } from "../company";
+import { companyDay, setTimeZone } from "../money";
 import { SetupPage } from "./SetupPage";
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  setTimeZone("UTC"); // as src/testSetup.ts leaves it
 });
 
 const ME: Me = {
@@ -15,9 +17,14 @@ const ME: Me = {
 const ADDRESS = {
   address_line_1: "100 Example Street", address_line_2: "Suite 2", city: "Sampletown", state: "ZZ", postal_code: "00000",
 };
+const ZONES = [
+  { id: "America/New_York", name: "Eastern" },
+  { id: "America/Los_Angeles", name: "Pacific" },
+  { id: "UTC", name: "UTC" },
+];
 const BARE: Company = {
-  name: "Synthetic PMC", address: null, late_fees: null, nsf_fee: null, reply_to: null, terms_url: null, privacy_url: null,
-  logo: null,
+  name: "Synthetic PMC", address: null, late_fees: null, nsf_fee: null, reply_to: null, terms_url: null, privacy_url: null, logo: null,
+  time_zone: "America/New_York", time_zones: ZONES,
 };
 const FULL: Company = {
   name: "Synthetic PMC", address: ADDRESS,
@@ -26,6 +33,7 @@ const FULL: Company = {
   terms_url: "https://example.com/terms",
   privacy_url: "https://example.com/privacy",
   logo: { id: "d1", content_type: "image/png", uploaded_at: "2026-10-17T00:00:00Z" },
+  time_zone: "America/Los_Angeles", time_zones: ZONES,
 };
 
 function server(company: Company, refuse = "") {
@@ -58,6 +66,8 @@ describe("SetupPage", () => {
     expect(screen.getByTestId("default-late-fees").textContent).toBe("After 5 days' grace: $50.00");
     expect(screen.getByTestId("default-nsf-fee").textContent).toBe("NSF fee $35.00");
     expect(screen.getByTestId("reply-to").textContent).toBe("Replies to its emails go to office@example.com.");
+    expect(screen.getByTestId("time-zone").textContent).toBe(
+      "Time zone: Pacific (America/Los_Angeles). Payments, bills and statements are dated by its day.");
     expect(screen.getByRole("link", { name: "Settings" }).getAttribute("aria-current")).toBe("page");
   });
 
@@ -69,6 +79,8 @@ describe("SetupPage", () => {
     expect(screen.getByTestId("default-late-fees").textContent).toBe("No late fee terms");
     expect(screen.getByTestId("default-nsf-fee").textContent).toBe("No NSF fee");
     expect(screen.getByTestId("reply-to").textContent).toBe("Replies to its emails go to the server's From address.");
+    expect(screen.getByTestId("time-zone").textContent).toBe(
+      "Time zone: Eastern (America/New_York). Payments, bills and statements are dated by its day.");
     expect(screen.queryByRole("button", { name: "Remove logo" })).toBeNull();
   });
 
@@ -85,7 +97,30 @@ describe("SetupPage", () => {
       name: "Synthetic PMC 2", address: { ...ADDRESS, address_line_2: null },
       late_fees: FULL.late_fees, nsf_fee: "35.00", reply_to: "office@example.com",
       terms_url: "https://example.com/terms", privacy_url: "https://example.com/privacy",
+      time_zone: "America/Los_Angeles",
     }]]);
+  });
+
+  it("picks the company's time zone in the side panel", async () => {
+    const fetch = server(BARE);
+    render(<SetupPage me={ME} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit company" }));
+    const zone = within(panel()).getByLabelText("Time zone");
+    expect((zone as HTMLSelectElement).value).toBe("America/New_York");
+    expect([...(zone as HTMLSelectElement).options].map((o) => o.textContent)).toEqual([
+      "Eastern (America/New_York)", "Pacific (America/Los_Angeles)", "UTC",
+    ]);
+    expect(companyDay(new Date("2026-11-01T06:30:00Z"))).toBe("2026-11-01"); // still UTC's
+    type("Time zone", "America/Los_Angeles");
+    fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(1));
+    expect(posted(fetch)[0]?.[1]).toMatchObject({ time_zone: "America/Los_Angeles" });
+    // The page reads the company again and every page's "today" is now the company's day there.
+    cleanup();
+    server({ ...BARE, time_zone: "America/Los_Angeles" });
+    render(<SetupPage me={ME} />);
+    expect(await screen.findByTestId("time-zone")).toBeTruthy();
+    expect(companyDay(new Date("2026-11-01T06:30:00Z"))).toBe("2026-10-31");
   });
 
   it("sets where replies to the company's emails go, or clears it", async () => {
@@ -155,7 +190,7 @@ describe("SetupPage", () => {
     expect(posted(fetch)).toEqual([["/api/company", {
       name: "Synthetic PMC", address: null,
       late_fees: { grace_days: 3, flat_fee: "25.00", percent: "0", maximum: null }, nsf_fee: "35.00", reply_to: null,
-      terms_url: null, privacy_url: null,
+      terms_url: null, privacy_url: null, time_zone: "America/New_York",
     }]]);
     cleanup();
 

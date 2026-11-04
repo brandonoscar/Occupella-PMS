@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -27,7 +27,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import exports, statements
+from pms import days, exports, statements
 from pms.api import deps, payables
 from pms.api.deps import Conn, Staff, refusal
 
@@ -996,7 +996,7 @@ def prepare(session: Staff, conn: Conn, bank_account_id: UUID, preparation: Prep
         raise HTTPException(422, "import a statement first")
     if preparation.through < start:
         raise HTTPException(422, f"the next period starts on {start}")
-    if preparation.through >= datetime.now(UTC).date():
+    if preparation.through >= days.today(conn, session.pmc_id):
         raise HTTPException(422, "prepare a period once its last day has ended")
     try:
         made = one(

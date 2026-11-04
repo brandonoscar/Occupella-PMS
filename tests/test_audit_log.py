@@ -51,7 +51,7 @@ NOT_AUDITED = {
 
 @pytest.fixture
 def pmc(conn):
-    return make_pmc(conn)
+    return make_pmc(conn, time_zone=None)  # its profile is no row the AI reads
 
 
 def log(conn, pmc, after=0):

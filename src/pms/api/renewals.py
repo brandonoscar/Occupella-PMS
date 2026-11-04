@@ -53,7 +53,7 @@ def renewals(
         "    AND p.display_name = r.property)"
         " FROM trust_report_lease_expirations(%(pmc)s, %(on)s) AS r"
         " WHERE r.item = 'lease' ORDER BY r.line",
-        {"pmc": session.pmc_id, "on": on or today()},
+        {"pmc": session.pmc_id, "on": on or today(conn, session.pmc_id)},
     ).fetchall()
     return [
         Expiring(
@@ -173,7 +173,7 @@ def renewal_plan(
 ) -> RenewalPlan:
     """What renewing a lease starts from: its rent now, the new term's first day, who signs, and
     the written notice the property's state asks before the new rent (ADR 0010 phase 3)."""
-    day = today()
+    day = today(conn, session.pmc_id)
     pmc = session.pmc_id
     found = conn.execute(LEASE, {"pmc": pmc, "lease": lease_id, "day": day}).fetchone()
     if found is None:

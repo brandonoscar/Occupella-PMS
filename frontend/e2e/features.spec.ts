@@ -2808,6 +2808,42 @@ test("staff require renters insurance on a lease, Today flags it, the tenant rec
   );
 });
 
+// The day in a time zone, as YYYY-MM-DD.
+const dayIn = (timeZone: string) => {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" })
+    .formatToParts(new Date());
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+};
+
+test("staff pick the company's time zone in Company setup, and a payment's day is the company's day there", async ({ page }) => {
+  const people = seed.features["time-zone"]!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Company setup");
+  // The browser tests' companies keep UTC's day (frontend/e2e/seed.py); a new one is Eastern.
+  await expect(page.getByTestId("time-zone")).toHaveText("Time zone: UTC. Payments, bills and statements are dated by its day.");
+  await page.getByRole("button", { name: "Edit company" }).click();
+  const editing = page.getByRole("dialog", { name: "Edit company" });
+  await editing.getByLabel("Time zone").selectOption({ label: "Hawaii (Pacific/Honolulu)" });
+  await editing.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("time-zone")).toHaveText(
+    "Time zone: Hawaii (Pacific/Honolulu). Payments, bills and statements are dated by its day.",
+  );
+
+  // Receive payment starts on the company's day in Hawaii, ten hours behind UTC, and so does the
+  // payment it records.
+  const hawaii = dayIn("Pacific/Honolulu");
+  await openLease(page, "Aspen Row, Unit 1");
+  const paying = await leasePanel(page, "Receive payment");
+  await expect(paying.getByLabel("Received on")).toHaveValue(hawaii);
+  await paying.getByLabel("Payment received").fill("100.00");
+  await paying.getByLabel("Check or reference").fill("Check 9001");
+  await paying.getByRole("button", { name: "Record payment" }).click();
+  await leaseTab(page, "Ledger");
+  const received = page.getByRole("table", { name: "Payments received" });
+  await expect(received.getByRole("row", { name: /Check 9001/ })).toContainText(us(hawaii));
+});
+
 // A 1x1 PNG, synthetic, for the company's logo.
 const LOGO = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64");
 

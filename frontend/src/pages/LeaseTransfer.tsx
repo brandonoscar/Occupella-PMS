@@ -5,7 +5,7 @@ import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
-import { day, money, sumMoney } from "../money";
+import { companyDay, money, sumMoney } from "../money";
 import { requestId } from "../rent";
 import type { LeaseDetail } from "../rentals";
 import { navigate } from "../router";
@@ -41,7 +41,7 @@ export function TransferForm({ lease, record }: { lease: LeaseDetail; record: Re
   const [books, setBooks] = useState<Portfolio | null>(null);
   const [error, setError] = useState("");
   const [unit, setUnit] = useState("");
-  const [movedOn, setMovedOn] = useState(day(new Date()));
+  const [movedOn, setMovedOn] = useState(companyDay());
   const [endsOn, setEndsOn] = useState("");
   const [rent, setRent] = useState(lease.monthly_rent);
   const [dueDay, setDueDay] = useState(String(lease.rent_due_day));

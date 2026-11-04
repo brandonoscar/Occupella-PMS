@@ -144,7 +144,7 @@ def unit_tax_credit(session: Staff, conn: Conn, unit_id: UUID) -> UnitTaxCredit:
         Designation(starts_on=s, income_percent=p, bedrooms=b, utility_allowance=money(a))
         for s, p, b, a in rows
     ]
-    day = rent.today()
+    day = rent.today(conn, session.pmc_id)
     current = next((d for d in designations if d.starts_on <= day), None)
     if current is None or current.income_percent is None:
         return UnitTaxCredit(in_force=None, max_gross_rent=None, designations=designations)
@@ -181,7 +181,13 @@ def lease_tax_credit(session: Staff, conn: Conn, lease_id: UUID) -> LeaseTaxCred
         " JOIN trust_report_tax_credit_compliance(%s, %s) AS r ON r.unit_id = l.unit_id"
         " WHERE l.id = %s AND r.item = 'unit' AND r.tenants IS NOT NULL"
         " AND l.starts_on <= %s AND (l.ends_on IS NULL OR l.ends_on >= %s)",
-        (session.pmc_id, rent.today(), lease_id, rent.today(), rent.today()),
+        (
+            session.pmc_id,
+            rent.today(conn, session.pmc_id),
+            lease_id,
+            rent.today(conn, session.pmc_id),
+            rent.today(conn, session.pmc_id),
+        ),
     ).fetchone()
     if row is None:
         return None

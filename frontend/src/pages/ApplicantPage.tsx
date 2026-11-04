@@ -17,7 +17,7 @@ import { latest } from "../latest";
 import type { Application, Decision } from "../leasing";
 import { againstScreening, applicantNames, applicationBadge, incomeMultiple, needsNotice, recommendationLabel } from "../leasing";
 import { when } from "../maintenance";
-import { day, money, usDate } from "../money";
+import { companyDay, money, usDate } from "../money";
 import { DetailsList, HouseholdList } from "./ApplicantDetails";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
@@ -222,7 +222,7 @@ function DecideForm({ application, rejecting, record }: {
   const [screening, setScreening] = useState(last?.id ?? "");
   const [conditions, setConditions] = useState("");
   const [reasons, setReasons] = useState(last?.reasons.join("\n") ?? "");
-  const [noticeOn, setNoticeOn] = useState(day(new Date()));
+  const [noticeOn, setNoticeOn] = useState(companyDay());
   const [why, setWhy] = useState("");
   const notice = needsNotice(decision, screening || null);
   const emailing = useNoticeEmails();

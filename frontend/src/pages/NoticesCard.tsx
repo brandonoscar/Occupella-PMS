@@ -7,7 +7,7 @@ import { Notice } from "../components/Notice";
 import { Said } from "../components/Said";
 import { Select } from "../components/Select";
 import { Card } from "../components/Shell";
-import { day, usDate } from "../money";
+import { companyDay, usDate } from "../money";
 import type { Filled, MadeNotice, Templates } from "../notices";
 import { GoLink } from "./NeedsAttention";
 
@@ -23,7 +23,7 @@ export function NoticesCard({ leaseId }: { leaseId: string }) {
   const [templates, setTemplates] = useState<Templates | null>(null);
   const [writing, setWriting] = useState(false);
   const [template, setTemplate] = useState("");
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const [filled, setFilled] = useState<Filled | null>(null);
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");

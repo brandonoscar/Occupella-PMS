@@ -24,7 +24,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from pms import exports
+from pms import days, exports
 from pms.api import documents
 from pms.api.deps import Conn, Current, Staff
 from pms.api.directory import City, PostalCode, State, Street
@@ -77,6 +77,11 @@ class Logo(BaseModel):
     uploaded_at: datetime
 
 
+class Zone(BaseModel):
+    id: str
+    name: str
+
+
 class Company(BaseModel):
     name: str
     address: Address | None
@@ -89,6 +94,10 @@ class Company(BaseModel):
     terms_url: str | None
     privacy_url: str | None
     logo: Logo | None
+    # Its time zone (src/pms/days.py): its day is the date there. America/New_York until it picks.
+    time_zone: str
+    # The time zones it may pick, each with the name Company setup shows.
+    time_zones: list[Zone]
 
 
 class Card(BaseModel):
@@ -103,7 +112,7 @@ class Card(BaseModel):
 
 def profile(conn: psycopg.Connection[Any], pmc_id: UUID) -> dict[str, Any]:
     """The latest profile row's fields (all None when there is none)."""
-    fields = (*ADDRESS, *LATE, "nsf_fee", "reply_to", *LEGAL)
+    fields = (*ADDRESS, *LATE, "nsf_fee", "reply_to", *LEGAL, "time_zone")
     row = conn.execute(
         f"SELECT {', '.join(fields)} FROM trust_company_profiles WHERE pmc_id = %s"  # noqa: S608
         " ORDER BY created_at DESC, id DESC LIMIT 1",
@@ -172,6 +181,8 @@ def company_of(conn: psycopg.Connection[Any], pmc_id: UUID) -> Company:
         terms_url=found["terms_url"],
         privacy_url=found["privacy_url"],
         logo=logo_of(conn, pmc_id),
+        time_zone=found["time_zone"] or days.DEFAULT,
+        time_zones=[Zone(id=zone, name=name) for zone, name in days.ZONES.items()],
     )
 
 
@@ -189,18 +200,25 @@ class NewCompany(BaseModel):
     reply_to: ReplyTo | None = None
     terms_url: Link | None = None
     privacy_url: Link | None = None
+    # Left out, the time zone stays as it is.
+    time_zone: days.TimeZone | None = None
 
 
 @router.post("")
 def save_company(session: Staff, conn: Conn, new: NewCompany) -> Company:
-    """Renames the company if its name changed, and keeps its address and default fee terms as a
-    new profile row if they changed; saving the same again writes nothing."""
+    """Renames the company if its name changed, and keeps its address, default fee terms and time
+    zone as a new profile row if they changed; saving the same again writes nothing."""
     if new.name != name_of(conn, session.pmc_id):
         conn.execute(
             "UPDATE trust_pmcs SET display_name = %s WHERE pmc_id = %s", (new.name, session.pmc_id)
         )
     address = new.address.model_dump() if new.address else dict.fromkeys(ADDRESS)
     late = new.late_fees
+    current = profile(conn, session.pmc_id)
+    # America/New_York picked by a company that never picked a zone is no change.
+    zone = new.time_zone or current["time_zone"]
+    if current["time_zone"] is None and zone == days.DEFAULT:
+        zone = None
     wanted: dict[str, Any] = {
         **address,
         "late_grace_days": late.grace_days if late else None,
@@ -211,8 +229,9 @@ def save_company(session: Staff, conn: Conn, new: NewCompany) -> Company:
         "reply_to": new.reply_to,
         "terms_url": new.terms_url,
         "privacy_url": new.privacy_url,
+        "time_zone": zone,
     }
-    if wanted != profile(conn, session.pmc_id):
+    if wanted != current:
         columns = list(wanted)
         conn.execute(
             f"INSERT INTO trust_company_profiles (pmc_id, {', '.join(columns)})"  # noqa: S608

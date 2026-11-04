@@ -49,7 +49,7 @@ THE_BILL = "(SELECT id FROM trust_bills WHERE pmc_id = %s AND reference = 'INV-1
 def books(conn):
     """A PMC with a month of activity: rent received and matched to its charge, a reconciled
     January. (pmc, lease id, charge id, rent transfer id, reconciliation id)."""
-    pmc = make_pmc(conn)
+    pmc = make_pmc(conn, time_zone=None)  # its profile is no row the AI reads
     tenant = conn.execute(
         "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
         (pmc.tenant_deposit,),

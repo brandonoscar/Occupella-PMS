@@ -9,7 +9,7 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import type { ContentType } from "../documents";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
-import { day, money, sumMoney, usDate } from "../money";
+import { companyDay, money, sumMoney, usDate } from "../money";
 import type { Bill, PayoutMethod, SimilarBill } from "../payables";
 import { evenShares, linesNote, similarNote } from "../payables";
 import type { Portfolio } from "../setup";
@@ -173,8 +173,8 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
   const [account, setAccount] = useState(
     books.accounts.find((a) => a.property_id === start?.propertyId)?.account ?? books.accounts[0]?.account ?? "");
   const [reference, setReference] = useState("");
-  const [dated, setDated] = useState(day(new Date()));
-  const [due, setDue] = useState(day(new Date()));
+  const [dated, setDated] = useState(companyDay());
+  const [due, setDue] = useState(companyDay());
   const [amount, setAmount] = useState("");
   const [memo, setMemo] = useState(start?.memo ?? "");
   const [expense, setExpense] = useState("");
@@ -340,7 +340,7 @@ const APPROVAL_METHODS = [
 ] as const;
 
 export function ApprovalForm({ bill, record }: { bill: Bill; record: Recorder }) {
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const [method, setMethod] = useState("");
   const [note, setNote] = useState("");
   return (
@@ -375,7 +375,7 @@ export function ApprovalForm({ bill, record }: { bill: Bill; record: Recorder })
 
 // The owner's decline as they gave it to staff: the bill is void, never paid.
 export function DeclineForm({ bill, record }: { bill: Bill; record: Recorder }) {
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const [by, setBy] = useState("");
   const [why, setWhy] = useState("");
   return (
@@ -402,7 +402,7 @@ export function DeclineForm({ bill, record }: { bill: Bill; record: Recorder }) 
 // staff confirm the amount first. The PMS records it; it sends nothing. Sent again (a retry), the
 // same request id records nothing new.
 export function PayForm({ bill, record }: { bill: Bill; record: Recorder }) {
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const [method, setMethod] = useState<PayoutMethod>("check");
   const [number, setNumber] = useState("");
   const [amount, setAmount] = useState(bill.left);

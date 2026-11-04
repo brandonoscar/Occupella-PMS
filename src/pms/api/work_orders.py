@@ -122,8 +122,8 @@ class WorkOrderRow(BaseModel):
     days_open: int
 
 
-def rows_of(found: list[tuple]) -> list[WorkOrderRow]:  # type: ignore[type-arg]
-    day = today()
+def rows_of(found: list[tuple], day: date) -> list[WorkOrderRow]:  # type: ignore[type-arg]
+    """The rows found, their days open counted to `day` (the company's today)."""
     return [
         WorkOrderRow(
             id=i,
@@ -212,7 +212,10 @@ def work_orders(
         ),
     ).fetchall()
     return Paged(
-        items=rows_of(found), total=found[0][-1] if found else 0, page=page, per_page=per_page
+        items=rows_of(found, today(conn, session.pmc_id)),
+        total=found[0][-1] if found else 0,
+        page=page,
+        per_page=per_page,
     )
 
 
@@ -223,7 +226,8 @@ def assigned_to(conn: psycopg.Connection[Any], pmc: UUID, vendor: UUID) -> list[
         conn.execute(
             WORK_ORDERS.format(where="a.vendor_id = %(vendor)s"),
             query(pmc=pmc, vendor=vendor, per_page=500, offset=0),
-        ).fetchall()
+        ).fetchall(),
+        today(conn, pmc),
     )
 
 
@@ -345,7 +349,7 @@ def work_order(session: Staff, conn: Conn, work_order_id: UUID) -> WorkOrder:
     ).fetchall()
     if not found:
         raise HTTPException(404, "no such work order")
-    (row,) = rows_of(found)
+    (row,) = rows_of(found, today(conn, session.pmc_id))
     description, entry = found[0][13], found[0][14]
     steps = [
         StepOut(
@@ -396,10 +400,10 @@ def work_order(session: Staff, conn: Conn, work_order_id: UUID) -> WorkOrder:
             " JOIN trust_lease_tenants AS lt ON lt.lease_id = l.id"
             " JOIN trust_tenants AS t ON t.id = lt.tenant_id"
             ' WHERE w.id = %s ORDER BY t.display_name COLLATE "C", t.id',
-            (today(), today(), work_order_id),
+            (today(conn, session.pmc_id), today(conn, session.pmc_id), work_order_id),
         ).fetchall()
     ]
-    asked = {"pmc": session.pmc_id, "order": work_order_id, "day": today()}
+    asked = {"pmc": session.pmc_id, "order": work_order_id, "day": today(conn, session.pmc_id)}
     charges = [
         TenantCharge(
             id=i,

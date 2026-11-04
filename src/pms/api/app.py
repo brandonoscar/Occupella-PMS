@@ -30,7 +30,7 @@ import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
@@ -47,7 +47,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from pms import accounts, email, exports, geocoding, nightly, payments, phones
+from pms import accounts, days, email, exports, geocoding, nightly, payments, phones
 from pms.api import (
     addresses,
     announcements,
@@ -240,6 +240,9 @@ class Me(BaseModel):
     areas: list[str]
     # Whether this server sends email (PMS_EMAIL_SENDER); without it, emails wait in the outbox.
     email_on: bool
+    # The company's time zone and its day now (src/pms/days.py): the portal's "today".
+    time_zone: str
+    today: date
 
 
 class InviteLink(BaseModel):
@@ -423,6 +426,8 @@ def create_app(settings: Settings) -> FastAPI:
             roles=staff.roles_of(conn, session) if session.kind == "staff" else [],
             areas=custom_roles.areas_of(conn, session) if session.kind == "staff" else [],
             email_on=app.state.email is not None,
+            time_zone=days.time_zone(conn, session.pmc_id),
+            today=days.today(conn, session.pmc_id),
         )
 
     @app.get("/health")

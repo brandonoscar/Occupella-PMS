@@ -4,7 +4,7 @@ import { Button, LinkButton } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
-import { money } from "../money";
+import { companyDate, money } from "../money";
 import type { YearEnd, YearEndData } from "../yearEnd";
 import { groupYearEnd, partLabel, thisYear } from "../yearEnd";
 import { Form } from "../components/Form";
@@ -16,7 +16,7 @@ const AMOUNT = "text-right";
 // The signed-in owner's year-end package: the year per property and across them, the rents for
 // their 1099-MISC, and the year's whole statement to download. The PMS files nothing.
 export function OwnerYearEnd() {
-  const [year, setYear] = useState(String(thisYear(new Date())));
+  const [year, setYear] = useState(String(thisYear(companyDate())));
   const [shown, setShown] = useState<YearEnd | null>(null);
   const [error, setError] = useState("");
 

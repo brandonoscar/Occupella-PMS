@@ -10,5 +10,6 @@ export default defineConfig({
     proxy: { "/api": "http://127.0.0.1:8000", "/health": "http://127.0.0.1:8000" },
   },
   build: { outDir: "dist", sourcemap: false },
-  test: { environment: "jsdom", include: ["src/**/*.test.ts", "src/**/*.test.tsx"] },
+  // Each test's "today" is UTC's, as its expectations count it (src/testSetup.ts).
+  test: { environment: "jsdom", include: ["src/**/*.test.ts", "src/**/*.test.tsx"], setupFiles: ["src/testSetup.ts"] },
 });

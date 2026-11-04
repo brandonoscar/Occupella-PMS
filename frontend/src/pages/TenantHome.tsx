@@ -14,7 +14,7 @@ import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
 import type { MaintenanceRequest } from "../maintenance";
 import { CATEGORIES, EMERGENCY_FIRST, PHOTOS_PER_REQUEST, photosProblem } from "../maintenance";
 import { TenantRequest } from "./TenantRequest";
-import { day, money, sumMoney, usDate, usDatesIn } from "../money";
+import { companyDay, money, sumMoney, usDate, usDatesIn } from "../money";
 import type { DepositAsked, Paid, RentersInsurance } from "../rent";
 import { dueDayLabel, insuranceLine, tenantDepositLine } from "../rent";
 import { PolicyForm } from "./InsuranceForms";
@@ -323,8 +323,8 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
     <Shell me={me} nav={TENANT_NAV}>
       <PageHeader title={heading || `Welcome, ${firstName(me.name)}`} description={description} />
       <Notice tone="error">{error}</Notice>
-      {section === "overview" && lease && rentChangeNotice(lease, day(new Date())) && (
-        <Notice tone="info">{rentChangeNotice(lease, day(new Date()))}</Notice>
+      {section === "overview" && lease && rentChangeNotice(lease, companyDay()) && (
+        <Notice tone="info">{rentChangeNotice(lease, companyDay())}</Notice>
       )}
       {section === "overview" && <AnnouncementsCard />}
       {!leaseSection ? null : leases === null ? (
@@ -346,7 +346,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                   onChange={(e) => setChosen(e.target.value)}
                 >
                   {leases.map((l) => (
-                    <option key={l.lease_id} value={l.lease_id}>{leaseLabel(l, day(new Date()))}</option>
+                    <option key={l.lease_id} value={l.lease_id}>{leaseLabel(l, companyDay())}</option>
                   ))}
                 </select>
               </label>
@@ -421,7 +421,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                   <p className="text-sm text-ink-subtle">Each month</p>
                   <ul className="mb-4 flex flex-col gap-1 text-base">
                     {lease.each_month.map((item) => (
-                      <li key={`${item.what}-${item.starts_on}`}>{eachMonthLabel(item, lease, day(new Date()))}</li>
+                      <li key={`${item.what}-${item.starts_on}`}>{eachMonthLabel(item, lease, companyDay())}</li>
                     ))}
                   </ul>
                 </>
@@ -447,7 +447,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
           {/* A renewal waiting to be signed shows on the Overview too; with none it shows nothing. */}
           {(section === "lease" || section === "overview") && <RenewalsCard me={me} />}
 
-          {section === "lease" && (lease.ends_on === null || lease.ends_on >= day(new Date())) && (
+          {section === "lease" && (lease.ends_on === null || lease.ends_on >= companyDay()) && (
             <MoveOutNoticeCard leaseId={lease.lease_id} company={me.pmc_name}
               notice={lease.move_out_notice ?? null}
               onGiven={(given) => setLeases((all) => all && all.map((l) =>
@@ -463,7 +463,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                 onChange={(e) => setChosen(e.target.value)}
               >
                 {leases.map((l) => (
-                  <option key={l.lease_id} value={l.lease_id}>{leaseLabel(l, day(new Date()))}</option>
+                  <option key={l.lease_id} value={l.lease_id}>{leaseLabel(l, companyDay())}</option>
                 ))}
               </select>
             </label>

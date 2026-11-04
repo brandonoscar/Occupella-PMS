@@ -181,7 +181,7 @@ def vendors(
             w9_on_file=v.w9_on_file,
             insurance=v.standing,
         )
-        for v in coverage(conn, session.pmc_id, on or today())
+        for v in coverage(conn, session.pmc_id, on or today(conn, session.pmc_id))
         if v.archived == archived
     ]
     start = (page - 1) * per_page
@@ -329,7 +329,14 @@ class VendorPage(VendorOut):
 def vendor_page(session: Staff, conn: Conn, vendor_id: UUID) -> VendorPage:
     """A vendor: their W-9, coverage today, contact details, bills newest first and the work
     orders they were last assigned."""
-    found = next((v for v in coverage(conn, session.pmc_id, today()) if v.id == vendor_id), None)
+    found = next(
+        (
+            v
+            for v in coverage(conn, session.pmc_id, today(conn, session.pmc_id))
+            if v.id == vendor_id
+        ),
+        None,
+    )
     if found is None:
         raise HTTPException(404, "no such vendor")
     bills = [

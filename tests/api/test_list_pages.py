@@ -13,7 +13,7 @@ SHOWS = ("current", "future", "past", "owing", "all")
 def test_the_rent_roll_a_lease_a_page_is_the_whole_roll_in_order(app_conn):
     built = demo.books(app_conn)
     # This month's rent, so leases owe; the demo's bounce (paid again since) counts in each sum.
-    nightly.run_pmc(app_conn, built.pmc_id, rent.today(), "http://testserver")
+    nightly.run_pmc(app_conn, built.pmc_id, rent.today(app_conn, built.pmc_id), "http://testserver")
     with demo.Builder(app_conn, built.pmc_id).as_staff(built.manager) as s:
         reversed_ = app_conn.execute(
             "SELECT count(*) FROM trust_payment_reversals AS r"

@@ -178,7 +178,7 @@ def record_deposit(session: Staff, conn: Conn, bank_account_id: UUID, new: NewDe
     """Records a deposit of what was ticked, all of it or none: each transfer brought money into
     this account by the day of the deposit, and is in no other deposit."""
     bank_of(conn, session.pmc_id, bank_account_id)
-    if new.deposited_on > today():
+    if new.deposited_on > today(conn, session.pmc_id):
         raise HTTPException(422, "a deposit is recorded on the day it went in, not a later one")
     if len(set(new.transfer_ids)) != len(new.transfer_ids):
         raise HTTPException(422, "each payment goes in a deposit once")

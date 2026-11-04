@@ -48,9 +48,23 @@ def logo(client, content=PNG, content_type="image/png"):
 
 
 def rows(conn, pmc):
+    """The profile rows saved here: past the one make_pmc writes (its time zone, UTC)."""
     return conn.execute(
-        "SELECT count(*) FROM trust_company_profiles WHERE pmc_id = %s", (pmc.pmc_id,)
+        "SELECT count(*) - 1 FROM trust_company_profiles WHERE pmc_id = %s", (pmc.pmc_id,)
     ).fetchone()[0]
+
+
+ZONES = [
+    {"id": "America/New_York", "name": "Eastern"},
+    {"id": "America/Chicago", "name": "Central"},
+    {"id": "America/Denver", "name": "Mountain"},
+    {"id": "America/Phoenix", "name": "Arizona"},
+    {"id": "America/Los_Angeles", "name": "Pacific"},
+    {"id": "America/Anchorage", "name": "Alaska"},
+    {"id": "Pacific/Honolulu", "name": "Hawaii"},
+    {"id": "America/Puerto_Rico", "name": "Atlantic (Puerto Rico)"},
+    {"id": "UTC", "name": "UTC"},
+]
 
 
 def test_a_company_starts_with_its_name_alone(client, staff, pmc, conn):
@@ -66,7 +80,46 @@ def test_a_company_starts_with_its_name_alone(client, staff, pmc, conn):
         "terms_url": None,
         "privacy_url": None,
         "logo": None,
+        "time_zone": "UTC",
+        "time_zones": ZONES,
     }
+
+
+def test_a_company_that_picked_no_time_zone_is_in_new_york(client, conn, app_conn):
+    """A company without a profile row (src/pms/days.py): America/New_York, and its day there."""
+    pmc = make_pmc(conn, time_zone=None)
+    join_as_staff(client, conn, app_conn, pmc)
+    assert ok(client.get("/api/company"))["time_zone"] == "America/New_York"
+    me = ok(client.get("/api/me"))
+    assert me["time_zone"] == "America/New_York"
+    eastern = conn.execute("SELECT (now() AT TIME ZONE 'America/New_York')::date").fetchone()[0]
+    assert me["today"] == str(eastern)
+    # Picking New York, the zone it is in already, is no change: nothing is written.
+    ok(save(client, time_zone="America/New_York"))
+    assert conn.execute(
+        "SELECT count(*) FROM trust_company_profiles WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone() == (0,)
+
+
+def test_a_company_picks_its_time_zone_and_its_day_follows_it(client, staff, pmc, conn):
+    saved = ok(save(client, time_zone="Pacific/Honolulu"))
+    assert saved["time_zone"] == "Pacific/Honolulu"
+    assert rows(conn, pmc) == 1
+    hawaii = conn.execute("SELECT (now() AT TIME ZONE 'Pacific/Honolulu')::date").fetchone()[0]
+    me = ok(client.get("/api/me"))
+    assert (me["time_zone"], me["today"]) == ("Pacific/Honolulu", str(hawaii))
+    # The same again writes nothing, and a save that leaves it out keeps it.
+    ok(save(client, time_zone="Pacific/Honolulu"))
+    assert ok(save(client))["time_zone"] == "Pacific/Honolulu"
+    assert rows(conn, pmc) == 1
+    assert ok(save(client, time_zone="America/Chicago"))["time_zone"] == "America/Chicago"
+    assert rows(conn, pmc) == 2
+    # The audit log names who changed it.
+    assert conn.execute(
+        "SELECT count(*) FROM trust_audit_log WHERE table_name = 'trust_company_profiles'"
+        " AND staff_id = %s AND row_data ->> 'time_zone' = 'America/Chicago'",
+        (staff.person_id,),
+    ).fetchone() == (1,)
 
 
 def test_replies_to_the_companys_emails_go_to_its_own_email(client, staff, pmc, conn):
@@ -283,6 +336,9 @@ def test_nobody_signed_out_sees_the_card_or_logo(client, pmc):
         {"terms_url": "javascript:alert(1)"},
         {"privacy_url": "https://example.com/a privacy notice"},
         {"privacy_url": "https://example.com/" + "p" * 500},
+        {"time_zone": "Europe/London"},
+        {"time_zone": "America/Nowhere"},
+        {"time_zone": ""},
     ],
 )
 def test_a_bad_company_is_refused(client, staff, pmc, conn, body):

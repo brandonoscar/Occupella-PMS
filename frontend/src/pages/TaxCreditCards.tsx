@@ -11,7 +11,7 @@ import { Select } from "../components/Select";
 import { Card } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
-import { day, money, usDate } from "../money";
+import { companyDay, money, usDate } from "../money";
 import type { LeaseTaxCredit, TaxCreditLimits, UnitTaxCredit } from "../taxCredit";
 import {
   HOUSEHOLDS, INCOME_PERCENTS, bedroomsLabel, designationLine, grossLine, incomeTone, rentTone,
@@ -96,7 +96,7 @@ export function TaxCreditLimitsCard({ propertyId }: { propertyId: string }) {
 }
 
 function LimitsForm({ propertyId, record }: { propertyId: string; record: Recorder }) {
-  const [from, setFrom] = useState(day(new Date()));
+  const [from, setFrom] = useState(companyDay());
   const [values, setValues] = useState<string[]>(HOUSEHOLDS.map(() => ""));
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
@@ -169,7 +169,7 @@ export function TaxCreditUnitCard({ unitId }: { unitId: string }) {
 }
 
 function DesignationForm({ unitId, record }: { unitId: string; record: Recorder }) {
-  const [from, setFrom] = useState(day(new Date()));
+  const [from, setFrom] = useState(companyDay());
   const [percent, setPercent] = useState("60");
   const [bedrooms, setBedrooms] = useState("1");
   const [allowance, setAllowance] = useState("");

@@ -16,7 +16,7 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
-import { day, money, usDate } from "../money";
+import { companyDay, money, usDate } from "../money";
 import type { Paged } from "../rentals";
 import { navigate } from "../router";
 import { scopeParams, useScope } from "../scope";
@@ -245,7 +245,7 @@ function RecurringPanel({ opened }: { opened: () => void }) {
 }
 
 function RecurringRow({ item, record }: { item: RecurringWorkOrder; record: Recorder }) {
-  const [ends, setEnds] = useState(day(new Date()));
+  const [ends, setEnds] = useState(companyDay());
   return (
     <li className="flex flex-col gap-2 py-3" aria-label={item.summary}>
       <p className="text-base text-ink">{recurringLine(item)}</p>
@@ -276,7 +276,7 @@ function NewRecurringForm({ books, record, opened }: { books: Portfolio; record:
   const [summary, setSummary] = useState("");
   const [months, setMonths] = useState("3");
   const [dayOfMonth, setDayOfMonth] = useState("1");
-  const [starts, setStarts] = useState(day(new Date()));
+  const [starts, setStarts] = useState(companyDay());
   const [priority, setPriority] = useState<Priority>("normal");
   const [vendor, setVendor] = useState("");
   if (books.properties.length === 0) return <Notice tone="info">Add a property from Properties first.</Notice>;
@@ -636,7 +636,7 @@ export function WorkOrderPage({ me, id }: { me: Me; id: string }) {
 function ChargeForm({ order, record }: { order: WorkOrder; record: Recorder }) {
   const [lease, setLease] = useState(order.leases[0]?.id ?? "");
   const [amount, setAmount] = useState("");
-  const [due, setDue] = useState(day(new Date()));
+  const [due, setDue] = useState(companyDay());
   const [memo, setMemo] = useState(`Work order #${order.number}: ${order.summary}`.slice(0, 200));
   const chosen = order.leases.find((l) => l.id === lease);
   return (

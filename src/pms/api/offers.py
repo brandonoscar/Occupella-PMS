@@ -457,7 +457,7 @@ def from_template(
         + (" (a credit)" if c.kind == "credit" else "")
         for c in new.recurring_charges
     ]
-    today = rent.today()
+    today = rent.today(conn, pmc_id)
     street = company.street_of(conn, pmc_id)
     values = {
         "tenant_names": notice_letters.names([n for n, _, role in people if role == "tenant"]),
@@ -610,7 +610,7 @@ def leases(session: Staff, conn: Conn) -> list[LeaseOut]:
         '       WHERE lt.lease_id = l.id ORDER BY t.display_name COLLATE "C", t.id)'
         " FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id"
         " JOIN trust_properties AS p ON p.id = u.property_id"
-        " WHERE l.pmc_id = %s AND (l.ends_on IS NULL OR l.ends_on >= current_date)"
+        " WHERE l.pmc_id = %s AND (l.ends_on IS NULL OR l.ends_on >= trust_pmc_day(l.pmc_id))"
         ' ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.starts_on',
         (session.pmc_id,),
     ).fetchall()

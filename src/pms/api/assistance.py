@@ -91,7 +91,7 @@ def authorities_of(
     return [
         Authority(id=i, name=n, leases=count, owed=rent.cents(owed))
         for i, n, count, owed in conn.execute(
-            AUTHORITIES, {"pmc": pmc_id, "day": rent.today(), "id": authority_id}
+            AUTHORITIES, {"pmc": pmc_id, "day": rent.today(conn, pmc_id), "id": authority_id}
         ).fetchall()
     ]
 
@@ -290,7 +290,7 @@ def compliance_of(conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID) -
             INSPECTIONS, (pmc_id, lease_id)
         ).fetchall()
     ]
-    day = rent.today()
+    day = rent.today(conn, pmc_id)
     # Each list is the latest first, so the first one in effect today holds, as in the report.
     certified = next((c for c in certifications if c.effective_on <= day), None)
     inspected = next((i for i in inspections if i.inspected_on <= day), None)
@@ -349,7 +349,7 @@ def lease_assistance(session: Staff, conn: Conn, lease_id: UUID) -> LeaseAssista
         " trust_rent_on(l.id, d.day)"
         " FROM trust_leases AS l, LATERAL (SELECT greatest(%s, l.starts_on) AS day) AS d"
         " WHERE l.id = %s",
-        (rent.today(), lease_id),
+        (rent.today(conn, session.pmc_id), lease_id),
     ).fetchone()
     assert row is not None
     in_force = next((t for t in terms if t.id == row[0]), None)
@@ -547,7 +547,7 @@ def inspect(session: Staff, conn: Conn, lease_id: UUID, new: NewInspection) -> C
     """The home's inspection for its housing authority, once it happened: passed, with the day
     the next is due, or failed, with the day it must pass a reinspection by."""
     rent.lease_of(conn, session.pmc_id, lease_id)
-    if new.inspected_on > rent.today():
+    if new.inspected_on > rent.today(conn, session.pmc_id):
         raise HTTPException(422, "an inspection is recorded once it happened")
     authority = new.housing_authority_id
     if authority is None:
@@ -691,13 +691,21 @@ def authority_page(session: Staff, conn: Conn, authority_id: UUID) -> AuthorityP
         "   WHERE r.lease_id = l.id AND r.housing_authority_id = %s)"
         "   OR EXISTS (SELECT 1 FROM trust_assistance_charges AS c"
         "   WHERE c.lease_id = l.id AND c.housing_authority_id = %s))",
-        (rent.today(), authority_id, rent.today(), session.pmc_id, authority_id, authority_id),
+        (
+            rent.today(conn, session.pmc_id),
+            authority_id,
+            rent.today(conn, session.pmc_id),
+            session.pmc_id,
+            authority_id,
+            authority_id,
+        ),
     ).fetchall()
     leases = []
     for lease_id, monthly, contract in rows:
         mine = [c for c in charges if c.lease_id == lease_id]
         hold = conn.execute(
-            HOLD_TODAY, {"pmc": session.pmc_id, "lease": lease_id, "day": rent.today()}
+            HOLD_TODAY,
+            {"pmc": session.pmc_id, "lease": lease_id, "day": rent.today(conn, session.pmc_id)},
         ).fetchone()
         leases.append(
             AssistedLease(
@@ -712,7 +720,9 @@ def authority_page(session: Staff, conn: Conn, authority_id: UUID) -> AuthorityP
             )
         )
     leases.sort(key=lambda lease: (lease.home, str(lease.lease_id)))
-    fee = conn.execute(LATE_FEE, (session.pmc_id, authority_id, rent.today())).fetchone()
+    fee = conn.execute(
+        LATE_FEE, (session.pmc_id, authority_id, rent.today(conn, session.pmc_id))
+    ).fetchone()
     return AuthorityPage(
         id=authority_id,
         name=name,
@@ -799,7 +809,7 @@ def record_payment(session: Staff, conn: Conn, new: NewAuthorityPayment) -> Auth
     """An authority's payment for one lease or many (its one check or deposit): each lease's part
     pays what the authority owes on it, oldest first, into its property's owners' accounts (by
     their ownership shares), never more than it owes. All or none."""
-    rent.not_after_today(new.received_on)
+    rent.not_after_today(conn, session.pmc_id, new.received_on)
     name = authority_named(conn, session.pmc_id, new.housing_authority_id)
     leases = [line.lease_id for line in new.lines]
     if len(set(leases)) != len(leases):
@@ -924,7 +934,7 @@ def bounce(
     """An authority's payment the bank returned: every transfer it posted moves back to cash, and
     what each paid of the authority's charges is reversed (trust_reverse_assistance_payment), so
     they are owed again. Once per payment."""
-    rent.not_after_today(returned.on)
+    rent.not_after_today(conn, session.pmc_id, returned.on)
     rows = conn.execute(
         "SELECT t.id, t.from_account_id, t.to_account_id, t.amount, t.metadata, t.event_at"
         " FROM pgledger_transfers AS t"

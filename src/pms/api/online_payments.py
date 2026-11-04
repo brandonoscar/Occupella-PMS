@@ -35,7 +35,7 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from pms import notices, payments
+from pms import days, notices, payments
 from pms.api import outbox, rent, tenant
 from pms.api.company import how_to_pay
 from pms.api.deps import Conn, Staff, Tenant, refusal
@@ -259,7 +259,7 @@ def why_not(
     """Why this lease takes no payment online now, or None when it does."""
     if partner_of(request, conn, pmc_id) is None or not chosen.online:
         return "off"
-    day = rent.today()
+    day = rent.today(conn, pmc_id)
     if conn.execute(rent.IN_FORCE, {"pmc": pmc_id, "lease": lease_id, "day": day}).fetchone():
         return "paused"
     return None
@@ -357,8 +357,10 @@ def checkout(session: Tenant, conn: Conn, request: Request, lease_id: UUID, body
 # --- what the partner reports -----------------------------------------------------------------
 
 
-def day_of(moment: datetime) -> date:
-    return moment.astimezone(UTC).date()
+def day_of(conn: psycopg.Connection[Any], pmc_id: UUID, moment: datetime) -> date:
+    """The company's day at a moment the partner reported (src/pms/days.py): rent paid at 9 pm
+    Eastern on October 31 is October's."""
+    return days.day_at(conn, pmc_id, moment)
 
 
 def bank_of(conn: psycopg.Connection[Any], row: Row, day: date) -> UUID:
@@ -528,14 +530,14 @@ def settle(conn: psycopg.Connection[Any], row: Row, on: date | None = None) -> N
     if "paid" not in events:
         return
     paid_at, fee = events["paid"]
-    paid_on = day_of(paid_at)
+    paid_on = day_of(conn, row.pmc_id, paid_at)
     if not record_paid(conn, row, paid_on):
         return
     from_company(
         conn, row, partner_fee_key(row.id), fee or ZERO, on or paid_on, "Payments partner's fee"
     )
     if "returned" in events:
-        returned_on = day_of(events["returned"][0])
+        returned_on = day_of(conn, row.pmc_id, events["returned"][0])
         if record_return(conn, row, returned_on) and posted(
             conn, row.pmc_id, tenant_fee_key(row.id)
         ):
@@ -808,7 +810,7 @@ def waiting(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Waiting]:
                 items.append(("fee refund", row.tenant_fee))
         if not items:
             continue
-        bank = bank_of(conn, row, day_of(paid_at))
+        bank = bank_of(conn, row, day_of(conn, pmc_id, paid_at))
         holds = rent.cents(held(conn, company_account(conn, pmc_id, bank)))
         memo = rent.lease_memo(conn, row.lease_id)
         found += [
@@ -865,7 +867,7 @@ def record(session: Staff, conn: Conn, payment_id: UUID, body: Record) -> None:
     if "paid" not in events:
         raise HTTPException(409, "the payments partner hasn't said this payment was paid")
     rent.lock_lease(conn, row.lease_id)
-    day = day_of(events["paid"][0])
+    day = day_of(conn, row.pmc_id, events["paid"][0])
     if not posted(conn, row.pmc_id, payment_key(row.id)):
         past_hold_by = str(session.person_id) if body.past_hold else None
         try:
@@ -873,7 +875,7 @@ def record(session: Staff, conn: Conn, payment_id: UUID, body: Record) -> None:
                 record_payment(conn, row, day, past_hold_by)
         except psycopg.Error as error:
             raise HTTPException(409, refusal(error)) from None
-    settle(conn, row, on=rent.today())
+    settle(conn, row, on=rent.today(conn, session.pmc_id))
 
 
 class Cover(BaseModel):
@@ -918,7 +920,7 @@ def cover(session: Staff, conn: Conn, body: Cover) -> Covered:
         session.pmc_id,
         key,
         [(rent.cash_of(conn, body.bank_account_id), company, body.amount)],
-        rent.today(),
+        rent.today(conn, session.pmc_id),
         {
             "key": key,
             "kind": "company cover",
@@ -934,8 +936,8 @@ def cover(session: Staff, conn: Conn, body: Cover) -> Covered:
         if row is None:
             owners = owner_payments.row_of(conn, payment)
             assert owners is not None
-            owner_payments.settle(conn, owners, on=rent.today())
+            owner_payments.settle(conn, owners, on=rent.today(conn, session.pmc_id))
             continue
         rent.lock_lease(conn, row.lease_id)
-        settle(conn, row, on=rent.today())
+        settle(conn, row, on=rent.today(conn, session.pmc_id))
     return Covered(still_waiting=len(owed_here()))

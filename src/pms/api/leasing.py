@@ -25,7 +25,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
-from pms import accounts, exports, notices
+from pms import accounts, days, exports, notices
 from pms.api import applicant_details, company, outbox, scope, screening_criteria
 from pms.api.deps import Conn, Staff, download, refusal
 from pms.api.listings import NewListing
@@ -42,8 +42,9 @@ NOT_OPEN = "this application link is closed or doesn't exist"
 WITHDRAWN = "the applicants withdrew this application; it takes nothing more"
 
 
-def today() -> date:
-    return datetime.now(UTC).date()
+def today(conn: psycopg.Connection[Any], pmc_id: UUID) -> date:
+    """The company's day (src/pms/days.py)."""
+    return days.today(conn, pmc_id)
 
 
 def new_token() -> tuple[str, bytes]:
@@ -176,8 +177,6 @@ def view_listing(conn: Conn, link: LinkToken) -> Listing:
 @router.post("/api/apply", status_code=201)
 def apply(request: Request, conn: Conn, application: ApplicationIn) -> Submitted:
     """An application through an open link. The answer's link is the only way back to it."""
-    if not today() <= application.move_in_on <= today() + timedelta(days=366):
-        raise HTTPException(422, "a move-in day is from today to a year from now")
     people = []
     for applicant in application.applicants:
         name, email = applicant.name.strip(), accounts.normalize_email(applicant.email)
@@ -189,6 +188,9 @@ def apply(request: Request, conn: Conn, application: ApplicationIn) -> Submitted
     if len({email for _, email in people}) < len(people):
         raise HTTPException(422, "each applicant has their own email")
     link, pmc_id, *_ = open_link(conn, application)
+    day = today(conn, pmc_id)
+    if not day <= application.move_in_on <= day + timedelta(days=366):
+        raise HTTPException(422, "a move-in day is from today to a year from now")
     recent = conn.execute(
         "SELECT count(*) FROM trust_applications WHERE link_id = %s AND submitted_at > %s",
         (link, datetime.now(UTC) - timedelta(days=1)),
@@ -719,7 +721,11 @@ def decide(session: Staff, conn: Conn, application_id: UUID, decision: Decision)
     if action is not None:
         if not all(reasons):
             raise HTTPException(422, "every reason says something")
-        if not today() - timedelta(days=30) <= action.notice_given_on <= today():
+        if (
+            not today(conn, session.pmc_id) - timedelta(days=30)
+            <= action.notice_given_on
+            <= today(conn, session.pmc_id)
+        ):
             raise HTTPException(422, "a notice is given on a day from 30 days ago to today")
     conn.execute(
         "INSERT INTO trust_application_decisions"
