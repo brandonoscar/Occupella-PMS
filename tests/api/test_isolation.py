@@ -147,6 +147,16 @@ RECORDS = {
     "portal owner's document": _DOCUMENT.format("owner_document"),
     # Harbor Tower, Demo Owner C's (the portal owner's): the portals' second version.
     "portal owner's property": _NAMED.format("trust_properties", "Harbor Tower"),
+    # A tenant's latest payment at Harbor Tower: a line of the portal owner's statement.
+    "portal owner's payment": "SELECT p.transfer_id FROM trust_charge_payments AS p"
+    " JOIN trust_charges AS c ON c.id = p.charge_id"
+    " JOIN trust_leases AS l ON l.id = c.lease_id"
+    " JOIN trust_units AS u ON u.id = l.unit_id"
+    " JOIN trust_properties AS pr ON pr.id = u.property_id"
+    " JOIN pgledger_transfers AS t ON t.id = p.transfer_id"
+    " WHERE c.pmc_id = %(pmc)s AND pr.display_name = 'Harbor Tower'"
+    " AND t.metadata ->> 'kind' = 'tenant payment'"
+    " ORDER BY t.event_at DESC, t.id LIMIT 1",
     "announcement": _ONLY.format("trust_announcements"),
     "bank match": "SELECT id FROM trust_bank_matches WHERE pmc_id = %(pmc)s"
     " ORDER BY matched_at DESC, id LIMIT 1",
@@ -261,6 +271,10 @@ ROUTE_PATH_IDS = {
     ("/api/move-out/{lease_id}/statement", "lease_id"): "returned lease",
     ("/api/move-out/{lease_id}/statement/send", "lease_id"): "returned lease",
     ("/api/owner/properties/{property_id}", "property_id"): "portal owner's property",
+    ("/api/owner/statement/sources/{transfer_id}", "transfer_id"): "portal owner's payment",
+    ("/api/owner/statement/sources/{transfer_id}/receipt", "transfer_id"): "portal owner's payment",
+    # A line of the tenant's ledger: the lease's latest payment.
+    ("/api/tenant/leases/{lease_id}/ledger/sources/{kind}/{source_id}", "source_id"): "payment",
     ("/api/messages/{about}/{person_id}", "person_id"): "tenant",
 }
 # Path parameters that name no record, and what the route is sent.
@@ -271,6 +285,8 @@ NOT_ID_PARAMS = {
     ("/api/leases/{lease_id}/{kind}/{item_id}/remove", "kind"): "occupants",
     # Whose conversation it is: a tenant's (person_id names the tenant).
     ("/api/messages/{about}/{person_id}", "about"): "tenant",
+    # What kind of ledger line source_id is: a payment.
+    ("/api/tenant/leases/{lease_id}/ledger/sources/{kind}/{source_id}", "kind"): "payment",
 }
 
 # A body field's record, by its name; then where one name means another record on a route.

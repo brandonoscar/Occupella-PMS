@@ -329,8 +329,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   every month and what is charged already but due later, and once a deposit was returned at
   move-out, their statement letter (migration 0120) to download; and a lease's files (q120):
   the lease as signed, its signing certificate when signed on the PMS's page, and the lease
-  documents staff keep on its Files tab (move-out photos stay with staff). Both portals show the
-  manager's name, mailing address and logo (`/api/company/card`). The portal takes no payments.
+  documents staff keep on its Files tab (move-out photos stay with staff). Both portals open a line
+  of the statement or ledger in a side panel saying where it came from (`src/pms/api/ledger_sources.py`,
+  `components/SourcePanel.tsx`): a tenant's payment and its receipt, a bill and its receipts, how
+  a management fee was worked out, a payout's check number or its bank account's last four. Both
+  portals show the manager's name, mailing address and logo (`/api/company/card`). The portal takes no payments.
 - Property addresses (migration 0109, `src/pms/api/addresses.py`, `src/pms/geocoding.py`): a
   property's street address, whole (street, maybe a building or unit, city, a state's USPS code,
   ZIP code), in `trust_property_addresses` (append-only, the latest holding,

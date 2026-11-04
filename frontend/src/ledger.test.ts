@@ -20,10 +20,24 @@ describe("readLedger", () => {
     expect(ledger.through).toBe("2026-04-30");
     expect(ledger.totals).toEqual({ charged: "6000.00", paid: "4000.00", balance: "2000.00" });
     expect(ledger.entries).toEqual([
-      { on: "2026-01-01", item: "rent", detail: "January rent", charged: "1500.00", paid: "0.00", balance: "1500.00" },
-      { on: "2026-01-03", item: "payment", detail: "Check 101", charged: "0.00", paid: "1500.00", balance: "0.00" },
-      { on: "2026-03-05", item: "payment", detail: "", charged: "0.00", paid: "1000.00", balance: "500.00" },
+      { on: "2026-01-01", item: "rent", detail: "January rent", charged: "1500.00", paid: "0.00", balance: "1500.00", source: null },
+      { on: "2026-01-03", item: "payment", detail: "Check 101", charged: "0.00", paid: "1500.00", balance: "0.00", source: null },
+      { on: "2026-03-05", item: "payment", detail: "", charged: "0.00", paid: "1000.00", balance: "500.00", source: null },
     ]);
+  });
+
+  it("gives each line the charge or payment the tenant's ledger names, which opens its source", () => {
+    const sources = [
+      null,
+      { kind: "charge" as const, id: "c1" },
+      { kind: "payment" as const, id: "pglt_1" },
+      { kind: "payment" as const, id: "pglt_2" },
+      null,
+    ];
+
+    const ledger = readLedger({ title: "t", columns: COLUMNS, rows: ROWS, sources });
+
+    expect(ledger.entries.map((e) => e.source)).toEqual(sources.slice(1, 4));
   });
 
   it("finds its columns by name, and says which is missing", () => {

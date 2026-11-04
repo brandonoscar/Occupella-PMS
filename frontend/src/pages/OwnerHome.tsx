@@ -9,6 +9,7 @@ import { lastMonth, money } from "../money";
 import type { StatementData } from "../statement";
 import { group } from "../statement";
 import { StatementView } from "../components/StatementView";
+import { SourcePanel } from "../components/SourcePanel";
 import { OwnerBills } from "./OwnerBills";
 import { OwnerDocuments } from "./OwnerDocuments";
 import { OwnerIncomeStatement } from "./OwnerIncomeStatement";
@@ -80,6 +81,7 @@ export function OwnerHome({ me, section = "overview", propertyId }: {
   const [properties, setProperties] = useState<Property[] | null>(null);
   const [period, setPeriod] = useState(lastMonth(new Date()));
   const [statement, setStatement] = useState<StatementData | null>(null);
+  const [opened, setOpened] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -184,7 +186,11 @@ export function OwnerHome({ me, section = "overview", propertyId }: {
               </div>
             </Form>
             <Notice tone="error">{error}</Notice>
-            {grouped && <StatementView grouped={grouped} />}
+            {grouped && <StatementView grouped={grouped} onOpen={setOpened} />}
+            {opened && (
+              <SourcePanel url={`/api/owner/statement/sources/${encodeURIComponent(opened)}`}
+                onClose={() => setOpened(null)} />
+            )}
           </Card>
           <OwnerYearEnd />
           <OwnerIncomeStatement />

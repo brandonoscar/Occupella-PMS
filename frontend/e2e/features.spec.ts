@@ -1458,6 +1458,57 @@ test("a tenant sees their lease, what comes each month and two months of charges
   await downloads(page, "Excel", XLSX);
 });
 
+test("an owner opens a line of their statement to see where it came from, and a tenant a line of their ledger", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["ledger-sources"]!;
+  await joinPortal(page, people.owner_a);
+  await portalSection(page, "Statements and reports");
+  const birch = part(page, "Statement").getByRole("table", { name: "Birch Flats" });
+
+  // A tenant's rent: the payment as its receipt says it, and the receipt to download.
+  await birch.getByRole("button", { name: /^Rent – Morgan Demo/ }).first().click();
+  const payment = page.getByRole("dialog", { name: "Tenant payment" });
+  await expect(payment).toContainText("Received from");
+  await expect(payment).toContainText("Morgan Demo");
+  const receipt = (await payment.getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")) ?? "";
+  const pdf = await page.request.get(receipt);
+  expect(pdf.status(), receipt).toBe(200);
+  expect(pdf.headers()["content-type"]).toContain(PDF);
+  await payment.getByRole("button", { name: "Close" }).click();
+
+  // The management fee: how it was worked out.
+  await birch.getByRole("button", { name: /Demo Property Management/ }).first().click();
+  const fee = page.getByRole("dialog", { name: "Management fee" });
+  await expect(fee).toContainText("Rent and fees collected");
+  await expect(fee).toContainText("of that");
+  await fee.getByRole("button", { name: "Close" }).click();
+
+  // The payout to the owner: its day and amount.
+  await birch.getByRole("button", { name: /^Owner draw/ }).first().click();
+  const draw = page.getByRole("dialog", { name: "Paid to you" });
+  await expect(draw).toContainText("Date");
+  await expect(draw).toContainText("Amount");
+  await draw.getByRole("button", { name: "Close" }).click();
+
+  // A tenant opens a rent charge and a payment of their ledger.
+  const tenant = await (await browser.newContext()).newPage();
+  await joinPortal(tenant, people.taylor);
+  await portalSection(tenant, "Payments");
+  const ledger = tenant.getByRole("table").filter({ hasText: "Charged" });
+  await ledger.getByRole("button", { name: /^Rent due/ }).first().click();
+  const rent = tenant.getByRole("dialog", { name: "Rent" });
+  await expect(rent).toContainText("Still owed");
+  await expect(rent).toContainText("$0.00");
+  await rent.getByRole("button", { name: "Close" }).click();
+  await ledger.getByRole("button", { name: /^Payment/ }).first().click();
+  const paid = tenant.getByRole("dialog", { name: "Payment" });
+  await expect(paid).toContainText("Received from");
+  const theirs = (await paid.getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")) ?? "";
+  expect((await tenant.request.get(theirs)).status(), theirs).toBe(200);
+});
+
 test("a lease ended mid-month keeps only its days of the month's rent, and its deposit goes back less what it owes", async ({
   browser,
   page,

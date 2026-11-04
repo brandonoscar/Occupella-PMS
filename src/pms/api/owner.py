@@ -10,17 +10,17 @@ trust_report_income_statement over the same year.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Path, Query, Response
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from pms import accounts, exports
-from pms.api import documents
+from pms.api import documents, ledger_sources
 from pms.api.deps import Conn, Owner, Rows, download
 
 router = APIRouter(prefix="/api/owner")
@@ -64,14 +64,10 @@ def statement_table(
         raise HTTPException(422, "Pick an end date on or after the start date.")
     if (end - start).days > MAX_DAYS:
         raise HTTPException(422, f"Pick {MAX_DAYS} days or fewer.")
-    period = (
-        datetime.combine(start, time(0), UTC),
-        datetime.combine(end + timedelta(days=1), time(0), UTC),
-    )
     return exports.run_report(
         conn,
         "trust_report_owner_statement",
-        [pmc_id, owner_id, *period],
+        [pmc_id, owner_id, *ledger_sources.period(start, end)],
     )
 
 
@@ -87,8 +83,40 @@ def titled_statement(
 @router.get("/statement")
 def statement(
     session: Owner, conn: Conn, start: Annotated[date, Query()], end: Annotated[date, Query()]
-) -> Rows:
-    return Rows.of(titled_statement(conn, session.pmc_id, session.person_id, start, end))
+) -> ledger_sources.StatementRows:
+    """The statement, each line with the ledger transfer it shows, which opens its source."""
+    titled = titled_statement(conn, session.pmc_id, session.person_id, start, end)
+    return ledger_sources.statement_rows(
+        conn,
+        session.pmc_id,
+        session.person_id,
+        Rows.of(titled),
+        *ledger_sources.period(start, end),
+    )
+
+
+TransferId = Annotated[str, Path(max_length=64)]
+
+
+@router.get("/statement/sources/{transfer_id}")
+def statement_source(session: Owner, conn: Conn, transfer_id: TransferId) -> ledger_sources.Source:
+    """Where a line of the owner's statement came from: a tenant's payment and its receipt, a bill
+    and its receipts, how a management fee was worked out, a payout's day and bank. A line of
+    another owner's reads as not found."""
+    return ledger_sources.owner_source(conn, session.pmc_id, session.person_id, transfer_id)
+
+
+@router.get("/statement/sources/{transfer_id}/receipt")
+def statement_receipt(session: Owner, conn: Conn, transfer_id: TransferId) -> Response:
+    """The receipt of a tenant's payment on the owner's statement, as a PDF."""
+    from pms.api import receipts  # it reads the company (company.py), which reads this module
+
+    ledger_sources.owners_transfer(conn, session.pmc_id, session.person_id, transfer_id)
+    try:
+        receipt = receipts.receipt_of(conn, session.pmc_id, transfer_id)
+    except HTTPException:
+        raise HTTPException(404, ledger_sources.NOT_YOURS_OWNER) from None
+    return receipts.pdf(receipt)
 
 
 @router.get("/statement/download")

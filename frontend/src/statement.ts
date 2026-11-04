@@ -6,9 +6,18 @@ export type StatementData = {
   title: string;
   columns: string[];
   rows: (string | null)[][];
+  // The owner's statement: each row's ledger transfer, which opens where it came from
+  // (src/pms/api/ledger_sources.py); null for headings and totals. Staff's copy has none.
+  sources?: (string | null)[];
 };
 
-export type Posting = { postedOn: string; detail: string; amount: string; balance: string };
+export type Posting = {
+  postedOn: string;
+  detail: string;
+  amount: string;
+  balance: string;
+  source: string | null;
+};
 
 export type PropertySection = {
   name: string;
@@ -43,7 +52,7 @@ export function group(data: StatementData): Grouped {
     totals: { opening: "0.00", moneyIn: "0.00", moneyOut: "0.00", closing: "0.00" },
   };
   let current: PropertySection | null = null;
-  for (const row of data.rows) {
+  for (const [n, row] of data.rows.entries()) {
     const value = (index: number) => row[index] ?? "";
     switch (value(item)) {
       case "period":
@@ -59,6 +68,7 @@ export function group(data: StatementData): Grouped {
           detail: value(detail),
           amount: value(amount),
           balance: value(balance),
+          source: data.sources?.[n] ?? null,
         });
         break;
       case "closing balance":

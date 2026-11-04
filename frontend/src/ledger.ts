@@ -4,6 +4,8 @@
 import { usDatesIn } from "./money";
 import type { StatementData } from "./statement";
 
+export type LedgerSource = { kind: "charge" | "payment" | "returned"; id: string };
+
 export type Entry = {
   on: string;
   item: string;
@@ -11,7 +13,12 @@ export type Entry = {
   charged: string;
   paid: string;
   balance: string;
+  source: LedgerSource | null;
 };
+
+// The tenant's ledger as the API sends it: each row's charge, payment or returned payment, which
+// opens where it came from (src/pms/api/ledger_sources.py); null for the lease and the balance.
+export type LedgerData = Omit<StatementData, "sources"> & { sources?: (LedgerSource | null)[] };
 
 export type Ledger = {
   lease: string;
@@ -20,7 +27,7 @@ export type Ledger = {
   totals: { charged: string; paid: string; balance: string };
 };
 
-export function readLedger(data: StatementData): Ledger {
+export function readLedger(data: LedgerData): Ledger {
   const at = (name: string) => {
     const index = data.columns.indexOf(name);
     if (index < 0) throw new Error(`the ledger has no ${name} column`);
@@ -40,7 +47,7 @@ export function readLedger(data: StatementData): Ledger {
     through: "",
     totals: { charged: "", paid: "", balance: "" },
   };
-  for (const row of data.rows) {
+  for (const [n, row] of data.rows.entries()) {
     const cell = (index: number) => row[index] ?? "";
     if (cell(item) === "lease") {
       ledger.lease = cell(detail);
@@ -55,6 +62,7 @@ export function readLedger(data: StatementData): Ledger {
         charged: cell(charged),
         paid: cell(paid),
         balance: cell(balance),
+        source: data.sources?.[n] ?? null,
       });
     }
   }

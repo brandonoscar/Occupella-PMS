@@ -16,11 +16,21 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Path, Query, Response
 from pydantic import BaseModel, Field
 
 from pms import accounts, exports, notices
-from pms.api import directory, documents, leaving, maintenance, moveout, offers, outbox, signing
+from pms.api import (
+    directory,
+    documents,
+    leaving,
+    ledger_sources,
+    maintenance,
+    moveout,
+    offers,
+    outbox,
+    signing,
+)
 from pms.api import rent as rent_api
 from pms.api.deps import Conn, Rows, Tenant, download, refusal
 from pms.homes import home
@@ -453,9 +463,25 @@ def ledger(
     conn: Conn,
     lease_id: UUID,
     as_of: Annotated[date | None, Query()] = None,
-) -> Rows:
-    """The lease's charges and payments through the end of a day (UTC), today by default."""
-    return Rows.of(ledger_table(conn, session, lease_id, as_of))
+) -> ledger_sources.LedgerRows:
+    """The lease's charges and payments through the end of a day (UTC), today by default, each
+    line with the charge, payment or returned payment it shows, which opens its source."""
+    rows = Rows.of(ledger_table(conn, session, lease_id, as_of))
+    return ledger_sources.ledger_rows(conn, lease_id, rows, as_of or today())
+
+
+@router.get("/leases/{lease_id}/ledger/sources/{kind}/{source_id}")
+def ledger_source(
+    session: Tenant,
+    conn: Conn,
+    lease_id: UUID,
+    kind: ledger_sources.LedgerKind,
+    source_id: Annotated[str, Path(max_length=64)],
+) -> ledger_sources.Source:
+    """Where a line of the tenant's ledger came from: a charge, or a payment and its receipt. A
+    line of a lease they aren't on reads as not found."""
+    lease_of(conn, session, lease_id)
+    return ledger_sources.tenant_source(conn, session.pmc_id, lease_id, kind, source_id)
 
 
 @router.get("/leases/{lease_id}/ledger/download")

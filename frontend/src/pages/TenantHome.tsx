@@ -6,14 +6,14 @@ import { Notice } from "../components/Notice";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
-import type { Ledger } from "../ledger";
+import type { Ledger, LedgerData, LedgerSource } from "../ledger";
 import { entryWords, readLedger } from "../ledger";
+import { OpensSource, SourcePanel } from "../components/SourcePanel";
 import type { ContentType } from "../documents";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
 import type { MaintenanceRequest } from "../maintenance";
 import { PHOTOS_PER_REQUEST, photosLabel, photosProblem, statusLabel, visitLabel, when } from "../maintenance";
 import { day, money, usDate, usDatesIn } from "../money";
-import type { StatementData } from "../statement";
 import type { DepositAsked, Paid, RentersInsurance } from "../rent";
 import { dueDayLabel, insuranceLine, methodLabel, tenantDepositLine } from "../rent";
 import { Badge } from "../components/Badge";
@@ -156,6 +156,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
   const [leases, setLeases] = useState<Lease[] | null>(null);
   const [chosen, setChosen] = useState<string>("");
   const [ledger, setLedger] = useState<Ledger | null>(null);
+  const [opened, setOpened] = useState<LedgerSource | null>(null);
   const [requests, setRequests] = useState<MaintenanceRequest[]>([]);
   const [summary, setSummary] = useState("");
   const [entryAllowed, setEntryAllowed] = useState(false);
@@ -184,7 +185,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
     if (!chosen) return;
     setLedger(null);
     api
-      .get<StatementData>(`/api/tenant/leases/${chosen}/ledger`)
+      .get<LedgerData>(`/api/tenant/leases/${chosen}/ledger`)
       .then(run.keep((data) => setLedger(readLedger(data))))
       .catch(run.keep(show));
     return run.stop;
@@ -402,12 +403,15 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                   <tbody>
                     {ledger.entries.map((entry, n) => {
                       const words = entryWords(entry);
+                      const source = entry.source;
                       return (
                       <tr key={n} className="border-t border-line">
                         <td className={`${CELL} whitespace-nowrap text-ink-muted`}>{usDate(entry.on)}</td>
                         <td className={CELL}>
-                          {words.what}
-                          {words.detail && <span className="text-ink-muted">: {words.detail}</span>}
+                          <OpensSource onOpen={source ? () => setOpened(source) : null}>
+                            {words.what}
+                            {words.detail && <span className="text-ink-muted">: {words.detail}</span>}
+                          </OpensSource>
                         </td>
                         <td className={AMOUNT}>{entry.charged === "0.00" ? "" : money(entry.charged)}</td>
                         <td className={AMOUNT}>{entry.paid === "0.00" ? "" : money(entry.paid)}</td>
@@ -426,6 +430,11 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                   </tbody>
                 </table>
               </Wide>
+            )}
+            {opened && (
+              <SourcePanel
+                url={`/api/tenant/leases/${encodeURIComponent(lease.lease_id)}/ledger/sources/${opened.kind}/${encodeURIComponent(opened.id)}`}
+                onClose={() => setOpened(null)} />
             )}
           </Card>
           )}

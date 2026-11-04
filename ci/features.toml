@@ -525,6 +525,18 @@ browser = [
 ]
 
 [[feature]]
+id = "ledger-sources"
+statement = "An owner opens a line of their statement and a tenant a line of their ledger to see where it came from, in a side panel: a tenant's payment as its receipt says it with the receipt to download, a bill with its receipts, how a management fee was worked out, how a payout left (check number, or the last four digits of the bank account an EFT went to); another owner's or lease's line reads as not found."
+operations = [
+  "GET /api/owner/statement/sources/{transfer_id}",
+  "GET /api/owner/statement/sources/{transfer_id}/receipt",
+  "GET /api/tenant/leases/{lease_id}/ledger/sources/{kind}/{source_id}",
+]
+browser = [
+  "features.spec.ts › an owner opens a line of their statement to see where it came from, and a tenant a line of their ledger",
+]
+
+[[feature]]
 id = "tenant-portal"
 statement = "A tenant sees their lease, what it charges each month, what they owe and paid, downloads their ledger, and once the deposit was returned, its statement."
 operations = [
