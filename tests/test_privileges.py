@@ -89,6 +89,7 @@ TABLES = {
     "trust_maintenance_request_notes": {"SELECT", "INSERT"},
     # A tenant's or an owner's phone and answer to "OK to text me" at sign-up (fix-list item 14).
     "trust_text_consents": {"SELECT", "INSERT"},
+    "trust_payment_keys": {"SELECT", "INSERT"},
     # Rental applications: applicants apply through the API, staff screen and decide.
     "trust_application_links": {"SELECT", "INSERT"},
     "trust_application_link_closings": {"SELECT", "INSERT"},
@@ -438,6 +439,8 @@ AI_NEVER_READS = {
     "trust_maintenance_request_notes",
     # A phone and its texting consent, as contact details are (fix-list item 14).
     "trust_text_consents",
+    # A company's own Stripe keys, sealed (fix-list item 4).
+    "trust_payment_keys",
     "trust_announcements",
     "trust_announcement_removals",
     # The company's mailing address, with the fee terms new properties start with (ADR 0006).
@@ -598,6 +601,7 @@ FUNCTIONS = {
     "trust_check_move_out_notice()": set(),  # a trigger's: no one calls it
     "trust_check_request_change()": set(),  # a trigger's: no one calls it
     "trust_check_text_consent()": set(),  # a trigger's: no one calls it
+    "trust_check_payment_keys()": set(),  # a trigger's: no one calls it
     "trust_refuse_cancelled_request_order()": set(),  # a trigger's: no one calls it
     "trust_check_autopay()": set(),  # a trigger's: no one calls it
     "trust_check_autopay_run()": set(),  # a trigger's: no one calls it

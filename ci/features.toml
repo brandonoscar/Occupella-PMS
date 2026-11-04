@@ -14,6 +14,7 @@
 [outside]
 "GET /health" = "the server's health check: the self-host image and the browser run wait for it, and no person uses it"
 "POST /api/payments/webhook/{name}" = "the payments partner's server reports what the bank did; no person calls it, and the browser run uses the fake partner's page instead (tests/api/test_online_payments_api.py signs reports as Stripe does)"
+"POST /api/payments/webhook/{name}/{pmc_id}" = "a company's own Stripe account reports what the bank did; no person calls it, and the browser run uses the fake partner's page instead (tests/api/test_payment_keys_api.py signs reports as Stripe does)"
 
 [[feature]]
 id = "logins"
@@ -1290,4 +1291,16 @@ statement = "A tenant on a lease in effect sends a document of it (a PDF, JPEG o
 operations = ["POST /api/tenant/leases/{lease_id}/documents"]
 browser = [
   "features.spec.ts › a tenant sends their renters insurance certificate from the portal; staff find it with the lease's files, as the tenant's",
+]
+
+[[feature]]
+id = "payment-keys"
+statement = "A company's own Stripe keys (migration 20261104000800; the founder's review of 11/03, item 4, and his call of 11/04): an admin enters the secret key and the webhook's signing secret in Company setup; the server seals each under its PMS_DATA_KEY and only ever shows the secret key's last four and whether it is a test or a live key. The company's payments then go through its own Stripe account and its webhook reports to an address of its own, which records only its payments and still takes reports signed with keys it used before; removed, the server's partner (PMS_PAYMENTS) holds again. Keys that don't open on this server take no payment and never fall back. Staff who aren't admins see them and change nothing."
+operations = [
+  "GET /api/payments/keys",
+  "POST /api/payments/keys",
+  "POST /api/payments/keys/remove",
+]
+browser = [
+  "features.spec.ts › an admin enters the company's own Stripe keys in Company setup: only the last four show, and removing them goes back to the server's partner",
 ]

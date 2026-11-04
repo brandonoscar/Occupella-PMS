@@ -881,9 +881,16 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   leaves it out. The AI role reads none of it.
 - Rent paid online (migration 0150, `src/pms/api/online_payments.py`, `src/pms/payments.py`,
   ADR 0009, `docs/law.md`): a tenant pays from their lease in the portal (Pay online) on the
-  server's payments partner's page (`PMS_PAYMENTS`: "stripe" with the company's own keys,
-  `PMS_STRIPE_SECRET_KEY` and `PMS_STRIPE_WEBHOOK_SECRET`, from the environment; "fake" for
-  development and CI, whose own page `/pay/fake#<id>` says what the bank did; none by default),
+  company's payments partner's page: its own Stripe account once an admin entered its keys in
+  Company setup (migration 20261104000800, `src/pms/api/payment_keys.py`, the founder's review of
+  11/03, item 4: `trust_payment_keys`, append-only, the latest holding, naming the admin; the
+  secret key and the webhook's signing secret each sealed under `PMS_DATA_KEY`, only the last four
+  and test or live ever shown; its webhook `POST /api/payments/webhook/stripe/<company>` records
+  only its payments and takes every secret it used, so a payment started before a change still
+  lands; keys that don't open on this server take no payment and never fall back), else the
+  server's (`PMS_PAYMENTS`: "stripe" with keys from the environment, `PMS_STRIPE_SECRET_KEY` and
+  `PMS_STRIPE_WEBHOOK_SECRET`; "fake" for development and CI, whose own page `/pay/fake#<id>`
+  says what the bank did; none by default; `pms.payments.Resolver` picks per company),
   by bank (ACH) only for now; the PMS never sees an account number. A company turns it on in
   Company setup and chooses who pays the partner's fee on a bank payment
   (`trust_payment_settings`: append-only, the latest holding, naming who; the company, from its

@@ -53,6 +53,9 @@ from pms.api import payables, rent
 
 log = logging.getLogger("pms.nightly")
 
+# The Scheduler's own argument is named `payments`, so it names the module's helper by this.
+resolver_of = payments.Resolver.of
+
 # When the run starts each day, UTC: after midnight in every US time zone.
 AT = time(6, 0)
 # How soon a run that failed (the database not up yet) is tried again, in seconds.
@@ -93,7 +96,7 @@ def run_pmc(
     day: date,
     public_url: str,
     sending: bool = False,
-    partner: str | None = None,
+    partner: str | payments.Resolver | None = None,
 ) -> Ran:
     """One PMC's run for a day, in one transaction. While the server sends email, it also writes
     the rent reminders, late notices and owner statements the company's settings ask for. With a
@@ -129,7 +132,9 @@ def run_pmc(
         draws = conn.execute("SELECT trust_prepare_owner_draws(%s, %s)", (pmc_id, day)).fetchone()
         assert draws is not None
         prepaid = rent.use_prepaid_by_itself(conn, pmc_id, day)
-        started = autopay.start_due(conn, pmc_id, day, partner, sending, public_url)
+        # The company's partner: its own keys, else the server's.
+        name = partner.name_for(conn, pmc_id) if isinstance(partner, payments.Resolver) else partner
+        started = autopay.start_due(conn, pmc_id, day, name, sending, public_url)
         written = notices.write_scheduled(conn, pmc_id, day, public_url) if sending else None
     emails = started.emails + (0 if written is None else sum(vars(written).values()))
     return Ran(
@@ -155,7 +160,7 @@ def run_all(
     public_url: str,
     pmcs: Iterable[UUID] | None = None,
     sending: bool = False,
-    partner: str | None = None,
+    partner: str | payments.Resolver | None = None,
 ) -> list[Ran]:
     """Every PMC's run for a day (or only those named). One that fails is logged and left for
     the next run, and while the server sends email its admins are told (once a day); the others
@@ -220,7 +225,7 @@ class Scheduler:
         at: time = AT,
         retry: float = RETRY,
         pmcs: Sequence[UUID] | None = None,
-        payments: payments.Partner | None = None,
+        payments: payments.Partner | payments.Resolver | None = None,
     ) -> None:
         self.database_url = database_url
         self.role = role
@@ -230,7 +235,7 @@ class Scheduler:
         self.at = at
         self.retry = retry
         self.pmcs = pmcs
-        self.payments = payments
+        self.payments = None if payments is None else resolver_of(payments)
         self.ran = threading.Event()  # set after each run that finished
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="pms-nightly", daemon=True)
@@ -252,7 +257,7 @@ class Scheduler:
                 self.public_url,
                 self.pmcs,
                 self.sender is not None,
-                None if self.payments is None else self.payments.name,
+                self.payments,
             )
             conn.autocommit = True
             if self.payments is not None:
@@ -285,17 +290,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         conn.commit()
         # What it writes to the outbox goes out with `python -m pms.email deliver`.
         sending = bool(os.environ.get("PMS_EMAIL_SENDER"))
-        partner = payments.partner_named(os.environ.get("PMS_PAYMENTS", ""), os.environ)
-        done = run_all(
-            conn,
-            datetime.now(UTC).date(),
-            public_url,
-            sending=sending,
-            partner=None if partner is None else partner.name,
+        # The server's partner, and each company's own keys entered in Settings.
+        partner = payments.Resolver(
+            payments.partner_named(os.environ.get("PMS_PAYMENTS", ""), os.environ)
         )
-        if partner is not None:
-            conn.autocommit = True
-            autopay.submit_waiting(conn, partner)
+        done = run_all(conn, datetime.now(UTC).date(), public_url, sending=sending, partner=partner)
+        conn.autocommit = True
+        autopay.submit_waiting(conn, partner)
     rents = sum(r.rents for r in done)
     late_fees = sum(r.late_fees for r in done)
     bills = sum(r.bills for r in done)
