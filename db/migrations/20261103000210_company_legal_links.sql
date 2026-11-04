@@ -1,5 +1,8 @@
 -- migrate:up
 
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '60s';
+
 -- The company's own terms of use and privacy notice, as links (the founder, 11/03): a self-hosted
 -- PMS is the company's, which answers to its tenants, owners and applicants for what it keeps
 -- of them, so the words are the company's and its lawyer's; the PMS writes none, as it writes no
@@ -15,4 +18,9 @@ ALTER TABLE public.trust_company_profiles
 
 -- migrate:down
 
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '60s';
+
+-- The two columns this migration added, and nothing reads them before it.
+-- squawk-ignore ban-drop-column
 ALTER TABLE public.trust_company_profiles DROP COLUMN terms_url, DROP COLUMN privacy_url;
