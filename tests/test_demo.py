@@ -3,10 +3,12 @@ three-way reconciliation waiting for the manager's approval, with a check outsta
 owner with three properties has a statement that rolls them up. Every other page has something
 on it, and the Dashboard lists what waits."""
 
+import io
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 
 import pytest
+from pypdf import PdfReader
 
 from pms import demo
 from pms.api import offers, payables, reconcile, rent, today
@@ -575,3 +577,39 @@ def test_if_empty_adds_no_demo_to_a_database_that_holds_a_pmc(
     assert capsys.readouterr().out == (
         "This database holds a PMC already, so no demo was added (--if-empty).\n"
     )
+
+
+def test_the_roof_repairs_receipt_is_a_one_page_invoice_that_matches_its_bill(conn, built):
+    """RF-2207's receipt reads as a vendor's invoice (the founder's review of 11/03, item 13):
+    who sent it, its number and days, what it was for, its lines adding to the bill's amount."""
+    content, size = conn.execute(
+        "SELECT f.content, d.size FROM trust_documents AS d"
+        " JOIN trust_document_files AS f ON f.document_id = d.id"
+        " JOIN trust_bills AS b ON b.id = d.bill_id"
+        " WHERE d.pmc_id = %s AND b.reference = 'RF-2207' AND d.kind = 'receipt'",
+        (built.pmc_id,),
+    ).fetchone()
+    billed, due = conn.execute(
+        "SELECT bill_date, due_on FROM trust_bills WHERE pmc_id = %s AND reference = 'RF-2207'",
+        (built.pmc_id,),
+    ).fetchone()
+
+    reader = PdfReader(io.BytesIO(bytes(content)))
+    text = reader.pages[0].extract_text()
+
+    assert len(reader.pages) == 1 and size > 1000
+    for part in (
+        "Demo Roofing Co",
+        "INVOICE",
+        "RF-2207",
+        f"{billed:%m/%d/%Y}",
+        f"{due:%m/%d/%Y}",
+        "Demo Property Management, for Cedar House",
+        "Roof flashing repair: labor",
+        "$260.00",
+        "$390.00",
+        "Total due",
+        "$650.00",
+        "Synthetic demo document",
+    ):
+        assert part in text, part
