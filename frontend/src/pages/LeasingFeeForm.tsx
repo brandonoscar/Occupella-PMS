@@ -6,7 +6,7 @@ import { Form } from "../components/Form";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { latest } from "../latest";
-import { day, money } from "../money";
+import { companyDay, money } from "../money";
 import type { OwnerMoney } from "../payables";
 import type { LeaseDetail } from "../rentals";
 import type { Recorder } from "./LeaseForms";
@@ -25,7 +25,7 @@ export function LeasingFeeForm({ lease, record }: { lease: LeaseDetail; record: 
   const [accounts, setAccounts] = useState<OwnerMoney[] | null>(null);
   const [error, setError] = useState("");
   const [account, setAccount] = useState("");
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
 
   useEffect(() => {
     const run = latest();

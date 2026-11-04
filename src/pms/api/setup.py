@@ -215,7 +215,7 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
         "       JOIN trust_tenants AS t ON t.id = lt.tenant_id"
         '       WHERE lt.lease_id = l.id ORDER BY t.display_name COLLATE "C", t.id)'
         " FROM trust_leases AS l WHERE l.pmc_id = %s"
-        "   AND (l.ends_on IS NULL OR l.ends_on >= (now() AT TIME ZONE 'UTC')::date)"
+        "   AND (l.ends_on IS NULL OR l.ends_on >= trust_pmc_day(l.pmc_id))"
         " ORDER BY l.starts_on, l.id",
         (pmc,),
     ).fetchall():
@@ -257,10 +257,10 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
             "SELECT p.id, p.display_name, f.starts_on, f.grace_days, f.flat_fee, f.percent,"
             " f.maximum, s.starts_on, s.fee FROM trust_properties AS p"
             " LEFT JOIN LATERAL (SELECT * FROM trust_late_fee_policies AS f"
-            "   WHERE f.property_id = p.id AND f.starts_on <= (now() AT TIME ZONE 'UTC')::date"
+            "   WHERE f.property_id = p.id AND f.starts_on <= trust_pmc_day(p.pmc_id)"
             "   ORDER BY f.starts_on DESC LIMIT 1) AS f ON true"
             " LEFT JOIN LATERAL (SELECT * FROM trust_nsf_fee_policies AS s"
-            "   WHERE s.property_id = p.id AND s.starts_on <= (now() AT TIME ZONE 'UTC')::date"
+            "   WHERE s.property_id = p.id AND s.starts_on <= trust_pmc_day(p.pmc_id)"
             "   ORDER BY s.starts_on DESC LIMIT 1) AS s ON true"
             ' WHERE p.pmc_id = %s ORDER BY p.display_name COLLATE "C", p.id',
             (pmc,),
@@ -308,7 +308,7 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
             "SELECT a.ledger_account_id, o.id, o.display_name, p.id, p.display_name,"
             " b.display_name, m.starts_on, m.fee_percent, m.minimum_fee, m.flat_fee,"
             " m.leasing_fee_percent, m.reserve, m.approval_limit, m.bill_markup_percent,"
-            " (SELECT s.percent FROM trust_ownership_on(p.id, (now() AT TIME ZONE 'UTC')::date)"
+            " (SELECT s.percent FROM trust_ownership_on(p.id, trust_pmc_day(a.pmc_id))"
             "  AS s WHERE s.ledger_account_id = a.ledger_account_id)"
             " FROM trust_ledger_accounts AS a"
             " JOIN trust_owners AS o ON o.id = a.owner_id"
@@ -316,7 +316,7 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
             " JOIN trust_bank_accounts AS b ON b.id = a.bank_account_id"
             " LEFT JOIN LATERAL (SELECT * FROM trust_management_agreements AS m"
             "   WHERE m.ledger_account_id = a.ledger_account_id"
-            "     AND m.starts_on <= (now() AT TIME ZONE 'UTC')::date"
+            "     AND m.starts_on <= trust_pmc_day(a.pmc_id)"
             "   ORDER BY m.starts_on DESC LIMIT 1) AS m ON true"
             " WHERE a.pmc_id = %s AND a.kind = 'owner_property'"
             ' ORDER BY o.display_name COLLATE "C", p.display_name COLLATE "C", a.ledger_account_id',
@@ -521,7 +521,7 @@ def add_property(session: Staff, conn: Conn, new: NewProperty) -> Created:
 
 
 def with_default_fees(conn: psycopg.Connection[Any], pmc_id: UUID, prop: UUID) -> None:
-    """A new property's late fee and NSF fee terms from its first day (today, UTC): the
+    """A new property's late fee and NSF fee terms from its first day (the company's today): the
     company's defaults as they stand (src/pms/api/company.py), if it has any."""
     defaults = conn.execute(
         "SELECT late_grace_days, late_flat_fee, late_percent, late_maximum, nsf_fee"
@@ -535,14 +535,14 @@ def with_default_fees(conn: psycopg.Connection[Any], pmc_id: UUID, prop: UUID) -
         conn.execute(
             "INSERT INTO trust_late_fee_policies (pmc_id, property_id, starts_on, grace_days,"
             " flat_fee, percent, maximum)"
-            " VALUES (%s, %s, (now() AT TIME ZONE 'UTC')::date, %s, %s, %s, %s)",
-            (pmc_id, prop, grace, flat, percent, maximum),
+            " VALUES (%s, %s, trust_pmc_day(%s), %s, %s, %s, %s)",
+            (pmc_id, prop, pmc_id, grace, flat, percent, maximum),
         )
     if nsf is not None:
         conn.execute(
             "INSERT INTO trust_nsf_fee_policies (pmc_id, property_id, starts_on, fee)"
-            " VALUES (%s, %s, (now() AT TIME ZONE 'UTC')::date, %s)",
-            (pmc_id, prop, nsf),
+            " VALUES (%s, %s, trust_pmc_day(%s), %s)",
+            (pmc_id, prop, pmc_id, nsf),
         )
 
 

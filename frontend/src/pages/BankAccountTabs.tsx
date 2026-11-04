@@ -15,7 +15,7 @@ import { Said } from "../components/Said";
 import { UpdatedStamp, useAgainOnFocus } from "../components/Updated";
 import { useRecord } from "./useRecord";
 import { latest } from "../latest";
-import { day, money, usDate } from "../money";
+import { companyDate, companyDay, day, money, usDate } from "../money";
 import type { Paged } from "../rentals";
 import { navigate } from "../router";
 import { GoLink } from "./NeedsAttention";
@@ -32,7 +32,7 @@ function detail(failed: unknown): string {
 // Export CSV downloads every move of the days, oldest first. It is read again when the browser tab
 // comes back into view, and says when it was.
 export function RegisterTab({ bankId }: { bankId: string }) {
-  const today = new Date();
+  const today = companyDate();
   const [start, setStart] = useState(day(new Date(today.getTime() - 90 * 86_400_000)));
   const [end, setEnd] = useState(day(today));
   const [number, setNumber] = useState(1);
@@ -46,7 +46,7 @@ export function RegisterTab({ bankId }: { bankId: string }) {
     setError("");
     const query = new URLSearchParams({ start, end, page: String(number) });
     api.get<Paged<RegisterLine>>(`/api/bank-accounts/${bankId}/register?${query}`)
-      .then(run.keep((found: Paged<RegisterLine>) => { setPage(found); setAt(new Date()); }))
+      .then(run.keep((found: Paged<RegisterLine>) => { setPage(found); setAt(companyDate()); }))
       .catch(run.keep((why) => { setPage(null); setError(detail(why)); }));
     return run.stop;
   }, [bankId, start, end, number, again]);
@@ -177,7 +177,7 @@ export function DepositsTab({ bankId }: { bankId: string }) {
   const [waiting, setWaiting] = useState<Undeposited[] | null>(null);
   const [done, setDone] = useState<BankDeposit[] | null>(null);
   const [chosen, setChosen] = useState<string[]>([]);
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const [error, setError] = useState("");
   const [runs, setRuns] = useState(0);
   const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));

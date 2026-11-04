@@ -40,7 +40,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -50,7 +50,7 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
-from pms import email_html
+from pms import days, email_html
 
 log = logging.getLogger("pms.email")
 
@@ -570,7 +570,7 @@ def tell_admins(
                 conn,
                 pmc_id,
                 "deliveries_failing",
-                datetime.now(UTC).date(),
+                days.today(conn, pmc_id),
                 f'The last attempt, to {to} ("{subject}"), said: {error}',
             )
     except psycopg.Error:

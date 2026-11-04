@@ -242,12 +242,12 @@ def settle(conn: psycopg.Connection[Any], row: Row, on: date | None = None) -> N
     if "paid" not in events:
         return
     paid_at, fee = events["paid"]
-    paid_on = online.day_of(paid_at)
+    paid_on = online.day_of(conn, row.pmc_id, paid_at)
     if not record_paid(conn, row, paid_on):
         return
     from_company(conn, row, fee or ZERO, on or paid_on)
     if "returned" in events:
-        record_return(conn, row, online.day_of(events["returned"][0]))
+        record_return(conn, row, online.day_of(conn, row.pmc_id, events["returned"][0]))
 
 
 def apply(conn: psycopg.Connection[Any], event: payments.Event, partner: str) -> bool:
@@ -328,10 +328,10 @@ def record(conn: psycopg.Connection[Any], row: Row) -> None:
     if not contributed(conn, row):
         try:
             with conn.transaction():
-                record_contribution(conn, row, online.day_of(events["paid"][0]))
+                record_contribution(conn, row, online.day_of(conn, row.pmc_id, events["paid"][0]))
         except psycopg.Error as error:
             raise HTTPException(409, refusal(error)) from None
-    settle(conn, row, on=rent.today())
+    settle(conn, row, on=rent.today(conn, row.pmc_id))
 
 
 # --- the fake partner's page ------------------------------------------------------------------
@@ -414,7 +414,7 @@ def accounts_of(conn: psycopg.Connection[Any], pmc_id: UUID, owner_id: UUID) -> 
             short=rent.cents(max(Decimal(reserve) - Decimal(held), ZERO)),
         )
         for account, prop, bank, held, reserve in conn.execute(
-            ACCOUNTS, {"pmc": pmc_id, "owner": owner_id, "day": rent.today()}
+            ACCOUNTS, {"pmc": pmc_id, "owner": owner_id, "day": rent.today(conn, pmc_id)}
         ).fetchall()
     ]
 

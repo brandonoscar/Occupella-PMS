@@ -14,6 +14,7 @@ import { Wide } from "../components/Wide";
 import { presetDays } from "../reports";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { companyDate } from "../money";
 
 export type QuickBooksAccount = {
   ledger_account_id: string;
@@ -34,7 +35,7 @@ export function journalHref(from: string, to: string, format: "iif" | "csv"): st
 export function QuickBooksPage({ me }: { me: Me }) {
   const [accounts, setAccounts] = useState<QuickBooksAccount[] | null>(null);
   const [error, setError] = useState("");
-  const [days, setDays] = useState(() => presetDays("last-month", new Date()));
+  const [days, setDays] = useState(() => presetDays("last-month", companyDate()));
   const [renaming, setRenaming] = useState<QuickBooksAccount | null>(null);
   const [said, setSaid] = useState("");
   function load() {

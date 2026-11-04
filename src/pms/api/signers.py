@@ -10,7 +10,7 @@ while it has one.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -19,7 +19,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import exports
+from pms import days, exports
 from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/signers")
@@ -90,8 +90,8 @@ def signers_on(conn: psycopg.Connection[Any], pmc_id: UUID, on: date) -> list[Ac
 def signers(
     session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
 ) -> list[Account]:
-    """Each trust bank account's broker and signers on a day (today, UTC, by default)."""
-    return signers_on(conn, session.pmc_id, on or datetime.now(UTC).date())
+    """Each trust bank account's broker and signers on a day (the company's today by default)."""
+    return signers_on(conn, session.pmc_id, on or days.today(conn, session.pmc_id))
 
 
 class Change(BaseModel):

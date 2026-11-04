@@ -29,7 +29,7 @@ import { TaxCreditLimitsCard, TaxCreditUnitCard } from "./TaxCreditCards";
 import { navigate } from "../router";
 import { agreementSummary, lateFeeSummary, leaseBreakFeeSummary, nsfFeeSummary } from "../setup";
 import { rateLine } from "../depositInterest";
-import { day, usDate } from "../money";
+import { companyDay, usDate } from "../money";
 import type { Panel } from "./SetupPanels";
 import { MarketRent, UnitDetailsCard, UnitSize } from "./UnitDetailsCard";
 import {
@@ -318,7 +318,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
 // in force today marked. With one in force its payments, prepaid rent used, deposits kept and
 // bills split by ownership go to the owners by their shares; without, staff choose an account.
 function OwnershipCard({ property, onSet }: { property: Property; onSet: () => void }) {
-  const states = ownershipStates(property.ownership, day(new Date()));
+  const states = ownershipStates(property.ownership, companyDay());
   return (
     <Card title="Ownership">
       {property.ownership.length === 0 ? (

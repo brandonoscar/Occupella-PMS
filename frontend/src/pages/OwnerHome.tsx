@@ -5,7 +5,7 @@ import { Button, LinkButton } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Card, PageHeader, Shell } from "../components/Shell";
-import { lastMonth, money } from "../money";
+import { companyDate, lastMonth, money } from "../money";
 import type { StatementData } from "../statement";
 import { group } from "../statement";
 import { StatementView } from "../components/StatementView";
@@ -79,7 +79,7 @@ export function OwnerHome({ me, section = "overview", propertyId }: {
   propertyId?: string;
 }) {
   const [properties, setProperties] = useState<Property[] | null>(null);
-  const [period, setPeriod] = useState(lastMonth(new Date()));
+  const [period, setPeriod] = useState(lastMonth(companyDate()));
   const [statement, setStatement] = useState<StatementData | null>(null);
   const [opened, setOpened] = useState<string | null>(null);
   const [error, setError] = useState("");

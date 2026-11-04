@@ -6,7 +6,7 @@ import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
-import { day, money, sumMoney, usDate } from "../money";
+import { companyDay, money, sumMoney, usDate } from "../money";
 import type { OwnerPaid } from "../payables";
 import { paidSummary } from "../payables";
 import type { DrawRun } from "../payouts";
@@ -82,7 +82,7 @@ export function ApproveDrawsForm({ run, record }: { run: DrawRun; record: Record
   const chosen = drawChoices(run);
   const lines = run.lines.filter((l) => l.account in chosen);
   const [output, setOutput] = useState<Output>("record");
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const [request] = useState(requestId);
   const { ask, prompt } = useConfirm();
   const total = sumMoney(Object.values(chosen));

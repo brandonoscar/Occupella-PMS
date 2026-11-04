@@ -172,7 +172,12 @@ def tenant_announcements(session: Tenant, conn: Conn) -> list[TenantAnnouncement
     ]
     rows = conn.execute(
         FOR_TENANT,
-        {"pmc": session.pmc_id, "records": records, "day": today(), "shown": SHOWN},
+        {
+            "pmc": session.pmc_id,
+            "records": records,
+            "day": today(conn, session.pmc_id),
+            "shown": SHOWN,
+        },
     ).fetchall()
     return [
         TenantAnnouncement(id=i, property=prop, title=title, body=body, at=at)

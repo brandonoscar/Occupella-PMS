@@ -145,7 +145,9 @@ payment of your own first (NOT VERIFIED).
 
 The install backs itself up. Its `backup` service (`scripts/backup-daily.sh`) dumps the whole
 database when it starts, and then every day at 07:00 UTC, after the nightly run has posted the
-day's rent and fees, into the `backups` folder next to `compose.selfhost.yaml`:
+day's rent and fees for a company in Eastern, Central or Mountain time (each company's run comes
+just after its own midnight; for Pacific, Alaska or Hawaii set `PMS_BACKUP_AT=11:00`), into the
+`backups` folder next to `compose.selfhost.yaml`:
 
 ```sh
 sudo ls -l backups/                                      # pms-2026-11-03.dump, one a day

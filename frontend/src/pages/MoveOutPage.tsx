@@ -8,7 +8,7 @@ import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
-import { day, money, usDate } from "../money";
+import { companyDay, money, usDate } from "../money";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
 import type { Fee, MoveOut, StatementSent } from "../moveout";
 import {
@@ -72,7 +72,7 @@ export function MoveOutPage({ me }: { me: Me }) {
 function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
   const { said, error, record } = useRecord(refresh);
   const { ask, prompt } = useConfirm();
-  const today = day(new Date());
+  const today = companyDay();
   const id = lease.lease_id;
   const [ends, setEnds] = useState(lease.ends_on ?? "");
   const [amount, setAmount] = useState("");

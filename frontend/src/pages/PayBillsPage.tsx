@@ -15,7 +15,7 @@ import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
-import { day, money, sumMoney, usDate } from "../money";
+import { companyDay, money, sumMoney, usDate } from "../money";
 import type { Bill, BillPaid, OwnerMoney, PayoutMethod } from "../payables";
 import { billBadge, billsPaidSummary } from "../payables";
 import type { Paged } from "../rentals";
@@ -64,7 +64,7 @@ export function PayBillsPage({ me }: { me: Me }) {
   const [method, setMethod] = useState<PayoutMethod>("check");
   const [output, setOutput] = useState<Output>("record");
   const [id, setId] = useState(requestId);
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const [numbers, setNumbers] = useState<Record<string, string>>({});
   const [runs, setRuns] = useState(0);
   const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));

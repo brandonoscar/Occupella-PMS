@@ -169,7 +169,7 @@ def register(
     paid, its memo, the property, the balance after it and the page it opens. `format=csv`
     downloads every move of those days, oldest first."""
     bank_of(conn, session.pmc_id, bank_account_id)
-    last = end or today()
+    last = end or today(conn, session.pmc_id)
     first = start or date.fromordinal(last.toordinal() - 90)
     if last < first:
         raise HTTPException(422, "a register runs from a day to the same day or a later one")

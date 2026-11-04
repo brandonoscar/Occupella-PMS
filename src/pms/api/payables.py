@@ -26,7 +26,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from pms import email, exports, notices
+from pms import days, email, exports, notices
 from pms.api import documents, outbox, payouts, scope
 from pms.api.deps import Conn, Staff, refusal
 from pms.api.rentals import Page, Paged, PerPage
@@ -48,16 +48,17 @@ def percent_text(value: Decimal) -> str:
     return f"{Decimal(value).normalize():f}"
 
 
-def today() -> date:
-    return datetime.now(UTC).date()
+def today(conn: psycopg.Connection[Any], pmc_id: UUID) -> date:
+    """The company's day (src/pms/days.py)."""
+    return days.today(conn, pmc_id)
 
 
 def at(day: date) -> datetime:
     return datetime.combine(day, time(0), UTC)
 
 
-def not_after_today(day: date) -> None:
-    if day > today():
+def not_after_today(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> None:
+    if day > today(conn, pmc_id):
         raise HTTPException(422, "money is recorded on the day it moved, not a later one")
 
 
@@ -246,7 +247,7 @@ def find_bills(
 ) -> tuple[list[Bill], int]:
     """The PMC's bills shown, by due date, a page of them when given a limit, and how many
     there are in all."""
-    day = today()
+    day = today(conn, pmc_id)
     rows = conn.execute(
         BILLS,
         {
@@ -524,7 +525,7 @@ def ask_of(conn: psycopg.Connection[Any], pmc_id: UUID, bill: Bill) -> AskOwner 
     asked = conn.execute(
         "SELECT 1 FROM trust_emails WHERE kind = 'bill_funds_needed' AND bill_id = %s"
         " AND (created_at AT TIME ZONE 'UTC')::date = %s",
-        (bill.id, today()),
+        (bill.id, today(conn, pmc_id)),
     ).fetchone()
     return AskOwner(
         owner=bill.owner,
@@ -1255,7 +1256,7 @@ def pay(session: Staff, conn: Conn, bill_id: UUID, step: Paying) -> Moved:
     """Records that the trust bank account paid the vendor the bill, or a part of it, by check
     (with its number) or ACH, maybe with a receipt: the first payment takes the whole bill from
     the owner's balance, which held it. Sent again with its request id, it records nothing new."""
-    not_after_today(step.on)
+    not_after_today(conn, session.pmc_id, step.on)
     found, _ = find_bills(conn, session.pmc_id, bill=bill_id)
     if not found:
         raise HTTPException(404, "no such bill")
@@ -1321,7 +1322,7 @@ def void(session: Staff, conn: Conn, bill_id: UUID, why: Void) -> None:
                 "INSERT INTO trust_bill_declines"
                 " (pmc_id, bill_id, declined_on, declined_by, reason, void)"
                 " VALUES (%s, %s, %s, %s, %s, true)",
-                (session.pmc_id, bill_id, today(), name, why.reason),
+                (session.pmc_id, bill_id, today(conn, session.pmc_id), name, why.reason),
             )
     except (psycopg.errors.UniqueViolation, psycopg.errors.CheckViolation) as refused:
         raise HTTPException(409, refusal(refused)) from None
@@ -1385,7 +1386,7 @@ def pay_bills(session: Staff, conn: Conn, run: PayBills) -> list[BillPaid]:
     """Pay bills (Buildium's): all that is left of each bill chosen, paid from its trust bank
     account, all of them or none, each recorded with how it was sent. Sent again, it pays
     nothing twice. A refusal names the bill it is about."""
-    not_after_today(run.on)
+    not_after_today(conn, session.pmc_id, run.on)
     if len(set(run.bill_ids)) != len(run.bill_ids):
         raise HTTPException(422, "pay each bill once")
     if run.output == "file" and run.request_id is None:
@@ -1620,7 +1621,9 @@ def add_recurring(session: Staff, conn: Conn, new: NewRecurring) -> AddedRecurri
         ) from None
     if new.expense_account_id is not None:
         recurring_put_in(conn, session.pmc_id, recurring.id, new.expense_account_id)
-    entered = enter_recurring_bills(conn, session.pmc_id, today(), outbox.PUBLIC_URL.get())
+    entered = enter_recurring_bills(
+        conn, session.pmc_id, today(conn, session.pmc_id), outbox.PUBLIC_URL.get()
+    )
     return AddedRecurring(id=recurring.id, entered=entered)
 
 
@@ -1784,7 +1787,7 @@ def owner_money(
         OWNERS,
         {
             "pmc": pmc,
-            "today": today(),
+            "today": today(conn, pmc),
             "owner": owner,
             "owners": owners,
             "bank": bank,
@@ -1895,7 +1898,13 @@ def management_fees_due(
                 fee = one(
                     conn,
                     "SELECT trust_post_management_fee(%s, %s, %s, %s, %s)",
-                    (session.pmc_id, account, period_start, period_end, at(today())),
+                    (
+                        session.pmc_id,
+                        account,
+                        period_start,
+                        period_end,
+                        at(today(conn, session.pmc_id)),
+                    ),
                 )
                 raise psycopg.Rollback()
         except FEE_REFUSALS as refusing:
@@ -1919,7 +1928,7 @@ def management_fees(session: Staff, conn: Conn, run: FeeRun) -> list[Fee]:
     period: its percent of the rent and recurring fees (pet rent, parking) collected in it, at
     least the minimum, plus a flat fee. An account the fee can't be taken from says why, and the
     others are taken."""
-    not_after_today(run.on)
+    not_after_today(conn, session.pmc_id, run.on)
     if run.period_end <= run.period_start:
         raise HTTPException(422, "a fee period ends after it starts")
     if run.account is not None:
@@ -2013,7 +2022,7 @@ def take_owner_fee(session: Staff, conn: Conn, new: OwnerFee) -> Moved:
     trust bank account (trust_take_owner_fee, staff who hold disburse), once per request id. The
     owner's balance must hold it; the money stays in trust until the company takes its fees out.
     """
-    not_after_today(new.on)
+    not_after_today(conn, session.pmc_id, new.on)
     owner_account(conn, session.pmc_id, new.account)
     try:
         moved = one(
@@ -2047,7 +2056,7 @@ class Taken(BaseModel):
 @router.post("/leasing-fees", status_code=201)
 def leasing_fee(session: Staff, conn: Conn, new: LeasingFee) -> Taken:
     """Takes the leasing fee for a lease from an owner's account of its property, once."""
-    not_after_today(new.on)
+    not_after_today(conn, session.pmc_id, new.on)
     owner_account(conn, session.pmc_id, new.account)
     try:
         fee = one(
@@ -2107,7 +2116,7 @@ def pay_owners(session: Staff, conn: Conn, run: PayOwners) -> list[OwnerPaid]:
     too: an ACH file for those paid by ACH, checks for those paid by check (one to each owner,
     numbered on from the account's next). Paying the draws prepared on the draw day approves
     them."""
-    not_after_today(run.on)
+    not_after_today(conn, session.pmc_id, run.on)
     chosen = [payout.account for payout in run.payouts]
     if len(set(chosen)) != len(chosen):
         raise HTTPException(422, "pay each owner's property account once")
@@ -2210,7 +2219,7 @@ class Contribution(BaseModel):
 @router.post("/contributions", status_code=201)
 def contribute(session: Staff, conn: Conn, new: Contribution) -> Moved:
     """Records money an owner put into their property account (to cover a bill, say)."""
-    not_after_today(new.on)
+    not_after_today(conn, session.pmc_id, new.on)
     owner_account(conn, session.pmc_id, new.account)
     try:
         moved = one(
@@ -2315,7 +2324,7 @@ def company_fees(
 ) -> list[CompanyFees]:
     """The company's earned fees in each operating trust bank account at a day's end (today,
     UTC, by default), and since when the oldest has waited to be taken out."""
-    return held_fees(conn, session.pmc_id, on or today())
+    return held_fees(conn, session.pmc_id, on or today(conn, session.pmc_id))
 
 
 class FeeWithdrawal(BaseModel):
@@ -2331,7 +2340,7 @@ class FeeWithdrawal(BaseModel):
 def take_company_fees(session: Staff, conn: Conn, new: FeeWithdrawal) -> Taken:
     """Records the company's earned fees paid out of a trust bank account to the company's own
     account: at most what the fee account holds."""
-    not_after_today(new.on)
+    not_after_today(conn, session.pmc_id, new.on)
     if (
         conn.execute(
             "SELECT 1 FROM trust_ledger_accounts"

@@ -15,6 +15,9 @@ export class ApiError extends Error {
 
 export type Me = {
   kind: "staff" | "owner" | "tenant";
+  // The company's time zone (src/pms/days.py): every page's "today" is the date there. /api/me
+  // always sends it; a page given a Me without it (a test's) keeps America/New_York.
+  time_zone?: string;
   email: string;
   name: string;
   person_id: string;

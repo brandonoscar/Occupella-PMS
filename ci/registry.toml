@@ -1687,3 +1687,14 @@ tests = [
   "tests/api/test_payment_keys_api.py::test_a_payment_started_under_keys_since_changed_or_taken_away_still_reports_in",
   "tests/api/test_payment_keys_api.py::test_keys_that_dont_open_here_take_no_payment_and_never_fall_back",
 ]
+
+[[invariant]]
+id = "a-companys-day-dates-its-money"
+statement = "A company's day (migration 20261104000900; the founder's review of 11/03, item 13) is the date in its own time zone, America/New_York until it picks another US zone or UTC in Company setup: never after UTC's day, at most one before it. Money is dated the company's day (a payment staff record, one the payments partner reports paid, a bill, a fee), its pages' today is that day, and its nightly run is for that day, once it has begun: rent paid at 9 pm Eastern on October 31 is on October's owner statement, never November's."
+tests = [
+  "tests/properties/test_company_day_properties.py::test_a_payment_is_on_the_statement_of_the_companys_own_day",
+  "tests/test_nightly.py::test_each_company_runs_for_its_own_day",
+  "tests/test_nightly.py::test_the_scheduler_runs_each_company_once_its_day_has_begun",
+  "tests/api/test_company_api.py::test_a_company_picks_its_time_zone_and_its_day_follows_it",
+  "tests/api/test_company_api.py::test_a_company_that_picked_no_time_zone_is_in_new_york",
+]

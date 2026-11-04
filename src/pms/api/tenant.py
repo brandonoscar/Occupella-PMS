@@ -20,7 +20,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Path, Query, Response
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import accounts, exports, notices
+from pms import accounts, days, exports, notices
 from pms.api import (
     directory,
     documents,
@@ -47,8 +47,9 @@ UPLOADS_PER_DAY = 10
 NOTICES_PER_DAY = 5
 
 
-def today() -> date:
-    return datetime.now(UTC).date()
+def today(conn: psycopg.Connection[Any], pmc_id: UUID) -> date:
+    """The company's day (src/pms/days.py)."""
+    return days.today(conn, pmc_id)
 
 
 class Monthly(BaseModel):
@@ -284,7 +285,7 @@ def still_on(conn: psycopg.Connection[Any], session: accounts.Session, lease_id:
     row = conn.execute(
         "SELECT left_on FROM trust_lease_departures"
         " WHERE pmc_id = %s AND lease_id = %s AND tenant_id = %s AND left_on <= %s",
-        (session.pmc_id, lease_id, tenant, today()),
+        (session.pmc_id, lease_id, tenant, today(conn, session.pmc_id)),
     ).fetchone()
     if row is not None:
         raise HTTPException(409, f"You left this lease on {row[0]:%m/%d/%Y}.")
@@ -295,7 +296,7 @@ def still_on(conn: psycopg.Connection[Any], session: accounts.Session, lease_id:
 def leases(session: Tenant, conn: Conn) -> list[Lease]:
     """Every lease the tenant is on, at any property, newest first, with its balance due at the
     end of today."""
-    on = today()
+    on = today(conn, session.pmc_id)
     mine = {"on": on, "pmc": session.pmc_id, "person": session.person_id}
     rows = conn.execute(
         "SELECT l.id, p.display_name, u.display_name, trust_unit_shown(u.id),"  # noqa: S608
@@ -373,7 +374,9 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             tenants=list(names),
             balance_due=exports.text(balance),
             in_effect=starts <= on and (ends is None or on <= ends),
-            each_month=[] if ends is not None and ends < on else monthly(conn, lease, starts, rent),
+            each_month=[]
+            if ends is not None and ends < on
+            else monthly(conn, lease, starts, rent, on),
             next_charge=next_charge(conn, lease, on),
             coming_due=[
                 ComingDue(due_on=due, kind=kind, memo=memo, open=rent_api.cents(left))
@@ -545,8 +548,11 @@ def lease_document(session: Tenant, conn: Conn, lease_id: UUID, document_id: UUI
     return documents.served(conn, session.pmc_id, document_id, None)
 
 
-def monthly(conn: psycopg.Connection[Any], lease: UUID, starts: date, rent: Any) -> list[Monthly]:
-    """The lease's rent, then each recurring fee or credit not stopped, by first due date."""
+def monthly(
+    conn: psycopg.Connection[Any], lease: UUID, starts: date, rent: Any, on: date
+) -> list[Monthly]:
+    """The lease's rent, then each recurring fee or credit not stopped by `on`, by first due
+    date."""
     return [
         Monthly(
             what="Rent", kind="rent", amount=rent_api.cents(rent), starts_on=starts, ends_on=None
@@ -559,7 +565,7 @@ def monthly(conn: psycopg.Connection[Any], lease: UUID, starts: date, rent: Any)
             " LEFT JOIN trust_recurring_charge_ends AS e ON e.recurring_charge_id = r.id"
             " WHERE r.lease_id = %s AND (e.ends_on IS NULL OR e.ends_on > %s)"
             ' ORDER BY r.starts_on, r.memo COLLATE "C", r.id',
-            (lease, today()),
+            (lease, on),
         ).fetchall()
     ]
 
@@ -568,7 +574,7 @@ def ledger_table(
     conn: psycopg.Connection[Any], session: accounts.Session, lease_id: UUID, as_of: date | None
 ) -> exports.Table:
     lease_of(conn, session, lease_id)
-    through = as_of or today()
+    through = as_of or today(conn, session.pmc_id)
     table = exports.run_report(
         conn, "trust_report_tenant_ledger", [session.pmc_id, lease_id, through]
     )
@@ -585,7 +591,9 @@ def ledger(
     """The lease's charges and payments through the end of a day (UTC), today by default, each
     line with the charge, payment or returned payment it shows, which opens its source."""
     rows = Rows.of(ledger_table(conn, session, lease_id, as_of))
-    return ledger_sources.ledger_rows(conn, session.pmc_id, lease_id, rows, as_of or today())
+    return ledger_sources.ledger_rows(
+        conn, session.pmc_id, lease_id, rows, as_of or today(conn, session.pmc_id)
+    )
 
 
 @router.get("/leases/{lease_id}/ledger/sources/{kind}/{source_id}")
@@ -611,7 +619,7 @@ def ledger_download(
     fmt: Annotated[Literal["csv", "xlsx", "pdf"], Query(alias="format")] = "pdf",
 ) -> Response:
     table = ledger_table(conn, session, lease_id, as_of)
-    name = f"tenant-ledger-{(as_of or today()).isoformat()}"
+    name = f"tenant-ledger-{(as_of or today(conn, session.pmc_id)).isoformat()}"
     return download(exports.export(table, fmt), name, fmt)
 
 
@@ -672,7 +680,7 @@ def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Re
     if not summary:
         raise HTTPException(422, "Tell us what needs fixing.")
     tenant = still_on(conn, session, new.lease_id)
-    on = today()
+    on = today(conn, session.pmc_id)
     row = conn.execute(
         "SELECT starts_on <= %s AND (ends_on IS NULL OR %s <= ends_on) FROM trust_leases"
         " WHERE id = %s",

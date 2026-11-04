@@ -78,7 +78,7 @@ def owned_property(session: Owner, conn: Conn, property_id: UUID) -> OwnedProper
     out), or since when it is vacant. Another's property reads as not found."""
     if property_id not in owned_properties(conn, session.pmc_id, session.person_id):
         raise HTTPException(404, "no such property of yours")
-    day = rent_today()
+    day = rent_today(conn, session.pmc_id)
     found = conn.execute(
         "SELECT p.display_name, coalesce(sum(a.balance), 0)"
         " FROM trust_properties AS p"
@@ -166,7 +166,7 @@ def owned_work_orders(session: Owner, conn: Conn) -> list[work_orders.WorkOrderR
         work_orders.WORK_ORDERS.format(where="w.property_id = ANY(%(owned)s)"),
         work_orders.query(pmc=session.pmc_id, owned=owned, per_page=200, offset=0),
     ).fetchall()
-    return work_orders.rows_of(found)
+    return work_orders.rows_of(found, rent_today(conn, session.pmc_id))
 
 
 @router.get("/contact")

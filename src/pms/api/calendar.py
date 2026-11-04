@@ -32,7 +32,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from pms import accounts
+from pms import accounts, days
 from pms.api import payables
 from pms.api.deps import Conn, Staff, Tenant, dollars
 from pms.api.leasing import public_url
@@ -301,7 +301,7 @@ def feed(conn: Conn, token: str) -> Response:
     if row is None:
         raise HTTPException(404, "no such calendar")
     pmc_id, staff_id, tenant_id, group, company = row
-    today = datetime.now(UTC).date()
+    today = days.today(conn, pmc_id)
     if staff_id is not None:
         events = staff_events(conn, pmc_id, group, today)
     else:

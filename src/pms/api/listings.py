@@ -25,7 +25,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, StringConstraints
 
-from pms import exports
+from pms import days, exports
 from pms.api import scope, unit_details
 from pms.api.deps import Conn, Staff
 from pms.api.rentals import Page, Paged, PerPage
@@ -177,7 +177,7 @@ def staff_vacancies(
     """The PMC's units that come free within 90 days or have an open application link, by
     property and unit, a page at a time: when each is free, its last rent, its open link and
     whether that is listed. Maybe of a property group or property."""
-    day = datetime.now(UTC).date()
+    day = days.today(conn, session.pmc_id)
     rows = conn.execute(
         VACANCIES,
         {

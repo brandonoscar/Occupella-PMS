@@ -14,7 +14,7 @@ import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
 import type { Keep } from "../latest";
 import { keepAll, latest } from "../latest";
-import { day, money, usDate } from "../money";
+import { companyDay, money, usDate } from "../money";
 import type { BreakFee, Household, LeaseDetail, LeasePerson } from "../rentals";
 import { petLine, vehicleLine } from "../rentals";
 import type { Recorder } from "./LeaseForms";
@@ -30,7 +30,7 @@ function detail(failed: unknown): string {
 export function RemoveTenantForm({ lease, person, record }: { lease: LeaseDetail; person: LeasePerson; record: Recorder }) {
   const staying = lease.people.filter((p) => p.left_on === null && p.id !== person.id);
   const held = lease.tenants.find((t) => t.id === person.id)?.deposit ?? "0.00";
-  const [leftOn, setLeftOn] = useState(day(new Date()));
+  const [leftOn, setLeftOn] = useState(companyDay());
   const [to, setTo] = useState("");
   const taker = staying.find((p) => p.id === to);
   return (
@@ -71,7 +71,7 @@ export function RemoveTenantForm({ lease, person, record }: { lease: LeaseDetail
 // lease-break fee its property's terms charge when a lease with an end date ends before it, only
 // if staff tick it.
 export function EndLeaseForm({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
-  const [last, setLast] = useState(lease.ends_on ?? day(new Date()));
+  const [last, setLast] = useState(lease.ends_on ?? companyDay());
   const [fee, setFee] = useState<BreakFee | null>(null);
   const [charge, setCharge] = useState(false);
   useEffect(() => {

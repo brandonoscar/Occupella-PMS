@@ -19,7 +19,7 @@ import { SidePanel } from "../components/SidePanel";
 import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
-import { day, money, usDate } from "../money";
+import { companyDay, money, usDate } from "../money";
 import type { Bill, Recurring } from "../payables";
 import { billBadge } from "../payables";
 import type { Paged } from "../rentals";
@@ -305,7 +305,7 @@ function NewRecurringForm({ books, record }: { books: Portfolio; record: Recorde
   const [amount, setAmount] = useState("");
   const [memo, setMemo] = useState("");
   const [dayOfMonth, setDayOfMonth] = useState("1");
-  const [starts, setStarts] = useState(day(new Date()));
+  const [starts, setStarts] = useState(companyDay());
   const [expense, setExpense] = useState("");
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
@@ -354,7 +354,7 @@ function NewRecurringForm({ books, record }: { books: Portfolio; record: Recorde
 
 // Stops a recurring bill after its last day; months before it stay entered.
 function StopForm({ recurring, record }: { recurring: Recurring; record: Recorder }) {
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
       event.preventDefault();

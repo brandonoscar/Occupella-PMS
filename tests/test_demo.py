@@ -10,7 +10,7 @@ from decimal import Decimal
 import pytest
 from pypdf import PdfReader
 
-from pms import demo
+from pms import days, demo
 from pms.api import offers, payables, reconcile, rent, today
 
 DAY = timedelta(days=1)
@@ -235,7 +235,7 @@ def test_the_company_took_the_month_before_lasts_fees_out_of_trust(conn, built):
 
 
 def test_every_other_page_has_something_on_it(conn, app_conn, built):
-    on = datetime.now(UTC).date()
+    on = days.today(conn, built.pmc_id)  # the demo company's day, in New York
     pmc = built.pmc_id
     assert report(
         conn,
@@ -315,7 +315,7 @@ def test_every_other_page_has_something_on_it(conn, app_conn, built):
 
 
 def test_the_founders_seed_puts_something_on_every_list(conn, app_conn, built):
-    on = datetime.now(UTC).date()
+    on = days.today(conn, built.pmc_id)  # the demo company's day, in New York
     pmc = built.pmc_id
     this_month = built.months[2]
     rows = lambda query, *more: report(conn, query, pmc, *more)  # noqa: E731

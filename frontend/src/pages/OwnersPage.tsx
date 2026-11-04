@@ -21,7 +21,7 @@ import { Wide } from "../components/Wide";
 import type { Agreement, Owner, OwnerRow } from "../directory";
 import type { Keep } from "../latest";
 import { keepAll, latest } from "../latest";
-import { day, money, usDate } from "../money";
+import { companyDate, companyDay, day, money, usDate } from "../money";
 import type { OwnerFeeKind, OwnerMoney } from "../payables";
 import { OWNER_FEE_KINDS, incomeStatementHref, ownerFeeSummary } from "../payables";
 import { requestId } from "../rent";
@@ -194,7 +194,7 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
         <RecordActions path={`/api/owners/${id}`} name={owner.name} archived={owner.archived}
           onChange={(done) => { setSaid(done); refresh(); }} />
       } />
-      <OwnerTop owner={owner} today={day(new Date())} />
+      <OwnerTop owner={owner} today={companyDay()} />
       <Said>{said}</Said>
       <div>
         <Tabs label="Owner" tabs={OWNER_TABS} value={tab} onChange={setTab} />
@@ -307,7 +307,7 @@ function OwnerProperties({ accounts }: { accounts: OwnerMoney[] }) {
 // Record contribution, money the owner put in, and Take a fee (an inspection, a lease-up, another;
 // migration 0082), from the owner's account into the company's fee account.
 function OwnerFinancials({ owner, refresh }: { owner: Owner; refresh: () => void }) {
-  const today = day(new Date());
+  const today = companyDay();
   const [start, setStart] = useState(`${today.slice(0, 4)}-01-01`);
   const [end, setEnd] = useState(today);
   const [statement, setStatement] = useState<StatementData | null>(null);
@@ -376,7 +376,7 @@ function ContributionForm({ owner, record }: { owner: Owner; record: Recorder })
   const [id, setId] = useState(requestId);
   const [account, setAccount] = useState(owner.accounts[0]?.account ?? "");
   const [amount, setAmount] = useState("");
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const [memo, setMemo] = useState("");
   return (
     <Form
@@ -418,7 +418,7 @@ function OwnerFeeForm({ owner, record }: { owner: Owner; record: Recorder }) {
   const [kind, setKind] = useState<OwnerFeeKind>("inspection");
   const [amount, setAmount] = useState("");
   const [memo, setMemo] = useState("");
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const property = owner.accounts.find((a) => a.account === account)?.property ?? "";
   return (
     <Form
@@ -467,7 +467,7 @@ export function lastTwelveMonths(today: Date): { label: string; start: string; e
 }
 
 function OwnerStatements({ owner }: { owner: Owner }) {
-  const today = new Date();
+  const today = companyDate();
   return (
     <div className="flex flex-col gap-4">
       <ul className="flex flex-col gap-1 text-base" aria-label="Monthly statements">

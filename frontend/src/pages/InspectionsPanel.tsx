@@ -6,7 +6,7 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import type { Condition, Inspection, NewRoom } from "../inspections";
 import { CONDITIONS, ROOMS, inspectionReportHref, inspectionSummary, itemsToSend } from "../inspections";
-import { day, usDate } from "../money";
+import { companyDay, usDate } from "../money";
 import { useRecord } from "./useRecord";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
@@ -21,7 +21,7 @@ export function InspectionsPanel({ leaseId, label }: { leaseId: string; label: s
   const [error, setError] = useState("");
   const { said, error: refused, record } = useRecord(load);
   const [kind, setKind] = useState<"move-in" | "move-out">("move-in");
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const [notes, setNotes] = useState("");
   const [rooms, setRooms] = useState<NewRoom[]>(fresh());
 

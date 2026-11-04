@@ -115,7 +115,7 @@ def properties(
         {
             **scope.params(group, property_id),
             "pmc": session.pmc_id,
-            "day": rent.today(),
+            "day": rent.today(conn, session.pmc_id),
             "archived": archived,
             "like": like(q),
             "per_page": per_page,
@@ -261,7 +261,7 @@ def property_page(request: Request, session: Staff, conn: Conn, property_id: UUI
     """A property: its address, its owners' accounts, what each holds and its management terms,
     its units, each with the lease in effect today (or the next to start), and its late and NSF
     fee terms."""
-    day = rent.today()
+    day = rent.today(conn, session.pmc_id)
     row = conn.execute(
         "SELECT p.display_name, trust_is_archived(p.id, NULL) FROM trust_properties AS p"
         " WHERE p.pmc_id = %s AND p.id = %s",
@@ -501,7 +501,9 @@ def unit_page(session: Staff, conn: Conn, unit_id: UUID) -> Unit:
     ).fetchone()
     if row is None:
         raise HTTPException(404, "no such unit")
-    leases = lease_lines(conn, session.pmc_id, rent.today(), "l.unit_id = %(unit)s", unit=unit_id)
+    leases = lease_lines(
+        conn, session.pmc_id, rent.today(conn, session.pmc_id), "l.unit_id = %(unit)s", unit=unit_id
+    )
     return Unit(
         id=unit_id,
         name=row[0],
@@ -623,7 +625,7 @@ def rent_roll(
     """The rent roll a page at a time: leases in effect today (or those to come, those ended,
     those that owe, or all), maybe of a group or one property, or matching a tenant, unit or
     property name, each with its days left, rent, the deposits held and what it owes."""
-    day = rent.today()
+    day = rent.today(conn, session.pmc_id)
     rows = conn.execute(
         RENT_ROLL,
         {
@@ -748,7 +750,7 @@ def lease_page(session: Staff, conn: Conn, lease_id: UUID) -> Lease:
     ).fetchone()
     if row is None:
         raise HTTPException(404, "no such lease")
-    day = rent.today()
+    day = rent.today(conn, session.pmc_id)
     detail = rent.lease_detail(conn, session.pmc_id, lease_id, day)
     holds = rent.holds_of(conn, session.pmc_id, lease_id, day)
     people = [
@@ -885,7 +887,7 @@ def lease_ledger(
     ).fetchone()
     if found is None:
         raise HTTPException(404, "no such lease")
-    day = end or rent.today()
+    day = end or rent.today(conn, session.pmc_id)
     if start is not None and start > day:
         raise HTTPException(422, "a ledger runs from a day to the same day or a later one")
     report = conn.execute(

@@ -10,7 +10,7 @@ trust_report_income_statement over the same year.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -19,7 +19,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Path, Query, Response
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from pms import accounts, exports
+from pms import accounts, days, exports
 from pms.api import documents, ledger_sources
 from pms.api.deps import Conn, Owner, Rows, download
 
@@ -455,7 +455,7 @@ def approve_bill(session: Owner, conn: Conn, bill_id: UUID, approval: Approval) 
         (
             session.pmc_id,
             bill_id,
-            today(),
+            today(conn, session.pmc_id),
             f"{name}, in the owner portal",
             session.person_id,
             typed if total[0] > over else None,
@@ -475,7 +475,7 @@ def decline_bill(session: Owner, conn: Conn, bill_id: UUID, decline: Decline) ->
         (
             session.pmc_id,
             bill_id,
-            today(),
+            today(conn, session.pmc_id),
             f"{name}, in the owner portal",
             decline.reason,
             session.person_id,
@@ -483,8 +483,9 @@ def decline_bill(session: Owner, conn: Conn, bill_id: UUID, decline: Decline) ->
     )
 
 
-def today() -> date:
-    return datetime.now(UTC).date()
+def today(conn: psycopg.Connection[Any], pmc_id: UUID) -> date:
+    """The company's day (src/pms/days.py)."""
+    return days.today(conn, pmc_id)
 
 
 def cents(amount: Decimal) -> str:

@@ -5,7 +5,7 @@ the API's scheduler, which runs it when the API starts and then every day at 06:
 
 import logging
 import uuid
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import psycopg
 import pytest
@@ -213,13 +213,71 @@ def test_every_company_runs_when_none_is_named(conn, app_conn, pmc, monkeypatch)
 @pytest.mark.parametrize(
     ("now", "seconds"),
     [
-        (datetime(2026, 10, 16, 5, 0, tzinfo=UTC), 3600),
-        (datetime(2026, 10, 16, 6, 0, tzinfo=UTC), 24 * 3600),
-        (datetime(2026, 10, 16, 23, 0, tzinfo=UTC), 7 * 3600),
+        (datetime(2026, 10, 16, 5, 0, tzinfo=UTC), 60),
+        (datetime(2026, 10, 16, 5, 1, tzinfo=UTC), 3600),
+        (datetime(2026, 10, 16, 5, 30, 30, tzinfo=UTC), 1830),
+        (datetime(2026, 10, 16, 23, 59, tzinfo=UTC), 120),
     ],
 )
-def test_the_next_run_is_the_next_six_in_the_morning_utc(now, seconds):
+def test_the_next_look_is_a_minute_past_the_next_hour(now, seconds):
     assert nightly.seconds_until(now) == seconds
+
+
+def test_each_company_runs_for_its_own_day(conn, app_conn, pmc):
+    """At 05:30 UTC on November 1, it is still October 31 in Hawaii: a company there gets no
+    November rent yet, while one in UTC does (src/pms/days.py)."""
+    hawaii = make_pmc(conn, time_zone="Pacific/Honolulu")
+    ours, theirs = (
+        lease_since(conn, pmc, date(2026, 9, 1)),
+        lease_since(conn, hawaii, date(2026, 9, 1)),
+    )
+    at = datetime(2026, 11, 1, 5, 30, tzinfo=UTC)
+
+    nightly.run_all(app_conn, None, URL, [pmc.pmc_id, hawaii.pmc_id], at=at)
+
+    assert (date(2026, 11, 1), "rent", "1000.00") in charges(conn, ours)
+    assert [day for day, *_ in charges(conn, theirs)] == [date(2026, 10, 1)]
+    # Ten hours on, its day has begun too.
+    nightly.run_all(app_conn, None, URL, [hawaii.pmc_id], at=at + timedelta(hours=10))
+    assert (date(2026, 11, 1), "rent", "1000.00") in charges(conn, theirs)
+
+
+@pytest.mark.parametrize(
+    ("zone", "local"),
+    [
+        ("America/New_York", date(2026, 10, 31)),
+        ("America/Chicago", date(2026, 10, 31)),
+        ("America/Los_Angeles", date(2026, 10, 31)),
+        ("Pacific/Honolulu", date(2026, 10, 31)),
+        ("UTC", date(2026, 11, 1)),
+    ],
+)
+def test_a_companys_day_is_the_date_in_its_time_zone(conn, zone, local):
+    """9 pm Eastern on October 31 is 01:00 UTC on November 1: October 31 in every US zone."""
+    pmc = make_pmc(conn, time_zone=zone)
+    at = datetime(2026, 11, 1, 1, 0, tzinfo=UTC)
+    assert nightly.days_at(conn, at, [pmc.pmc_id]) == {pmc.pmc_id: local}
+
+
+def test_the_scheduler_runs_each_company_once_its_day_has_begun(conn, database_url, pmc):
+    hawaii = make_pmc(conn, time_zone="Pacific/Honolulu")
+    leases = {p.pmc_id: lease_since(conn, p, date(2026, 9, 1)) for p in (pmc, hawaii)}
+    now = [datetime(2026, 11, 1, 5, 1, tzinfo=UTC)]
+    runs = nightly.Scheduler(
+        database_url, "trust_app", URL, None, lambda: now[0], pmcs=[pmc.pmc_id, hawaii.pmc_id]
+    )
+    started = runs.run_once()  # when started, every company, each for its own day
+    assert {r.pmc_id for r in started} == {pmc.pmc_id, hawaii.pmc_id}
+    assert runs.days == {pmc.pmc_id: date(2026, 11, 1), hawaii.pmc_id: date(2026, 10, 31)}
+    assert [day for day, *_ in charges(conn, leases[hawaii.pmc_id])] == [date(2026, 10, 1)]
+    # An hour on, no company's day has begun since: nothing runs.
+    now[0] += timedelta(hours=1)
+    assert runs.run_once(begun_only=True) == []
+    # At 10:01 UTC it is past midnight in Hawaii: that company alone runs, for November 1.
+    now[0] = datetime(2026, 11, 1, 10, 1, tzinfo=UTC)
+    (ran,) = runs.run_once(begun_only=True)
+    assert (ran.pmc_id, ran.rents) == (hawaii.pmc_id, 1)
+    assert (date(2026, 11, 1), "rent", "1000.00") in charges(conn, leases[hawaii.pmc_id])
 
 
 @pytest.mark.timing
@@ -238,9 +296,7 @@ def test_the_scheduler_runs_at_start_then_waits_for_its_time(conn, database_url,
 
 @pytest.mark.timing
 def test_a_scheduler_that_cannot_reach_the_database_tries_again(caplog):
-    runs = nightly.Scheduler(
-        "postgresql://nobody@127.0.0.1:1/none", "trust_app", URL, retry=0.01, at=time(6, 0)
-    )
+    runs = nightly.Scheduler("postgresql://nobody@127.0.0.1:1/none", "trust_app", URL, retry=0.01)
     with caplog.at_level(logging.ERROR, logger="pms.nightly"):
         runs.start()
         deadline = datetime.now(UTC) + timedelta(seconds=30)
@@ -278,7 +334,8 @@ def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     monkeypatch.delenv("PMS_PAYMENTS", raising=False)
 
     assert nightly.main([]) == 0
-    assert seen == [(datetime.now(UTC).date(), "https://pms.example.com", False, None)]
+    # No day: each company runs for its own (src/pms/days.py).
+    assert seen == [(None, "https://pms.example.com", False, None)]
     assert capsys.readouterr().out == (
         "1 companies: 2 rents, 1 late fees, 3 bills, 4 emails, 5 management fees, 6 work orders,"
         " 0 autopay payments\n"

@@ -17,7 +17,7 @@ import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
 import type { Keep } from "../latest";
 import { keepAll, latest } from "../latest";
-import { day, money, usDate } from "../money";
+import { companyDay, money, usDate } from "../money";
 import { methodLabel } from "../rent";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
@@ -165,7 +165,7 @@ function AuthorityPaymentRow({ payment, record }: { payment: AuthorityPayment; r
             label: "It bounced", danger: true,
             confirm: `Mark the ${money(payment.amount)} payment bounced today? Its money moves back out of the owners' accounts and the authority owes it again. Tenants' balances don't change.`,
             onSelect: () => record(`/api/assistance/payments/${encodeURIComponent(payment.transfer_id)}/bounce`,
-              { on: day(new Date()) }, () => `The ${money(payment.amount)} payment bounced; the authority owes it again.`),
+              { on: companyDay() }, () => `The ${money(payment.amount)} payment bounced; the authority owes it again.`),
           }]} />
         )}
       </td>
@@ -176,7 +176,7 @@ function AuthorityPaymentRow({ payment, record }: { payment: AuthorityPayment; r
 // The authority's late payment fee from a day, as its HAP contract provides: its part of a rent
 // still open after the grace days is charged the fee, on the authority, once. 0 charges none.
 function LateFeeForm({ authority, record }: { authority: string; record: ReturnType<typeof useRecord>["record"] }) {
-  const [from, setFrom] = useState(day(new Date()));
+  const [from, setFrom] = useState(companyDay());
   const [grace, setGrace] = useState("5");
   const [fee, setFee] = useState("");
   return (

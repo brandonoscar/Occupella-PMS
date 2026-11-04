@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "../components/Button";
 import { Field } from "../components/Field";
-import { day, usDate } from "../money";
+import { companyDay, usDate } from "../money";
 import type { RentLease } from "../rent";
 import { Form } from "../components/Form";
 
@@ -12,7 +12,7 @@ type Recorder = <T>(path: string, body: object, done: (answer: T) => string) => 
 export function InsuranceForms({ lease, record }: { lease: RentLease; record: Recorder }) {
   const [required, setRequired] = useState(lease.renters_insurance?.required ?? false);
   const [minimum, setMinimum] = useState("");
-  const [from, setFrom] = useState(day(new Date()));
+  const [from, setFrom] = useState(companyDay());
   return (
     <div className="flex flex-col gap-4">
       <Form
@@ -50,7 +50,7 @@ export function InsuranceForms({ lease, record }: { lease: RentLease; record: Re
 export function PolicyForm({ path, id, record }: { path: string; id: string; record: Recorder }) {
   const [carrier, setCarrier] = useState("");
   const [number, setNumber] = useState("");
-  const [starts, setStarts] = useState(day(new Date()));
+  const [starts, setStarts] = useState(companyDay());
   const [expires, setExpires] = useState("");
   const [limit, setLimit] = useState("");
   const [named, setNamed] = useState(false);

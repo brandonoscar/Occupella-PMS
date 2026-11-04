@@ -9,7 +9,7 @@ import { Badge } from "../components/Badge";
 import { Notice } from "../components/Notice";
 import type { ContentType } from "../documents";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
-import { day, money, usDate } from "../money";
+import { companyDate, companyDay, money, usDate } from "../money";
 import type { Bounce, DepositKind, Hold, OpenCharge, Payment, PaymentMethod, RecurringCharge, RentChange, RentLease } from "../rent";
 import {
   DEPOSIT_KINDS,
@@ -41,7 +41,7 @@ export type Recorder = <T>(path: string, body: object, done: (answer: T) => stri
 // amount, before it is recorded, since it moves the money back and charges the property's NSF fee.
 export function PaymentRow({ payment, record }: { payment: RentLease["payments"][number]; record: Recorder }) {
   const [asking, setAsking] = useState(false);
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   return (
     <tr>
       <td>
@@ -108,7 +108,7 @@ export function PaymentForm({ lease, record, onRecorded }: {
 }) {
   const [id, setId] = useState(requestId);
   const [amount, setAmount] = useState("");
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const [reference, setReference] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("check");
   const [pastHold, setPastHold] = useState(false);
@@ -243,7 +243,7 @@ export function PaymentForm({ lease, record, onRecorded }: {
             variant="secondary"
             onClick={async () => {
               if (await record<Payment>(`/api/rent/leases/${lease.id}/use-prepaid`,
-                { request_id: requestId(), on: day(new Date()), ...chosen }, paymentSummary)) onRecorded?.(false);
+                { request_id: requestId(), on: companyDay(), ...chosen }, paymentSummary)) onRecorded?.(false);
             }}
           >
             Use prepaid rent
@@ -280,7 +280,7 @@ function ChargeChoice({ charge, amount, onChange }: {
 export function ChargeForm({ lease, record }: { lease: RentLease; record: Recorder }) {
   const [kind, setKind] = useState<"fee" | "credit">("fee");
   const [amount, setAmount] = useState("");
-  const [due, setDue] = useState(day(new Date()));
+  const [due, setDue] = useState(companyDay());
   const [memo, setMemo] = useState("");
   const [types] = useChargeTypes();
   const [type, setType] = useState("");
@@ -322,7 +322,7 @@ export function ChargeForm({ lease, record }: { lease: RentLease; record: Record
 // A recurring charge; Stop is in its ⋯ menu and asks for the day it stops first.
 export function RecurringLine({ recurring, record }: { recurring: RecurringCharge; record: Recorder }) {
   const [asking, setAsking] = useState(false);
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   return (
     <li className="flex min-h-8 flex-wrap items-center gap-3">
       <span>{recurringLabel(recurring)}</span>
@@ -357,7 +357,7 @@ export function RecurringLine({ recurring, record }: { recurring: RecurringCharg
 export function RecurringForm({ lease, record }: { lease: RentLease; record: Recorder }) {
   const [kind, setKind] = useState<"fee" | "credit">("fee");
   const [amount, setAmount] = useState("");
-  const [from, setFrom] = useState(day(new Date()));
+  const [from, setFrom] = useState(companyDay());
   const [memo, setMemo] = useState("");
   const [types] = useChargeTypes();
   const [type, setType] = useState("");
@@ -400,9 +400,9 @@ export function RecurringForm({ lease, record }: { lease: RentLease; record: Rec
 // with an end date names the term that lets its rent change during it. A state or city may ask
 // for more notice, or cap the increase: that stays the company's to check.
 export function RentChangeForm({ lease, record }: { lease: RentLease; record: Recorder }) {
-  const [from, setFrom] = useState(earliestRentChange(new Date()));
+  const [from, setFrom] = useState(earliestRentChange(companyDate()));
   const [amount, setAmount] = useState("");
-  const [notice, setNotice] = useState(day(new Date()));
+  const [notice, setNotice] = useState(companyDay());
   const [served, setServed] = useState<RentChange["served_by"]>("mail");
   const [terms, setTerms] = useState("");
   return (
@@ -449,7 +449,7 @@ export function RentChangeForm({ lease, record }: { lease: RentLease; record: Re
 // The day of the month the lease's rent is due, from the first of a month (the founder's review,
 // q013): the rent run charges it on that day. A month whose rent is charged keeps its due date.
 export function DueDayForm({ lease, record }: { lease: RentLease; record: Recorder }) {
-  const [from, setFrom] = useState(nextMonthFirst(new Date()));
+  const [from, setFrom] = useState(nextMonthFirst(companyDate()));
   const [due, setDue] = useState(String(lease.rent_due_day));
   return (
     <Form
@@ -491,7 +491,7 @@ export function DepositForm({ lease, record }: { lease: RentLease; record: Recor
   // What the signed lease asked and is not held yet, to start from (q036).
   const owing = lease.deposit_asked && Number(lease.deposit_asked.to_receive) > 0 ? lease.deposit_asked.to_receive : "";
   const [amount, setAmount] = useState(owing);
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const [kind, setKind] = useState<DepositKind>("security");
   const label = DEPOSIT_KINDS.find((k) => k.value === kind)?.label ?? "Deposit";
   return (
@@ -541,7 +541,7 @@ export function DepositForm({ lease, record }: { lease: RentLease; record: Recor
 // A payment hold placed when an eviction is filed: from its first day a payment is refused unless
 // staff accept it past the hold.
 export function HoldForm({ lease, record }: { lease: RentLease; record: Recorder }) {
-  const [since, setSince] = useState(day(new Date()));
+  const [since, setSince] = useState(companyDay());
   const [reason, setReason] = useState("Eviction filed");
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
@@ -564,7 +564,7 @@ export function HoldForm({ lease, record }: { lease: RentLease; record: Recorder
 }
 
 export function ReleaseForm({ hold, record }: { hold: Hold; record: Recorder }) {
-  const [ends, setEnds] = useState(day(new Date()));
+  const [ends, setEnds] = useState(companyDay());
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
       event.preventDefault();

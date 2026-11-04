@@ -772,7 +772,7 @@ browser = [
 
 [[feature]]
 id = "company"
-statement = "Staff keep the company's name, mailing address and logo (a PNG or JPEG), and the late fee and NSF fee terms each property added from then on starts with, from its first day; a property already there keeps its own. Owners and tenants see their manager's name, mailing address and logo in the portal."
+statement = "Staff keep the company's name, mailing address and logo (a PNG or JPEG), its time zone (America/New_York until they pick another; its day, there, is the day its money is dated and its pages' today), and the late fee and NSF fee terms each property added from then on starts with, from its first day; a property already there keeps its own. Owners and tenants see their manager's name, mailing address and logo in the portal."
 operations = [
   "GET /api/company",
   "POST /api/company",
@@ -783,6 +783,7 @@ operations = [
 ]
 browser = [
   "features.spec.ts › staff keep the company's name, address, logo and the fees new properties start with; a property added then starts with them, and owners and tenants see their manager",
+  "features.spec.ts › staff pick the company's time zone in Company setup, and a payment's day is the company's day there",
 ]
 
 [[feature]]

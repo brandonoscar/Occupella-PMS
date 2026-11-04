@@ -7,7 +7,7 @@ import { Notice } from "../components/Notice";
 import { Said } from "../components/Said";
 import { Select } from "../components/Select";
 import { SidePanel } from "../components/SidePanel";
-import { day, usDate } from "../money";
+import { companyDay, usDate } from "../money";
 import type { OwnerAccount as PropertyOwner } from "../rentals";
 import { sharesLine, sharesTotal } from "../rentals";
 import type { Portfolio } from "../setup";
@@ -158,7 +158,7 @@ export function OwnershipPanel({ panel, propertyId, name, owners }: {
   owners: PropertyOwner[];
 }) {
   const { error, save } = useSave(panel);
-  const [from, setFrom] = useState(day(new Date()));
+  const [from, setFrom] = useState(companyDay());
   const [percents, setPercents] = useState<Record<string, string>>(
     Object.fromEntries(owners.map((o) => [o.account, o.percent ?? ""])));
   const total = sharesTotal(Object.values(percents));
@@ -216,7 +216,7 @@ export function TermsPanel({ panel, accounts, everyOwnerOf }: {
 }) {
   const { error, save } = useSave(panel);
   const [account, setAccount] = useState(accounts[0]?.account ?? "");
-  const [from, setFrom] = useState(day(new Date()));
+  const [from, setFrom] = useState(companyDay());
   const [amounts, setAmounts] = useState<Record<Amount, string>>(
     Object.fromEntries(AMOUNTS.map(([key]) => [key, ""])) as Record<Amount, string>,
   );
@@ -250,7 +250,7 @@ export function TermsPanel({ panel, accounts, everyOwnerOf }: {
 
 export function LateFeesPanel({ panel, propertyId }: { panel: Panel; propertyId: string }) {
   const { error, save } = useSave(panel);
-  const [fees, setFees] = useState({ starts_on: day(new Date()), grace_days: "5", flat_fee: "", percent: "", maximum: "" });
+  const [fees, setFees] = useState({ starts_on: companyDay(), grace_days: "5", flat_fee: "", percent: "", maximum: "" });
   const set = (key: keyof typeof fees) => (e: React.ChangeEvent<HTMLInputElement>) => setFees({ ...fees, [key]: e.target.value });
   return (
     <SidePanel title="Set late fees" onClose={panel.close}>
@@ -275,7 +275,7 @@ export function LateFeesPanel({ panel, propertyId }: { panel: Panel; propertyId:
 
 export function NsfFeePanel({ panel, propertyId }: { panel: Panel; propertyId: string }) {
   const { error, save } = useSave(panel);
-  const [from, setFrom] = useState(day(new Date()));
+  const [from, setFrom] = useState(companyDay());
   const [fee, setFee] = useState("");
   return (
     <SidePanel title="Set NSF fee" onClose={panel.close}>
@@ -296,7 +296,7 @@ export function NsfFeePanel({ panel, propertyId }: { panel: Panel; propertyId: s
 // sets it (migration 0122): the PMS builds in no state's rate; 0 earns none from that day.
 export function DepositInterestPanel({ panel, propertyId }: { panel: Panel; propertyId: string }) {
   const { error, save } = useSave(panel);
-  const [from, setFrom] = useState(day(new Date()));
+  const [from, setFrom] = useState(companyDay());
   const [percent, setPercent] = useState("");
   return (
     <SidePanel title="Set deposit interest" onClose={panel.close}>
@@ -325,7 +325,7 @@ export function DepositInterestPanel({ panel, propertyId }: { panel: Panel; prop
 // charged only when staff end such a lease before its end date and tick it.
 export function LeaseBreakFeePanel({ panel, propertyId }: { panel: Panel; propertyId: string }) {
   const { error, save } = useSave(panel);
-  const [from, setFrom] = useState(day(new Date()));
+  const [from, setFrom] = useState(companyDay());
   const [flat, setFlat] = useState("0.00");
   const [months, setMonths] = useState("0");
   return (

@@ -16,7 +16,7 @@ import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
 import type { Keep } from "../latest";
 import { keepAll, latest } from "../latest";
-import { day, money, usDate } from "../money";
+import { companyDay, money, usDate } from "../money";
 import { COVERAGES, PAYMENT, standingTone, standingWord } from "../vendors";
 import type { VendorPageData } from "../workOrders";
 import { STATUS } from "../workOrders";
@@ -263,7 +263,7 @@ function PolicyForm({ vendor, record }: { vendor: VendorPageData; record: Record
   const [coverage, setCoverage] = useState<string>(COVERAGES[0]);
   const [carrier, setCarrier] = useState("");
   const [number, setNumber] = useState("");
-  const [starts, setStarts] = useState(day(new Date()));
+  const [starts, setStarts] = useState(companyDay());
   const [expires, setExpires] = useState("");
   const [limit, setLimit] = useState("");
   return (

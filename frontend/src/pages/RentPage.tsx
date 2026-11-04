@@ -17,7 +17,7 @@ import { SidePanel } from "../components/SidePanel";
 import { TenantLinks } from "../components/TenantLinks";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
-import { day, money, usDate } from "../money";
+import { companyDay, money, usDate } from "../money";
 import type { RentRun, RentRunLine } from "../rent";
 import { rentRunSummary } from "../rent";
 import type { Paged, RentRollRow } from "../rentals";
@@ -44,7 +44,7 @@ const SHOWN: { value: Show; label: string }[] = [
 ];
 
 function firstOfThisMonth(): string {
-  return `${day(new Date()).slice(0, 8)}01`;
+  return `${companyDay().slice(0, 8)}01`;
 }
 
 // Rentals → Rent roll (ADR 0006): every lease a page at a time, current, to come, ended, owing
@@ -172,7 +172,7 @@ export function RentPage({ me }: { me: Me }) {
 // the latest runs, nightly or by hand.
 function RunRent({ record }: { record: Recorder }) {
   const [due, setDue] = useState(firstOfThisMonth());
-  const [asOf, setAsOf] = useState(day(new Date()));
+  const [asOf, setAsOf] = useState(companyDay());
   const [runs, setRuns] = useState<RentRunLine[] | null>(null);
 
   useEffect(() => {

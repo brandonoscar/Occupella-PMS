@@ -14,6 +14,7 @@ import { useScope } from "../scope";
 import type { Portfolio } from "../setup";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
+import { companyDate } from "../money";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 // Columns that are only for joining rows up, never for reading.
@@ -36,7 +37,7 @@ export function ReportPage({ me, name }: { me: Me; name: string }) {
 }
 
 function Report({ me, spec }: { me: Me; spec: ReportSpec }) {
-  const [filters, setFilters] = useState<Filters>(() => defaultFilters(new Date()));
+  const [filters, setFilters] = useState<Filters>(() => defaultFilters(companyDate()));
   const [scope, setScope] = useScope();
   const [owners, setOwners] = useState<{ id: string; name: string }[]>([]);
   // A report by property narrowed to one owner's properties; "" is all of them.
@@ -111,7 +112,7 @@ function Report({ me, spec }: { me: Me; spec: ReportSpec }) {
         {ranged && (
           <>
             <Select label="Days" id="report-preset" value="" onChange={(e) => {
-              if (e.target.value) change(presetDays(e.target.value as Preset, new Date()));
+              if (e.target.value) change(presetDays(e.target.value as Preset, companyDate()));
             }}>
               <option value="">Choose…</option>
               {PRESETS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}

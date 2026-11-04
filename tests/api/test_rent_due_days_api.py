@@ -74,8 +74,8 @@ def test_staff_move_a_leases_rent_due_day_from_next_month(
     assert mine["rent_due_day"] == 1
     # From its month on, the lease's page and the portal show the new day.
     with monkeypatch.context() as later:
-        later.setattr(rent, "today", lambda: NEXT_MONTH)
-        later.setattr(tenant, "today", lambda: NEXT_MONTH)
+        later.setattr(rent, "today", lambda *_: NEXT_MONTH)
+        later.setattr(tenant, "today", lambda *_: NEXT_MONTH)
         assert ok(client.get(f"/api/leases/{lease}"))["rent_due_day"] == 10
         (mine,) = ok(other_client.get("/api/tenant/leases"))
         assert mine["rent_due_day"] == 10

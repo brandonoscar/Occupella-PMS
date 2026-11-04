@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { day, lastMonth, money, sumMoney, usDatesIn } from "./money";
+import { afterEach, describe, expect, it } from "vitest";
+import { companyDate, companyDay, day, lastMonth, money, setTimeZone, sumMoney, usDatesIn } from "./money";
 
 describe("money", () => {
   it("shows dollars and cents from the API's text, negatives in parentheses", () => {
@@ -61,5 +61,23 @@ describe("usDatesIn", () => {
     expect(usDatesIn("Bill LAWN-2026-10")).toBe("Bill LAWN-2026-10");
     expect(usDatesIn("2026-10-05T12:00")).toBe("2026-10-05T12:00");
     expect(usDatesIn("")).toBe("");
+  });
+});
+
+describe("the company's day", () => {
+  afterEach(() => setTimeZone("UTC")); // as src/testSetup.ts leaves it
+  // 9 pm Eastern on October 31 is 01:00 UTC on November 1.
+  const evening = new Date("2026-11-01T01:00:00Z");
+
+  it("is the date in the company's time zone", () => {
+    setTimeZone("America/New_York");
+    expect(companyDay(evening)).toBe("2026-10-31");
+    expect(companyDate(evening).toISOString()).toBe("2026-10-31T00:00:00.000Z");
+    expect(lastMonth(companyDate(evening))).toEqual({ start: "2026-09-01", end: "2026-09-30" });
+    setTimeZone("Pacific/Honolulu");
+    expect(companyDay(new Date("2026-11-01T09:59:00Z"))).toBe("2026-10-31");
+    expect(companyDay(new Date("2026-11-01T10:00:00Z"))).toBe("2026-11-01");
+    setTimeZone("UTC");
+    expect(companyDay(evening)).toBe("2026-11-01");
   });
 });

@@ -12,7 +12,7 @@ import { Wide } from "../components/Wide";
 import type { LedgerAccount } from "../generalLedger";
 import { ledgerHref, monthToDate, nonZero } from "../generalLedger";
 import { latest } from "../latest";
-import { day, money, usDate } from "../money";
+import { companyDay, money, usDate } from "../money";
 import type { Paged } from "../rentals";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
@@ -24,7 +24,7 @@ const BUTTON =
 // entries with a running balance, and its totals, as Buildium lays it out; a page of accounts at
 // a time, found by account or bank. Cash basis. "Journal entry" corrects the books.
 export function GeneralLedgerPage({ me }: { me: Me }) {
-  const start = monthToDate(day(new Date()));
+  const start = monthToDate(companyDay());
   const [from, setFrom] = useState(start.from);
   const [to, setTo] = useState(start.to);
   const [q, setQ] = useState("");

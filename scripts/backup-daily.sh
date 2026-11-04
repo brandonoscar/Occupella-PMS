@@ -11,8 +11,10 @@
 #   scripts/backup-daily.sh next     the seconds until the next daily dump
 #
 # PMS_BACKUP_DIR   where the dumps go (default /backups)
-# PMS_BACKUP_AT    the time of day, HH:MM in UTC (default 07:00: after the 06:00 nightly run has
-#                  posted the day's rent and fees, src/pms/nightly.py)
+# PMS_BACKUP_AT    the time of day, HH:MM in UTC (default 07:00: after the nightly run has posted
+#                  the day's rent and fees for a company in Eastern, Central or Mountain time; each
+#                  company's run comes just after its own midnight, src/pms/nightly.py, so 11:00
+#                  for Pacific to Hawaii)
 #
 # The database comes from libpq's own variables (PGHOST, PGUSER, PGDATABASE and the password from
 # PGPASSWORD or a password file), as scripts/backup.sh takes it. A dump is readable by its owner
