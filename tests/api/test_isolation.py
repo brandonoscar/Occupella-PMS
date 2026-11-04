@@ -145,6 +145,9 @@ RECORDS = {
     "portal owner's bill": "SELECT id FROM trust_bills"
     " WHERE pmc_id = %(pmc)s AND reference = 'LND-3001'",
     "portal owner's document": _DOCUMENT.format("owner_document"),
+    # Harbor Tower, Demo Owner C's (the portal owner's): the portals' second version.
+    "portal owner's property": _NAMED.format("trust_properties", "Harbor Tower"),
+    "announcement": _ONLY.format("trust_announcements"),
     "bank match": "SELECT id FROM trust_bank_matches WHERE pmc_id = %(pmc)s"
     " ORDER BY matched_at DESC, id LIMIT 1",
     "statement line": "SELECT l.id FROM trust_bank_statement_lines AS l"
@@ -243,6 +246,7 @@ PATH_IDS = {
     "run_id": "payout run",
     "tax_id": "tax id",
     "pmc_id": "company",
+    "announcement_id": "announcement",
 }
 ROUTE_PATH_IDS = {
     ("/api/payables/recurring/{recurring_id}/expense-account", "recurring_id"): "recurring bill",
@@ -256,6 +260,8 @@ ROUTE_PATH_IDS = {
     ("/api/tenant/leases/{lease_id}/documents/{document_id}", "document_id"): "lease document",
     ("/api/move-out/{lease_id}/statement", "lease_id"): "returned lease",
     ("/api/move-out/{lease_id}/statement/send", "lease_id"): "returned lease",
+    ("/api/owner/properties/{property_id}", "property_id"): "portal owner's property",
+    ("/api/messages/{about}/{person_id}", "person_id"): "tenant",
 }
 # Path parameters that name no record, and what the route is sent.
 NOT_ID_PARAMS = {
@@ -263,6 +269,8 @@ NOT_ID_PARAMS = {
     ("/api/reports/{name}", "name"): None,
     # The kind of household record the item is: the occupant fill_in makes.
     ("/api/leases/{lease_id}/{kind}/{item_id}/remove", "kind"): "occupants",
+    # Whose conversation it is: a tenant's (person_id names the tenant).
+    ("/api/messages/{about}/{person_id}", "about"): "tenant",
 }
 
 # A body field's record, by its name; then where one name means another record on a route.
@@ -962,6 +970,7 @@ def fill_in(client: TestClient, company: Company, conn: psycopg.Connection[Any])
         {"utility": "water", "starts_on": str(LAST_MONTH), "method": "units"},
     )
     staff("POST", "/api/notes", {"about": "property", "about_id": str(prop), "body": "Gate code"})
+    staff("POST", "/api/announcements", {"property_id": None, "title": "Office", "body": "Closed"})
     tenant(
         "POST",
         "/api/tenant/requests",

@@ -5,6 +5,7 @@ import {
   KeyRound,
   Landmark,
   LayoutDashboard,
+  MessagesSquare,
   Settings,
   Wrench,
 } from "lucide-react";
@@ -55,6 +56,14 @@ export const STAFF_NAV: NavEntry[] = [
     items: [
       { href: "/work-orders", label: "Work orders" },
       { href: "/vendors", label: "Vendors" },
+    ],
+  },
+  {
+    label: "Communication",
+    icon: MessagesSquare,
+    items: [
+      { href: "/messages", label: "Messages" },
+      { href: "/announcements", label: "Announcements" },
     ],
   },
   { href: "/files", label: "Files", icon: FolderOpen },

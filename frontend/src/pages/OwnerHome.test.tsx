@@ -51,7 +51,7 @@ function server() {
 describe("OwnerHome", () => {
   it("reads the statement in words: the period, and what each posting was and with whom", async () => {
     server();
-    render(<OwnerHome me={ME} />);
+    render(<OwnerHome me={ME} section="statements" />);
 
     expect(await screen.findByText("September 1 to September 30, 2026")).toBeTruthy();
     const statement = screen.getByRole("table", { name: "Property 1" });

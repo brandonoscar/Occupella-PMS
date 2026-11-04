@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, StringConstraints
 
 from pms import exports
-from pms.api import addresses, rent, scope, setup, unit_details
+from pms.api import addresses, leaving, rent, scope, setup, unit_details
 from pms.api.deps import Conn, Staff, download, refusal
 from pms.api.setup import Name
 
@@ -717,6 +717,8 @@ class Lease(rent.RentLease):
     people: list[LeasePerson]
     # Its payment holds (an eviction filed), newest first.
     holds: list[rent.Hold]
+    # The latest notice to move out a tenant on it gave from the portal, if any.
+    move_out_notice: leaving.MoveOutNotice | None = None
 
 
 LEASE_PEOPLE = f"""
@@ -762,6 +764,7 @@ def lease_page(session: Staff, conn: Conn, lease_id: UUID) -> Lease:
         status=status_of(row[2], row[3], day),
         people=people,
         holds=holds,
+        move_out_notice=leaving.notice_of(conn, session.pmc_id, lease_id),
     )
 
 

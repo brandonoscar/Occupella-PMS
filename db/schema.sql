@@ -3150,6 +3150,45 @@ $$;
 
 
 --
+-- Name: trust_check_move_out_notice(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_move_out_notice() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    today date := (clock_timestamp() AT TIME ZONE 'UTC')::date;
+    lease record;
+BEGIN
+    SELECT l.starts_on, l.ends_on INTO lease
+    FROM trust_leases AS l WHERE l.id = NEW.lease_id;
+    IF lease.ends_on IS NOT NULL AND lease.ends_on < today THEN
+        RAISE EXCEPTION 'trust: lease % ended on %; there is no notice to give', NEW.lease_id,
+            to_char(lease.ends_on, 'MM/DD/YYYY')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM trust_lease_departures AS d
+        WHERE d.lease_id = NEW.lease_id AND d.tenant_id = NEW.tenant_id
+    ) THEN
+        RAISE EXCEPTION 'trust: this tenant has left lease % already', NEW.lease_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.leaving_on < today OR NEW.leaving_on < lease.starts_on THEN
+        RAISE EXCEPTION 'trust: the day you leave is today or later, within the lease'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.leaving_on > today + 730 THEN
+        RAISE EXCEPTION 'trust: a notice is for a day within the next two years'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_notice_template_version(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14007,6 +14046,35 @@ CREATE TABLE public.trust_adverse_actions (
 
 
 --
+-- Name: trust_announcement_removals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_announcement_removals (
+    announcement_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    recorded_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_announcements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_announcements (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    property_id uuid,
+    title text NOT NULL,
+    body text NOT NULL,
+    recorded_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_announcements_body_check CHECK (((body ~ '\S'::text) AND (length(body) <= 4000))),
+    CONSTRAINT trust_announcements_title_check CHECK (((title ~ '\S'::text) AND (length(title) <= 200) AND (title !~ '[\r\n]'::text)))
+);
+
+
+--
 -- Name: trust_applicant_details; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14900,7 +14968,7 @@ CREATE TABLE public.trust_contacts (
     CONSTRAINT trust_contacts_address_line_1_check CHECK (((char_length(address_line_1) >= 1) AND (char_length(address_line_1) <= 200))),
     CONSTRAINT trust_contacts_address_line_2_check CHECK (((char_length(address_line_2) >= 1) AND (char_length(address_line_2) <= 200))),
     CONSTRAINT trust_contacts_alternate_phone_check CHECK ((alternate_phone ~ '^[+]?[0-9 ().-]{7,30}$'::text)),
-    CONSTRAINT trust_contacts_by_person CHECK (((NOT by_person) OR ((tenant_id IS NOT NULL) AND (recorded_by IS NULL)))),
+    CONSTRAINT trust_contacts_by_person CHECK (((NOT by_person) OR ((num_nonnulls(tenant_id, owner_id) = 1) AND (recorded_by IS NULL)))),
     CONSTRAINT trust_contacts_check CHECK ((num_nonnulls(tenant_id, owner_id, vendor_id) = 1)),
     CONSTRAINT trust_contacts_check1 CHECK (((num_nonnulls(address_line_1, city, state, postal_code) = ANY (ARRAY[0, 4])) AND ((address_line_2 IS NULL) OR (address_line_1 IS NOT NULL)))),
     CONSTRAINT trust_contacts_city_check CHECK (((char_length(city) >= 1) AND (char_length(city) <= 100))),
@@ -15145,11 +15213,13 @@ CREATE TABLE public.trust_documents (
     request_id uuid,
     transfer_id text,
     applicant_id uuid,
+    uploaded_by_tenant uuid,
     CONSTRAINT trust_documents_check1 CHECK (((kind = 'receipt'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_documents_check3 CHECK (((kind = 'owner_document'::text) = (owner_id IS NOT NULL))),
     CONSTRAINT trust_documents_content_type_check CHECK ((content_type = ANY (ARRAY['application/pdf'::text, 'image/jpeg'::text, 'image/png'::text]))),
     CONSTRAINT trust_documents_sha256_check CHECK ((length(sha256) = 32)),
     CONSTRAINT trust_documents_size_check CHECK (((size >= 1) AND (size <= 5242880))),
+    CONSTRAINT trust_documents_tenant_upload CHECK (((uploaded_by_tenant IS NULL) OR ((kind = 'lease_document'::text) AND (uploaded_by IS NULL)))),
     CONSTRAINT trust_documents_title_check CHECK (((title ~ '\S'::text) AND (length(title) <= 200)))
 );
 
@@ -16061,6 +16131,39 @@ CREATE TABLE public.trust_management_fees (
     CONSTRAINT trust_management_fees_check CHECK ((period_end > period_start)),
     CONSTRAINT trust_management_fees_check1 CHECK (((fee = (0)::numeric) = (transfer_id IS NULL))),
     CONSTRAINT trust_management_fees_fee_check CHECK ((fee >= (0)::numeric))
+);
+
+
+--
+-- Name: trust_messages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_messages (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    tenant_id uuid,
+    owner_id uuid,
+    recorded_by uuid,
+    body text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_messages_body_check CHECK (((body ~ '\S'::text) AND (length(body) <= 4000))),
+    CONSTRAINT trust_messages_check CHECK ((num_nonnulls(tenant_id, owner_id) = 1))
+);
+
+
+--
+-- Name: trust_move_out_notices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_move_out_notices (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    leaving_on date NOT NULL,
+    note text,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_move_out_notices_note_check CHECK (((note ~ '\S'::text) AND (length(note) <= 1000)))
 );
 
 
@@ -17802,6 +17905,30 @@ ALTER TABLE ONLY public.trust_admin_alerts
 
 ALTER TABLE ONLY public.trust_adverse_actions
     ADD CONSTRAINT trust_adverse_actions_pkey PRIMARY KEY (application_id);
+
+
+--
+-- Name: trust_announcement_removals trust_announcement_removals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_announcement_removals
+    ADD CONSTRAINT trust_announcement_removals_pkey PRIMARY KEY (announcement_id);
+
+
+--
+-- Name: trust_announcements trust_announcements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_announcements
+    ADD CONSTRAINT trust_announcements_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_announcements trust_announcements_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_announcements
+    ADD CONSTRAINT trust_announcements_pmc_id_id_key UNIQUE (pmc_id, id);
 
 
 --
@@ -19631,6 +19758,38 @@ ALTER TABLE ONLY public.trust_management_fees
 
 
 --
+-- Name: trust_messages trust_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_messages
+    ADD CONSTRAINT trust_messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_messages trust_messages_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_messages
+    ADD CONSTRAINT trust_messages_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_move_out_notices trust_move_out_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_move_out_notices
+    ADD CONSTRAINT trust_move_out_notices_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_move_out_notices trust_move_out_notices_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_move_out_notices
+    ADD CONSTRAINT trust_move_out_notices_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_notes trust_notes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21047,6 +21206,13 @@ CREATE INDEX trust_account_signers_staff ON public.trust_account_signers USING b
 
 
 --
+-- Name: trust_announcements_by_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_announcements_by_pmc ON public.trust_announcements USING btree (pmc_id, created_at);
+
+
+--
 -- Name: trust_application_links_unit_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22328,6 +22494,41 @@ CREATE INDEX trust_management_fees_transfer_id ON public.trust_management_fees U
 
 
 --
+-- Name: trust_messages_by_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_messages_by_owner ON public.trust_messages USING btree (owner_id, created_at) WHERE (owner_id IS NOT NULL);
+
+
+--
+-- Name: trust_messages_by_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_messages_by_pmc ON public.trust_messages USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_messages_by_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_messages_by_tenant ON public.trust_messages USING btree (tenant_id, created_at) WHERE (tenant_id IS NOT NULL);
+
+
+--
+-- Name: trust_move_out_notices_by_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_move_out_notices_by_lease ON public.trust_move_out_notices USING btree (lease_id, created_at);
+
+
+--
+-- Name: trust_move_out_notices_by_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_move_out_notices_by_pmc ON public.trust_move_out_notices USING btree (pmc_id, created_at);
+
+
+--
 -- Name: trust_notes_lease; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -23469,6 +23670,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_announcement_removals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_announcement_removals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_announcements trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_announcements FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_applicant_details trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24253,6 +24468,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_messages trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_messages FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_move_out_notices trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_move_out_notices FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_notes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24999,6 +25228,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_admi
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_adverse_actions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_announcement_removals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_announcement_removals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_announcements trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_announcements FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -25776,6 +26019,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_mana
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_management_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_messages trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_messages FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_move_out_notices trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_move_out_notices FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -26647,6 +26904,13 @@ CREATE TRIGGER trust_check_hold_release BEFORE INSERT ON public.trust_payment_ho
 
 
 --
+-- Name: trust_move_out_notices trust_check_move_out_notice; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_move_out_notice BEFORE INSERT ON public.trust_move_out_notices FOR EACH ROW EXECUTE FUNCTION public.trust_check_move_out_notice();
+
+
+--
 -- Name: trust_online_payment_events trust_check_online_payment_event; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26938,6 +27202,27 @@ CREATE TRIGGER trust_lease_offer_void_open BEFORE INSERT ON public.trust_lease_o
 --
 
 CREATE TRIGGER trust_lock_autopay_stop BEFORE INSERT ON public.trust_autopay_stops FOR EACH ROW EXECUTE FUNCTION public.trust_lock_autopay_stop();
+
+
+--
+-- Name: trust_announcement_removals trust_name_recorder; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_name_recorder BEFORE INSERT ON public.trust_announcement_removals FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_announcements trust_name_recorder; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_name_recorder BEFORE INSERT ON public.trust_announcements FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_messages trust_name_recorder; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_name_recorder BEFORE INSERT ON public.trust_messages FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -28008,6 +28293,46 @@ ALTER TABLE ONLY public.trust_adverse_actions
 
 ALTER TABLE ONLY public.trust_adverse_actions
     ADD CONSTRAINT trust_adverse_actions_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_announcement_removals trust_announcement_removals_pmc_id_announcement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_announcement_removals
+    ADD CONSTRAINT trust_announcement_removals_pmc_id_announcement_id_fkey FOREIGN KEY (pmc_id, announcement_id) REFERENCES public.trust_announcements(pmc_id, id);
+
+
+--
+-- Name: trust_announcement_removals trust_announcement_removals_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_announcement_removals
+    ADD CONSTRAINT trust_announcement_removals_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_announcements trust_announcements_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_announcements
+    ADD CONSTRAINT trust_announcements_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_announcements trust_announcements_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_announcements
+    ADD CONSTRAINT trust_announcements_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_announcements trust_announcements_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_announcements
+    ADD CONSTRAINT trust_announcements_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -29627,6 +29952,14 @@ ALTER TABLE ONLY public.trust_documents
 
 
 --
+-- Name: trust_documents trust_documents_uploaded_by_tenant_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_uploaded_by_tenant_fkey FOREIGN KEY (lease_id, uploaded_by_tenant) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
 -- Name: trust_draw_run_approvals trust_draw_run_approvals_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31072,6 +31405,62 @@ ALTER TABLE ONLY public.trust_management_fees
 
 ALTER TABLE ONLY public.trust_management_fees
     ADD CONSTRAINT trust_management_fees_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_messages trust_messages_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_messages
+    ADD CONSTRAINT trust_messages_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_messages trust_messages_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_messages
+    ADD CONSTRAINT trust_messages_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_messages trust_messages_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_messages
+    ADD CONSTRAINT trust_messages_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_messages trust_messages_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_messages
+    ADD CONSTRAINT trust_messages_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
+-- Name: trust_move_out_notices trust_move_out_notices_lease_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_move_out_notices
+    ADD CONSTRAINT trust_move_out_notices_lease_id_tenant_id_fkey FOREIGN KEY (lease_id, tenant_id) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_move_out_notices trust_move_out_notices_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_move_out_notices
+    ADD CONSTRAINT trust_move_out_notices_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_move_out_notices trust_move_out_notices_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_move_out_notices
+    ADD CONSTRAINT trust_move_out_notices_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
 
 
 --
@@ -33508,4 +33897,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261028000200'),
     ('20261031000200'),
     ('20261102000150'),
+    ('20261103000100'),
     ('20261103000210');

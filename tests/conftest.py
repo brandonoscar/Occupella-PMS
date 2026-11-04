@@ -19,6 +19,10 @@ Environment knobs, all optional:
                          first and shard only part r (each night's part of the nightly)
   HYPOTHESIS_PROFILE     pr (default), nightly or mutation; example counts live in
                          ci/thresholds.toml
+  PMS_TEST_STARTED_YESTERDAY
+                         1: the test modules load with the clock at a minute before midnight
+                         UTC the day before, and the tests run on the real one, as a run that
+                         crossed midnight (tools/started_yesterday.py; nightly)
 
 Every fixture is synthetic: no real names, addresses, bank numbers or tax IDs.
 """
@@ -38,6 +42,7 @@ from psycopg import sql
 
 from tools import sql_coverage
 from tools.run_rules import balanced_shard, marker_problems, outcome_problems, shard
+from tools.started_yesterday import pytest_collection_finish, pytest_configure  # noqa: F401
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -60,6 +65,17 @@ settings.register_profile(
     **_common,
 )
 settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "pr"))
+
+
+def pytest_runtest_setup(item):
+    """A test module that keeps today's dates (TODAY, and what follows from it) works them out
+    in its on_this_day(), called when it loads and again here before each of its tests: a run
+    that loads the modules before midnight UTC and runs a test after it compares the database's
+    today with today, never with the day before (PMS_TEST_STARTED_YESTERDAY replays that). A
+    hook, not a fixture, so a property test takes no fixture it doesn't name."""
+    again = getattr(getattr(item, "module", None), "on_this_day", None)
+    if again is not None:
+        again()
 
 
 # The advisory lock a run holds while it migrates its database; it ends with the connection.

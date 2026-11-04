@@ -13,6 +13,8 @@ describe("PayDonePage", () => {
     window.history.replaceState(null, "", "/pay/done?paid=1");
     render(<PayDonePage />);
     expect(screen.getByTestId("pay-done").textContent).toContain("a few business days");
+    // Back to Payments, where the payment shows once the bank pays it.
+    expect(screen.getByRole("link", { name: "Back to your payments" }).getAttribute("href")).toBe("/payments");
     cleanup();
     window.history.replaceState(null, "", "/pay/done?cancelled=1");
     render(<PayDonePage />);
