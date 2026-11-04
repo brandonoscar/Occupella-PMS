@@ -11,6 +11,7 @@ afterEach(() => {
 const VIEW: PayView = {
   available: true,
   why_not: null,
+  how_to_pay: null,
   owed: "1200.00",
   fee_payer: "tenant",
   payments: [{ id: "p1", started_at: "2026-10-01T12:00:00Z", amount: "300.00", tenant_fee: "2.42", status: "paid" }],
@@ -46,11 +47,25 @@ describe("PayOnlineCard", () => {
     expect(JSON.parse(String(post?.[1]?.body))).toEqual({ amount: "1200.00" });
   });
 
-  it("says why a lease takes no payment online", async () => {
-    server({ ...VIEW, available: false, why_not: "your manager doesn't take payments online", payments: [] });
+  it("shows the company's own words on how to pay it when it takes no payment online", async () => {
+    server({ ...VIEW, available: false, why_not: "off", how_to_pay: "Checks to Example Co.\nMail them to the office.", payments: [] });
     render(<PayOnlineCard leaseId="l1" />);
-    expect((await screen.findByTestId("pay-online-off")).textContent).toBe("your manager doesn't take payments online");
+    expect((await screen.findByTestId("pay-online-off")).textContent).toBe("Checks to Example Co.\nMail them to the office.");
+    expect(screen.getByRole("heading", { name: "How to pay" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Pay online" })).toBeNull();
+  });
+
+  it("says to contact the manager when the company wrote nothing, and why a lease on hold can't pay", async () => {
+    server({ ...VIEW, available: false, why_not: "off", how_to_pay: null, payments: [] });
+    render(<PayOnlineCard leaseId="l1" />);
+    expect((await screen.findByTestId("pay-online-off")).textContent).toBe("Contact your property manager to pay.");
+    cleanup();
+    server({ ...VIEW, available: false, why_not: "paused", how_to_pay: "Checks to Example Co.", payments: [] });
+    render(<PayOnlineCard leaseId="l1" />);
+    expect((await screen.findByTestId("pay-online-off")).textContent).toBe(
+      "Online payments are paused for this lease. Contact your property manager.",
+    );
+    expect(screen.getByRole("heading", { name: "Pay online" })).toBeTruthy();
   });
 
   it("won't pay an amount that isn't one", async () => {

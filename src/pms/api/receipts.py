@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Response
 from pms import exports
 from pms.api import company
 from pms.api.deps import Conn, Staff, Tenant, download
+from pms.homes import home as home_name
 
 router = APIRouter()
 
@@ -60,7 +61,7 @@ WHERE a.pmc_id = %(pmc)s AND t.metadata ->> 'kind' = 'tenant payment'
 ORDER BY t.created_at, t.id
 """
 HOME = """
-SELECT p.display_name, u.display_name,
+SELECT p.display_name, trust_unit_shown(u.id),
        array(SELECT t.display_name FROM trust_lease_tenants AS lt
              JOIN trust_tenants AS t ON t.id = lt.tenant_id
              WHERE lt.lease_id = l.id ORDER BY t.display_name COLLATE "C", t.id)
@@ -102,7 +103,7 @@ def receipt_of(conn: psycopg.Connection[Any], pmc_id: UUID, transfer_id: str) ->
     )
     lines: list[tuple[str, str]] = [
         ("Received from", ", ".join(tenants)),
-        ("For", f"{prop}, {unit}"),
+        ("For", home_name(prop, unit)),
         ("Received on", us(received_on)),
         ("Amount", dollars(total)),
     ]

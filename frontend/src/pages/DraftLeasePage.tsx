@@ -82,8 +82,7 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
             </Button>
           )}
           {waiting && (
-            <Button variant="secondary" onClick={resend}
-              says="Makes a new link for each signer who hasn't signed, shown here; old ones still work. No email is sent.">
+            <Button variant="secondary" onClick={resend}>
               Resend
             </Button>
           )}

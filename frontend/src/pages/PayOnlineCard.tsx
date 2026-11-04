@@ -9,7 +9,7 @@ import { Card } from "../components/Shell";
 import { latest } from "../latest";
 import { money, usDate } from "../money";
 import type { FeeQuote, PayView, Started } from "../payments";
-import { STATUS, feeLine, payable } from "../payments";
+import { NO_HOW_TO_PAY, PAUSED, STATUS, feeLine, payable } from "../payments";
 
 // A tenant pays a lease online (src/pms/api/online_payments.py): what they choose, the lease's
 // balance to start with, on the payments partner's page, which takes their bank account; the PMS
@@ -64,13 +64,17 @@ export function PayOnlineCard({ leaseId }: { leaseId: string }) {
     }
   }
 
+  // Off: the company's own words on how to pay it. Paused: a payment hold on the lease.
+  const off = view !== null && !view.available && view.why_not !== "paused";
   return (
-    <Card title="Pay online">
+    <Card title={off ? "How to pay" : "Pay online"}>
       <Notice tone="error">{error}</Notice>
       {view === null ? (
         !error && <Notice tone="info">Loading</Notice>
       ) : !view.available ? (
-        <p className="text-base text-ink-muted" data-testid="pay-online-off">{view.why_not}</p>
+        <p className="whitespace-pre-line text-base text-ink" data-testid="pay-online-off">
+          {off ? (view.how_to_pay ?? NO_HOW_TO_PAY) : PAUSED}
+        </p>
       ) : (
         <Form className="flex flex-col gap-3" onSubmit={pay}>
           <p className="text-sm text-ink-muted">

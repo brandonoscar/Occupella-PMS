@@ -26,6 +26,15 @@ def invite_token(app_conn, pmc_id, kind, person_id, email, created_by=None) -> s
     return accounts.create_invite(app_conn, pmc_id, kind, person_id, email, created_by).token
 
 
+# A tenant or an owner gives a phone as they set their password (the founder's review of 11/03,
+# item 14); a fictional number (tools/check_synthetic_data.py). Staff give none.
+PHONE = "(555) 555-0123"
+
+
+def accept(token, password=None, **more):
+    return {"token": token, "password": password or PASSWORD, "phone": PHONE, **more}
+
+
 def login_of(app_conn, kind, person_id) -> UUID:
     return app_conn.execute(
         f"SELECT id FROM trust_logins WHERE {kind}_id = %s", (person_id,)
@@ -37,7 +46,7 @@ def join_as_owner(client, app_conn, pmc, n=0) -> Person:
     owner_id = pmc.owners[n].owner_id
     email = f"owner{n}.{owner_id.hex[:8]}@example.com"
     token = invite_token(app_conn, pmc.pmc_id, "owner", owner_id, email)
-    accepted = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+    accepted = client.post("/api/invites/accept", json=accept(token))
     assert accepted.status_code == 200, accepted.text
     return Person("owner", owner_id, email, login_of(app_conn, "owner", owner_id))
 
@@ -46,7 +55,7 @@ def join_as(client, app_conn, pmc_id, kind, person_id) -> Person:
     """An owner or tenant of the PMC, invited and signed in on `client`."""
     email = f"{kind}.{person_id.hex[:8]}@example.com"
     token = invite_token(app_conn, pmc_id, kind, person_id, email)
-    accepted = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+    accepted = client.post("/api/invites/accept", json=accept(token))
     assert accepted.status_code == 200, accepted.text
     return Person(kind, person_id, email, login_of(app_conn, kind, person_id))
 
@@ -62,7 +71,7 @@ def join_as_tenant(client, conn, app_conn, pmc) -> Person:
     tenant_id = tenant_of(conn, pmc)
     email = f"tenant.{tenant_id.hex[:8]}@example.com"
     token = invite_token(app_conn, pmc.pmc_id, "tenant", tenant_id, email)
-    accepted = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+    accepted = client.post("/api/invites/accept", json=accept(token))
     assert accepted.status_code == 200, accepted.text
     return Person("tenant", tenant_id, email, login_of(app_conn, "tenant", tenant_id))
 
@@ -78,7 +87,7 @@ def join_as_staff(client, conn, app_conn, pmc, name="Staff 1", roles=ROLES) -> P
     give_roles(conn, pmc.pmc_id, staff_id, roles)
     email = f"staff.{staff_id.hex[:8]}@example.com"
     token = invite_token(app_conn, pmc.pmc_id, "staff", staff_id, email)
-    enrolled = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+    enrolled = client.post("/api/invites/accept", json=accept(token))
     assert enrolled.status_code == 200, enrolled.text
     totp = totp_from(enrolled.json()["totp_uri"])
     confirmed = client.post("/api/invites/confirm", json={"token": token, "code": totp.now()})

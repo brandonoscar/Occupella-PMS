@@ -84,7 +84,7 @@ function EmergencyForm({ held, save }: {
       <Field label="Phone" id="emergency-phone" type="tel" required value={phone}
         onChange={(e) => setPhone(e.target.value)} />
       <div>
-        <Button type="submit" says="Saves this contact; the earlier one stays in the history. Nothing is sent to them.">Save</Button>
+        <Button type="submit">Save</Button>
       </div>
     </Form>
   );

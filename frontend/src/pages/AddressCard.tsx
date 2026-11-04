@@ -57,7 +57,7 @@ export function AddressCard({ propertyId, address, location, canLocate, onChange
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => setEditing(true)}>{address ? "Edit address" : "Add address"}</Button>
           {address !== null && canLocate && (
-            <Button variant="secondary" says="Sends this address alone to the map lookup and keeps the point it finds. Nothing else is shared."
+            <Button variant="secondary"
               onClick={() => record(`/api/properties/${propertyId}/locate`, {}, () => "Found on the map.")}>
               Find on map
             </Button>
@@ -100,9 +100,7 @@ function AddressForm({ propertyId, address, record }: {
       <Field label="ZIP code" id="address-zip" required maxLength={10} inputMode="numeric" autoComplete="postal-code"
         value={zip} onChange={(e) => setZip(e.target.value)} />
       <div>
-        <Button type="submit" says={address === null
-          ? "Saves the address. It goes to no map lookup until someone chooses Find on map."
-          : "Saves it; the earlier address stays in the history. A changed address is off the map until found again."}>
+        <Button type="submit">
           Save address
         </Button>
       </div>

@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from helpers import add_agreement, balance, contribute, fresh, make_pmc
-from people import PASSWORD, invite_token, join_as_owner, join_as_staff, join_as_tenant
+from people import accept, invite_token, join_as_owner, join_as_staff, join_as_tenant
 
 
 def on_this_day() -> None:
@@ -90,7 +90,7 @@ def test_an_owners_page_shows_their_terms_portal_and_statement(
 
     token = invite_token(app_conn, pmc.pmc_id, "owner", owner, "owner.a@example.com")
     assert ok(client.get(f"/api/owners/{owner}"))["portal"] == "invited"
-    ok(other_client.post("/api/invites/accept", json={"token": token, "password": PASSWORD}))
+    ok(other_client.post("/api/invites/accept", json=accept(token)))
     assert ok(client.get(f"/api/owners/{owner}"))["portal"] == "active"
 
     statement = ok(client.get(f"/api/owners/{owner}/statement?start={TODAY - 7 * DAY}&end={TODAY}"))

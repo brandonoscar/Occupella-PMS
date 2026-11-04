@@ -102,8 +102,7 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
       >
         <Field label="Last day" id={`ends-${id}`} type="date" required value={ends}
           onChange={(e) => setEnds(e.target.value)} />
-        <Button type="submit" variant="secondary"
-          says="Sets this last day; rent is charged only through it. No fee is charged and the deposit isn't returned yet.">
+        <Button type="submit" variant="secondary">
           End the lease
         </Button>
       </Form>
@@ -122,8 +121,7 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
           onChange={(e) => setMemo(e.target.value)} />
         <Field label="Amount" id={`amount-${id}`} inputMode="decimal" required value={amount}
           onChange={(e) => setAmount(e.target.value)} />
-        <Button type="submit" variant="secondary"
-          says={`Charges the tenants this fee, due ${usDate(lease.ends_on ?? today)}. No money moves now; returning the deposit keeps what the lease owes.`}>
+        <Button type="submit" variant="secondary">
           Charge it
         </Button>
       </Form>
@@ -297,8 +295,7 @@ function FeeRow({ leaseId, fee, record }: { leaseId: string; fee: Fee; record: R
               setFile({ name: picked.name, type, base64: toBase64(bytes) });
             }} />
         </label>
-        <Button type="submit" variant="secondary" disabled={file === null}
-          says="Keeps it with this fee and the lease's files; its tenants can download it in the portal. Nothing is charged.">
+        <Button type="submit" variant="secondary" disabled={file === null}>
           Add receipt
         </Button>
       </Form>

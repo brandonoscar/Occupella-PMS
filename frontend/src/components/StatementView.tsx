@@ -1,6 +1,7 @@
 import { money, usDate, usDatesIn } from "../money";
 import type { Grouped } from "../statement";
 import { describePosting, periodLabel } from "../statement";
+import { OpensSource } from "./SourcePanel";
 import { Wide } from "./Wide";
 
 const CELL = "text-left";
@@ -8,8 +9,14 @@ const AMOUNT = "text-right";
 
 // An owner statement on screen (trust_report_owner_statement, grouped): each property's postings
 // between its opening and closing balance, then the totals over all properties. The owner reads
-// it in the portal; staff on the owner's page.
-export function StatementView({ grouped }: { grouped: Grouped }) {
+// it in the portal, where each line opens where it came from (onOpen); staff on the owner's page.
+export function StatementView({
+  grouped,
+  onOpen,
+}: {
+  grouped: Grouped;
+  onOpen?: (source: string) => void;
+}) {
   return (
     <div className="flex flex-col gap-6">
       <p className="text-sm text-ink-muted">{periodLabel(grouped.period)}</p>
@@ -32,12 +39,15 @@ export function StatementView({ grouped }: { grouped: Grouped }) {
               </tr>
               {section.postings.map((posting, n) => {
                 const described = describePosting(posting.detail, posting.amount);
+                const source = posting.source;
                 return (
                 <tr key={n} className="border-t border-line">
                   <td className={`${CELL} whitespace-nowrap text-ink-muted`}>{usDate(posting.postedOn)}</td>
                   <td className={CELL}>
-                    {usDatesIn(described.what)}
-                    {described.with && <span className="text-ink-muted"> · {usDatesIn(described.with)}</span>}
+                    <OpensSource onOpen={onOpen && source ? () => onOpen(source) : null}>
+                      {usDatesIn(described.what)}
+                      {described.with && <span className="text-ink-muted"> · {usDatesIn(described.with)}</span>}
+                    </OpensSource>
                   </td>
                   <td className={AMOUNT}>{money(posting.amount)}</td>
                   <td className={AMOUNT}>{money(posting.balance)}</td>

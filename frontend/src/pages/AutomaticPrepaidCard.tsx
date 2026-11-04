@@ -79,9 +79,7 @@ function AutomaticPrepaidForm({ prepaid, save }: { prepaid: AutomaticPrepaid; sa
         Use tenants' prepaid rent by itself for new rent
       </label>
       <div>
-        <Button type="submit" says={automatic
-          ? "Each night, tenants' prepaid rent pays what their lease owes. Nothing is used as you save."
-          : "Prepaid rent waits for staff to use it on the lease. Nothing is used as you save."}>
+        <Button type="submit">
           Save
         </Button>
       </div>

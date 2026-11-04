@@ -422,7 +422,10 @@ def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
             conn,
             roof,
             payables.Approval(
-                approved_on=last_month + 9 * DAY, approved_by="Demo Owner A, by email"
+                approved_on=last_month + 9 * DAY,
+                owner_id=demo.owners["Demo Owner A"],
+                method="email",
+                note="Replied to the quote: go ahead with the flashing repair.",
             ),
         )
         demo.outstanding = payables.pay(
@@ -1285,7 +1288,15 @@ def bills_of_every_status(b: Builder, demo: Demo, today: date, public_url: str) 
             ),
         ).id
         payables.approve(
-            s, conn, roof, payables.Approval(approved_on=today, approved_by="Demo Owner, by phone")
+            s,
+            conn,
+            roof,
+            payables.Approval(
+                approved_on=today,
+                owner_id=demo.owners["Demo Owner A"],
+                method="phone",
+                note="Called to approve the replacement; will send funds for the balance.",
+            ),
         )
         # The company's draw day came this month, so tonight's run prepares the owners' draws
         # for staff to pay (ADR 0010 phase 1b); Demo Owner C is paid by ACH. No bank account is
@@ -1411,7 +1422,7 @@ def files(b: Builder, demo: Demo) -> None:
             "image/png",
             PNG,
         ),
-        ("receipt", roof, "Roof repair receipt", "application/pdf", PDF),
+        ("receipt", roof, "Roof repair receipt", "application/pdf", roof_invoice(conn, roof)),
         ("work_order_photo", faucet, "Faucet before the repair", "image/png", PNG),
     ]
     with b.as_staff(demo.manager) as s:
@@ -1427,6 +1438,70 @@ def files(b: Builder, demo: Demo) -> None:
                     content_base64=base64.b64encode(content).decode(),
                 ),
             )
+
+
+def roof_invoice(conn: psycopg.Connection[Any], bill_id: UUID) -> bytes:
+    """The roofer's invoice for RF-2207 as a one-page PDF, made from the bill as entered (the
+    founder's review of 11/03, item 13): who sent it, to whom, its number, days, what it was
+    for and its total. Synthetic, as everything the demo makes."""
+    from fpdf import FPDF
+
+    row = conn.execute(
+        "SELECT v.display_name, b.reference, b.bill_date, b.due_on, b.amount, b.memo"
+        " FROM trust_bills AS b JOIN trust_vendors AS v ON v.id = b.vendor_id WHERE b.id = %s",
+        (bill_id,),
+    ).fetchone()
+    assert row is not None  # the demo entered it just before
+    vendor, reference, memo = str(row[0]), str(row[1]), str(row[5])
+    billed: date = row[2]
+    due: date = row[3]
+    amount = Decimal(row[4])
+    labor = (amount * Decimal("0.4")).quantize(Decimal("0.01"))
+    lines = [(f"{memo}: labor", labor), ("Flashing, sealant and fasteners", amount - labor)]
+
+    def dollars(value: Decimal) -> str:
+        return f"${value:,.2f}"
+
+    pdf = FPDF(unit="pt", format="letter")
+    pdf.set_creation_date(datetime.combine(billed, time(12), UTC))
+    pdf.set_title(f"Invoice {reference}")
+    pdf.set_author(vendor)
+    pdf.set_margins(54, 54, 54)
+    pdf.add_page()
+    pdf.set_font("Helvetica", style="B", size=18)
+    pdf.cell(0, 24, vendor, new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", size=10)
+    pdf.cell(0, 14, "100 Example Street, Sampletown, ZZ 00000", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(18)
+    pdf.set_font("Helvetica", style="B", size=14)
+    pdf.cell(0, 20, "INVOICE", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", size=10)
+    for label, value in (
+        ("Invoice no.", reference),
+        ("Date", f"{billed:%m/%d/%Y}"),
+        ("Due", f"{due:%m/%d/%Y}"),
+        ("Bill to", "Demo Property Management, for Cedar House"),
+    ):
+        pdf.cell(90, 14, label)
+        pdf.cell(0, 14, value, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(14)
+    pdf.set_font("Helvetica", style="B", size=10)
+    pdf.cell(380, 18, "Description", border="B")
+    pdf.cell(0, 18, "Amount", border="B", align="R", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", size=10)
+    for what, cost in lines:
+        pdf.cell(380, 18, what)
+        pdf.cell(0, 18, dollars(cost), align="R", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", style="B", size=10)
+    pdf.cell(380, 20, "Total due", border="T")
+    pdf.cell(0, 20, dollars(amount), border="T", align="R", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(18)
+    pdf.set_font("Helvetica", size=10)
+    pdf.cell(0, 14, f"Pay by check to {vendor}. Thank you.", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(24)
+    pdf.set_font("Helvetica", size=7)
+    pdf.cell(0, 10, "Synthetic demo document: no real business, person or address.")
+    return bytes(pdf.output())
 
 
 def staff_and_signers(b: Builder, demo: Demo, since: date) -> None:

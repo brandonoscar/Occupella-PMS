@@ -41,9 +41,10 @@ export function groupYearEnd(data: YearEndData): YearEnd {
   return grouped;
 }
 
-// Last calendar year (UTC): the year an owner usually wants their package for.
-export function lastYear(today: Date): number {
-  return today.getUTCFullYear() - 1;
+// This calendar year (UTC): what the year-end package and the income statement open on (the
+// founder's review of 11/03, item 6); an owner picks last year with Year.
+export function thisYear(today: Date): number {
+  return today.getUTCFullYear();
 }
 
 // A part's name as the page shows it.

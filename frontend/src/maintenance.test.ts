@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { PHOTOS_PER_REQUEST, isOpen, photosLabel, photosProblem, statusLabel, visitLabel, when } from "./maintenance";
+import {
+  PHOTOS_PER_REQUEST,
+  isOpen,
+  kindAndPlace,
+  photosLabel,
+  photosProblem,
+  statusLabel,
+  visitLabel,
+  when,
+} from "./maintenance";
 
 describe("maintenance status", () => {
   it("reads every status in words, and only completed and cancelled are closed", () => {
     const all = ["received", "opened", "assigned", "completed", "cancelled"] as const;
 
-    expect(all.map(statusLabel)).toEqual([
+    expect(all.map((status) => statusLabel(status))).toEqual([
       "Received",
       "Work order opened",
       "Someone is assigned",
@@ -38,5 +47,19 @@ describe("maintenance status", () => {
     expect(when("2026-10-11T18:05:09.123456Z")).toBe("10/11/2026 18:05 UTC");
     expect(when("2026-10-11T20:05:00+02:00")).toBe("10/11/2026 18:05 UTC");
     expect(when("not a time")).toBe("not a time");
+  });
+});
+
+describe("a request's kind and place", () => {
+  it("reads the kind and the place, either alone, and nothing with neither", () => {
+    expect(kindAndPlace({ category: "heating_cooling", location: "Hall closet" })).toBe("Heating/cooling · Hall closet");
+    expect(kindAndPlace({ category: "pests", location: null })).toBe("Pests");
+    expect(kindAndPlace({ category: null, location: "Bathroom" })).toBe("Bathroom");
+    expect(kindAndPlace({})).toBeNull();
+  });
+
+  it("reads a request its tenant took back as cancelled", () => {
+    expect(statusLabel("cancelled", true)).toBe("Cancelled");
+    expect(statusLabel("cancelled")).toBe("Closed without work");
   });
 });

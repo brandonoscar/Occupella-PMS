@@ -193,10 +193,7 @@ function LateFeeForm({ authority, record }: { authority: string; record: ReturnT
       <Field label="Grace days" id="authority-fee-grace" inputMode="numeric" required value={grace} onChange={(e) => setGrace(e.target.value)} />
       <Field label="Late payment fee" id="authority-fee" inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} />
       <div>
-        <Button type="submit"
-          says={Number(fee.trim() || "0") > 0
-            ? `From ${usDate(from)}, the authority is charged this fee once per rent it leaves unpaid past the grace days. Nothing is charged now.`
-            : `No late payment fee from ${usDate(from)}. Nothing is charged now.`}>
+        <Button type="submit">
           Set late fee
         </Button>
       </div>

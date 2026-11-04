@@ -37,8 +37,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, StringConstraints
 
 from pms import payments
+from pms.api import company, outbox, rent
 from pms.api import online_payments as online
-from pms.api import outbox, rent
 from pms.api.deps import Conn, Owner, refusal
 
 router = APIRouter(prefix="/api/payments/owner")
@@ -372,7 +372,9 @@ class OwnerPayment(BaseModel):
 class OwnerPayView(BaseModel):
     # Whether the owner may pay in online now, and if not, why.
     available: bool
-    why_not: str | None
+    why_not: online.WhyNot | None
+    # The company's own words on how to pay it, shown when the owner can't pay in online.
+    how_to_pay: str | None
     accounts: list[OwnerAccount]
     payments: list[OwnerPayment]
 
@@ -417,11 +419,9 @@ def accounts_of(conn: psycopg.Connection[Any], pmc_id: UUID, owner_id: UUID) -> 
     ]
 
 
-def why_not(request: Request, chosen: online.PaymentSettings) -> str | None:
-    if online.partner_of(request) is None:
-        return "this server takes no payments online"
-    if not chosen.online:
-        return "your manager doesn't take payments online"
+def why_not(request: Request, chosen: online.PaymentSettings) -> online.WhyNot | None:
+    if online.partner_of(request) is None or not chosen.online:
+        return "off"
     return None
 
 
@@ -440,6 +440,7 @@ def pay_view(session: Owner, conn: Conn, request: Request) -> OwnerPayView:
     return OwnerPayView(
         available=reason is None,
         why_not=reason,
+        how_to_pay=company.how_to_pay(conn, session.pmc_id),
         accounts=accounts_of(conn, session.pmc_id, session.person_id),
         payments=[
             OwnerPayment(
@@ -460,7 +461,7 @@ def checkout(session: Owner, conn: Conn, request: Request, body: OwnerPay) -> on
     reason = why_not(request, chosen)
     partner = online.partner_of(request)
     if reason is not None or partner is None:
-        raise HTTPException(409, reason or "this server takes no payments online")
+        raise HTTPException(409, online.OFF)
     account = next(
         (
             found
@@ -478,7 +479,7 @@ def checkout(session: Owner, conn: Conn, request: Request, body: OwnerPay) -> on
             payment, [(f"Owner contribution – {account.property}", body.amount)], done
         )
     except payments.PartnerFailed:
-        raise HTTPException(502, "the payments partner didn't answer: try again soon") from None
+        raise HTTPException(502, online.PARTNER_DOWN) from None
     conn.execute(
         "INSERT INTO trust_owner_online_payments (id, pmc_id, ledger_account_id, amount, method,"
         " partner, partner_ref) VALUES (%s, %s, %s, %s, 'ach', %s, %s)",

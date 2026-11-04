@@ -112,7 +112,8 @@ def from_person(
     ).fetchone() or (0,)
     if today >= MESSAGES_PER_DAY:
         raise HTTPException(
-            429, f"at most {MESSAGES_PER_DAY} messages a day; call the office if it can't wait"
+            429,
+            f"You can send {MESSAGES_PER_DAY} messages a day. If it can't wait, call your manager.",
         )
     made = write(conn, pmc, about, person, body)
     return next(m for m in conversation(conn, pmc, about, person) if m.id == made)

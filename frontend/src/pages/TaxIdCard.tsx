@@ -117,7 +117,7 @@ function TaxIdForm({ save }: { save: (body: unknown) => Promise<void> }) {
         Kept sealed and shown by its last four. Only an admin sees it whole, and only it goes into the year's 1099 export.
       </p>
       <div>
-        <Button type="submit" says="It replaces the one on file from now on; the old one stays in the history. Nothing is sent to them.">
+        <Button type="submit">
           Save
         </Button>
       </div>

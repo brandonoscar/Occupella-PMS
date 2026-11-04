@@ -89,8 +89,7 @@ function VendorOrder({ order, step }: { order: VendorWorkOrder; step: Step }) {
         }}>
           <Field label="Visit on" id={`visit-${order.id}`} type="date" required value={on} onChange={(e) => setOn(e.target.value)} />
           <Field label="Window (optional)" id={`window-${order.id}`} maxLength={60} value={slot} onChange={(e) => setSlot(e.target.value)} />
-          <Button type="submit" variant="secondary"
-            says={`The company and any tenant who asked for the repair see the ${order.visit_on ? "new " : ""}day. No email is sent.`}>
+          <Button type="submit" variant="secondary">
             {order.visit_on ? "Change the visit" : "Schedule the visit"}
           </Button>
         </Form>

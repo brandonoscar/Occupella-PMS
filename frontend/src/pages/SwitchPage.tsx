@@ -123,8 +123,7 @@ function VendorPaymentsCard() {
         <Field label="Cutover day" id="vendor-payments-cutover" type="date" required value={cutover}
           onChange={(e) => setCutover(e.target.value)} />
         <FileField id="vendor-payments-file" label="Vendor payments (CSV)" onRead={setContent} />
-        <Button type="submit" variant="secondary" disabled={content === null}
-          says="Adds each vendor's total to their 1099 year; the same file again adds nothing. No money moves.">
+        <Button type="submit" variant="secondary" disabled={content === null}>
           Carry over
         </Button>
       </Form>
@@ -194,8 +193,7 @@ function CutoverCard({ cutover, refresh }: { cutover: Cutover; refresh: () => vo
                 }}
               >
                 <FileField id={`items-${bank}`} label="Checks and deposits not cleared (CSV)" onRead={setItems} />
-                <Button type="submit" variant="secondary" disabled={items === null}
-                  says="Carries these over as not cleared at the cutover; more can be added until you sign off. No money moves.">
+                <Button type="submit" variant="secondary" disabled={items === null}>
                   Add items
                 </Button>
               </Form>

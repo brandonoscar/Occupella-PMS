@@ -42,6 +42,7 @@ import psycopg
 from pms import email, notices, payments
 from pms.api import online_payments as op
 from pms.api import rent
+from pms.homes import home
 
 log = logging.getLogger("pms.autopay")
 
@@ -186,16 +187,16 @@ def stop(conn: psycopg.Connection[Any], pmc_id: UUID, autopay_id: UUID, why: Why
     return made is not None
 
 
-def home_of(conn: psycopg.Connection[Any], lease_id: UUID) -> tuple[str, str]:
-    """The tenant's name for their home: the property and the unit."""
+def home_of(conn: psycopg.Connection[Any], lease_id: UUID) -> tuple[str, str | None]:
+    """The tenant's name for their home: the property and the unit, when it says something."""
     row = conn.execute(
-        "SELECT p.display_name, u.display_name FROM trust_leases AS l"
+        "SELECT p.display_name, trust_unit_shown(u.id) FROM trust_leases AS l"
         " JOIN trust_units AS u ON u.id = l.unit_id"
         " JOIN trust_properties AS p ON p.id = u.property_id WHERE l.id = %s",
         (lease_id,),
     ).fetchone()
     assert row is not None
-    return str(row[0]), str(row[1])
+    return str(row[0]), row[1]
 
 
 def tenant_name(conn: psycopg.Connection[Any], tenant_id: UUID) -> str:
@@ -230,30 +231,30 @@ def write_email(
     if kind == "autopay_payment":
         assert due_on is not None
         with_fee = f", plus a {email.dollars(fee)} processing fee" if fee else ""
-        subject = f"Autopay: {email.dollars(amount)} from your bank for {prop}, {unit}"
+        subject = f"Autopay: {email.dollars(amount)} from your bank for {home(prop, unit)}"
         body = (
             f"Hello {name},\n\n"
             f"Autopay is paying {email.dollars(amount)}{with_fee} toward what is due "
-            f"{notices.us(due_on)} for {prop}, {unit}, from {autopay.label}. Your bank takes a few "
-            f"business days; the payment shows on your lease once your bank pays it.\n\n"
+            f"{notices.us(due_on)} for {home(prop, unit)}, from {autopay.label}. Your bank takes a"
+            f" few business days; the payment shows on your lease once your bank pays it.\n\n"
             f"{portal}{company}\n"
         )
     elif kind == "autopay_not_sent":
         assert due_on is not None
-        subject = f"Autopay: your payment for {prop}, {unit} was not sent"
+        subject = f"Autopay: your payment for {home(prop, unit)} was not sent"
         body = (
             f"Hello {name},\n\n"
             f"Autopay couldn't send its {email.dollars(amount + fee)} payment toward what is due "
-            f"{notices.us(due_on)} for {prop}, {unit} to your bank, so nothing was taken from "
+            f"{notices.us(due_on)} for {home(prop, unit)} to your bank, so nothing was taken from "
             f"{autopay.label} for it. Please pay what is due another way.\n\n"
             f"{portal}{company}\n"
         )
     else:
-        subject = f"Autopay stopped for {prop}, {unit}"
+        subject = f"Autopay stopped for {home(prop, unit)}"
         body = (
             f"Hello {name},\n\n"
-            f"Autopay of your rent for {prop}, {unit} stopped: {why}. Nothing more will be taken "
-            f"from {autopay.label}.\n\n{portal}{company}\n"
+            f"Autopay of your rent for {home(prop, unit)} stopped: {why}. Nothing more will be"
+            f" taken from {autopay.label}.\n\n{portal}{company}\n"
         )
     about: dict[str, Any] = {
         "tenant_id": autopay.tenant_id,
