@@ -82,18 +82,11 @@ def keep(client, secret_key=SECRET_KEY, webhook_secret=WEBHOOK):
     )
 
 
-def report(client, pmc_id, payment, secret, kind="checkout.session.async_payment_succeeded"):
-    """Stripe's signed report that the bank paid `payment`, to the company's own webhook."""
+def signed(client, pmc_id, kind, subject, secret):
+    """Stripe's signed report of `kind` about `subject`, to the company's own webhook."""
     now = int(time.time())
     body = json.dumps(
-        {
-            "id": f"evt_{uuid4().hex}",
-            "type": kind,
-            "created": now,
-            "data": {
-                "object": {"id": "cs_1", "client_reference_id": payment, "payment_intent": "pi_1"}
-            },
-        }
+        {"id": f"evt_{uuid4().hex}", "type": kind, "created": now, "data": {"object": subject}}
     ).encode()
     mac = hmac.new(secret.encode(), f"{now}.".encode() + body, hashlib.sha256).hexdigest()
     return client.post(
@@ -101,6 +94,12 @@ def report(client, pmc_id, payment, secret, kind="checkout.session.async_payment
         content=body,
         headers={"stripe-signature": f"t={now},v1={mac}", "content-type": "application/json"},
     )
+
+
+def report(client, pmc_id, payment, secret, kind="checkout.session.async_payment_succeeded"):
+    """Stripe's signed report that the bank paid `payment`, to the company's own webhook."""
+    subject = {"id": "cs_1", "client_reference_id": payment, "payment_intent": "pi_1"}
+    return signed(client, pmc_id, kind, subject, secret)
 
 
 def start_payment(client, tenant_client, conn, app_conn, pmc, lease, stripe):
@@ -355,3 +354,75 @@ def test_keys_that_dont_open_here_take_no_payment_and_never_fall_back(
         assert ok(browser.get("/api/payments/keys"))["using"] == "unreadable"
         join_as_tenant(tenant, conn, app_conn, pmc)
         assert ok(tenant.get(f"/api/payments/leases/{lease}"))["why_not"] == "off"
+
+
+def test_stripe_not_answering_through_the_companys_webhook_asks_for_the_report_again(
+    client, other_client, conn, app_conn, pmc, admin, lease, stripe
+):
+    answers, _ = stripe
+    ok(keep(client))
+    payment = start_payment(client, other_client, conn, app_conn, pmc, lease, stripe)
+    # Stripe can't say its fee yet: answered "send it again", nothing recorded.
+    answers[("GET", "/payment_intents/pi_1")] = {"latest_charge": None}
+
+    refused(
+        report(other_client, pmc.pmc_id, payment, WEBHOOK),
+        502,
+        "the payments partner didn't answer: send it again",
+    )
+    assert not paid(conn, payment)
+
+
+def test_a_bank_account_saved_for_autopay_reports_through_its_own_companys_webhook(
+    client, other_client, conn, app_conn, pmc, admin, lease, stripe
+):
+    answers, _ = stripe
+    ok(keep(client))
+    ok(
+        client.post("/api/payments/settings", json={"online": True, "ach_fee_payer": "company"}),
+        204,
+    )
+    join_as_tenant(other_client, conn, app_conn, pmc)
+    answers[("POST", "/customers")] = {"id": "cus_1"}
+    answers[("POST", "/checkout/sessions")] = {"id": "cs_setup_1", "url": "https://checkout.test/s"}
+    autopay = ok(
+        other_client.post(
+            f"/api/payments/leases/{lease}/autopay", json={"rule": "balance", "amount": "1500.00"}
+        ),
+        201,
+    )["id"]
+    answers[("GET", "/setup_intents/seti_1")] = {
+        "status": "succeeded",
+        "customer": "cus_1",
+        "mandate": "mandate_1",
+        "metadata": {"autopay_id": autopay},
+        "payment_method": {
+            "id": "pm_1",
+            "us_bank_account": {"bank_name": "STRIPE TEST BANK", "last4": "6789"},
+        },
+    }
+    subject = {"id": "cs_setup_1", "mode": "setup", "setup_intent": "seti_1"}
+    other = make_pmc(conn)
+    with TestClient(
+        create_app(
+            Settings(
+                database_url=client.app.state.settings.database_url,
+                public_url="http://testserver",
+                cookie_secure=False,
+            )
+        )
+    ) as theirs:
+        join_as_staff(theirs, conn, app_conn, other)
+        ok(keep(theirs, OTHER_KEY, OTHER_WEBHOOK))
+        # Another company's webhook records none of this company's autopays.
+        assert ok(
+            signed(theirs, other.pmc_id, "checkout.session.completed", subject, OTHER_WEBHOOK)
+        ) == {"recorded": False}
+
+    assert ok(signed(other_client, pmc.pmc_id, "checkout.session.completed", subject, WEBHOOK)) == {
+        "recorded": True
+    }
+    assert conn.execute(
+        "SELECT partner_customer, label FROM trust_autopay_accounts WHERE autopay_id = %s",
+        (autopay,),
+    ).fetchone() == ("cus_1", "STRIPE TEST BANK ••••6789")
