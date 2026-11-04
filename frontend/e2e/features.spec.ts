@@ -3,9 +3,9 @@
 // and month-end, last month prepared and waiting for its approval. ci/features.toml names the test that proves
 // each feature, and tools/check_features.py keeps the two in step.
 import { readFileSync } from "node:fs";
-import { inflateSync } from "node:zlib";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { fillApplicant } from "./apply";
+import { pdfText } from "./pdf";
 import { expectAccessible } from "./a11y";
 import { totp } from "./totp";
 
@@ -4626,21 +4626,6 @@ test("staff keep the company's own notice templates, make one into a notice for 
   // The saved toasts sit over the page's corner until they go.
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
-
-// The text a PDF of the PMS's own shows: each content stream, inflated.
-function pdfText(data: Buffer): string {
-  const text: string[] = [];
-  for (let at = data.indexOf("stream\n"); at >= 0; at = data.indexOf("stream\n", at + 1)) {
-    const end = data.indexOf("endstream", at);
-    try {
-      text.push(inflateSync(data.subarray(at + 7, end)).toString("latin1"));
-    } catch {
-      // A stream that isn't deflated (a font's, an image's) has no text to read.
-    }
-    at = end + 9;
-  }
-  return text.join("\n");
-}
 
 test("staff keep the company's own lease as a template, and a draft lease is it filled in from its terms", async ({
   page,
