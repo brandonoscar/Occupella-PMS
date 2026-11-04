@@ -114,3 +114,8 @@ export function contactBody(draft: Record<(typeof CONTACT_FIELDS)[number], strin
 export function hasContact(contact: Contact): boolean {
   return CONTACT_FIELDS.some((field) => contact[field] !== null);
 }
+
+// A person's first name, to greet them: "Taylor" of "Taylor Demo" (the founder's review of 11/03).
+export function firstName(name: string): string {
+  return name.trim().split(/\s+/)[0] || name;
+}

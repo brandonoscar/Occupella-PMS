@@ -17,7 +17,9 @@ import { AutomaticEmailsCard } from "./AutomaticEmailsCard";
 import { AutomaticFeesCard } from "./AutomaticFeesCard";
 import { DrawDayCard } from "./DrawDayCard";
 import { AutomaticPrepaidCard } from "./AutomaticPrepaidCard";
+import { HowToPayCard } from "./HowToPayCard";
 import { OnlinePaymentsCard } from "./OnlinePaymentsCards";
+import { OwnerApprovalsCard } from "./OwnerApprovalsCard";
 import { ScreeningCriteriaCard } from "./ScreeningCriteriaCard";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
@@ -82,8 +84,10 @@ export function SetupPage({ me }: { me: Me }) {
           </Card>
           <AutomaticFeesCard />
           <DrawDayCard />
+          <OwnerApprovalsCard />
           <AutomaticPrepaidCard />
           <OnlinePaymentsCard />
+          <HowToPayCard />
           <AutomaticEmailsCard />
           <ScreeningCriteriaCard />
           {open === "company" && (
@@ -147,8 +151,7 @@ function CompanyForm({ company, save }: { company: Company; save: Save }) {
       <Field label="ZIP code" id="company-zip" required={given} maxLength={20} value={address.postal_code} onChange={set("postal_code")} />
       <Field label="Replies to the company's emails go to (optional)" id="company-reply-to" type="email" maxLength={254}
         value={replyTo} onChange={(e) => setReplyTo(e.target.value)} />
-      <div><Button type="submit"
-        says="Owners and tenants see the name and address in their portal. Nothing is sent; earlier details stay in the history.">Save</Button></div>
+      <div><Button type="submit">Save</Button></div>
     </Form>
   );
 }
@@ -191,8 +194,7 @@ function FeesForm({ company, save }: { company: Company; save: Save }) {
       {nsf.trim() && (
         <p className="text-sm text-ink-muted">{`A new property charges ${money(nsf.trim())} for a returned payment.`}</p>
       )}
-      <div><Button type="submit"
-        says="Properties added from now on start with these. A property already here keeps its own terms.">Save</Button></div>
+      <div><Button type="submit">Save</Button></div>
     </Form>
   );
 }

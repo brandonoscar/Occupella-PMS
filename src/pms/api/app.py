@@ -46,7 +46,7 @@ from psycopg import sql
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
-from pms import accounts, email, exports, geocoding, nightly, payments
+from pms import accounts, email, exports, geocoding, nightly, payments, phones
 from pms.api import (
     addresses,
     ai_keys,
@@ -209,6 +209,10 @@ class ResetAsked(BaseModel):
 
 class AcceptInvite(InviteToken):
     password: Password
+    # A tenant's or an owner's phone, as typed, and whether the company may text them (item 14
+    # of the founder's review of 11/03); staff give neither.
+    phone: Annotated[str, Field(max_length=40)] | None = None
+    texts_ok: bool = False
 
 
 class ConfirmInvite(InviteToken):
@@ -245,6 +249,8 @@ class InviteDetails(BaseModel):
     name: str
     pmc_name: str
     expires_at: datetime
+    # The words beside "OK to text me", for a tenant or an owner; none for staff.
+    text_consent: str | None = None
 
 
 class Enroll(BaseModel):
@@ -490,9 +496,30 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.post("/api/invites/accept", response_model=None)
     def accept_invite(body: AcceptInvite, response: Response, conn: Conn) -> Me | Enroll:
+        invited = accounts.view_invite(conn, body.token)
+        phone = None
+        if invited.text_consent is not None:
+            if not (body.phone or "").strip():
+                raise HTTPException(422, "Enter your phone number.")
+            try:
+                phone = phones.e164(body.phone or "")
+            except phones.BadPhone as bad:
+                raise HTTPException(422, str(bad)) from None
         done = accounts.accept_invite(conn, body.token, body.password)
         if isinstance(done, accounts.Enrollment):
             return Enroll(totp_uri=done.totp_uri)
+        if phone is not None and invited.text_consent is not None:
+            who = done.session
+            phones.record_signup(
+                conn,
+                who.pmc_id,
+                who.login_id,
+                who.kind,
+                who.person_id,
+                phone,
+                body.texts_ok,
+                invited.text_consent,
+            )
         return signed_in(response, done, conn)
 
     @app.post("/api/invites/confirm")

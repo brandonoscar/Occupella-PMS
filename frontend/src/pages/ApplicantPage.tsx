@@ -82,7 +82,7 @@ export function ApplicantPage({ me, id }: { me: Me; id: string }) {
         <div className="flex flex-wrap items-center gap-2">
           {deciding && (
             <>
-              <Button variant="secondary" says="Asks the screening partner and records its answer here. It decides nothing."
+              <Button variant="secondary"
                 onClick={() => record(`/api/leasing/applications/${id}/screen`, {}, () => `Screened ${names}.`)}>
                 Screen
               </Button>

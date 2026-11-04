@@ -71,6 +71,11 @@ def home(conn, pmc):
     return Home(conn, pmc)
 
 
+def first_of_next_month():
+    today = datetime.now(UTC).date()
+    return date(today.year + today.month // 12, today.month % 12 + 1, 1)
+
+
 def new_request(home, lease=None, **changes):
     return {
         "lease_id": str(lease or home.lease),
@@ -91,6 +96,8 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "lease_id": str(home.lease),
             "property": "Property 1",
             "unit": "Unit 1",
+            # The property has more than one unit, so the home says which (src/pms/homes.py).
+            "home": "Property 1, Unit 1",
             "starts_on": "2026-01-01",
             "ends_on": None,
             "monthly_rent": "1500.00",
@@ -108,9 +115,16 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
                     "ends_on": None,
                 }
             ],
+            # Next month's rent, not charged yet (test_tenant_coming_up_api.py).
+            "next_charge": {
+                "due_on": str(first_of_next_month()),
+                "total": "1500.00",
+                "lines": [{"what": "Rent", "kind": "rent", "amount": "1500.00"}],
+            },
             "coming_due": [],
             "deposit_returned": False,
             "deposit_asked": None,
+            "deposit_held": None,  # none recorded
             "renters_insurance": {
                 "required": False,
                 "minimum_liability": None,
@@ -132,6 +146,7 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "lease_id": str(home.old_lease),
             "property": "Property 1",
             "unit": "Unit 0",
+            "home": "Property 1, Unit 0",
             "starts_on": "2025-01-01",
             "ends_on": "2025-12-31",
             "monthly_rent": "1400.00",
@@ -141,9 +156,11 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "balance_due": "0.00",
             "in_effect": False,
             "each_month": [],  # it has ended
+            "next_charge": None,
             "coming_due": [],
             "deposit_returned": False,
             "deposit_asked": None,
+            "deposit_held": None,  # none recorded
             "renters_insurance": None,  # not in effect
             "payments": [],
             "files": [],
@@ -359,6 +376,12 @@ def test_a_tenant_files_a_request_and_their_co_tenant_sees_it(
         "visit_on",
         "visit_window",
         "photos",
+        # What kind, where, taken back and notes (test_request_details_api.py); never a work
+        # order or its vendor.
+        "category",
+        "location",
+        "taken_back",
+        "notes",
     }
     assert (
         request["filed_by"],
@@ -406,7 +429,7 @@ def test_a_request_is_filed_only_under_a_lease_in_effect(client, conn, app_conn,
     answer = client.post("/api/tenant/requests", json=new_request(home, home.old_lease))
 
     assert answer.status_code == 409
-    assert answer.json()["detail"] == "requests are filed under a lease in effect today"
+    assert answer.json()["detail"] == "You can send requests only for your current lease."
 
 
 def test_ten_requests_a_day_per_lease(client, conn, app_conn, home):

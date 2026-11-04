@@ -11,6 +11,7 @@ afterEach(() => {
 const VIEW: OwnerPayView = {
   available: true,
   why_not: null,
+  how_to_pay: null,
   accounts: [
     { account_id: "a1", property: "Aspen Row", bank: "Operating", balance: "900.00", reserve: "500.00", short: "0.00" },
     { account_id: "a2", property: "Birch Flats", bank: "Operating", balance: "100.00", reserve: "500.00", short: "400.00" },
@@ -54,13 +55,15 @@ describe("OwnerPayCard", () => {
     expect(within(list).getByText("Paid")).toBeTruthy();
   });
 
-  it("says why the owner can't pay online, and how they can", async () => {
-    server({ ...VIEW, available: false, why_not: "your manager doesn't take payments online", payments: [] });
+  it("shows the company's own words on how to send it money when it takes no payment online", async () => {
+    server({ ...VIEW, available: false, why_not: "off", how_to_pay: "Wire it to the trust account on file.", payments: [] });
     render(<OwnerPayCard />);
-    expect((await screen.findByTestId("owner-pay-off")).textContent).toBe(
-      "Your manager doesn't take payments online. Send money by check or bank transfer to your manager.",
-    );
+    expect((await screen.findByTestId("owner-pay-off")).textContent).toBe("Wire it to the trust account on file.");
     expect(screen.queryByRole("button", { name: "Pay by bank" })).toBeNull();
+    cleanup();
+    server({ ...VIEW, available: false, why_not: "off", how_to_pay: null, payments: [] });
+    render(<OwnerPayCard />);
+    expect((await screen.findByTestId("owner-pay-off")).textContent).toBe("Contact your property manager to send money.");
   });
 
   it("says when no account is held for them", async () => {

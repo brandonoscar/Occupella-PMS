@@ -231,8 +231,7 @@ export function PaymentForm({ lease, record, onRecorded }: {
           </Button>
           {onRecorded && (
             <Button type="submit" variant="secondary" disabled={problem !== ""}
-              onClick={() => { another.current = true; }}
-              says="Records it the same way, then starts a new payment.">
+              onClick={() => { another.current = true; }}>
               Save and add another
             </Button>
           )}
@@ -242,7 +241,6 @@ export function PaymentForm({ lease, record, onRecorded }: {
         <div>
           <Button
             variant="secondary"
-            says="Pays what the lease owes from the tenants' prepaid rent, rent first. No receipt is emailed."
             onClick={async () => {
               if (await record<Payment>(`/api/rent/leases/${lease.id}/use-prepaid`,
                 { request_id: requestId(), on: day(new Date()), ...chosen }, paymentSummary)) onRecorded?.(false);
@@ -314,10 +312,7 @@ export function ChargeForm({ lease, record }: { lease: RentLease; record: Record
       {kind === "fee" && (
         <ChargeTypeSelect id={`charge-type-${lease.id}`} types={types} value={type} onChange={setType} />
       )}
-      <Button type="submit" variant="secondary"
-        says={kind === "fee"
-          ? `Adds a fee due ${usDate(due)}; the tenant sees it in the portal. Nothing is emailed or paid.`
-          : "Takes this off what the lease owes; the tenant sees it in the portal. No money moves."}>
+      <Button type="submit" variant="secondary">
         Add
       </Button>
     </Form>
@@ -345,8 +340,7 @@ export function RecurringLine({ recurring, record }: { recurring: RecurringCharg
             <input type="date" aria-label={`Stops on, ${recurring.memo}`} value={on}
               onChange={(e) => setOn(e.target.value)} required
               className="h-8 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink" />
-            <Button type="submit" variant="secondary" size="sm"
-              says={`It isn't charged from ${usDate(on)} on. What it charged before stays; nothing is sent.`}>
+            <Button type="submit" variant="secondary" size="sm">
               Stop it
             </Button>
             <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(false)}>
@@ -395,8 +389,7 @@ export function RecurringForm({ lease, record }: { lease: RentLease; record: Rec
       {kind === "fee" && (
         <ChargeTypeSelect id={`recurring-type-${lease.id}`} types={types} value={type} onChange={setType} />
       )}
-      <Button type="submit" variant="secondary"
-        says={`The rent run ${kind === "fee" ? "charges" : "credits"} it each month from ${usDate(from)}; the tenant sees it in the portal. Nothing is emailed.`}>
+      <Button type="submit" variant="secondary">
         Add every month
       </Button>
     </Form>
@@ -446,8 +439,7 @@ export function RentChangeForm({ lease, record }: { lease: RentLease; record: Re
         <Field label="The lease term that allows it" id={`rent-change-terms-${lease.id}`} required
           maxLength={500} value={terms} onChange={(e) => setTerms(e.target.value)} />
       )}
-      <Button type="submit" variant="secondary"
-        says={`Charged from ${usDate(from)}; months already charged keep their rent. The tenant sees it in the portal; no notice is sent.`}>
+      <Button type="submit" variant="secondary">
         Change rent
       </Button>
     </Form>
@@ -472,8 +464,7 @@ export function DueDayForm({ lease, record }: { lease: RentLease; record: Record
         value={due} onChange={(e) => setDue(e.target.value)} />
       <Field label="From (the first of a month)" id={`due-day-from-${lease.id}`} type="date" required
         value={from} onChange={(e) => setFrom(e.target.value)} />
-      <Button type="submit" variant="secondary"
-        says={`Rent is due on this day from ${usDate(from)}; a month already charged keeps its due date. Nothing is sent.`}>
+      <Button type="submit" variant="secondary">
         Change due day
       </Button>
     </Form>
@@ -540,8 +531,7 @@ export function DepositForm({ lease, record }: { lease: RentLease; record: Recor
         value={amount} onChange={(e) => setAmount(e.target.value)} />
       <Field label="Deposit received on" id={`deposit-on-${lease.id}`} type="date" required value={on}
         onChange={(e) => setOn(e.target.value)} />
-      <Button type="submit" variant="secondary"
-        says={`Holds the ${label.toLowerCase()} in trust for ${lease.tenants.find((t) => t.id === tenant)?.name ?? "the tenant"}; it pays nothing owed until deposits are returned.`}>
+      <Button type="submit" variant="secondary">
         Record deposit
       </Button>
     </Form>
@@ -585,8 +575,7 @@ export function ReleaseForm({ hold, record }: { hold: Hold; record: Recorder }) 
       <Field label="Accept payments again from" id={`release-${hold.id}`} type="date" required value={ends}
         onChange={(e) => setEnds(e.target.value)} />
       <div>
-        <Button type="submit"
-          says={`Payments are accepted again from ${usDate(ends)}. Charges stay as they are, and nothing is sent.`}>
+        <Button type="submit">
           Release hold
         </Button>
       </div>

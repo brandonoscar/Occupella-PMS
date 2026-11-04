@@ -54,6 +54,8 @@ TABLES = {
     "trust_emails": {"SELECT", "INSERT"},
     "trust_email_deliveries": {"SELECT", "INSERT"},
     "trust_email_settings": {"SELECT", "INSERT"},
+    "trust_owner_approval_settings": {"SELECT", "INSERT"},
+    "trust_payment_instructions": {"SELECT", "INSERT"},
     "trust_bill_payments": {"SELECT"},  # written only by trust_set_aside_bill, trust_pay_bill
     "trust_work_orders": {"SELECT", "INSERT"},
     "trust_work_order_steps": {"SELECT", "INSERT"},
@@ -83,6 +85,11 @@ TABLES = {
     # Maintenance requests: tenants file them through the API, staff link a work order.
     "trust_maintenance_requests": {"SELECT", "INSERT"},
     "trust_maintenance_request_work_orders": {"SELECT", "INSERT"},
+    # A request its tenant took back, and a tenant's notes on an open one (fix-list item 12).
+    "trust_maintenance_request_cancellations": {"SELECT", "INSERT"},
+    "trust_maintenance_request_notes": {"SELECT", "INSERT"},
+    # A tenant's or an owner's phone and answer to "OK to text me" at sign-up (fix-list item 14).
+    "trust_text_consents": {"SELECT", "INSERT"},
     # Rental applications: applicants apply through the API, staff screen and decide.
     "trust_application_links": {"SELECT", "INSERT"},
     "trust_application_link_closings": {"SELECT", "INSERT"},
@@ -432,10 +439,16 @@ AI_NEVER_READS = {
     # notice to move out with its note (the portals, migration 20261103000100).
     "trust_messages",
     "trust_move_out_notices",
+    # A tenant's own words on their request, as a message is (fix-list item 12).
+    "trust_maintenance_request_notes",
+    # A phone and its texting consent, as contact details are (fix-list item 14).
+    "trust_text_consents",
     "trust_announcements",
     "trust_announcement_removals",
     # The company's mailing address, with the fee terms new properties start with (ADR 0006).
     "trust_company_profiles",
+    # How to pay us (migration 20261104000400), like the company's profile.
+    "trust_payment_instructions",
     # Who else lives in a home, their pets (an assistance animal speaks to a disability) and
     # vehicles, and the lease's guarantors with their contact details (migration 0080).
     "trust_lease_occupants",
@@ -589,6 +602,9 @@ FUNCTIONS = {
     "trust_check_owner_online_payment()": set(),  # a trigger's: no one calls it
     "trust_check_owner_online_payment_event()": set(),  # a trigger's: no one calls it
     "trust_check_move_out_notice()": set(),  # a trigger's: no one calls it
+    "trust_check_request_change()": set(),  # a trigger's: no one calls it
+    "trust_check_text_consent()": set(),  # a trigger's: no one calls it
+    "trust_refuse_cancelled_request_order()": set(),  # a trigger's: no one calls it
     "trust_check_autopay()": set(),  # a trigger's: no one calls it
     "trust_check_autopay_run()": set(),  # a trigger's: no one calls it
     "trust_lock_autopay_stop()": set(),  # a trigger's: no one calls it
@@ -678,6 +694,8 @@ FUNCTIONS = {
     "trust_report_deposit_interest(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_tax_credit_compliance(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_is_archived(uuid,uuid,uuid,uuid,uuid)": {"trust_app"},
+    # A home's name as tenants, owners, vendors and applicants read it (migration 20261104000500).
+    "trust_unit_shown(uuid)": {"trust_app"},
     "trust_group_properties(uuid)": {"trust_app"},
     "trust_run_rent(uuid,date,date)": {"trust_app"},
     "trust_report_inspection(uuid,uuid)": {"trust_app", "trust_ai_agent"},

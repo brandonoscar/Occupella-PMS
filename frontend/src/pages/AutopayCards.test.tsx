@@ -72,10 +72,15 @@ describe("TenantAutopayCard", () => {
     );
   });
 
-  it("says why autopay can't be set up", async () => {
-    server({ ...VIEW, available: false, why_not: "your manager doesn't take payments online" });
+  it("isn't there while the tenant can't pay online, unless an autopay is on to turn off", async () => {
+    const fetch = server({ ...VIEW, available: false, why_not: "off" });
+    const { container } = render(<TenantAutopayCard leaseId="l1" />);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+    await vi.waitFor(() => expect(container.textContent).toBe(""));
+    cleanup();
+    server({ ...VIEW, available: false, why_not: "paused", autopays: [ON] });
     render(<TenantAutopayCard leaseId="l1" />);
-    expect((await screen.findByTestId("autopay-off")).textContent).toBe("your manager doesn't take payments online");
+    expect(await screen.findByRole("button", { name: "Turn off autopay" })).toBeTruthy();
   });
 });
 

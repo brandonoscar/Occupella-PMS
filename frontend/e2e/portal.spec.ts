@@ -65,9 +65,11 @@ test.afterEach(async ({ page }) => {
 
 test("an owner joins from the invite, reads their statement and signs back in", async ({ page }) => {
   await page.goto(`/invite#${seed.owner_invite}`);
-  await expect(page.getByRole("heading", { name: "Welcome, Owner E2E" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome, Owner" })).toBeVisible();
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
 
   await expect(page.getByRole("heading", { name: "Your properties" })).toBeVisible();
@@ -107,19 +109,22 @@ test("a wrong password is refused without saying which part was wrong", async ({
 test("a tenant joins, sees what is due and asks for a repair", async ({ page }) => {
   await page.goto(`/invite#${seed.renter_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
 
-  await expect(page.getByRole("heading", { name: "Welcome, Tenant Two E2E" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome, Tenant" })).toBeVisible();
   await expect(page.getByTestId("balance-due")).toHaveText("$950.00");
   await portalSection(page, "Payments");
   const ledger = page.locator("section", { hasText: "Charges and payments" });
-  await expect(ledger.getByRole("row", { name: /Check 101/ })).toContainText("$950.00");
-  await expect(ledger.getByRole("row", { name: /Balance at the end of/ })).toContainText("$950.00");
+  await expect(ledger.getByRole("row", { name: /Payment · Check 101/ })).toContainText("$950.00");
+  await expect(ledger.getByRole("row", { name: /Totals/ })).toContainText("$950.00");
 
   await portalSection(page, "Repairs");
   await page.getByLabel("What needs fixing?").fill("The hallway light is out");
-  await page.getByLabel("Someone may come in while I'm out").check();
+  await page.getByLabel("What kind of repair?").selectOption("Electrical");
+  await page.getByLabel("OK to enter if I'm not home").check();
   await page.getByRole("button", { name: "Send request" }).click();
   const requests = page.locator("section", { hasText: "Maintenance requests" });
   await expect(requests.getByRole("listitem").filter({ hasText: "The hallway light is out" }))
@@ -130,7 +135,9 @@ test("a tenant joins, sees what is due and asks for a repair", async ({ page }) 
 test("staff enroll an authenticator, invite a tenant and see a repair through", async ({ page }) => {
   await page.goto(`/invite#${seed.staff_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
 
   const secret = (await page.locator("code").textContent()) ?? "";
@@ -192,7 +199,9 @@ test("an applicant applies; staff screen, decline with a notice, and the applica
   const staff = await (await browser.newContext()).newPage();
   await staff.goto(`/invite#${seed.leasing_invite}`);
   await staff.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await staff.getByLabel("The same password again").fill(PASSWORD);
+  await staff.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await staff.getByLabel("Phone").count()) await staff.getByLabel("Phone").fill("(555) 555-0123");
   await staff.getByRole("button", { name: "Set password" }).click();
   await staff.getByLabel("Code").fill(totp((await staff.locator("code").textContent()) ?? ""));
   await staff.getByRole("button", { name: "Finish" }).click();
@@ -225,7 +234,9 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
 }) => {
   await page.goto(`/invite#${seed.offers_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
@@ -385,7 +396,9 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
   const tenant = await (await browser.newContext()).newPage();
   await tenant.goto(`/invite#${seed.renewer_invite}`);
   await tenant.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await tenant.getByLabel("The same password again").fill(PASSWORD);
+  await tenant.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await tenant.getByLabel("Phone").count()) await tenant.getByLabel("Phone").fill("(555) 555-0123");
   await tenant.getByRole("button", { name: "Set password" }).click();
   const offered = tenant.getByRole("listitem", { name: "Renewal of E2E Unit 3" });
   await expect(offered).toHaveCount(1); // the void one is not the tenant's to see
@@ -438,7 +451,7 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
     await expect(page.getByRole("row", { name: row }).getByTestId("status")).toHaveText("Lease active");
   }
   await tenant.reload();
-  await expect(tenant.getByRole("heading", { name: "Welcome, Renewer E2E" })).toBeVisible();
+  await expect(tenant.getByRole("heading", { name: "Welcome, Renewer" })).toBeVisible();
   await expect(tenant.getByRole("heading", { name: "Lease renewal" })).toHaveCount(0);
   await portalSection(tenant, "Lease", "Your lease");
   // The tenant keeps the renewal as signed, its signing certificate and its addendum (q120).
@@ -454,7 +467,9 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
 test("staff set up a property from nothing where each thing lives, lease a unit and see it on the rent roll", async ({ page }) => {
   await page.goto(`/invite#${seed.setup_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
@@ -512,7 +527,9 @@ test("staff record a tenant's payment, the rest held as prepaid rent, and then i
 }) => {
   await page.goto(`/invite#${seed.rent_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
@@ -556,7 +573,9 @@ test("staff record a vendor's bill with its invoice, record the owner's approval
 }) => {
   await page.goto(`/invite#${seed.bills_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
@@ -585,8 +604,15 @@ test("staff record a vendor's bill with its invoice, record the owner's approval
   await expect(page.getByRole("heading", { level: 1, name: "Vendor E2E E2E-INV-1" })).toBeVisible();
   await expect(page.getByRole("list", { name: "Files, Vendor E2E E2E-INV-1" })).toContainText("invoice-e2e");
   await page.getByRole("button", { name: "Record approval" }).click();
-  await page.getByRole("dialog", { name: "Record approval" }).getByLabel("Approved by").fill("Payee E2E");
-  await page.getByRole("dialog", { name: "Record approval" }).getByRole("button", { name: "Record approval" }).click();
+  // The bill's own owner, how they approved and a note; staff are named from their sign-in.
+  const approval = page.getByRole("dialog", { name: "Record approval" });
+  await expect(approval.getByLabel("Owner")).toHaveText("Payee E2E");
+  await approval.getByLabel("How they approved").selectOption({ label: "Phone" });
+  await approval.getByLabel("Note").fill("Called at 2pm, OK to proceed");
+  await approval.getByRole("button", { name: "Record approval" }).click();
+  await expect(page.getByRole("list", { name: "History" })).toContainText(
+    /Approved by Payee E2E, by phone\. Recorded by .+: Called at 2pm, OK to proceed/,
+  );
   await expect(page.getByTestId("status")).toHaveText("Ready to pay");
   await expect(page.getByTestId("hold")).toHaveText("$300.00 held from Payee E2E's balance for this bill.");
   await page.getByRole("button", { name: "Record payment" }).click();
@@ -611,7 +637,9 @@ test("staff charge a tenant's damage at move-out, return the rest of the deposit
 }) => {
   await page.goto(`/invite#${seed.move_out_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
@@ -655,7 +683,9 @@ test("staff charge a tenant's damage at move-out, return the rest of the deposit
 test("staff keep an owner's document and a property's, and the owner downloads them from the portal", async ({ page, browser }) => {
   await page.goto(`/invite#${seed.documents_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
@@ -721,7 +751,9 @@ test("staff import last month's statement, match it to the books and prepare it;
 
   await page.goto(`/invite#${seed.month_end_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
@@ -794,7 +826,9 @@ test("staff import last month's statement, match it to the books and prepare it;
   // The approver, who may approve, signs in and approves what was prepared.
   await page.goto(`/invite#${seed.approver_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
@@ -824,7 +858,9 @@ test("staff bring a roster in, open an account with its old balances and a check
 
   await page.goto(`/invite#${seed.switch_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
@@ -896,7 +932,9 @@ test("the demo opens on last month waiting for its manager, who approves it and 
 
   await page.goto(`/invite#${seed.demo_manager_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
@@ -952,7 +990,9 @@ test("the demo opens on last month waiting for its manager, who approves it and 
 
   await page.goto(`/invite#${seed.demo_owner_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await expect(page.getByRole("heading", { name: "Your properties" })).toBeVisible();
   // Each holds its reserve and this month's rent, which its tenants paid.
@@ -1010,7 +1050,9 @@ test("every page of the demo meets WCAG 2.2 AA as axe checks it, in plain words:
   await page.goto(`/invite#${demo.manager}`);
   await expectAccessible(page, "the invite");
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await expect(page.locator("code")).toBeVisible();
   await expectAccessible(page, "the authenticator step");
@@ -1042,7 +1084,9 @@ test("every page of the demo meets WCAG 2.2 AA as axe checks it, in plain words:
     const portal = await (await browser.newContext()).newPage();
     await portal.goto(`/invite#${who}`);
     await portal.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-    await portal.getByLabel("The same password again").fill(PASSWORD);
+    await portal.getByLabel("Confirm password").fill(PASSWORD);
+    // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+    if (await portal.getByLabel("Phone").count()) await portal.getByLabel("Phone").fill("(555) 555-0123");
     await portal.getByRole("button", { name: "Set password" }).click();
     const portalSections = portal.getByRole("navigation", { name: "Sections" });
     await expect(portalSections.getByRole("link", { name: "Overview" })).toBeVisible();

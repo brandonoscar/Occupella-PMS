@@ -235,7 +235,7 @@ function GuarantorForm({ leaseId, record }: { leaseId: string; record: Recorder 
       <Field label="Email" id="guarantor-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
       <Field label="Phone" id="guarantor-phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
       <div>
-        <Button type="submit" says="Adds them as the lease's guarantor. Nothing is sent to them, and they get no portal login.">
+        <Button type="submit">
           Add guarantor
         </Button>
       </div>
@@ -256,7 +256,7 @@ function OccupantForm({ leaseId, record }: { leaseId: string; record: Recorder }
       <Field label="Relationship to the tenants" id="occupant-relationship" maxLength={100} value={relationship}
         onChange={(e) => setRelationship(e.target.value)} />
       <div>
-        <Button type="submit" says="Adds them as living there, not as a tenant on the lease. Nothing is charged or sent.">
+        <Button type="submit">
           Add occupant
         </Button>
       </div>
@@ -286,9 +286,7 @@ function PetForm({ leaseId, record }: { leaseId: string; record: Recorder }) {
         An assistance animal (service or support): no pet rent, fee or deposit is charged for it
       </label>
       <div>
-        <Button type="submit" says={assistance
-          ? "Adds the assistance animal to the lease. No pet rent, fee or deposit is charged for it."
-          : "Adds the pet to the lease. Nothing is charged: add pet rent or a pet deposit yourself."}>
+        <Button type="submit">
           Add pet
         </Button>
       </div>
@@ -315,7 +313,7 @@ function VehicleForm({ leaseId, record }: { leaseId: string; record: Recorder })
       <Field label="Plate" id="vehicle-plate" required maxLength={15} value={plate} onChange={(e) => setPlate(e.target.value)} />
       <Field label="Plate state" id="vehicle-state" maxLength={30} value={state} onChange={(e) => setState(e.target.value)} />
       <div>
-        <Button type="submit" says="Adds the vehicle to the lease. Nothing is charged or sent.">Add vehicle</Button>
+        <Button type="submit">Add vehicle</Button>
       </div>
     </Form>
   );

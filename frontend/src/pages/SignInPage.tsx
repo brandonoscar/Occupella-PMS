@@ -69,8 +69,7 @@ export function SignInPage() {
               onChange={(e) => setCode(e.target.value)} required />
           )}
           <Notice tone="error">{error}</Notice>
-          <Button type="submit" disabled={busy}
-            says="Signs you in on this browser for up to 12 hours. Ten wrong tries in a row lock it for 15 minutes.">
+          <Button type="submit" disabled={busy}>
             Sign in
           </Button>
           {canReset && (

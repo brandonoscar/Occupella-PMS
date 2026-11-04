@@ -301,8 +301,7 @@ describe("DraftLeasePage", () => {
     expect(within(screen.getByLabelText("Summary")).getByRole("link", { name: "Signing certificate (PDF)" })
       .getAttribute("href")).toBe("/api/leasing/offers/o1/certificate");
     expect(screen.queryByRole("button", { name: "Check signatures" })).toBeNull();
-    expect(says(screen.getByRole("button", { name: "Resend" })))
-      .toBe("Makes a new link for each signer who hasn't signed, shown here; old ones still work. No email is sent.");
+    expect(says(screen.getByRole("button", { name: "Resend" }))).toBeUndefined(); // no line: it says it all
     expect(says(screen.getByRole("button", { name: "Activate lease" })))
       .toBe("Makes it the lease once all have signed, with its monthly charges. Nothing is collected or emailed.");
     fireEvent.click(screen.getByRole("button", { name: "Resend" }));

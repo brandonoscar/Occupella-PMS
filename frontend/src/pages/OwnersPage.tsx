@@ -145,7 +145,7 @@ function AddOwner() {
     }}>
       <Field label="Name" id="new-owner" required maxLength={100} value={name}
         onChange={(event) => setName(event.target.value)} />
-      <div><Button type="submit" says="Adds them by name and opens their page. Nothing is sent to them.">Add owner</Button></div>
+      <div><Button type="submit">Add owner</Button></div>
       <Notice tone="error">{error}</Notice>
     </Form>
   );
@@ -401,7 +401,7 @@ function ContributionForm({ owner, record }: { owner: Owner; record: Recorder })
       <Field label="For" id="contribution-memo" maxLength={200} value={memo}
         onChange={(event) => setMemo(event.target.value)} />
       <div>
-        <Button type="submit" says="Adds it to the owner's balance, as money already received. The PMS collects nothing from them.">
+        <Button type="submit">
           Record contribution
         </Button>
       </div>

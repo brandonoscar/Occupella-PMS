@@ -41,7 +41,7 @@ function server() {
         : path.startsWith("/api/owner/year-end")
           ? { title: "Year-end", columns: ["property", "item", "amount"], rows: [] }
           : path.startsWith("/api/payments/owner")
-            ? { available: false, why_not: "your manager doesn't take payments online", accounts: [], payments: [] }
+            ? { available: false, why_not: "off", how_to_pay: null, accounts: [], payments: [] }
             : [];
     return new Response(JSON.stringify(body), { status: 200 });
   });

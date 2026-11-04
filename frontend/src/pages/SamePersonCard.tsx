@@ -88,7 +88,7 @@ function Elsewhere({ tenant, say, onClose }: { tenant: Tenant; say: (said: strin
           <option value="">Pick a property</option>
           {choices.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </Select>
-        <Button type="submit" says="Adds only the record there: they aren't put on a lease, and nothing is charged or sent.">
+        <Button type="submit">
           Make them a tenant there
         </Button>
       </Form>
@@ -119,7 +119,7 @@ function SamePerson({ tenant, refresh, say, onClose }: {
       }}>
         <Field label="Name, email or phone" id="same-person-words" required value={words}
           onChange={(event) => setWords(event.target.value)} />
-        <Button type="submit" variant="secondary" says="Only searches tenants; nothing is linked until you pick one below.">
+        <Button type="submit" variant="secondary">
           Find
         </Button>
       </Form>

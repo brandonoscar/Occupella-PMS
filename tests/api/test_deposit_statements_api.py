@@ -259,7 +259,8 @@ def test_staff_email_each_tenant_their_statement_with_its_pdf(client, conn, staf
         " WHERE pmc_id = %s AND kind = 'deposit_statement'",
         (pmc.pmc_id,),
     ).fetchall()
-    subject = "Your security deposit statement: Property 1, Unit 1"
+    # Unit 1 is Property 1's only unit, so the tenant's home reads as the property alone.
+    subject = "Your security deposit statement: Property 1"
     assert written == [(tenant, lease, subject, False)] * 2
 
     keeping = Keeping()

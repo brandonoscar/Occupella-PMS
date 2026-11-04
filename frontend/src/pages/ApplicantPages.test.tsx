@@ -113,8 +113,7 @@ describe("ApplicantPage", () => {
       .toEqual(["Applicant A, a@example.com", "Applicant B, b@example.com"]);
     expect(screen.getByRole("list", { name: "Screenings" }).textContent).toContain("Recommends conditions: Income below 3x rent");
 
-    expect(says(screen.getByRole("button", { name: "Screen" })))
-      .toBe("Asks the screening partner and records its answer here. It decides nothing.");
+    expect(says(screen.getByRole("button", { name: "Screen" }))).toBeUndefined(); // no line: it says it all
     fireEvent.click(screen.getByRole("button", { name: "Screen" }));
     await screen.findByText("Screened Applicant A, Applicant B.");
     expect(posted(fetch)).toEqual([["/api/leasing/applications/a1/screen", {}]]);

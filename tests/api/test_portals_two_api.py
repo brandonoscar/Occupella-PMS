@@ -94,7 +94,10 @@ def test_an_owner_changes_their_own_contact_details_and_the_record_says_they_did
     client, other_client, conn, app_conn, pmc, staff
 ):
     owner = join_as_owner(other_client, app_conn, pmc)
-    assert ok(client.get(f"/api/owners/{owner.person_id}"))["contact_by_owner_at"] is None
+    # Signing up, they gave their phone (migration 20261104000700): theirs already.
+    signed_up = ok(client.get(f"/api/owners/{owner.person_id}"))
+    assert signed_up["contact"]["phone"] == "+15555550123"
+    assert signed_up["contact_by_owner_at"] is not None
     contact = {
         "email": "owner.own@example.com",
         "phone": "(555) 555-0199",
@@ -113,7 +116,7 @@ def test_an_owner_changes_their_own_contact_details_and_the_record_says_they_did
     assert conn.execute(
         "SELECT by_person, recorded_by FROM trust_contacts WHERE owner_id = %s",
         (owner.person_id,),
-    ).fetchall() == [(True, None)]
+    ).fetchall() == [(True, None), (True, None)]  # signing up, then their change
     # Staff see the new details on the owner's page, and that the owner gave them.
     page = ok(client.get(f"/api/owners/{owner.person_id}"))
     assert page["contact"]["email"] == "owner.own@example.com"
@@ -527,7 +530,7 @@ def test_a_lease_takes_so_many_files_a_day_from_its_tenants(
     ]
 
     assert [a.status_code for a in answers] == [201] * tenant_api.UPLOADS_PER_DAY + [429]
-    assert "call the office" in answers[-1].json()["detail"]
+    assert answers[-1].json()["detail"] == "You can send 10 files a day. Try again tomorrow."
     assert len(ok(other_client.get("/api/tenant/leases"))[0]["files"]) == tenant_api.UPLOADS_PER_DAY
 
 

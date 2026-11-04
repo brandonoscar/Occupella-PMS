@@ -193,10 +193,11 @@ def test_an_owner_reads_their_properties_files_and_their_bills_receipts(
     join_as_owner(client, app_conn, pmc)
 
     listed = ok(client.get("/api/owner/documents"))
+    # Unit 4 is Property 1's only unit, so the owner reads its home as the property alone.
     assert sorted((d["title"], d["about"], d["about_name"]) for d in listed) == [
         ("Insurance binder", "property", "Property 1"),
         ("Plumber's receipt", "bill", "Bill INV-1, Vendor 1"),
-        ("Water heater manual", "property", "Property 1, Unit 4"),
+        ("Water heater manual", "property", "Property 1"),
     ]
     for title in ("Insurance binder", "Plumber's receipt", "Water heater manual"):
         assert client.get(f"/api/owner/documents/{made[title]}/file").content == PDF

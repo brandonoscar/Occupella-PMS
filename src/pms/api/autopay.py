@@ -132,7 +132,7 @@ def submit(pool: ConnectionPool[Any], partner: payments.Partner) -> None:
 class AutopayView(BaseModel):
     # Whether the tenant may set up autopay of this lease now, and if not, why.
     available: bool
-    why_not: str | None
+    why_not: op.WhyNot | None
     fee_payer: op.FeePayer
     # The lease's next rent due date, from tomorrow; None once the lease has no more.
     next_due: date | None
@@ -183,7 +183,7 @@ def set_up(session: Tenant, conn: Conn, request: Request, lease_id: UUID, body: 
     reason = op.why_not(conn, request, session.pmc_id, lease_id, chosen)
     partner = op.partner_of(request)
     if reason is not None or partner is None:
-        raise HTTPException(409, reason or "this server takes no payments online")
+        raise HTTPException(409, op.SAID[reason] if reason else op.OFF)
     for before in autopays(conn, session.pmc_id, lease_id, payer):
         if before.stopped is None:
             autopay.stop(conn, session.pmc_id, before.id, "replaced")
@@ -196,7 +196,7 @@ def set_up(session: Tenant, conn: Conn, request: Request, lease_id: UUID, body: 
     try:
         page = partner.save_account(made[0], f"{outbox.PUBLIC_URL.get()}/pay/done")
     except payments.PartnerFailed:
-        raise HTTPException(502, "the payments partner didn't answer: try again soon") from None
+        raise HTTPException(502, op.PARTNER_DOWN) from None
     return Started(id=made[0], url=page.url)
 
 
@@ -206,7 +206,7 @@ def stop_mine(session: Tenant, conn: Conn, lease_id: UUID) -> None:
     mine = tenant.lease_of(conn, session, lease_id)
     on = [a for a in autopays(conn, session.pmc_id, lease_id, mine) if a.stopped is None]
     if not on:
-        raise HTTPException(404, "you have no autopay of this lease on")
+        raise HTTPException(404, "Autopay isn't on for this lease.")
     for each in on:
         autopay.stop(conn, session.pmc_id, each.id, "tenant")
 
@@ -228,7 +228,7 @@ def staff_stop(session: Staff, conn: Conn, autopay_id: UUID) -> None:
     if row is None or row[0] != session.pmc_id:
         raise HTTPException(404, "no such autopay")
     if not autopay.stop(conn, session.pmc_id, autopay_id, "staff"):
-        raise HTTPException(409, "this autopay is off already")
+        raise HTTPException(409, "Autopay is already off.")
 
 
 # --- the fake partner's pages -----------------------------------------------------------------

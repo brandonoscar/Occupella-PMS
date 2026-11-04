@@ -8,7 +8,7 @@ import type { IncomeStatement, Line } from "../incomeStatement";
 import { groupIncomeStatement } from "../incomeStatement";
 import { money, usDatesIn } from "../money";
 import type { YearEndData } from "../yearEnd";
-import { lastYear } from "../yearEnd";
+import { thisYear } from "../yearEnd";
 import { Form } from "../components/Form";
 
 const AMOUNT = "text-right";
@@ -39,7 +39,7 @@ function Total({ label, amount }: { label: string; amount: string }) {
 // each property and across them, and the Schedule E lines each amount goes on. Their
 // accountant files; the PMS files nothing.
 export function OwnerIncomeStatement() {
-  const [year, setYear] = useState(String(lastYear(new Date())));
+  const [year, setYear] = useState(String(thisYear(new Date())));
   const [shown, setShown] = useState<IncomeStatement | null>(null);
   const [error, setError] = useState("");
 
@@ -51,7 +51,7 @@ export function OwnerIncomeStatement() {
       .then((data) => setShown(groupIncomeStatement(data)))
       .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
   }
-  useEffect(() => load(year), []); // last year's first; "Show" loads another
+  useEffect(() => load(year), []); // this year's first; "Show" loads another
 
   const download = (format: string) =>
     `/api/owner/income-statement/download?${new URLSearchParams({ year, format })}`;

@@ -227,9 +227,7 @@ function ListForm({ unit, record }: { unit: OpenUnit; record: Recorder }) {
           onChange={(e) => setDescription(e.target.value)}
           className="rounded-sm border border-line-strong bg-sunken px-3 py-2 text-base text-ink" />
       </label>
-      <div><Button type="submit" says={unit.link_id
-        ? "Puts it on the public page under its open link. Nothing goes to listing sites."
-        : "Opens an application link at this rent and puts it on the public page. Nothing goes to listing sites."}>
+      <div><Button type="submit">
         List it
       </Button></div>
     </Form>

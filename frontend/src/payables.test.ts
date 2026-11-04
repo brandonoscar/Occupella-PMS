@@ -144,7 +144,7 @@ describe("holdLine", () => {
       "$100.00 held from Owner A's balance for this bill. Owner A needs to send $140.00.",
     );
     expect(holdLine(billOf({ status: "short", held: "0.00", short: "240.00", needed: "300.00" }))).toBe(
-      "Nothing of Owner A's balance is left to hold for this bill. Owner A needs to send $300.00.",
+      "Nothing above Owner A's reserve is left to hold for this bill. Owner A needs to send $300.00.",
     );
     expect(holdLine(billOf({ status: "waiting for owner" }))).toBe(
       "$240.00 held from Owner A's balance for this bill until Owner A decides.",

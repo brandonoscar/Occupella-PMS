@@ -1362,7 +1362,14 @@ CREATE FUNCTION public.trust_bill_holds(p_pmc_id uuid) RETURNS TABLE(bill_id uui
           AND NOT EXISTS (SELECT 1 FROM trust_bill_declines AS d WHERE d.bill_id = b.id)
     ),
     running AS (
-        SELECT o.id, o.need, greatest(a.balance, 0) AS balance,
+        -- What the account holds above the reserve its agreement in force today keeps: the
+        -- reserve stays in the account, so a bill is never laid over it.
+        SELECT o.id, o.need,
+               greatest(a.balance - coalesce((
+                   SELECT g.reserve FROM trust_management_agreements AS g
+                   WHERE g.ledger_account_id = o.ledger_account_id
+                     AND g.starts_on <= (now() AT TIME ZONE 'UTC')::date
+                   ORDER BY g.starts_on DESC LIMIT 1), 0), 0) AS balance,
                sum(o.need) OVER (
                    PARTITION BY o.ledger_account_id
                    ORDER BY o.due_on, o.bill_date, o.reference COLLATE "C", o.id
@@ -3782,6 +3789,58 @@ $$;
 
 
 --
+-- Name: trust_check_request_change(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_request_change() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_lease uuid;
+    v_order uuid;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('maintenance request ' || NEW.request_id, 0));
+    SELECT r.lease_id INTO v_lease FROM trust_maintenance_requests AS r WHERE r.id = NEW.request_id;
+    IF v_lease IS DISTINCT FROM NEW.lease_id THEN
+        RAISE EXCEPTION 'trust: request % is not of lease %', NEW.request_id, NEW.lease_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM trust_lease_departures AS d
+        WHERE d.lease_id = NEW.lease_id AND d.tenant_id = NEW.tenant_id
+          AND d.left_on <= (clock_timestamp() AT TIME ZONE 'UTC')::date
+    ) THEN
+        RAISE EXCEPTION 'trust: this tenant has left lease % already', NEW.lease_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM trust_maintenance_request_cancellations AS c
+        WHERE c.request_id = NEW.request_id
+    ) THEN
+        RAISE EXCEPTION 'trust: request % was cancelled', NEW.request_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT w.work_order_id INTO v_order
+    FROM trust_maintenance_request_work_orders AS w WHERE w.request_id = NEW.request_id;
+    IF TG_TABLE_NAME = 'trust_maintenance_request_cancellations' AND v_order IS NOT NULL THEN
+        RAISE EXCEPTION 'trust: request % has a work order; it can no longer be cancelled',
+            NEW.request_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF TG_TABLE_NAME = 'trust_maintenance_request_notes' AND EXISTS (
+        SELECT 1 FROM trust_work_order_steps AS s
+        WHERE s.work_order_id = v_order AND s.step IN ('completed', 'cancelled')
+    ) THEN
+        RAISE EXCEPTION 'trust: request % is closed', NEW.request_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_request_work_order(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4383,6 +4442,29 @@ BEGIN
         RAISE EXCEPTION 'trust: transfer % is a housing authority''s payment, not a tenant''s',
             NEW.transfer_id
             USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_text_consent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_text_consent() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_logins AS l
+        WHERE l.id = NEW.login_id AND l.pmc_id = NEW.pmc_id
+          AND l.tenant_id IS NOT DISTINCT FROM NEW.tenant_id
+          AND l.owner_id IS NOT DISTINCT FROM NEW.owner_id
+    ) THEN
+        RAISE EXCEPTION 'trust: login % is not this person''s', NEW.login_id
+            USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
 END;
@@ -7460,6 +7542,28 @@ BEGIN
         pmc_id, request_key, ledger_account_id, amount, transfer_id
     ) VALUES (p_pmc_id, p_request_key, p_account, p_amount, v_transfer_id);
     RETURN v_transfer_id;
+END;
+$$;
+
+
+--
+-- Name: trust_refuse_cancelled_request_order(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_refuse_cancelled_request_order() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('maintenance request ' || NEW.request_id, 0));
+    IF EXISTS (
+        SELECT 1 FROM trust_maintenance_request_cancellations AS c
+        WHERE c.request_id = NEW.request_id
+    ) THEN
+        RAISE EXCEPTION 'trust: request % was cancelled by its tenant', NEW.request_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -13619,6 +13723,31 @@ $$;
 
 
 --
+-- Name: trust_unit_shown(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_unit_shown(p_unit_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT CASE
+        WHEN lower(btrim(u.display_name)) IN (
+            'house', 'home', 'main', 'main house', 'unit', 'whole house', 'entire home',
+            'single family', 'single-family', 'sfh', 'residence'
+        ) THEN NULL
+        WHEN NOT EXISTS (
+            SELECT 1 FROM trust_units AS o
+            WHERE o.property_id = u.property_id AND o.id <> u.id
+              AND NOT trust_is_archived(NULL, o.id)
+        ) THEN NULL
+        ELSE u.display_name
+    END
+    FROM trust_units AS u
+    WHERE u.id = p_unit_id
+$$;
+
+
+--
 -- Name: trust_unmatch_bank_lines(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14719,7 +14848,15 @@ CREATE TABLE public.trust_bill_approvals (
     approved_by text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     owner_id uuid,
-    CONSTRAINT trust_bill_approvals_approved_by_check CHECK ((approved_by <> ''::text))
+    signed_name text,
+    recorded_by uuid,
+    method text,
+    note text,
+    CONSTRAINT trust_bill_approvals_approved_by_check CHECK ((approved_by <> ''::text)),
+    CONSTRAINT trust_bill_approvals_method CHECK (((method IS NULL) OR (method = ANY (ARRAY['phone'::text, 'email'::text, 'in_person'::text, 'carried_over'::text])))),
+    CONSTRAINT trust_bill_approvals_note CHECK (((note IS NULL) OR ((note ~ '\S'::text) AND (length(note) <= 1000)))),
+    CONSTRAINT trust_bill_approvals_recorded_whole CHECK (((recorded_by IS NULL) OR ((owner_id IS NOT NULL) AND (method IS NOT NULL) AND (note IS NOT NULL)))),
+    CONSTRAINT trust_bill_approvals_signed_name CHECK (((signed_name IS NULL) OR ((signed_name ~ '\S'::text) AND (length(signed_name) <= 200))))
 );
 
 
@@ -16117,6 +16254,35 @@ CREATE TABLE public.trust_logins (
 
 
 --
+-- Name: trust_maintenance_request_cancellations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_maintenance_request_cancellations (
+    request_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_maintenance_request_notes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_maintenance_request_notes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    body text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_maintenance_request_notes_body_check CHECK (((body ~ '\S'::text) AND (length(body) <= 2000)))
+);
+
+
+--
 -- Name: trust_maintenance_request_work_orders; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16142,6 +16308,10 @@ CREATE TABLE public.trust_maintenance_requests (
     submitted_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     emergency boolean DEFAULT false NOT NULL,
+    category text,
+    location text,
+    CONSTRAINT trust_maintenance_requests_category_check CHECK ((category = ANY (ARRAY['plumbing'::text, 'electrical'::text, 'appliance'::text, 'heating_cooling'::text, 'pests'::text, 'other'::text]))),
+    CONSTRAINT trust_maintenance_requests_location_check CHECK (((location ~ '\S'::text) AND (length(location) <= 200) AND (location !~ '[\r\n]'::text))),
     CONSTRAINT trust_maintenance_requests_summary_check CHECK (((summary ~ '\S'::text) AND (length(summary) <= 2000)))
 );
 
@@ -16404,6 +16574,20 @@ CREATE TABLE public.trust_opening_balances (
     CONSTRAINT trust_opening_balances_book_cash_check CHECK ((book_cash > (0)::numeric)),
     CONSTRAINT trust_opening_balances_entered_by_check CHECK ((entered_by <> ''::text)),
     CONSTRAINT trust_opening_balances_transfer_ids_check CHECK ((cardinality(transfer_ids) > 0))
+);
+
+
+--
+-- Name: trust_owner_approval_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_owner_approval_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    sign_over numeric(12,2) NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_owner_approval_settings_sign_over_check CHECK ((sign_over >= (0)::numeric))
 );
 
 
@@ -16711,6 +16895,20 @@ CREATE TABLE public.trust_payment_holds (
     reason text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_payment_holds_reason_check CHECK ((reason <> ''::text))
+);
+
+
+--
+-- Name: trust_payment_instructions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_instructions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    body text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_payment_instructions_body_check CHECK (((body IS NULL) OR ((body ~ '\S'::text) AND (length(body) <= 2000))))
 );
 
 
@@ -17605,6 +17803,26 @@ CREATE TABLE public.trust_tenants (
     display_name text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_tenants_display_name_check CHECK ((display_name <> ''::text))
+);
+
+
+--
+-- Name: trust_text_consents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_text_consents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    login_id uuid NOT NULL,
+    tenant_id uuid,
+    owner_id uuid,
+    phone text NOT NULL,
+    texts_ok boolean NOT NULL,
+    wording text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_text_consents_check CHECK ((num_nonnulls(tenant_id, owner_id) = 1)),
+    CONSTRAINT trust_text_consents_phone_check CHECK ((phone ~ '^\+[1-9][0-9]{7,14}$'::text)),
+    CONSTRAINT trust_text_consents_wording_check CHECK (((wording ~ '\S'::text) AND (length(wording) <= 1000)))
 );
 
 
@@ -19773,6 +19991,22 @@ ALTER TABLE ONLY public.trust_logins
 
 
 --
+-- Name: trust_maintenance_request_cancellations trust_maintenance_request_cancellations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_cancellations
+    ADD CONSTRAINT trust_maintenance_request_cancellations_pkey PRIMARY KEY (request_id);
+
+
+--
+-- Name: trust_maintenance_request_notes trust_maintenance_request_notes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_notes
+    ADD CONSTRAINT trust_maintenance_request_notes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_maintenance_request_work_orders trust_maintenance_request_work_orders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20018,6 +20252,14 @@ ALTER TABLE ONLY public.trust_online_payments
 
 ALTER TABLE ONLY public.trust_opening_balances
     ADD CONSTRAINT trust_opening_balances_pkey PRIMARY KEY (bank_account_id);
+
+
+--
+-- Name: trust_owner_approval_settings trust_owner_approval_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_approval_settings
+    ADD CONSTRAINT trust_owner_approval_settings_pkey PRIMARY KEY (id);
 
 
 --
@@ -20274,6 +20516,14 @@ ALTER TABLE ONLY public.trust_payment_holds
 
 ALTER TABLE ONLY public.trust_payment_holds
     ADD CONSTRAINT trust_payment_holds_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_payment_instructions trust_payment_instructions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_instructions
+    ADD CONSTRAINT trust_payment_instructions_pkey PRIMARY KEY (id);
 
 
 --
@@ -20989,6 +21239,14 @@ ALTER TABLE ONLY public.trust_tenants
 
 
 --
+-- Name: trust_text_consents trust_text_consents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_unit_areas trust_unit_areas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21576,6 +21834,13 @@ CREATE INDEX trust_bank_payout_settings_account ON public.trust_bank_payout_sett
 --
 
 CREATE INDEX trust_bank_payout_settings_recorded_by ON public.trust_bank_payout_settings USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_bill_approvals_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bill_approvals_recorded_by ON public.trust_bill_approvals USING btree (pmc_id, recorded_by);
 
 
 --
@@ -22545,6 +22810,27 @@ CREATE INDEX trust_ledger_accounts_pmc_id ON public.trust_ledger_accounts USING 
 
 
 --
+-- Name: trust_maintenance_request_cancellations_by_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_maintenance_request_cancellations_by_pmc ON public.trust_maintenance_request_cancellations USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_maintenance_request_notes_by_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_maintenance_request_notes_by_pmc ON public.trust_maintenance_request_notes USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_maintenance_request_notes_by_request; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_maintenance_request_notes_by_request ON public.trust_maintenance_request_notes USING btree (request_id, created_at);
+
+
+--
 -- Name: trust_maintenance_requests_lease_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22755,6 +23041,20 @@ CREATE INDEX trust_online_payments_tenant ON public.trust_online_payments USING 
 
 
 --
+-- Name: trust_owner_approval_settings_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_approval_settings_pmc ON public.trust_owner_approval_settings USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_owner_approval_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_approval_settings_recorded_by ON public.trust_owner_approval_settings USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_owner_draw_settings_pmc; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22913,6 +23213,20 @@ CREATE INDEX trust_payment_files_recorded_by ON public.trust_payment_files USING
 --
 
 CREATE INDEX trust_payment_holds_lease_id ON public.trust_payment_holds USING btree (lease_id);
+
+
+--
+-- Name: trust_payment_instructions_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_instructions_pmc ON public.trust_payment_instructions USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_payment_instructions_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_instructions_recorded_by ON public.trust_payment_instructions USING btree (pmc_id, recorded_by);
 
 
 --
@@ -23480,6 +23794,34 @@ CREATE INDEX trust_tenant_links_recorded_by ON public.trust_tenant_links USING b
 --
 
 CREATE INDEX trust_tenant_links_same_as ON public.trust_tenant_links USING btree (pmc_id, same_as);
+
+
+--
+-- Name: trust_text_consents_by_login; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_consents_by_login ON public.trust_text_consents USING btree (login_id);
+
+
+--
+-- Name: trust_text_consents_by_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_consents_by_owner ON public.trust_text_consents USING btree (owner_id, created_at);
+
+
+--
+-- Name: trust_text_consents_by_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_consents_by_pmc ON public.trust_text_consents USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_text_consents_by_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_consents_by_tenant ON public.trust_text_consents USING btree (tenant_id, created_at);
 
 
 --
@@ -24540,6 +24882,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_maintenance_request_cancellations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_maintenance_request_cancellations FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_maintenance_request_notes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_maintenance_request_notes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_maintenance_request_work_orders trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24666,6 +25022,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_owner_approval_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_owner_approval_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_owner_contributions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24782,6 +25145,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_holds FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_payment_instructions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_instructions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -25118,6 +25488,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_tenant_links FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_text_consents trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_text_consents FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -26108,6 +26485,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_logi
 
 
 --
+-- Name: trust_maintenance_request_cancellations trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_maintenance_request_cancellations FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_maintenance_request_notes trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_maintenance_request_notes FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_maintenance_request_work_orders trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26234,6 +26625,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_open
 
 
 --
+-- Name: trust_owner_approval_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owner_approval_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_owner_contributions trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26357,6 +26755,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_paym
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_holds FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_payment_instructions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_instructions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -26738,6 +27143,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tena
 
 
 --
+-- Name: trust_text_consents trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_text_consents FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_unit_areas trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27074,6 +27486,20 @@ CREATE TRIGGER trust_check_recurring_bill BEFORE INSERT ON public.trust_recurrin
 
 
 --
+-- Name: trust_maintenance_request_cancellations trust_check_request_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_request_change BEFORE INSERT ON public.trust_maintenance_request_cancellations FOR EACH ROW EXECUTE FUNCTION public.trust_check_request_change();
+
+
+--
+-- Name: trust_maintenance_request_notes trust_check_request_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_request_change BEFORE INSERT ON public.trust_maintenance_request_notes FOR EACH ROW EXECUTE FUNCTION public.trust_check_request_change();
+
+
+--
 -- Name: trust_reserve_events trust_check_reserve_event; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27099,6 +27525,13 @@ CREATE TRIGGER trust_check_tenant_link BEFORE INSERT ON public.trust_tenant_link
 --
 
 CREATE TRIGGER trust_check_tenant_login BEFORE INSERT ON public.trust_logins FOR EACH ROW WHEN ((new.tenant_id IS NOT NULL)) EXECUTE FUNCTION public.trust_check_tenant_login();
+
+
+--
+-- Name: trust_text_consents trust_check_text_consent; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_text_consent BEFORE INSERT ON public.trust_text_consents FOR EACH ROW EXECUTE FUNCTION public.trust_check_text_consent();
 
 
 --
@@ -27515,6 +27948,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bank_payout_setti
 
 
 --
+-- Name: trust_bill_approvals trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bill_approvals FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_bill_declines trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27788,6 +28228,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_on_call_staff FOR
 
 
 --
+-- Name: trust_owner_approval_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_owner_approval_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_owner_draw_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27841,6 +28288,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_file_skip
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_files FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_payment_instructions trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_instructions FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -28121,6 +28575,13 @@ CREATE TRIGGER trust_recorded_by_admin BEFORE INSERT ON public.trust_api_keys FO
 --
 
 CREATE TRIGGER trust_recurring_charge_amount BEFORE INSERT ON public.trust_charges FOR EACH ROW WHEN ((new.recurring_charge_id IS NOT NULL)) EXECUTE FUNCTION public.trust_check_recurring_charge_amount();
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_refuse_cancelled_request_order; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_refuse_cancelled_request_order BEFORE INSERT ON public.trust_maintenance_request_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_cancelled_request_order();
 
 
 --
@@ -29274,6 +29735,14 @@ ALTER TABLE ONLY public.trust_bill_approvals
 
 ALTER TABLE ONLY public.trust_bill_approvals
     ADD CONSTRAINT trust_bill_approvals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bill_approvals trust_bill_approvals_recorder; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_approvals
+    ADD CONSTRAINT trust_bill_approvals_recorder FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -31469,6 +31938,38 @@ ALTER TABLE ONLY public.trust_logins
 
 
 --
+-- Name: trust_maintenance_request_cancellations trust_maintenance_request_cancellations_lease_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_cancellations
+    ADD CONSTRAINT trust_maintenance_request_cancellations_lease_id_tenant_id_fkey FOREIGN KEY (lease_id, tenant_id) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_maintenance_request_cancellations trust_maintenance_request_cancellations_pmc_id_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_cancellations
+    ADD CONSTRAINT trust_maintenance_request_cancellations_pmc_id_request_id_fkey FOREIGN KEY (pmc_id, request_id) REFERENCES public.trust_maintenance_requests(pmc_id, id);
+
+
+--
+-- Name: trust_maintenance_request_notes trust_maintenance_request_notes_lease_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_notes
+    ADD CONSTRAINT trust_maintenance_request_notes_lease_id_tenant_id_fkey FOREIGN KEY (lease_id, tenant_id) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_maintenance_request_notes trust_maintenance_request_notes_pmc_id_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_notes
+    ADD CONSTRAINT trust_maintenance_request_notes_pmc_id_request_id_fkey FOREIGN KEY (pmc_id, request_id) REFERENCES public.trust_maintenance_requests(pmc_id, id);
+
+
+--
 -- Name: trust_maintenance_request_work_orders trust_maintenance_request_work_orders_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31925,6 +32426,22 @@ ALTER TABLE ONLY public.trust_opening_balances
 
 
 --
+-- Name: trust_owner_approval_settings trust_owner_approval_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_approval_settings
+    ADD CONSTRAINT trust_owner_approval_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_owner_approval_settings trust_owner_approval_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_approval_settings
+    ADD CONSTRAINT trust_owner_approval_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_owner_contributions trust_owner_contributions_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -32306,6 +32823,22 @@ ALTER TABLE ONLY public.trust_payment_holds
 
 ALTER TABLE ONLY public.trust_payment_holds
     ADD CONSTRAINT trust_payment_holds_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_payment_instructions trust_payment_instructions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_instructions
+    ADD CONSTRAINT trust_payment_instructions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payment_instructions trust_payment_instructions_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_instructions
+    ADD CONSTRAINT trust_payment_instructions_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -33541,6 +34074,38 @@ ALTER TABLE ONLY public.trust_tenants
 
 
 --
+-- Name: trust_text_consents trust_text_consents_login_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_login_id_fkey FOREIGN KEY (login_id) REFERENCES public.trust_logins(id);
+
+
+--
+-- Name: trust_text_consents trust_text_consents_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_text_consents trust_text_consents_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_text_consents trust_text_consents_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
 -- Name: trust_unit_areas trust_unit_areas_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34079,4 +34644,11 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261031000200'),
     ('20261031000201'),
     ('20261102000150'),
-    ('20261103000100');
+    ('20261103000100'),
+    ('20261104000100'),
+    ('20261104000200'),
+    ('20261104000300'),
+    ('20261104000400'),
+    ('20261104000500'),
+    ('20261104000600'),
+    ('20261104000700');

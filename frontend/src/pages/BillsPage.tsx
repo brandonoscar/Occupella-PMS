@@ -344,7 +344,7 @@ function NewRecurringForm({ books, record }: { books: Portfolio; record: Recorde
         </Select>
       )}
       <div>
-        <Button type="submit" says="Enters a bill each month on its day, any already due now. Nothing is paid until you record a payment.">
+        <Button type="submit">
           Add recurring bill
         </Button>
       </div>
@@ -393,7 +393,7 @@ function RecurringAccountForm({ recurring, books, record }: { recurring: Recurri
         ))}
       </Select>
       <div>
-        <Button type="submit" says="Each month's bill goes in this account from now on; bills already entered keep theirs. No money moves.">
+        <Button type="submit">
           Save
         </Button>
       </div>
