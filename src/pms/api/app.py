@@ -50,6 +50,7 @@ from pms import accounts, email, exports, geocoding, nightly, payments
 from pms.api import (
     addresses,
     ai_keys,
+    announcements,
     applicant_details,
     assistance,
     autopay,
@@ -74,6 +75,7 @@ from pms.api import (
     leasing,
     listings,
     maintenance,
+    messages,
     moveout,
     notes,
     notice_templates,
@@ -82,6 +84,7 @@ from pms.api import (
     outbox,
     owner,
     owner_payments,
+    owner_portal,
     payables,
     payment_files,
     payouts,
@@ -569,6 +572,9 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(rent.router)
     app.include_router(online_payments.router)
     app.include_router(owner_payments.router)
+    app.include_router(owner_portal.router)
+    app.include_router(messages.router)
+    app.include_router(announcements.router)
     app.include_router(autopay.router)
     app.include_router(assistance.router)
     app.include_router(addresses.router)

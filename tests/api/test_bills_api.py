@@ -12,13 +12,21 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import add_agreement, balance, bank_sums, make_pmc, post, set_aside_bill
+from helpers import add_agreement, balance, bank_sums, fresh, make_pmc, post, set_aside_bill
 from people import join_as_staff
 
 from pms import accounts, email
 
-NOW = datetime.now(UTC)
-TODAY = NOW.date()
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global NOW, TODAY
+    NOW = datetime.now(UTC)
+    TODAY = NOW.date()
+
+
+on_this_day()
 DAY = timedelta(days=1)
 PDF = b"%PDF-1.4 synthetic invoice\n"
 
@@ -348,12 +356,13 @@ def test_pay_bills_takes_the_disburse_role(client, conn, app_conn, pmc):
 @pytest.mark.parametrize(
     "body",
     [
-        {"on": str(TODAY), "method": "check", "bill_ids": []},
-        {"on": str(TODAY), "method": "wire", "bill_ids": [str(uuid.uuid4())]},
-        {"on": str(TODAY + DAY), "method": "check", "bill_ids": [str(uuid.uuid4())]},
+        {"on": lambda: str(TODAY), "method": "check", "bill_ids": []},
+        {"on": lambda: str(TODAY), "method": "wire", "bill_ids": [str(uuid.uuid4())]},
+        {"on": lambda: str(TODAY + DAY), "method": "check", "bill_ids": [str(uuid.uuid4())]},
     ],
 )
 def test_pay_bills_refuses_bad_input(client, staff, body):
+    body = fresh(body)
     refused(client.post("/api/payables/bills/pay", json=body), 422)
 
 

@@ -14,7 +14,9 @@ import { SignPage } from "./pages/SignPage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { InvitePage } from "./pages/InvitePage";
 import { ListingsPage } from "./pages/ListingsPage";
-import { OwnerHome } from "./pages/OwnerHome";
+import { OWNER_SECTIONS, OwnerHome } from "./pages/OwnerHome";
+import { AnnouncementsPage } from "./pages/AnnouncementsPage";
+import { ConversationPage, MessagesPage } from "./pages/MessagesPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { GroupsPage } from "./pages/GroupsPage";
 import { HousingAuthorityPage } from "./pages/HousingAuthoritiesPages";
@@ -55,7 +57,7 @@ import { ChartOfAccountsPage } from "./pages/ChartOfAccountsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { StaffPage } from "./pages/StaffPage";
 import { SwitchPage } from "./pages/SwitchPage";
-import { TenantHome } from "./pages/TenantHome";
+import { TENANT_SECTIONS, TenantHome } from "./pages/TenantHome";
 import { VendorLinkPage } from "./pages/VendorLinkPage";
 import { VendorsPage } from "./pages/VendorsPage";
 import { navigate, usePath } from "./router";
@@ -101,17 +103,24 @@ function Home({ path }: { path: string }) {
   }, []);
   if (error) return <Notice tone="error">{error}</Notice>;
   if (!me) return null;
-  if (me.kind === "owner") return <OwnerHome me={me} />;
+  if (me.kind === "owner") {
+    const property = /^\/properties\/([0-9a-f-]{36})$/.exec(path)?.[1];
+    return <OwnerHome me={me} section={OWNER_SECTIONS[path] ?? "overview"} propertyId={property} />;
+  }
   if (me.kind === "staff") {
     const page = STAFF_PAGES[path];
     if (page) return page(me);
+    const conversation = /^\/messages\/(tenant|owner)\/([0-9a-f-]{36})$/.exec(path);
+    if (conversation?.[1] && conversation[2]) {
+      return <ConversationPage me={me} about={conversation[1] as "tenant" | "owner"} id={conversation[2]} />;
+    }
     for (const [pattern, record] of RECORDS) {
       const found = pattern.exec(path);
       if (found?.[1]) return record(me, found[1]);
     }
     return <DashboardPage me={me} />;
   }
-  return <TenantHome me={me} />;
+  return <TenantHome me={me} section={TENANT_SECTIONS[path] ?? "overview"} />;
 }
 
 // Staff's pages by path (ADR 0005's menu); any other path is the Dashboard.
@@ -136,6 +145,8 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/management-fees": (me) => <ManagementFeesPage me={me} />,
   "/budgets": (me) => <BudgetsPage me={me} />,
   "/work-orders": (me) => <WorkOrdersPage me={me} />,
+  "/messages": (me) => <MessagesPage me={me} />,
+  "/announcements": (me) => <AnnouncementsPage me={me} />,
   "/vendors": (me) => <VendorsPage me={me} />,
   "/files": (me) => <DocumentsPage me={me} />,
   "/reports": (me) => <ReportsPage me={me} />,

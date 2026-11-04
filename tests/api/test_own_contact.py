@@ -117,13 +117,16 @@ def test_only_a_tenant_reads_or_changes_their_own_contact(client, conn, app_conn
     assert [a.status_code for a in answers] == [401 if caller == "nobody" else 403] * 2
 
 
-def test_the_database_keeps_a_persons_own_change_to_a_tenant_naming_no_staff(conn, pmc, staff):
-    owner = pmc.owners[0].owner_id
+def test_the_database_keeps_a_persons_own_change_to_a_tenant_or_owner_naming_no_staff(
+    conn, pmc, staff
+):
+    # Owners give their own since the portals' second version (migration 20261103000100,
+    # tests/api/test_portals_two_api.py); a vendor has no portal, so never.
     with pytest.raises(psycopg.errors.CheckViolation), conn.transaction():
         conn.execute(
-            "INSERT INTO trust_contacts (pmc_id, owner_id, by_person, phone)"
+            "INSERT INTO trust_contacts (pmc_id, vendor_id, by_person, phone)"
             " VALUES (%s, %s, true, '555-555-0100')",
-            (pmc.pmc_id, owner),
+            (pmc.pmc_id, pmc.vendor_id),
         )
     tenant = conn.execute(
         "SELECT id FROM trust_tenants WHERE pmc_id = %s LIMIT 1", (pmc.pmc_id,)

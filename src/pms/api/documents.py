@@ -187,9 +187,11 @@ SELECT d.id, d.kind,
        coalesce(d.vendor_id, d.bill_id, d.lease_id, d.owner_id, d.work_order_id, d.property_id,
                 d.unit_id, d.tenant_id, d.request_id),
        d.title,
-       d.content_type, d.size, s.display_name, d.created_at
+       d.content_type, d.size,
+       coalesce(s.display_name, ut.display_name || ' (the tenant)'), d.created_at
 FROM trust_documents AS d
 LEFT JOIN trust_staff AS s ON s.id = d.uploaded_by
+LEFT JOIN trust_tenants AS ut ON ut.id = d.uploaded_by_tenant
 WHERE d.pmc_id = %(pmc)s AND d.kind <> ALL(%(unlisted)s)
   AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)
 ORDER BY d.created_at DESC, d.id
@@ -255,9 +257,11 @@ WITH placed AS (
 SELECT d.id, d.kind,
        coalesce(d.vendor_id, d.bill_id, d.lease_id, d.owner_id, d.work_order_id, d.property_id,
                 d.unit_id, d.tenant_id, d.request_id),
-       d.title, d.content_type, d.size, s.display_name, d.created_at, count(*) OVER ()
+       d.title, d.content_type, d.size,
+       coalesce(s.display_name, ut.display_name || ' (the tenant)'), d.created_at, count(*) OVER ()
 FROM trust_documents AS d
 LEFT JOIN trust_staff AS s ON s.id = d.uploaded_by
+LEFT JOIN trust_tenants AS ut ON ut.id = d.uploaded_by_tenant
 WHERE d.pmc_id = %(pmc)s AND d.kind <> ALL(%(unlisted)s)
   AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)
   AND (%(kind)s::text IS NULL OR d.kind = %(kind)s)
@@ -346,10 +350,15 @@ def upload(session: Staff, conn: Conn, new: NewDocument) -> Created:
 
 
 def keep(
-    conn: psycopg.Connection[Any], pmc_id: UUID, new: NewDocument, transfer_id: str | None = None
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    new: NewDocument,
+    transfer_id: str | None = None,
+    uploaded_by_tenant: UUID | None = None,
 ) -> UUID:
     """Keeps a file as a document of the PMC, checked: its type, its size and what it is
-    about. A bill's invoice comes this way too, with the bill (src/pms/api/payables.py)."""
+    about. A bill's invoice comes this way too, with the bill (src/pms/api/payables.py), and a
+    tenant's own document of their lease from the portal (src/pms/api/tenant.py)."""
     try:
         content = base64.b64decode(new.content_base64, validate=True)
     except (binascii.Error, ValueError):
@@ -376,7 +385,8 @@ def keep(
             )
     insert = sql.SQL(
         "INSERT INTO trust_documents (pmc_id, kind, {}, title, content_type, size, sha256,"
-        " transfer_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"
+        " transfer_id, uploaded_by_tenant)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"
     ).format(sql.Identifier(COLUMN[new.kind]))
     row = conn.execute(
         insert,
@@ -389,6 +399,7 @@ def keep(
             len(content),
             hashlib.sha256(content).digest(),
             transfer_id,
+            uploaded_by_tenant,
         ),
     ).fetchone()
     assert row is not None

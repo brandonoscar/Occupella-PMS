@@ -8,11 +8,19 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import balance, contribute, make_pmc
+from helpers import balance, contribute, fresh, make_pmc
 from people import join_as_owner, join_as_staff, join_as_tenant
 
-NOW = datetime.now(UTC)
-TODAY = NOW.date()
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global NOW, TODAY
+    NOW = datetime.now(UTC)
+    TODAY = NOW.date()
+
+
+on_this_day()
 
 
 @pytest.fixture
@@ -175,11 +183,12 @@ def test_another_companys_account_is_not_found(client, conn, staff, pmc):
         {"amount": "1.001"},
         {"memo": "  "},
         {"memo": "x" * 201},
-        {"on": str(TODAY + timedelta(days=1))},
+        {"on": lambda: str(TODAY + timedelta(days=1))},
         {"request_id": "again"},
     ],
 )
 def test_bad_fees_are_refused(client, conn, staff, pmc, body):
+    body = fresh(body)
     contribute(conn, pmc.pmc_id, pmc.owners[0].account, "in-4", "500.00", NOW - timedelta(days=1))
     refused(fee(client, pmc, **body), 422)
     assert conn.execute(

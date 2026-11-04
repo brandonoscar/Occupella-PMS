@@ -38,9 +38,18 @@ from people import join_as_owner, join_as_staff, join_as_tenant
 from pms.api import today
 from pms.api.today import months_ended
 
-TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
-START = TODAY - timedelta(days=90)
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, START
+    TODAY = datetime.now(UTC).date()
+    START = TODAY - timedelta(days=90)
+
+
+on_this_day()
 
 
 def first_of(day, months_back):
@@ -197,6 +206,8 @@ def test_a_quiet_day_shows_nothing(client, conn, staff, pmc):
         "deposits_to_return": [],
         "owner_draws": None,
         "month_to_month": [],
+        "move_out_notices": [],
+        "messages_waiting": [],
     }
 
 

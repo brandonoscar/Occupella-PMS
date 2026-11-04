@@ -1219,3 +1219,61 @@ browser = [
   "portal.spec.ts › staff draft a lease with a deposit and a monthly charge and send it, void a renewal, send another; the signers sign on the PMS's own page; both become leases",
   "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff screen and approve it and record its withdrawal, take it off the page and close the link",
 ]
+
+[[feature]]
+id = "owner-portal-two"
+statement = "An owner's portal is in sections (Overview, Properties, Statements and reports, Bills, Repairs, Documents, Messages, Profile): each of their properties opens to its units, who rents each (tenants' names only, never their contact details) and for how much, what each owes today, what is vacant and since when, and who gave notice to move out; Repairs lists the work orders at their properties with their status, vendor, visit and what was billed; Profile changes their own email, phones and mailing address, which staff see on the owner's page with when the owner changed them."
+operations = [
+  "GET /api/owner/properties/{property_id}",
+  "GET /api/owner/work-orders",
+  "GET /api/owner/contact",
+  "POST /api/owner/contact",
+]
+browser = [
+  "features.spec.ts › an owner reads a property's units, who rents each and for how much, and what is vacant; follows the repairs there; and keeps their own contact details, which staff see they changed",
+]
+
+[[feature]]
+id = "portal-messages"
+statement = "A tenant or an owner writes to the company from their portal's Messages (at most 20 a day); staff see each conversation waiting on the Dashboard and in Messages, waiting ones first, answer it there (the answer emailed to the person too), and the person reads the answer in the portal; each person reads only their own conversation."
+operations = [
+  "GET /api/tenant/messages",
+  "POST /api/tenant/messages",
+  "GET /api/owner/messages",
+  "POST /api/owner/messages",
+  "GET /api/messages",
+  "GET /api/messages/{about}/{person_id}",
+  "POST /api/messages/{about}/{person_id}",
+]
+browser = [
+  "features.spec.ts › a tenant and an owner each write to the company from their portal; staff see both waiting, answer, and each reads the answer",
+]
+
+[[feature]]
+id = "move-out-notice"
+statement = "A tenant on a lease in effect or to come gives notice from the portal's Lease section of the last day they will live there (today or later, within the lease and two years at most, with a note); a later notice replaces it; it ends nothing: staff see it on the Dashboard and the lease's page, and the owner sees the unit moving out."
+operations = ["POST /api/tenant/leases/{lease_id}/move-out-notice"]
+browser = [
+  "features.spec.ts › a tenant gives notice to move out from their lease; staff see it on the Dashboard and the lease, and the owner sees the unit moving out",
+]
+
+[[feature]]
+id = "announcements"
+statement = "Staff post an announcement for the tenants of every property or of one, from Announcements; tenants see those for their company and the properties of their leases in effect or to come on their portal's Overview until staff take it down from its row's menu, after which it stays on the staff list, marked."
+operations = [
+  "GET /api/announcements",
+  "POST /api/announcements",
+  "POST /api/announcements/{announcement_id}/remove",
+  "GET /api/tenant/announcements",
+]
+browser = [
+  "features.spec.ts › staff announce something to every tenant and something to one property's; tenants see theirs on the Overview until staff take it down",
+]
+
+[[feature]]
+id = "tenant-uploads"
+statement = "A tenant on a lease in effect sends a document of it (a PDF, JPEG or PNG of at most 5 MB, at most 10 a day) from the portal's Lease section, such as a renters insurance certificate; they see it with the lease's files as sent by them, and staff find it with the lease's files, marked as the tenant's."
+operations = ["POST /api/tenant/leases/{lease_id}/documents"]
+browser = [
+  "features.spec.ts › a tenant sends their renters insurance certificate from the portal; staff find it with the lease's files, as the tenant's",
+]

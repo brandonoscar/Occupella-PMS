@@ -10,8 +10,16 @@ import pytest
 from helpers import add_tenant, add_unit, make_pmc, open_lease
 from people import join_as_owner, join_as_staff, join_as_tenant
 
-TODAY = datetime.now(UTC).date()
-START = TODAY - timedelta(days=100)
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, START
+    TODAY = datetime.now(UTC).date()
+    START = TODAY - timedelta(days=100)
+
+
+on_this_day()
 LIMITS = ["30000", "34300", "38600", "42850", "46300", "49750", "53150", "56600"]
 
 
@@ -42,7 +50,8 @@ def refused(answer, status, detail=None):
         assert detail in str(answer.json()["detail"]), answer.text
 
 
-def set_limits(client, pmc, limits=LIMITS, starts_on=START):
+def set_limits(client, pmc, limits=LIMITS, starts_on=None):
+    starts_on = START if starts_on is None else starts_on
     return client.post(
         "/api/tax-credit/limits",
         json={
@@ -53,7 +62,8 @@ def set_limits(client, pmc, limits=LIMITS, starts_on=START):
     )
 
 
-def designate(client, unit, percent=60, bedrooms=1, allowance="50.00", starts_on=START):
+def designate(client, unit, percent=60, bedrooms=1, allowance="50.00", starts_on=None):
+    starts_on = START if starts_on is None else starts_on
     return client.post(
         "/api/tax-credit/units",
         json={

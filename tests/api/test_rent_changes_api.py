@@ -12,9 +12,6 @@ from people import join_as_owner, join_as_staff, join_as_tenant
 
 from pms.api import rent
 
-TODAY = datetime.now(UTC).date()
-FIRST = TODAY.replace(day=1)
-
 
 def months_from(day, n):
     """The first of the month n months from day's month."""
@@ -22,7 +19,16 @@ def months_from(day, n):
     return date(year, month + 1, 1)
 
 
-NEXT_MONTH, IN_TWO = months_from(TODAY, 1), months_from(TODAY, 2)
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, FIRST, NEXT_MONTH, IN_TWO
+    TODAY = datetime.now(UTC).date()
+    FIRST = TODAY.replace(day=1)
+    NEXT_MONTH, IN_TWO = months_from(TODAY, 1), months_from(TODAY, 2)
+
+
+on_this_day()
 
 
 @pytest.fixture

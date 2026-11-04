@@ -39,9 +39,9 @@ export function PayDonePage({ owner = false }: { owner?: boolean }) {
               ? "Your bank account is saved. Autopay pays on your rent's due day, from the next one, and emails you before each payment."
               : owner
                 ? "Your bank takes a few business days with a bank payment. It shows on your statement once your bank pays it."
-                : "Your bank takes a few business days with a bank payment. It shows on your lease once your bank pays it."}
+                : "Your bank takes a few business days with a bank payment. It shows in your payments once your bank pays it."}
         </p>
-        <LinkButton href="/">{owner ? "Back to your properties" : "Back to your lease"}</LinkButton>
+        <LinkButton href={owner ? "/" : "/payments"}>{owner ? "Back to your properties" : "Back to your payments"}</LinkButton>
       </Card>
     </main>
   );
