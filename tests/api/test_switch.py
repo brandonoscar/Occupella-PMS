@@ -901,3 +901,16 @@ def test_only_staff_switch(client, conn, app_conn, pmc, caller, method, path):
 )
 def test_bad_input_is_refused(client, staff, path, body):
     refused(call(client, path, **body), 422)
+
+
+def test_a_file_whose_letters_didnt_read_is_refused_with_its_line(client, conn, staff, pmc):
+    # A file saved in one encoding and read in another: "José" arrives as "Jos�".
+    broken = imported(client, "owners", "Name", "Owner Z", "Jos� O�Brien")
+
+    refused(broken, 422, "line 3: a letter didn't read")
+    assert "save the file as CSV UTF-8" in broken.json()["detail"]
+    (owners,) = conn.execute(
+        "SELECT count(*) FROM trust_owners WHERE pmc_id = %s AND display_name = 'Owner Z'",
+        (pmc.pmc_id,),
+    ).fetchone()
+    assert owners == 0  # nothing of the file came in

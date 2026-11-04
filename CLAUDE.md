@@ -1020,7 +1020,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   The vendors' bills the old system had not paid come over from a CSV file as ordinary bills
   with their old references and dates, once, so draws hold them back from the first day; one
   over the owner's limit keeps the old system's approval or waits for the owner
-  (`src/pms/api/switching.py`, `docs/law.md`).
+  (`src/pms/api/switching.py`, `docs/law.md`). The portal reads a file as UTF-8, else as
+  Windows-1252, which Excel on Windows saves "CSV" in (`frontend/src/fileText.ts`, also for bank
+  statements and payment files), and a file with a letter that didn't read is refused with its line.
 - Staff roles (migration 0034): admin (changes roles; invites and disables staff logins),
   approve (approves a reconciliation, signs off a cutover, posts a journal entry) and disburse
   (pays a bill, an owner draw). The database refuses those writes to a named staff member

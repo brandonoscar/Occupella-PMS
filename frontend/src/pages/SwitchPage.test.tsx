@@ -74,6 +74,26 @@ describe("SwitchPage", () => {
     expect(posted(fetch)).toEqual([["/api/switching/import", { kind: "leases", content: "Property,Unit\n" }]]);
   });
 
+  it("reads a file Excel on Windows saved (Windows-1252) with its names as written", async () => {
+    const fetch = server({ "/api/switching/import": { added: 1, kept: 0 } });
+    render(<SwitchPage me={ME} />);
+    await screen.findByText("Cutover: Operating");
+    const importing = screen.getByRole("button", { name: "Import" }) as HTMLButtonElement;
+    // "Name\nJosé O’Brien\n" in Windows-1252: é is 0xE9 and ’ is 0x92, neither of them UTF-8.
+    const bytes = new Uint8Array([0x4e, 0x61, 0x6d, 0x65, 0x0a, 0x4a, 0x6f, 0x73, 0xe9, 0x20, 0x4f, 0x92,
+      0x42, 0x72, 0x69, 0x65, 0x6e, 0x0a]);
+
+    fireEvent.change(screen.getByLabelText("File of"), { target: { value: "owners" } });
+    fireEvent.change(screen.getByLabelText("CSV file"), {
+      target: { files: [new File([bytes], "owners.csv", { type: "text/csv" })] },
+    });
+    await vi.waitFor(() => expect(importing.disabled).toBe(false));
+    fireEvent.click(importing);
+
+    expect(await screen.findByText("1 added.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/switching/import", { kind: "owners", content: "Name\nJosé O’Brien\n" }]]);
+  });
+
   it("carries over what the old system paid each vendor before the cutover", async () => {
     const fetch = server({ "/api/switching/vendor-payments": { added: 2, kept: 0 } });
     render(<SwitchPage me={ME} />);
