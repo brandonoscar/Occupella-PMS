@@ -6,17 +6,17 @@ import { Notice } from "../components/Notice";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
-import type { Ledger } from "../ledger";
-import { entryWords, readLedger } from "../ledger";
+import type { Ledger, LedgerData, LedgerSource } from "../ledger";
+import { entryWords, ledgerLines, readLedger } from "../ledger";
+import { OpensSource, SourcePanel } from "../components/SourcePanel";
 import type { ContentType } from "../documents";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
 import type { MaintenanceRequest } from "../maintenance";
-import { PHOTOS_PER_REQUEST, photosLabel, photosProblem, statusLabel, visitLabel, when } from "../maintenance";
-import { day, money, usDate, usDatesIn } from "../money";
-import type { StatementData } from "../statement";
+import { CATEGORIES, EMERGENCY_FIRST, PHOTOS_PER_REQUEST, photosProblem } from "../maintenance";
+import { TenantRequest } from "./TenantRequest";
+import { day, money, sumMoney, usDate, usDatesIn } from "../money";
 import type { DepositAsked, Paid, RentersInsurance } from "../rent";
-import { dueDayLabel, insuranceLine, methodLabel, tenantDepositLine } from "../rent";
-import { Badge } from "../components/Badge";
+import { dueDayLabel, insuranceLine, tenantDepositLine } from "../rent";
 import { PolicyForm } from "./InsuranceForms";
 import { RenewalsCard } from "./RenewalsCard";
 import { useRecord } from "./useRecord";
@@ -31,6 +31,7 @@ import { MessagesCard } from "../components/MessagesCard";
 import type { NavEntry } from "../components/Shell";
 import { CreditCard, FileText, Home as HomeIcon, MessagesSquare, UserRound, Wrench } from "lucide-react";
 import type { MoveOutNotice } from "./TenantPortalCards";
+import { firstName } from "../directory";
 import { AnnouncementsCard, LeaseUploadForm, MoveOutNoticeCard } from "./TenantPortalCards";
 
 // What the lease charges every month: its rent, and each recurring fee or credit not stopped
@@ -44,11 +45,20 @@ export type Monthly = {
 };
 // A charge entered already and due after today, with what is still open of it.
 export type ComingDue = { due_on: string; kind: "rent" | "fee"; memo: string | null; open: string };
+// The next month's charges not entered yet: the rent in force on its due day (a rent change to
+// come included) and each monthly fee or credit, as the rent run will charge them.
+export type NextCharge = {
+  due_on: string;
+  total: string;
+  lines: { what: string; kind: "rent" | "fee" | "credit"; amount: string }[];
+};
 
 export type Lease = {
   lease_id: string;
   property: string;
   unit: string;
+  // The home as the tenant reads it: "Elm Court, Unit 4", or "Cedar House" (src/pms/homes.py).
+  home: string;
   starts_on: string;
   ends_on: string | null;
   monthly_rent: string;
@@ -62,11 +72,14 @@ export type Lease = {
   balance_due: string;
   in_effect: boolean;
   each_month: Monthly[];
+  next_charge: NextCharge | null;
   coming_due: ComingDue[];
   deposit_returned: boolean;
   // The security deposit the signed lease asked, what is held of it and what is still to give
   // the manager (q036); null when it asked none, or once the deposit was returned.
   deposit_asked: DepositAsked | null;
+  // The security deposit held for the lease's tenants; null when none is held.
+  deposit_held: string | null;
   // Each payment to it, newest first, each with its receipt to download.
   payments: Paid[];
   // The lease as signed, its signing certificate and the lease's documents (q120), the tenant's
@@ -118,6 +131,79 @@ export function monthlyLabel(item: Monthly, today: string): string {
   return `${item.what}: ${amount}${from}${until}`;
 }
 
+// "$2,300.00 due 12/01/2026", and what makes it up when it is more than the rent:
+// "(Rent $2,300.00 · Pet rent $25.00 · Autopay credit $10.00 off)".
+export function nextChargeLabel(next: NextCharge): string {
+  const total = `${money(next.total)} due ${usDate(next.due_on)}`;
+  if (next.lines.length < 2) return total;
+  const parts = next.lines.map((l) => `${l.what} ${money(l.amount)}${l.kind === "credit" ? " off" : ""}`);
+  return `${total} (${parts.join(" · ")})`;
+}
+
+// "Rent: $2,250.00; $2,300.00 from 12/01/2026": each month's rent with the changes to come.
+export function eachMonthLabel(item: Monthly, lease: Pick<Lease, "rent_changes">, today: string): string {
+  const label = monthlyLabel(item, today);
+  if (item.kind !== "rent") return label;
+  return label + lease.rent_changes.map((c) => `; ${money(c.monthly_rent)} from ${usDate(c.effective_on)}`).join("");
+}
+
+const MONTH_DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const MONTH_DAY_YEAR = new Intl.DateTimeFormat("en-US", {
+  month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
+});
+
+// "Your rent goes up to $2,300 on Dec 1." for the first rent change to come (its year when it
+// isn't this year's); null with none, or one that changes nothing.
+export function rentChangeNotice(lease: Pick<Lease, "rent_changes" | "monthly_rent">, today: string): string | null {
+  const next = lease.rent_changes[0];
+  if (!next) return null;
+  const change = sumMoney([next.monthly_rent, negated(lease.monthly_rent)]);
+  if (change === "0.00") return null;
+  const day = new Date(`${next.effective_on}T00:00:00Z`);
+  const when = (next.effective_on.slice(0, 4) === today.slice(0, 4) ? MONTH_DAY : MONTH_DAY_YEAR).format(day);
+  const amount = money(next.monthly_rent).replace(/\.00$/, "");
+  return `Your rent goes ${change.startsWith("-") ? "down" : "up"} to ${amount} on ${when}.`;
+}
+
+function negated(amount: string): string {
+  return amount.startsWith("-") ? amount.slice(1) : `-${amount}`;
+}
+
+// What the lease card says about it: the home, term, rent (with changes to come), due day and
+// who is on it, then the security deposit held and the lease to read, each only when there is one.
+function leaseDetails(lease: Lease): { key: string; label: string; value: React.ReactNode }[] {
+  const rent = `${money(lease.monthly_rent)} a month` + lease.rent_changes
+    .map((c) => `; ${money(c.monthly_rent)} from ${usDate(c.effective_on)} (notice given ${usDate(c.notice_given_on)})`)
+    .join("");
+  return [
+    { key: "home", label: "Home", value: lease.home },
+    { key: "term", label: "Term", value: leaseTermLabel(lease.starts_on, lease.ends_on) },
+    { key: "rent", label: "Rent", value: rent },
+    { key: "due", label: "Rent due", value: dueDayLabel(lease.rent_due_day) },
+    { key: "tenants", label: "On the lease", value: lease.tenants.join(", ") },
+    ...(lease.deposit_held
+      ? [{ key: "deposit", label: "Security deposit held", value: money(lease.deposit_held) }]
+      : []),
+    ...leaseDocuments(lease).map((f) => ({
+      key: f.url,
+      label: "Lease",
+      value: (
+        <a className="text-iris hover:text-iris-hover hover:underline" href={f.url}>
+          {f.kind === "signed lease" ? `${f.title} (as signed, PDF)` : f.title}
+        </a>
+      ),
+    })),
+  ];
+}
+
+// The lease itself, to read: as signed through the PMS, else the lease documents staff keep for
+// it (not the tenant's own uploads, nor the signing certificate); none when there is none.
+export function leaseDocuments(lease: Pick<Lease, "files">): Lease["files"] {
+  const signed = lease.files.filter((f) => f.kind === "signed lease");
+  if (signed.length > 0) return signed;
+  return lease.files.filter((f) => f.kind === "lease document" && !f.from_tenant);
+}
+
 // "10/23/2026 Key replacement: $50.00" (the kind when it has no memo).
 export function comingDueLabel(charge: ComingDue): string {
   const what = usDatesIn(charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee"));
@@ -131,7 +217,12 @@ const AMOUNT = "text-right";
 // A lease as the picker names it: its home and first day, and whether it has ended or is to come.
 export function leaseLabel(lease: Lease, today: string): string {
   const when = lease.in_effect ? "" : lease.starts_on > today ? " (to come)" : " (ended)";
-  return `${lease.property}, ${lease.unit}, from ${usDate(lease.starts_on)}${when}`;
+  return `${lease.home}, from ${usDate(lease.starts_on)}${when}`;
+}
+
+// A lease's term as the tenant reads it: "Month-to-month since 12/01/2025", or its two days.
+export function leaseTermLabel(startsOn: string, endsOn: string | null): string {
+  return endsOn ? `${usDate(startsOn)} to ${usDate(endsOn)}` : `Month-to-month since ${usDate(startsOn)}`;
 }
 
 // The lease shown first: the one in effect, else the newest.
@@ -148,10 +239,13 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
   const [leases, setLeases] = useState<Lease[] | null>(null);
   const [chosen, setChosen] = useState<string>("");
   const [ledger, setLedger] = useState<Ledger | null>(null);
+  const [opened, setOpened] = useState<LedgerSource | null>(null);
   const [requests, setRequests] = useState<MaintenanceRequest[]>([]);
   const [summary, setSummary] = useState("");
   const [entryAllowed, setEntryAllowed] = useState(false);
   const [emergency, setEmergency] = useState(false);
+  const [category, setCategory] = useState("");
+  const [location, setLocation] = useState("");
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [sent, setSent] = useState("");
   const [error, setError] = useState("");
@@ -176,7 +270,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
     if (!chosen) return;
     setLedger(null);
     api
-      .get<StatementData>(`/api/tenant/leases/${chosen}/ledger`)
+      .get<LedgerData>(`/api/tenant/leases/${chosen}/ledger`)
       .then(run.keep((data) => setLedger(readLedger(data))))
       .catch(run.keep(show));
     return run.stop;
@@ -197,12 +291,16 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
         summary,
         entry_allowed: entryAllowed,
         emergency,
+        category,
+        location: location.trim() || null,
         photos: photos.map((p) => ({ title: p.title, content_type: p.type, content_base64: p.base64 })),
       });
       setRequests([filed, ...requests]);
       setSummary("");
       setEntryAllowed(false);
       setEmergency(false);
+      setCategory("");
+      setLocation("");
       setPhotos([]);
       setSent(
         emergency ? `Sent to ${me.pmc_name} as an emergency. If anyone is in danger, call 911.` : `Sent to ${me.pmc_name}.`,
@@ -223,8 +321,11 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
 
   return (
     <Shell me={me} nav={TENANT_NAV}>
-      <PageHeader title={heading || `Welcome, ${me.name}`} description={description} />
+      <PageHeader title={heading || `Welcome, ${firstName(me.name)}`} description={description} />
       <Notice tone="error">{error}</Notice>
+      {section === "overview" && lease && rentChangeNotice(lease, day(new Date())) && (
+        <Notice tone="info">{rentChangeNotice(lease, day(new Date()))}</Notice>
+      )}
       {section === "overview" && <AnnouncementsCard />}
       {!leaseSection ? null : leases === null ? (
         <Notice tone="info">Loading</Notice>
@@ -251,16 +352,8 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
               </label>
             )}
             <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-base sm:grid-cols-4">
-              {[
-                ["Home", `${lease.property}, ${lease.unit}`],
-                ["Term", `${usDate(lease.starts_on)} to ${lease.ends_on ? usDate(lease.ends_on) : "month to month"}`],
-                ["Rent", `${money(lease.monthly_rent)} a month` + lease.rent_changes
-                  .map((c) => `; ${money(c.monthly_rent)} from ${usDate(c.effective_on)} (notice given ${usDate(c.notice_given_on)})`)
-                  .join("")],
-                ["Rent due", dueDayLabel(lease.rent_due_day)],
-                ["On the lease", lease.tenants.join(", ")],
-              ].map(([label, value]) => (
-                <div key={label}>
+              {leaseDetails(lease).map(({ key, label, value }) => (
+                <div key={key}>
                   <dt className="text-sm text-ink-subtle">{label}</dt>
                   <dd>{value}</dd>
                 </div>
@@ -315,14 +408,20 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
           </Card>
           )}
 
-          {section === "overview" && (lease.each_month.length > 0 || lease.coming_due.length > 0) && (
+          {section === "overview" && (lease.next_charge || lease.each_month.length > 0 || lease.coming_due.length > 0) && (
             <Card title="Coming up">
+              {lease.next_charge && (
+                <>
+                  <p className="text-sm text-ink-subtle">Next charge</p>
+                  <p className="mb-4 text-base" data-testid="next-charge">{nextChargeLabel(lease.next_charge)}</p>
+                </>
+              )}
               {lease.each_month.length > 0 && (
                 <>
                   <p className="text-sm text-ink-subtle">Each month</p>
                   <ul className="mb-4 flex flex-col gap-1 text-base">
                     {lease.each_month.map((item) => (
-                      <li key={`${item.what}-${item.starts_on}`}>{monthlyLabel(item, day(new Date()))}</li>
+                      <li key={`${item.what}-${item.starts_on}`}>{eachMonthLabel(item, lease, day(new Date()))}</li>
                     ))}
                   </ul>
                 </>
@@ -392,14 +491,52 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                     </tr>
                   </thead>
                   <tbody>
-                    {ledger.entries.map((entry, n) => {
+                    <tr className="border-t border-line text-ink-muted">
+                      <td className={`${CELL} whitespace-nowrap`}>{usDate(lease.starts_on)}</td>
+                      <td className={CELL} colSpan={3}>Opening balance</td>
+                      <td className={AMOUNT}>{money(ledger.opening)}</td>
+                    </tr>
+                    {ledgerLines(ledger).map((line, n) => {
+                      if ("held" in line) {
+                        const { held, balance } = line;
+                        return (
+                          <tr key={n} className="border-t border-line">
+                            <td className={`${CELL} whitespace-nowrap text-ink-muted`}>{usDate(held.on)}</td>
+                            <td className={CELL}>
+                              {held.what}
+                              <span className="text-ink-muted">
+                                {held.how && ` · ${held.how}`}, {money(held.amount)} held as prepaid rent
+                                {held.returned && " · came back unpaid"}
+                              </span>
+                              <a href={held.receipt} className="ml-3 text-sm text-iris hover:text-iris-hover hover:underline">
+                                Receipt (PDF)
+                              </a>
+                            </td>
+                            <td className={AMOUNT}>{""}</td>
+                            <td className={AMOUNT}>{""}</td>
+                            <td className={AMOUNT}>{money(balance)}</td>
+                          </tr>
+                        );
+                      }
+                      const entry = line.entry;
                       const words = entryWords(entry);
+                      const source = entry.source;
+                      const receipt = entry.payment?.receipt;
                       return (
                       <tr key={n} className="border-t border-line">
                         <td className={`${CELL} whitespace-nowrap text-ink-muted`}>{usDate(entry.on)}</td>
                         <td className={CELL}>
-                          {words.what}
-                          {words.detail && <span className="text-ink-muted">: {words.detail}</span>}
+                          <OpensSource onOpen={source ? () => setOpened(source) : null}>
+                            {words.what}
+                            {words.detail && (
+                              <span className="text-ink-muted">{entry.payment ? " · " : ": "}{words.detail}</span>
+                            )}
+                          </OpensSource>
+                          {receipt && (
+                            <a href={receipt} className="ml-3 text-sm text-iris hover:text-iris-hover hover:underline">
+                              Receipt (PDF)
+                            </a>
+                          )}
                         </td>
                         <td className={AMOUNT}>{entry.charged === "0.00" ? "" : money(entry.charged)}</td>
                         <td className={AMOUNT}>{entry.paid === "0.00" ? "" : money(entry.paid)}</td>
@@ -408,9 +545,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                       );
                     })}
                     <tr className="border-t border-line-strong font-medium">
-                      <td className={CELL} colSpan={2}>
-                        Balance at the end of {usDate(ledger.through)}
-                      </td>
+                      <td className={CELL} colSpan={2}>Totals</td>
                       <td className={AMOUNT}>{money(ledger.totals.charged)}</td>
                       <td className={AMOUNT}>{money(ledger.totals.paid)}</td>
                       <td className={AMOUNT}>{money(ledger.totals.balance)}</td>
@@ -419,39 +554,16 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                 </table>
               </Wide>
             )}
+            {opened && (
+              <SourcePanel
+                url={`/api/tenant/leases/${encodeURIComponent(lease.lease_id)}/ledger/sources/${opened.kind}/${encodeURIComponent(opened.id)}`}
+                onClose={() => setOpened(null)} />
+            )}
           </Card>
           )}
 
           {section === "payments" && <PayOnlineCard leaseId={lease.lease_id} />}
           {section === "payments" && <TenantAutopayCard leaseId={lease.lease_id} />}
-
-          {section === "payments" && (
-          <Card title="Payments">
-            {lease.payments.length === 0 ? (
-              <p className="text-sm text-ink-subtle">No payment recorded yet.</p>
-            ) : (
-              <ul className="flex flex-col divide-y divide-line text-base" aria-label="Payments">
-                {lease.payments.map((payment) => (
-                  <li key={payment.transfer_id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-                    <span>
-                      {usDate(payment.received_on)} · {money(payment.amount)}
-                      {(payment.method || payment.reference) && (
-                        <span className="text-ink-muted">
-                          {" · "}{[payment.method && methodLabel(payment.method), payment.reference].filter(Boolean).join(" ")}
-                        </span>
-                      )}
-                    </span>
-                    <span className="flex items-center gap-3">
-                      {payment.bounced && <Badge tone="danger">Bounced</Badge>}
-                      <a href={`/api/tenant/payments/${encodeURIComponent(payment.transfer_id)}/receipt`}
-                        className="text-sm text-iris hover:text-iris-hover hover:underline">Receipt (PDF)</a>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-          )}
 
           {section === "repairs" && (
           <Card title="Maintenance requests">
@@ -469,18 +581,35 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                     className="rounded-sm border border-line-strong bg-sunken px-3 py-2 text-base text-ink"
                   />
                 </label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label htmlFor="category" className="flex flex-col gap-1.5 text-sm text-ink-muted">
+                    What kind of repair?
+                    <select id="category" required value={category} onChange={(e) => setCategory(e.target.value)}
+                      className="h-9 rounded-sm border border-line-strong bg-sunken px-3 text-base text-ink">
+                      <option value="" disabled>Pick one</option>
+                      {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                    </select>
+                  </label>
+                  <label htmlFor="location" className="flex flex-col gap-1.5 text-sm text-ink-muted">
+                    Where in the unit?
+                    <input id="location" maxLength={200} value={location} placeholder="Kitchen sink"
+                      onChange={(e) => setLocation(e.target.value)}
+                      className="h-9 rounded-sm border border-line-strong bg-sunken px-3 text-base text-ink" />
+                  </label>
+                </div>
                 <label className="flex items-center gap-2 text-sm text-ink-muted">
                   <input
                     type="checkbox"
                     checked={entryAllowed}
                     onChange={(e) => setEntryAllowed(e.target.checked)}
                   />
-                  Someone may come in while I'm out
+                  OK to enter if I'm not home
                 </label>
                 <label className="flex items-center gap-2 text-sm text-ink-muted">
                   <input type="checkbox" checked={emergency} onChange={(e) => setEmergency(e.target.checked)} />
                   This is an emergency (no heat, no water, a leak, a gas smell)
                 </label>
+                {emergency && <Notice tone="error">{EMERGENCY_FIRST}</Notice>}
                 <label htmlFor="request-photos" className="flex flex-col gap-1.5 text-sm text-ink-muted">
                   Photos (up to {PHOTOS_PER_REQUEST}, JPEG, PNG or PDF)
                   <input
@@ -510,11 +639,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                   </p>
                 )}
                 <div className="flex items-center gap-4">
-                  <Button type="submit" says={emergency
-                    ? `Sends it to ${me.pmc_name} as an emergency. You can't change it after; if anyone is in danger, call 911.`
-                    : `Sends it to ${me.pmc_name}; how it's going shows below. You can't change it after it's sent.`}>
-                    Send request
-                  </Button>
+                  <Button type="submit">Send request</Button>
                   <Said>{sent}</Said>
                 </div>
               </Form>
@@ -526,21 +651,8 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
             ) : (
               <ul className="flex flex-col divide-y divide-line">
                 {requests.map((request) => (
-                  <li key={request.id} className="py-3">
-                    <p className="flex flex-wrap items-center gap-2">
-                      {request.summary}
-                      {request.emergency && <Badge tone="danger">Emergency</Badge>}
-                    </p>
-                    <p className="text-sm text-ink-subtle">
-                      {request.unit}, sent by {request.filed_by} {when(request.submitted_at)}.{" "}
-                      {photosLabel(request.photos) && `${photosLabel(request.photos)}. `}
-                      <span className="text-ink-muted">{statusLabel(request.status)}</span>
-                      {request.status !== "received" && ` (${when(request.status_at)})`}
-                    </p>
-                    {visitLabel(request) && (
-                      <p className="text-sm text-ink" data-testid="visit">{visitLabel(request)}</p>
-                    )}
-                  </li>
+                  <TenantRequest key={request.id} request={request} canChange={lease.in_effect}
+                    onChange={(changed) => setRequests(requests.map((r) => (r.id === changed.id ? changed : r)))} />
                 ))}
               </ul>
             )}

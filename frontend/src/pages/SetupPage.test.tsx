@@ -149,8 +149,7 @@ describe("SetupPage", () => {
     type("Flat fee", "25.00");
     type("NSF fee (empty for none)", "35.00");
     expect(panel().textContent).toContain("A new property charges $35.00 for a returned payment.");
-    expect(says(within(panel()).getByRole("button", { name: "Save" })))
-      .toBe("Properties added from now on start with these. A property already here keeps its own terms.");
+    expect(says(within(panel()).getByRole("button", { name: "Save" }))).toBeUndefined(); // no line: it says it all
     fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Saved the fees new properties start with.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/company", {

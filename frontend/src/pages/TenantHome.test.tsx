@@ -2,8 +2,20 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import { holdBack } from "../holdBack";
+import { EMERGENCY_FIRST } from "../maintenance";
 import type { Lease } from "./TenantHome";
-import { TenantHome, comingDueLabel, firstLease, leaseLabel, monthlyLabel } from "./TenantHome";
+import {
+  TenantHome,
+  comingDueLabel,
+  eachMonthLabel,
+  firstLease,
+  leaseLabel,
+  leaseDocuments,
+  leaseTermLabel,
+  monthlyLabel,
+  nextChargeLabel,
+  rentChangeNotice,
+} from "./TenantHome";
 
 afterEach(() => {
   cleanup();
@@ -23,6 +35,7 @@ const lease = (id: string, inEffect: boolean): Lease => ({
   lease_id: id,
   property: "Property 1",
   unit: `Unit ${id}`,
+  home: `Property 1, Unit ${id}`,
   starts_on: "2026-01-01",
   ends_on: inEffect ? null : "2026-06-30",
   monthly_rent: "1500.00",
@@ -33,9 +46,11 @@ const lease = (id: string, inEffect: boolean): Lease => ({
   balance_due: "1500.00",
   in_effect: inEffect,
   each_month: [],
+  next_charge: null,
   coming_due: [],
   deposit_returned: false,
   deposit_asked: null,
+  deposit_held: null,
   payments: [],
   files: [],
 });
@@ -184,30 +199,53 @@ describe("TenantHome", () => {
     ]);
   });
 
-  it("lists each payment with how it came and its receipt, and says one bounced", async () => {
+  it("puts each payment on the ledger as what paid and how, with its receipt, and no list of its own", async () => {
     server({
-      "GET /api/tenant/leases": [{
-        ...lease("1", true),
-        payments: [
-          { transfer_id: "tr2", received_on: "2026-10-03", amount: "1500.00", reference: "No. 8", method: "cashier's check", bounced: false },
-          { transfer_id: "tr1", received_on: "2026-09-02", amount: "1500.00", reference: null, method: "EFT", bounced: true },
-        ],
-      }],
+      "GET /api/tenant/leases": [lease("1", true)],
       "GET /api/tenant/requests": [],
       "GET /api/tenant/renewals": [],
-      "GET /api/tenant/leases/1/ledger": LEDGER,
+      "GET /api/tenant/leases/1/ledger": {
+        ...LEDGER,
+        rows: [
+          ...LEDGER.rows.slice(0, 2),
+          ["3", "2026-01-03", "payment", "Rent – Tenant 1, Property 1", "0.00", "1500.00", "0.00"],
+          ["4", "2026-01-04", "payment", "Prepaid rent", "0.00", "0.00", "0.00"],
+          ["5", "2026-10-11", "balance", "end of day UTC", "1500.00", "1500.00", "0.00"],
+        ],
+        payments: [
+          null,
+          null,
+          { what: "Rent payment", how: "Cashier's check No. 8", receipt: "/api/tenant/payments/tr2/receipt" },
+          { what: "Prepaid rent used", how: null, receipt: null },
+          null,
+        ],
+        held: [{
+          on: "2026-01-03", what: "Rent payment", how: "Cashier's check No. 8", amount: "50.00",
+          receipt: "/api/tenant/payments/tr3/receipt", returned: false,
+        }],
+      },
     });
     render(<TenantHome me={ME} section="payments" />);
 
-    const list = await screen.findByRole("list", { name: "Payments" });
-    const items = within(list).getAllByRole("listitem");
-    expect(items.map((item) => item.textContent)).toEqual([
-      "10/03/2026 · $1,500.00 · Cashier's check No. 8Receipt (PDF)",
-      "09/02/2026 · $1,500.00 · EFTBouncedReceipt (PDF)",
-    ]);
-    expect(within(items[0] as HTMLElement).getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")).toBe(
+    await screen.findAllByRole("row", { name: /Rent payment/ });
+    const row = (start: string) =>
+      screen.getAllByRole("row").find((r) => r.textContent?.startsWith(start)) as HTMLElement;
+    const paid = row("01/03/2026Rent payment · Cashier's check No. 8Receipt");
+    expect(within(paid).getAllByRole("cell")[1]?.textContent).toBe("Rent payment · Cashier's check No. 8Receipt (PDF)");
+    expect(within(paid).getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")).toBe(
       "/api/tenant/payments/tr2/receipt",
     );
+    const held = row("01/03/2026Rent payment · Cashier's check No. 8, $50.00 held");
+    expect(within(held).getAllByRole("cell").map((cell) => cell.textContent)).toEqual([
+      "01/03/2026",
+      "Rent payment · Cashier's check No. 8, $50.00 held as prepaid rentReceipt (PDF)",
+      "",
+      "",
+      "$0.00",
+    ]);
+    const used = row("01/04/2026Prepaid rent used");
+    expect(within(used).queryByRole("link")).toBeNull();
+    expect(screen.queryByRole("list", { name: "Payments" })).toBeNull();
   });
 
   it("shows neither when nothing comes up and no deposit was returned", async () => {
@@ -243,7 +281,14 @@ describe("TenantHome", () => {
     const due = screen.getByTestId("balance-due").parentElement as HTMLElement;
     expect(within(due).getByRole("link", { name: "Payments" }).getAttribute("href")).toBe("/payments");
     rerender(<TenantHome me={ME} section="payments" />);
-    expect(await screen.findByText("Balance at the end of 10/11/2026")).toBeTruthy();
+    const totals = await screen.findByRole("row", { name: /^Totals/ });
+    expect(within(totals).getAllByRole("cell").map((cell) => cell.textContent)).toEqual([
+      "Totals", "$1,500.00", "$0.00", "$1,500.00",
+    ]);
+    const opening = screen.getByRole("row", { name: /Opening balance/ });
+    expect(within(opening).getAllByRole("cell").map((cell) => cell.textContent)).toEqual([
+      "01/01/2026", "Opening balance", "$0.00",
+    ]);
     const rent = screen.getByRole("row", { name: /^01\/01\/2026 Rent/ });
     expect(within(rent).getAllByRole("cell").map((cell) => cell.textContent)).toEqual([
       "01/01/2026", "Rent", "$1,500.00", "", "$1,500.00",
@@ -257,7 +302,9 @@ describe("TenantHome", () => {
     fireEvent.change(screen.getByLabelText("What needs fixing?"), {
       target: { value: "Tap drips" },
     });
-    fireEvent.click(screen.getByLabelText("Someone may come in while I'm out"));
+    fireEvent.change(screen.getByLabelText("What kind of repair?"), { target: { value: "plumbing" } });
+    fireEvent.change(screen.getByLabelText("Where in the unit?"), { target: { value: " Kitchen sink " } });
+    fireEvent.click(screen.getByLabelText("OK to enter if I'm not home"));
     fireEvent.click(screen.getByRole("button", { name: "Send request" }));
 
     expect(await screen.findByText("Sent to Synthetic PMC.")).toBeTruthy();
@@ -265,6 +312,8 @@ describe("TenantHome", () => {
     expect(JSON.parse(String(posted?.[1]?.body))).toEqual({
       lease_id: "1",
       summary: "Tap drips",
+      category: "plumbing",
+      location: "Kitchen sink",
       entry_allowed: true,
       emergency: false,
       photos: [],
@@ -290,7 +339,11 @@ describe("TenantHome", () => {
     expect(screen.getByText(/1 photo\./)).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("What needs fixing?"), { target: { value: "No heat" } });
+    fireEvent.change(screen.getByLabelText("What kind of repair?"), { target: { value: "heating_cooling" } });
+    expect(screen.queryByText(EMERGENCY_FIRST)).toBeNull();
     fireEvent.click(screen.getByLabelText("This is an emergency (no heat, no water, a leak, a gas smell)"));
+    // Before it is sent: what to do first when it can't wait for anyone.
+    expect(screen.getByText(EMERGENCY_FIRST)).toBeTruthy();
     const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "radiator.png", { type: "image/png" });
     const jpeg = new File([new Uint8Array([0xff, 0xd8, 0xff])], "boiler.jpg", { type: "image/jpeg" });
     fireEvent.change(screen.getByLabelText("Photos (up to 3, JPEG, PNG or PDF)"), { target: { files: [png, jpeg] } });
@@ -302,6 +355,8 @@ describe("TenantHome", () => {
     expect(JSON.parse(String(posted?.[1]?.body))).toEqual({
       lease_id: "1",
       summary: "No heat",
+      category: "heating_cooling",
+      location: null,
       entry_allowed: false,
       emergency: true,
       photos: [
@@ -323,6 +378,7 @@ describe("TenantHome", () => {
     });
     render(<TenantHome me={ME} section="repairs" />);
     fireEvent.change(await screen.findByLabelText("What needs fixing?"), { target: { value: "Tap drips" } });
+    fireEvent.change(screen.getByLabelText("What kind of repair?"), { target: { value: "plumbing" } });
     const page = new File(["<html>"], "tap.html", { type: "text/html" });
     fireEvent.change(screen.getByLabelText("Photos (up to 3, JPEG, PNG or PDF)"), { target: { files: [page] } });
     await screen.findByTestId("photos-chosen");
@@ -359,6 +415,59 @@ describe("TenantHome", () => {
     expect(await screen.findByText(
       "$1,500.00 a month; $1,575.00 from 12/01/2026 (notice given 10/15/2026)",
     )).toBeTruthy();
+  });
+
+  it("shows the security deposit held and the lease to read, and nothing when there is neither", async () => {
+    server({
+      "GET /api/tenant/leases": [
+        {
+          ...lease("1", true),
+          deposit_held: "2250.00",
+          files: [
+            { kind: "signing certificate", title: "Signing certificate", url: "/c" },
+            { kind: "signed lease", title: "Lease, Unit 1", url: "/l" },
+          ],
+        },
+        lease("2", true),
+      ],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+      "GET /api/tenant/leases/2/ledger": LEDGER,
+      "GET /api/tenant/announcements": [],
+    });
+    render(<TenantHome me={ME} />);
+
+    const held = await screen.findByText("Security deposit held");
+    expect(held.nextElementSibling?.textContent).toBe("$2,250.00");
+    expect(screen.getByRole("link", { name: "Lease, Unit 1 (as signed, PDF)" }).getAttribute("href")).toBe("/l");
+
+    fireEvent.change(screen.getByLabelText("Lease"), { target: { value: "2" } });
+    await vi.waitFor(() => expect(screen.queryByText("Security deposit held")).toBeNull());
+    expect(screen.queryByText("Lease", { selector: "dt" })).toBeNull();
+  });
+
+  it("says on the Overview when the rent goes up, and what the next charge is", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-04T12:00:00Z") });
+    server({
+      "GET /api/tenant/leases": [{
+        ...lease("1", true),
+        monthly_rent: "2250.00",
+        rent_changes: [{ effective_on: "2026-12-01", monthly_rent: "2300.00", notice_given_on: "2026-10-22" }],
+        each_month: [{ what: "Rent", kind: "rent", amount: "2250.00", starts_on: "2026-01-01", ends_on: null }],
+        next_charge: { due_on: "2026-12-01", total: "2300.00", lines: [{ what: "Rent", kind: "rent", amount: "2300.00" }] },
+      }],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+      "GET /api/tenant/announcements": [],
+    });
+    render(<TenantHome me={ME} />);
+
+    expect(await screen.findByText("Your rent goes up to $2,300 on Dec 1.")).toBeTruthy();
+    expect(screen.getByTestId("next-charge").textContent).toBe("$2,300.00 due 12/01/2026");
+    expect(screen.getByText("Rent: $2,250.00; $2,300.00 from 12/01/2026")).toBeTruthy();
+    vi.useRealTimers();
   });
 
   it("shows the lease's renters insurance and records the tenant's own policy", async () => {
@@ -404,18 +513,22 @@ describe("TenantHome", () => {
       "GET /api/tenant/leases/1/ledger": LEDGER,
       "GET /api/tenant/leases/2/ledger": {
         ...LEDGER,
-        rows: [...LEDGER.rows.slice(0, 2), ["3", "2026-06-30", "balance", "end of day UTC", "1500.00", "0.00", "1500.00"]],
+        rows: [
+          LEDGER.rows[0],
+          ["2", "2026-01-01", "rent", null, "900.00", "0.00", "900.00"],
+          ["3", "2026-06-30", "balance", "end of day UTC", "900.00", "0.00", "900.00"],
+        ],
       },
     });
     const release = holdBack((path) => path === "/api/tenant/leases/1/ledger");
     render(<TenantHome me={ME} section="payments" />);
 
     fireEvent.change(await screen.findByLabelText("Lease"), { target: { value: "2" } });
-    await screen.findByText("Balance at the end of 06/30/2026");
+    const totals = () => screen.getByRole("row", { name: /^Totals/ }).textContent;
+    await screen.findByRole("row", { name: /^Totals/ });
     await release();
 
-    expect(screen.getByText("Balance at the end of 06/30/2026")).toBeTruthy();
-    expect(screen.queryByText("Balance at the end of 10/11/2026")).toBeNull();
+    expect(totals()).toBe("Totals$900.00$0.00$900.00");
   });
 
   it("picks the lease a repair is for on Repairs, and keeps it from section to section", async () => {
@@ -459,5 +572,62 @@ describe("TenantHome", () => {
     render(<TenantHome me={ME} />);
 
     expect(await screen.findByText("No lease is on file for you. Ask Synthetic PMC.")).toBeTruthy();
+  });
+});
+
+describe("leaseTermLabel", () => {
+  it("reads month-to-month from its first day, and a fixed term by its two days", () => {
+    expect(leaseTermLabel("2025-12-01", null)).toBe("Month-to-month since 12/01/2025");
+    expect(leaseTermLabel("2025-12-01", "2026-11-30")).toBe("12/01/2025 to 11/30/2026");
+  });
+});
+
+describe("the next charge and rent changes in words", () => {
+  it("reads the next charge, and what makes it up when it is more than the rent", () => {
+    expect(nextChargeLabel({ due_on: "2026-12-01", total: "2300.00", lines: [{ what: "Rent", kind: "rent", amount: "2300.00" }] }))
+      .toBe("$2,300.00 due 12/01/2026");
+    expect(nextChargeLabel({
+      due_on: "2026-12-01",
+      total: "2315.00",
+      lines: [
+        { what: "Rent", kind: "rent", amount: "2300.00" },
+        { what: "Autopay credit", kind: "credit", amount: "10.00" },
+        { what: "Pet rent", kind: "fee", amount: "25.00" },
+      ],
+    })).toBe("$2,315.00 due 12/01/2026 (Rent $2,300.00 · Autopay credit $10.00 off · Pet rent $25.00)");
+  });
+
+  it("says the rent goes up or down, with the year only when it isn't this year's", () => {
+    const changes = (effective_on: string, monthly_rent: string) => ({
+      monthly_rent: "2250.00",
+      rent_changes: [{ effective_on, monthly_rent, notice_given_on: "2026-10-22" }],
+    });
+    expect(rentChangeNotice(changes("2026-12-01", "2300.00"), "2026-11-04")).toBe("Your rent goes up to $2,300 on Dec 1.");
+    expect(rentChangeNotice(changes("2027-01-01", "2200.50"), "2026-11-04")).toBe(
+      "Your rent goes down to $2,200.50 on Jan 1, 2027.",
+    );
+    expect(rentChangeNotice(changes("2026-12-01", "2250.00"), "2026-11-04")).toBeNull();
+    expect(rentChangeNotice({ monthly_rent: "2250.00", rent_changes: [] }, "2026-11-04")).toBeNull();
+  });
+
+  it("gives each month's rent its changes to come, and leaves fees as they are", () => {
+    const lease = { rent_changes: [{ effective_on: "2026-12-01", monthly_rent: "2300.00", notice_given_on: "2026-10-22" }] };
+    expect(eachMonthLabel({ what: "Rent", kind: "rent", amount: "2250.00", starts_on: "2026-01-01", ends_on: null }, lease, "2026-11-04"))
+      .toBe("Rent: $2,250.00; $2,300.00 from 12/01/2026");
+    expect(eachMonthLabel({ what: "Pet rent", kind: "fee", amount: "25.00", starts_on: "2026-01-01", ends_on: null }, lease, "2026-11-04"))
+      .toBe("Pet rent: $25.00");
+  });
+});
+
+describe("leaseDocuments", () => {
+  const file = (kind: "signed lease" | "signing certificate" | "lease document", url: string, from_tenant = false) =>
+    ({ kind, title: url, url, from_tenant });
+
+  it("is the lease as signed, else the lease documents staff keep, never the tenant's own or the certificate", () => {
+    expect(leaseDocuments({ files: [file("signing certificate", "c"), file("signed lease", "s"), file("lease document", "d")] })
+      .map((f) => f.url)).toEqual(["s"]);
+    expect(leaseDocuments({ files: [file("lease document", "d"), file("lease document", "mine", true)] })
+      .map((f) => f.url)).toEqual(["d"]);
+    expect(leaseDocuments({ files: [file("lease document", "mine", true)] })).toEqual([]);
   });
 });

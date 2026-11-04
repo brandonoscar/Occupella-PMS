@@ -22,7 +22,35 @@ export type MaintenanceRequest = {
   visit_window: string | null;
   // How many photos came with it.
   photos: number;
+  // What kind of repair it is and where in the unit (none on requests filed before they were asked).
+  category?: Category | null;
+  location?: string | null;
+  // A tenant on the lease took it back while it was still received.
+  taken_back?: boolean;
+  // What tenants on the lease added while it was open, oldest first.
+  notes?: { by: string; body: string; at: string }[];
 };
+
+export type Category = "plumbing" | "electrical" | "appliance" | "heating_cooling" | "pests" | "other";
+
+export const CATEGORIES: { value: Category; label: string }[] = [
+  { value: "plumbing", label: "Plumbing" },
+  { value: "electrical", label: "Electrical" },
+  { value: "appliance", label: "Appliance" },
+  { value: "heating_cooling", label: "Heating/cooling" },
+  { value: "pests", label: "Pests" },
+  { value: "other", label: "Other" },
+];
+
+// "Plumbing · Kitchen sink", either alone, or null with neither.
+export function kindAndPlace(request: Pick<MaintenanceRequest, "category" | "location">): string | null {
+  const kind = CATEGORIES.find((c) => c.value === request.category)?.label;
+  const parts = [kind, request.location].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+// Shown before an emergency is sent (the founder's review of 11/03, item 12).
+export const EMERGENCY_FIRST = "Gas smell, fire or flooding? Get out and call 911 or your gas company first.";
 
 export type StaffRequest = MaintenanceRequest & {
   work_order_id: string | null;
@@ -38,8 +66,8 @@ const LABELS: Record<Status, string> = {
   cancelled: "Closed without work",
 };
 
-export function statusLabel(status: Status): string {
-  return LABELS[status];
+export function statusLabel(status: Status, takenBack = false): string {
+  return takenBack ? "Cancelled" : LABELS[status];
 }
 
 // "Visit on 11/03/2026, 8-10 am" while a visit is scheduled, else null.

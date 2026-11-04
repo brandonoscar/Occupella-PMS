@@ -366,8 +366,7 @@ function StatementsCard({ bank, refresh }: BankProps) {
           onChange={(e) => setOpening(e.target.value)} />
         <Field label="Closing balance" id="statement-closing" inputMode="decimal" value={closing}
           onChange={(e) => setClosing(e.target.value)} />
-        <Button type="submit" disabled={!file}
-          says="Adds the bank's lines and matches checks to bill payments by number and amount. No money moves.">
+        <Button type="submit" disabled={!file}>
           Import statement
         </Button>
       </Form>
@@ -491,7 +490,6 @@ function WorksheetCard({
             <Button
               variant={prepared ? "secondary" : "primary"}
               disabled={gap !== "0.00"}
-              says="Saves these figures for another staff member who may approve. Nothing closes until then; no money moves."
               onClick={() =>
                 record<{ id: string }>(`/api/reconcile/${bank.id}/prepare`, { through: day },
                   () => `Prepared through ${usDate(day)}; another staff member who may approve approves it.`)
@@ -590,7 +588,7 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
   return (
     <Card title="Match the bank to the books">
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Button variant="secondary" says="Matches only the lines it is sure of; the rest wait for you. No money moves."
+        <Button variant="secondary"
           onClick={() => record<{ matched: number }>(`/api/reconcile/${bank.id}/auto-match`, {},
             (done) => `${done.matched} line${done.matched === 1 ? "" : "s"} matched.`)}>
           Match the sure ones
@@ -629,7 +627,6 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
         </span>
         <Button
           disabled={lines.length + moved.length + carried.length === 0 || lineTotal !== movedTotal}
-          says="Pairs what is ticked on each side. No money moves; Undo takes it back until the month is approved."
           onClick={async () => {
             const body = { line_ids: lines, transfer_ids: moved, cutover_item_ids: carried };
             if (await record(`/api/reconcile/${bank.id}/matches`, body, () => "Matched.")) {
@@ -660,7 +657,7 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
                     "Nothing in the books"}
                 </td>
                 <td className="text-right">
-                  <Button variant="ghost" size="sm" says="Unpairs them; both sides go back to the lists above. No money moves."
+                  <Button variant="ghost" size="sm"
                     onClick={() => record(`/api/reconcile/matches/${m.id}/undo`, {}, () => "Match undone.")}>
                     Undo
                   </Button>
@@ -710,7 +707,7 @@ function OpeningCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet })
               </option>
             ))}
           </Select>
-          <Button says="Pairs this bank line with the opening balances. No money moves."
+          <Button
             onClick={() => record(`/api/reconcile/${bank.id}/opening-match`, { line_id: chosen },
             () => "The opening is matched.")}>
             Match the opening

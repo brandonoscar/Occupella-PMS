@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 
 from pms import notices, payments
 from pms.api import outbox, rent, tenant
+from pms.api.company import how_to_pay
 from pms.api.deps import Conn, Staff, Tenant, refusal
 
 router = APIRouter(prefix="/api/payments")
@@ -198,10 +199,21 @@ class OnlinePayment(BaseModel):
     status: Status
 
 
+# Why a tenant or owner can't pay online now: the company (or its server) takes no payment
+# online, or the lease is on a payment hold. The portal says it in its own words.
+WhyNot = Literal["off", "paused"]
+OFF = "Online payments aren't available."
+PARTNER_DOWN = "We couldn't reach our payments partner. Try again in a few minutes."
+PAUSED = "Online payments are paused for this lease. Contact your property manager."
+SAID: dict[str, str] = {"off": OFF, "paused": PAUSED}
+
+
 class PayView(BaseModel):
     # Whether the tenant may pay this lease online now, and if not, why.
     available: bool
-    why_not: str | None
+    why_not: WhyNot | None
+    # The company's own words on how to pay it, shown when the tenant can't pay online.
+    how_to_pay: str | None
     owed: str
     fee_payer: FeePayer
     payments: list[OnlinePayment]
@@ -229,15 +241,13 @@ def why_not(
     pmc_id: UUID,
     lease_id: UUID,
     chosen: PaymentSettings,
-) -> str | None:
+) -> WhyNot | None:
     """Why this lease takes no payment online now, or None when it does."""
-    if partner_of(request) is None:
-        return "this server takes no payments online"
-    if not chosen.online:
-        return "your manager doesn't take payments online"
+    if partner_of(request) is None or not chosen.online:
+        return "off"
     day = rent.today()
     if conn.execute(rent.IN_FORCE, {"pmc": pmc_id, "lease": lease_id, "day": day}).fetchone():
-        return "this lease takes no payment online now: ask your manager"
+        return "paused"
     return None
 
 
@@ -266,6 +276,7 @@ def pay_view(session: Tenant, conn: Conn, request: Request, lease_id: UUID) -> P
     return PayView(
         available=(reason := why_not(conn, request, session.pmc_id, lease_id, chosen)) is None,
         why_not=reason,
+        how_to_pay=how_to_pay(conn, session.pmc_id),
         owed=rent.cents(max(rent.owed(conn, lease_id), ZERO)),
         fee_payer=chosen.ach_fee_payer,
         payments=online_payments(conn, lease_id),
@@ -298,7 +309,7 @@ def checkout(session: Tenant, conn: Conn, request: Request, lease_id: UUID, body
     reason = why_not(conn, request, session.pmc_id, lease_id, chosen)
     partner = partner_of(request)
     if reason is not None or partner is None:
-        raise HTTPException(409, reason or "this server takes no payments online")
+        raise HTTPException(409, SAID[reason] if reason else OFF)
     fee = fee_for(chosen, body.amount)
     payment = uuid4()
     memo = rent.lease_memo(conn, lease_id)
@@ -309,7 +320,7 @@ def checkout(session: Tenant, conn: Conn, request: Request, lease_id: UUID, body
     try:
         started = partner.checkout(payment, lines, done)
     except payments.PartnerFailed:
-        raise HTTPException(502, "the payments partner didn't answer: try again soon") from None
+        raise HTTPException(502, PARTNER_DOWN) from None
     conn.execute(
         "INSERT INTO trust_online_payments (id, pmc_id, lease_id, tenant_id, amount, tenant_fee,"
         " fee_payer, method, partner, partner_ref)"

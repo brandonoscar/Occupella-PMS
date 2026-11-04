@@ -776,9 +776,18 @@ def notice(session: Staff, conn: Conn, application_id: UUID) -> Response:
         "declined": "Your application was declined.",
         "conditional": f"Your application was approved on conditions: {found.decision.conditions}",
     }[found.decision.decision]
+    applied_for = conn.execute(
+        "SELECT p.display_name || coalesce(', ' || trust_unit_shown(u.id), '')"
+        " FROM trust_applications AS ap"
+        " JOIN trust_application_links AS k ON k.id = ap.link_id"
+        " JOIN trust_units AS u ON u.id = k.unit_id"
+        " JOIN trust_properties AS p ON p.id = u.property_id WHERE ap.id = %s",
+        (application_id,),
+    ).fetchone()
+    assert applied_for is not None
     rows: list[tuple[str, str]] = [
         ("To", ", ".join(f"{a.name} <{a.email}>" for a in found.applicants)),
-        ("Home applied for", f"{found.property}, {found.unit}"),
+        ("Home applied for", str(applied_for[0])),
         ("Decision", outcome),
         *[("Reason", reason) for reason in action.reasons],
         ("Based on a report from", agency),

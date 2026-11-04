@@ -40,6 +40,7 @@ from uuid import UUID
 import psycopg
 
 from pms import email
+from pms.homes import home
 
 Kind = Literal["tenant", "owner", "vendor"]
 
@@ -171,7 +172,7 @@ NOT EXISTS (SELECT 1 FROM trust_payment_holds AS h
 """
 
 REMINDERS = f"""
-SELECT l.id, lt.tenant_id, t.display_name, p.display_name, u.display_name, l.ends_on,
+SELECT l.id, lt.tenant_id, t.display_name, p.display_name, trust_unit_shown(u.id), l.ends_on,
        trust_rent_on(l.id, %(due)s), trust_lease_owed(l.id)
 FROM trust_leases AS l
 JOIN trust_units AS u ON u.id = l.unit_id
@@ -237,7 +238,8 @@ def remind(
         before = f"Owed today, before it: {email.dollars(owed)}.\n" if owed > 0 else ""
         body = (
             f"Hello {name},\n\n"
-            f"Your rent for {prop}, {unit} is due on {us(due)}: {email.dollars(rent)} a month.\n"
+            f"Your rent for {home(prop, unit)} is due on {us(due)}:"
+            f" {email.dollars(rent)} a month.\n"
             f"{part}{before}\n"
             + portal_line(
                 can_sign_in(conn, pmc_id, "tenant", tenant),
@@ -264,7 +266,7 @@ def remind(
 
 # The late fees charged in this transaction (their created_at is its start, now()).
 LATE_FEES = f"""
-SELECT f.fee_charge_id, l.id, lt.tenant_id, t.display_name, p.display_name, u.display_name,
+SELECT f.fee_charge_id, l.id, lt.tenant_id, t.display_name, p.display_name, trust_unit_shown(u.id),
        r.due_on, f.unpaid, f.fee, trust_lease_owed(l.id)
 FROM trust_late_fees AS f
 JOIN trust_charges AS r ON r.id = f.rent_charge_id
@@ -294,7 +296,8 @@ def write_late_notices(
             continue
         body = (
             f"Hello {name},\n\n"
-            f"Rent for {prop}, {unit} due on {us(due_on)} still had {email.dollars(unpaid)} unpaid"
+            f"Rent for {home(prop, unit)} due on {us(due_on)} still had"
+            f" {email.dollars(unpaid)} unpaid"
             f" after its grace days, so a late fee of {email.dollars(fee)} was charged on"
             f" {us(day)}.\nOwed today: {email.dollars(owed)}.\n\n"
             + portal_line(
@@ -494,7 +497,7 @@ def write_reserve_alerts(
 # --- payment receipts ----------------------------------------------------------------------
 
 PAYERS = """
-SELECT lt.tenant_id, t.display_name, p.display_name, u.display_name
+SELECT lt.tenant_id, t.display_name, p.display_name, trust_unit_shown(u.id)
 FROM trust_leases AS l
 JOIN trust_units AS u ON u.id = l.unit_id
 JOIN trust_properties AS p ON p.id = u.property_id
@@ -534,7 +537,7 @@ def write_payment_receipts(
         body = (
             f"Hello {name},\n\n"
             f"{company} received a payment of {email.dollars(amount)} on {us(received_on)} for "
-            f"{prop}, {unit}. Its receipt is attached as a PDF.\n\n{portal}{company}\n"
+            f"{home(prop, unit)}. Its receipt is attached as a PDF.\n\n{portal}{company}\n"
         )
         written += _insert(
             conn,
@@ -556,7 +559,7 @@ def write_payment_receipts(
 
 # A lease's tenants, each with the home the statement is about (migration 0120).
 STATEMENT_TO = """
-SELECT lt.tenant_id, t.display_name, p.display_name, u.display_name
+SELECT lt.tenant_id, t.display_name, p.display_name, trust_unit_shown(u.id)
 FROM trust_lease_tenants AS lt
 JOIN trust_tenants AS t ON t.id = lt.tenant_id
 JOIN trust_leases AS l ON l.id = lt.lease_id
@@ -597,10 +600,10 @@ def write_deposit_statements(
                 "tenant_id": tenant,
                 "lease_id": lease_id,
                 "to_address": to,
-                "subject": one_line(f"Your security deposit statement: {prop}, {unit}"),
+                "subject": one_line(f"Your security deposit statement: {home(prop, unit)}"),
                 "body": (
                     f"Hello {name},\n\n"
-                    f"Your security deposit statement for {prop}, {unit} is attached as a PDF: "
+                    f"Your security deposit statement for {home(prop, unit)} is attached as a PDF: "
                     "what your deposit came to, what was kept and why, what came back to you, "
                     f"and the receipts and move-out photos it names.\n\n{portal}{company}\n"
                 ),
@@ -655,7 +658,7 @@ SELECT s.step, s.scheduled_for, s.visit_window, s.note,
                 (SELECT a.vendor_id FROM trust_work_order_steps AS a
                  WHERE a.work_order_id = s.work_order_id AND a.step = 'assigned'
                  ORDER BY a.taken_at DESC, a.created_at DESC LIMIT 1)),
-       w.number, w.summary, p.display_name, u.display_name,
+       w.number, w.summary, p.display_name, trust_unit_shown(u.id),
        d.priority, d.description, d.due_on, d.entry
 FROM trust_work_order_steps AS s
 JOIN numbered AS w ON w.id = s.work_order_id
@@ -709,7 +712,7 @@ def write_work_order(conn: psycopg.Connection[Any], pmc_id: UUID, step_id: UUID)
     name = email.PEOPLE["vendor"][0]
     vendor_name = conn.execute(name, (pmc_id, vendor)).fetchone()
     assert vendor_name is not None
-    where = prop if unit is None else f"{prop}, {unit}"
+    where = home(prop, unit)
     what = (
         f"{company} assigned you work order #{number}."
         if step == "assigned"
@@ -787,7 +790,7 @@ def write_emergency(
         name, address = login
         body = (
             f"Hello {name},\n\n"
-            f"{tenant} filed an emergency maintenance request for {prop}, {unit}:\n\n"
+            f"{tenant} filed an emergency maintenance request for {home(prop, unit)}:\n\n"
             f"{summary}\n\n"
             + ("They allow entry." if entry else "Call them before going in.")
             + "\n\nOpen a work order for it on Work orders:\n"
@@ -802,7 +805,7 @@ def write_emergency(
                 "staff_id": staff,
                 "request_id": request_id,
                 "to_address": str(address),
-                "subject": one_line(f"Emergency at {prop}, {unit}: {summary}")[:200],
+                "subject": one_line(f"Emergency at {home(prop, unit)}: {summary}")[:200],
                 "body": body,
             },
         )
@@ -813,7 +816,7 @@ def write_emergency(
 
 NOTICE = """
 SELECT d.decision, d.conditions, a.reasons, a.agency, a.notice_given_on,
-       p.display_name, u.display_name
+       p.display_name, trust_unit_shown(u.id)
 FROM trust_adverse_actions AS a
 JOIN trust_application_decisions AS d ON d.application_id = a.application_id
 JOIN trust_applications AS ap ON ap.id = a.application_id
@@ -870,8 +873,8 @@ def write_adverse_action(conn: psycopg.Connection[Any], pmc_id: UUID, applicatio
                 "applicant_id": applicant,
                 "application_id": application_id,
                 "to_address": to,
-                "subject": one_line(f"About your rental application: {prop}, {unit}")[:200],
-                "body": f"Hello {name},\n\nAbout your application for {prop}, {unit}:\n\n"
+                "subject": one_line(f"About your rental application: {home(prop, unit)}")[:200],
+                "body": f"Hello {name},\n\nAbout your application for {home(prop, unit)}:\n\n"
                 f"{text}\n{company}\n",
             },
         )

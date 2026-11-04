@@ -649,6 +649,9 @@ FEATURES = (
     "move-out-notice",
     "announcements",
     "tenant-uploads",
+    "ledger-sources",
+    "request-details",
+    "signup-phone",
 )
 
 

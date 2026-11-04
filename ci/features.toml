@@ -17,7 +17,7 @@
 
 [[feature]]
 id = "logins"
-statement = "Staff invite a staff member (from the staff page), owner or tenant (from their own page) by email; the invite sets a password (and for staff an authenticator); people sign in and out; a wrong email or password is refused without saying which; Logins lists everyone's login by status, and an admin disables one for good from its row's menu, which signs it out."
+statement = "Staff invite a staff member (from the staff page), owner or tenant (from their own page) by email; the invite sets a password (and for staff an authenticator); people sign in and out; a wrong email or password is refused without saying which; Logins lists everyone's login by status, and an admin disables one for good from its row's menu, which signs it out. A tenant or an owner gives a phone as they set their password (kept as E.164, and as their contact phone) and says whether the company may text them, the box unchecked unless they check it; each answer is kept with the words shown and when. Staff are asked neither."
 operations = [
   "POST /api/invites",
   "POST /api/invites/view",
@@ -33,6 +33,7 @@ browser = [
   "portal.spec.ts › an owner joins from the invite, reads their statement and signs back in",
   "portal.spec.ts › a wrong password is refused without saying which part was wrong",
   "portal.spec.ts › staff enroll an authenticator, invite a tenant and see a repair through",
+  "features.spec.ts › a tenant gives their phone at sign-up and says texts are OK, the box unchecked until they check it; staff see the phone on their page",
   "features.spec.ts › only staff holding a role do its work: an admin grants pay-out and adds staff, staff sign in again with their code, and a disabled login is signed out for good",
 ]
 
@@ -301,6 +302,17 @@ browser = [
 ]
 
 [[feature]]
+id = "request-details"
+statement = "A tenant says what kind of repair a request is and where in the unit, sees what to do first before sending an emergency, cancels a request while it is still received (no work order follows) and adds notes while it is open; staff see the kind, the place, the notes and that the tenant cancelled it."
+operations = [
+  "POST /api/tenant/requests/{request_id}/cancel",
+  "POST /api/tenant/requests/{request_id}/notes",
+]
+browser = [
+  "features.spec.ts › a tenant says what kind of repair and where, sees what to do first in an emergency, cancels one request and adds a note to another; staff see it all",
+]
+
+[[feature]]
 id = "recurring-work-orders"
 statement = "Staff add a job that comes back every few months at a property or unit; the ones already due open at once and the nightly run opens the rest on their days; staff stop one from a day, and charge a tenant a fee for a work order (a repair they caused) on a lease at its unit."
 operations = [
@@ -340,7 +352,7 @@ browser = [
 
 [[feature]]
 id = "bills"
-statement = "Staff list bills a page at a time (Unpaid, Paid, Recurring, Void; by property group, vendor and due day; each Entered, Waiting for owner, Ready to pay, Short, Partly paid, Paid or Void, and overdue) and record one in a side panel, maybe with its invoice, warned of a vendor's bill with nearly the same reference; one over the owner's limit emails the owner, who approves or declines it in their portal (or staff record their answer); a bill not paid holds its amount from the owner's balance, and a Short one says what the owner must send and emails them for it after staff see who gets it; a bill's own page has its expense account lines, files, emails, payments and history, records a payment (all of it or a part, by check with its number or ACH, with a receipt) and voids one entered by mistake; Pay bills pays several at once, all or none, showing each property's cash first; a void bill is never paid."
+statement = "Staff list bills a page at a time (Unpaid, Paid, Recurring, Void; by property group, vendor and due day; each Entered, Waiting for owner, Ready to pay, Short, Partly paid, Paid or Void, and overdue) and record one in a side panel, maybe with its invoice, warned of a vendor's bill with nearly the same reference; one over the owner's limit emails the owner, who approves or declines it in their portal (approving asks first, showing the bill and the property's balance before and after; over the company's amount, $5,000.00 unless staff set another in Company setup, the owner types their full name, which the server checks against theirs) (or staff record their answer); a bill not paid holds its amount from the owner's balance, and a Short one says what the owner must send and emails them for it after staff see who gets it; a bill's own page has its expense account lines, files, emails, payments and history, records a payment (all of it or a part, by check with its number or ACH, with a receipt) and voids one entered by mistake; Pay bills pays several at once, all or none, showing each property's cash first; a void bill is never paid."
 operations = [
   "GET /api/payables/bills",
   "GET /api/payables/bills/{bill_id}",
@@ -355,6 +367,8 @@ operations = [
   "GET /api/owner/bills",
   "POST /api/owner/bills/{bill_id}/approval",
   "POST /api/owner/bills/{bill_id}/decline",
+  "GET /api/company/owner-approvals",
+  "POST /api/company/owner-approvals",
 ]
 browser = [
   "features.spec.ts › a bill over the owner's limit emails them; they decline one and approve another in the portal, and staff pay it",
@@ -520,6 +534,18 @@ browser = [
   "portal.spec.ts › an owner joins from the invite, reads their statement and signs back in",
   "portal.spec.ts › the demo opens on last month waiting for its manager, who approves it and sees on the Dashboard what else waits; its owner reads three properties",
   "phone.spec.ts › an owner reads their properties and statement on a phone",
+]
+
+[[feature]]
+id = "ledger-sources"
+statement = "An owner opens a line of their statement and a tenant a line of their ledger to see where it came from, in a side panel: a tenant's payment as its receipt says it with the receipt to download, a bill with its receipts, how a management fee was worked out, how a payout left (check number, or the last four digits of the bank account an EFT went to); another owner's or lease's line reads as not found."
+operations = [
+  "GET /api/owner/statement/sources/{transfer_id}",
+  "GET /api/owner/statement/sources/{transfer_id}/receipt",
+  "GET /api/tenant/leases/{lease_id}/ledger/sources/{kind}/{source_id}",
+]
+browser = [
+  "features.spec.ts › an owner opens a line of their statement to see where it came from, and a tenant a line of their ledger",
 ]
 
 [[feature]]
@@ -1042,10 +1068,12 @@ browser = [
 
 [[feature]]
 id = "owners-pay-online"
-statement = "Owners pay in online (migration 20261102000150, ADR 0009, readiness q054): once the company takes payments online, an owner adds money to one of their property accounts from the owner portal (Add money), starting with what brings it back up to its reserve, on the payments partner's page (the fake partner's in development and CI); it becomes their contribution only once the partner says the bank paid, once however often it says so, and a return comes back out of their account; the processing fee is always the company's, from its fees in trust, never the owner's (the founder, 2026-11-02); what the books can't take yet waits on Banking with the tenants' payments."
+statement = "Owners pay in online (migration 20261102000150, ADR 0009, readiness q054): once the company takes payments online, an owner adds money to one of their property accounts from the owner portal (Add money), starting with what brings it back up to its reserve, on the payments partner's page (the fake partner's in development and CI); it becomes their contribution only once the partner says the bank paid, once however often it says so, and a return comes back out of their account; the processing fee is always the company's, from its fees in trust, never the owner's (the founder, 2026-11-02); what the books can't take yet waits on Banking with the tenants' payments. Until then staff's How to pay us (Company setup, migration 20261104000400) is what the owner reads on Add money, and a tenant on Pay online, in the company's own words."
 operations = [
   "GET /api/payments/owner",
   "POST /api/payments/owner/checkout",
+  "GET /api/company/how-to-pay",
+  "POST /api/company/how-to-pay",
 ]
 browser = [
   "features.spec.ts › an owner adds money to a property's account online once the company takes payments online, and the bank's payment reaches it with no fee",

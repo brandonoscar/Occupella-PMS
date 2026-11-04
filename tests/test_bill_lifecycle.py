@@ -112,6 +112,39 @@ def test_the_balance_is_held_for_the_bill_due_first_and_the_rest_is_short(conn, 
     assert balance(conn, owner) == Decimal("500.00")  # nothing moved
 
 
+def test_the_reserve_stays_in_the_account_so_rf_3006_is_20960_short(conn, pmc):
+    """The founder's review of 11/03, item 3: a $24,000.00 roof against $3,290.00 held with a
+    $250.00 reserve is $20,960.00 short ($24,000 - ($3,290 - $250)), not $20,710.00."""
+    account = pmc.owners[1].account
+    add_agreement(
+        conn, pmc.pmc_id, account, TODAY - 60 * DAY, reserve="250", approval_limit="100000"
+    )
+    transfer_batch(conn, [(pmc.operating_cash, account, "3290.00")], at(TODAY - 30 * DAY))
+    roof = bill(conn, pmc, account, "24000.00", "RF-3006", due_in=30)
+
+    assert holds(conn, pmc)[roof] == (
+        Decimal("3040.00"),
+        Decimal("20960.00"),
+        Decimal("20960.00"),
+    )
+
+    # A bill due before it is held first, out of what is above the reserve: $500.00 more short.
+    gutter = bill(conn, pmc, account, "500.00", "GT-1", due_in=5)
+    held = holds(conn, pmc)
+    assert held[gutter] == (Decimal("500.00"), Decimal("0.00"), Decimal("0.00"))
+    assert held[roof] == (Decimal("2540.00"), Decimal("21460.00"), Decimal("21460.00"))
+    assert balance(conn, account) == Decimal("3290.00")  # nothing moved
+
+
+def test_a_balance_at_or_below_the_reserve_holds_nothing(conn, pmc):
+    account = pmc.owners[1].account
+    add_agreement(conn, pmc.pmc_id, account, TODAY - 60 * DAY, reserve="250", approval_limit="1000")
+    transfer_batch(conn, [(pmc.operating_cash, account, "200.00")], at(TODAY - 30 * DAY))
+    small = bill(conn, pmc, account, "80.00", "S-1")
+
+    assert holds(conn, pmc)[small] == (Decimal("0.00"), Decimal("80.00"), Decimal("80.00"))
+
+
 def test_a_bill_holds_its_markup_and_a_bill_dated_later_holds_nothing_yet(conn, pmc, owner):
     add_agreement(
         conn, pmc.pmc_id, owner, TODAY - 59 * DAY, approval_limit="1000", bill_markup_percent="10"

@@ -4,7 +4,9 @@ copied) and record what happens to it (assigned to a vendor, a visit's day and w
 or cancelled). Staff say who is on call for emergencies (migration 0084).
 
 A request's status is its work order's latest step: "received" before there is one, "opened"
-once there is, then "assigned", "scheduled", "completed" or "cancelled".
+once there is, then "assigned", "scheduled", "completed" or "cancelled"; "cancelled" too once a
+tenant on its lease took it back while it was received. Tenants say what kind of repair it is and
+where, and add notes while it is open (migration 20261104000600).
 """
 
 from __future__ import annotations
@@ -31,18 +33,23 @@ CLOSED = ("completed", "cancelled")
 REQUESTS = """
 SELECT r.id, r.lease_id, p.display_name, u.display_name, t.display_name, r.summary,
        r.entry_allowed, r.submitted_at, w.work_order_id,
-       coalesce(s.step, CASE WHEN w.work_order_id IS NULL THEN 'received' ELSE 'opened' END),
-       coalesce(s.taken_at, wo.opened_at, r.submitted_at),
+       CASE WHEN c.request_id IS NOT NULL THEN 'cancelled'
+            ELSE coalesce(s.step,
+                          CASE WHEN w.work_order_id IS NULL THEN 'received' ELSE 'opened' END)
+       END,
+       coalesce(c.created_at, s.taken_at, wo.opened_at, r.submitted_at),
        v.display_name, r.emergency, vi.scheduled_for, vi.visit_window,
        (SELECT count(*) FROM trust_documents AS d
         WHERE d.request_id = r.id
-          AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS x WHERE x.document_id = d.id))
+          AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS x WHERE x.document_id = d.id)),
+       r.category, r.location, c.request_id IS NOT NULL
 FROM trust_maintenance_requests AS r
 JOIN trust_leases AS l ON l.id = r.lease_id
 JOIN trust_units AS u ON u.id = l.unit_id
 JOIN trust_properties AS p ON p.id = u.property_id
 JOIN trust_tenants AS t ON t.id = r.tenant_id
 LEFT JOIN trust_maintenance_request_work_orders AS w ON w.request_id = r.id
+LEFT JOIN trust_maintenance_request_cancellations AS c ON c.request_id = r.id
 LEFT JOIN trust_work_orders AS wo ON wo.id = w.work_order_id
 LEFT JOIN LATERAL (
     -- A closing step is the last one (a trigger refuses any after it), even when an earlier
@@ -80,6 +87,17 @@ ONE = "r.id = %(request)s"
 EVERY = "true"
 
 
+Category = Literal["plumbing", "electrical", "appliance", "heating_cooling", "pests", "other"]
+
+
+class RequestNote(BaseModel):
+    """What a tenant on the lease added to an open request (migration 20261104000600)."""
+
+    by: str
+    body: str
+    at: datetime
+
+
 class Request(BaseModel):
     """A request as a tenant on its lease sees it."""
 
@@ -99,6 +117,14 @@ class Request(BaseModel):
     visit_window: str | None
     # How many photos came with it.
     photos: int
+    # What kind of repair it is and where in the unit, as the tenant said (none on requests filed
+    # before migration 20261104000600).
+    category: Category | None = None
+    location: str | None = None
+    # A tenant on the lease took it back while it was still received: no work order follows.
+    taken_back: bool = False
+    # What tenants on the lease added while it was open, oldest first.
+    notes: list[RequestNote] = []
 
 
 class StaffRequest(Request):
@@ -113,6 +139,16 @@ def requests(conn: psycopg.Connection[Any], where: str, **params: object) -> lis
     if where not in (FOR_TENANT, ONE, EVERY):
         raise ValueError("requests are narrowed by one of the fixed conditions only")
     query = sql.SQL(REQUESTS).format(where=sql.SQL(where))
+    found = conn.execute(query, params).fetchall()
+    notes: dict[UUID, list[RequestNote]] = {}
+    for request, by, body, at in conn.execute(
+        "SELECT n.request_id, t.display_name, n.body, n.created_at"
+        " FROM trust_maintenance_request_notes AS n"
+        " JOIN trust_tenants AS t ON t.id = n.tenant_id"
+        " WHERE n.request_id = ANY(%s) ORDER BY n.created_at, n.id",
+        ([row[0] for row in found],),
+    ).fetchall():
+        notes.setdefault(request, []).append(RequestNote(by=by, body=body, at=at))
     return [
         StaffRequest(
             id=i,
@@ -131,6 +167,10 @@ def requests(conn: psycopg.Connection[Any], where: str, **params: object) -> lis
             visit_on=visit_on,
             visit_window=window,
             photos=photos,
+            category=category,
+            location=location,
+            taken_back=taken_back,
+            notes=notes.get(i, []),
         )
         for (
             i,
@@ -149,7 +189,10 @@ def requests(conn: psycopg.Connection[Any], where: str, **params: object) -> lis
             visit_on,
             window,
             photos,
-        ) in conn.execute(query, params).fetchall()
+            category,
+            location,
+            taken_back,
+        ) in found
     ]
 
 
@@ -212,6 +255,8 @@ def vendors(session: Staff, conn: Conn) -> list[Vendor]:
 def open_work_order(session: Staff, conn: Conn, request_id: UUID) -> StaffRequest:
     """A work order for the request, at its lease's unit, opened now."""
     found = one(conn, session.pmc_id, request_id)
+    if found.taken_back:
+        raise HTTPException(409, "The tenant cancelled this request.")
     if found.work_order_id is not None:
         raise HTTPException(409, "this request already has a work order")
     row = conn.execute(
@@ -244,6 +289,9 @@ def open_work_order(session: Staff, conn: Conn, request_id: UUID) -> StaffReques
     except psycopg.errors.UniqueViolation:
         # Another staff member opened one at the same moment; theirs stands.
         raise HTTPException(409, "this request already has a work order") from None
+    except psycopg.errors.CheckViolation:
+        # Its tenant took it back at the same moment (trust_refuse_cancelled_request_order).
+        raise HTTPException(409, "The tenant cancelled this request.") from None
     return one(conn, session.pmc_id, request_id)
 
 

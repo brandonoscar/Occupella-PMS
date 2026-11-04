@@ -238,7 +238,16 @@ def test_a_bills_page_tells_its_story_email_approval_and_payment(client, conn, s
     fund(conn, pmc, "1000.00")
     add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 59 * DAY, approval_limit="500")
     made = ok(new_bill(client, pmc, "800.00"))["id"]
-    ok(call(client, f"bills/{made}/approval", approved_on=TODAY, approved_by="Owner 1, by phone"))
+    ok(
+        call(
+            client,
+            f"bills/{made}/approval",
+            approved_on=TODAY,
+            owner_id=str(pmc.owners[0].owner_id),
+            method="phone",
+            note="Called to approve it",
+        )
+    )
     ok(call(client, f"bills/{made}/pay", on=TODAY, method="EFT"))
 
     page = ok(client.get(f"/api/payables/bills/{made}"), 200)
@@ -248,7 +257,7 @@ def test_a_bills_page_tells_its_story_email_approval_and_payment(client, conn, s
     assert [e["what"] for e in page["history"]] == [
         "Entered",
         f"Email to {to} asking Owner 1 to approve or decline it: sent",
-        "Approved by Owner 1, by phone",
+        "Approved by Owner 1, by phone. Recorded by Staff 1: Called to approve it",
         "Paid $800.00 by ACH",
     ]
     assert page["email"]["sent_at"] is not None

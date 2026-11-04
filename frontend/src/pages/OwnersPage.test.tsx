@@ -370,11 +370,11 @@ describe("OwnerPage", () => {
 
     vi.stubGlobal("fetch", vi.fn(async (path: string) =>
       path.includes("/statement")
-        ? new Response(JSON.stringify({ detail: "a statement runs from a day to the same day or a later one" }), { status: 422 })
+        ? new Response(JSON.stringify({ detail: "Pick an end date on or after the start date." }), { status: 422 })
         : new Response(JSON.stringify(OWNER), { status: 200 })));
     render(<OwnerPage me={ME} id="o1" />);
     fireEvent.click(await screen.findByRole("tab", { name: "Financials" }));
-    expect((await screen.findByRole("alert")).textContent).toBe("a statement runs from a day to the same day or a later one");
+    expect((await screen.findByRole("alert")).textContent).toBe("Pick an end date on or after the start date.");
   });
 
   it("links each of the last twelve months' statements and the year's income statement, and the owner's files", async () => {

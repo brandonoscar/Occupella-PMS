@@ -126,7 +126,7 @@ export function StaffPage({ me }: { me: Me }) {
             }}
           >
             <Field label="Name" id="staff-name" required value={name} onChange={(e) => setName(e.target.value)} />
-            <Button type="submit" says="Adds them with no roles and no login. Nothing is sent; invite them from their row.">Add</Button>
+            <Button type="submit">Add</Button>
           </Form>
         </Card>
       )}

@@ -70,7 +70,7 @@ describe("groupIncomeStatement", () => {
 });
 
 describe("OwnerIncomeStatement", () => {
-  it("shows last year's statement by property with its Schedule E lines, and downloads it", async () => {
+  it("shows this year's statement by property with its Schedule E lines, and downloads it", async () => {
     vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-03-01T12:00:00Z") });
     const fetch = answer(STATEMENT);
     vi.stubGlobal("fetch", fetch);
@@ -84,9 +84,9 @@ describe("OwnerIncomeStatement", () => {
     const scheduleE = screen.getByRole("list", { name: "Schedule E, Property 1" });
     expect(scheduleE.textContent).toContain("Schedule E line 14: Repairs$200.00");
     expect(screen.getByRole("table", { name: "All properties" }).textContent).toContain("$1,550.00");
-    expect(fetch.mock.calls[0]?.[0]).toBe("/api/owner/income-statement?year=2025");
+    expect(fetch.mock.calls[0]?.[0]).toBe("/api/owner/income-statement?year=2026");
     expect(screen.getByRole("link", { name: "Excel" }).getAttribute("href")).toBe(
-      "/api/owner/income-statement/download?year=2025&format=xlsx",
+      "/api/owner/income-statement/download?year=2026&format=xlsx",
     );
   });
 

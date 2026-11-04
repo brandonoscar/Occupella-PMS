@@ -22,12 +22,13 @@ from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from pms import exports
 from pms.api import documents
 from pms.api.deps import Conn, Current, Staff
 from pms.api.directory import City, PostalCode, State, Street
+from pms.api.owner import sign_over
 from pms.api.setup import Money, Name, Percent
 
 router = APIRouter(prefix="/api/company")
@@ -219,6 +220,74 @@ def save_company(session: Staff, conn: Conn, new: NewCompany) -> Company:
             (session.pmc_id, *wanted.values()),
         )
     return company_of(conn, session.pmc_id)
+
+
+class OwnerApprovals(BaseModel):
+    sign_over: str
+
+
+class NewOwnerApprovals(BaseModel):
+    sign_over: Money
+
+
+@router.get("/owner-approvals")
+def owner_approvals(session: Staff, conn: Conn) -> OwnerApprovals:
+    """Over what amount an owner types their full name to approve a bill in the portal."""
+    return OwnerApprovals(sign_over=f"{sign_over(conn, session.pmc_id):.2f}")
+
+
+@router.post("/owner-approvals")
+def save_owner_approvals(session: Staff, conn: Conn, new: NewOwnerApprovals) -> OwnerApprovals:
+    """Sets that amount from now on; the same again writes nothing."""
+    if new.sign_over != sign_over(conn, session.pmc_id):
+        conn.execute(
+            "INSERT INTO trust_owner_approval_settings (pmc_id, sign_over) VALUES (%s, %s)",
+            (session.pmc_id, new.sign_over),
+        )
+    return owner_approvals(session, conn)
+
+
+def how_to_pay(conn: psycopg.Connection[Any], pmc_id: UUID) -> str | None:
+    """What the company tells its tenants and owners about paying it (migration 20261104000400):
+    the latest it wrote, or None."""
+    row = conn.execute(
+        "SELECT body FROM trust_payment_instructions WHERE pmc_id = %s"
+        " ORDER BY created_at DESC, id DESC LIMIT 1",
+        (pmc_id,),
+    ).fetchone()
+    return None if row is None else row[0]
+
+
+class HowToPay(BaseModel):
+    # What the company tells its tenants and owners about paying it; None until it says.
+    body: str | None
+
+
+class NewHowToPay(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Empty or None clears it.
+    body: str | None = Field(default=None, max_length=2000)
+
+
+@router.get("/how-to-pay")
+def how_to_pay_view(session: Staff, conn: Conn) -> HowToPay:
+    """How to pay us: the company's own words, which the tenant's Pay online and the owner's Add
+    money show when it takes no payment online."""
+    return HowToPay(body=how_to_pay(conn, session.pmc_id))
+
+
+@router.post("/how-to-pay")
+def save_how_to_pay(session: Staff, conn: Conn, new: NewHowToPay) -> HowToPay:
+    """Sets it from now on, or clears it; the same again writes nothing."""
+    body = None if new.body is None or not new.body.strip() else new.body.strip()
+    if body is not None and "\x00" in body:
+        raise HTTPException(422, "How to pay us is text.")
+    if body != how_to_pay(conn, session.pmc_id):
+        conn.execute(
+            "INSERT INTO trust_payment_instructions (pmc_id, body) VALUES (%s, %s)",
+            (session.pmc_id, body),
+        )
+    return how_to_pay_view(session, conn)
 
 
 class NewLogo(BaseModel):

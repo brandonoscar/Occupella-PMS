@@ -45,15 +45,13 @@ describe("VendorLinkPage", () => {
 
     fireEvent.change(within(leak).getByLabelText("Visit on"), { target: { value: "2026-10-20" } });
     fireEvent.change(within(leak).getByLabelText("Window (optional)"), { target: { value: " 8-10 am " } });
-    expect(says(within(leak).getByRole("button", { name: "Schedule the visit" })))
-      .toBe("The company and any tenant who asked for the repair see the day. No email is sent.");
+    expect(says(within(leak).getByRole("button", { name: "Schedule the visit" }))).toBeUndefined(); // no line
     expect(says(within(leak).getByRole("button", { name: "The work is done" })))
       .toBe("Tells the company it's done and closes the work order; it leaves this list and can't be reopened.");
     fireEvent.click(within(leak).getByRole("button", { name: "Schedule the visit" }));
     expect(await screen.findByText("Visit for #7 on 10/20/2026, 8-10 am.")).toBeTruthy();
     expect(screen.getByTestId("visit").textContent).toBe("Visit on 10/20/2026, 8-10 am");
-    expect(says(screen.getByRole("button", { name: "Change the visit" })))
-      .toBe("The company and any tenant who asked for the repair see the new day. No email is sent.");
+    expect(says(screen.getByRole("button", { name: "Change the visit" }))).toBeUndefined();
 
     expect(bodies(fetch)).toEqual([
       ["/api/vendor-link/work-orders", { token: "a-token-of-enough-length" }],
