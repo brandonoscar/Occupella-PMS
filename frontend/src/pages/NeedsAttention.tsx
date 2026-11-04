@@ -40,7 +40,7 @@ export function NeedsAttention({ today, me, refresh }: { today: Today; me: Me; r
       <>
         <Said>{said}</Said>
         <EmptyState icon={CircleCheck} title="Nothing is late or waiting."
-          body="Late rent, bills due this week, owner draws ready to pay, month-end, applications, unsigned offers, journal entries waiting, vendor insurance running out, the company's fees left in trust, trust accounts' signers, renters insurance, security deposits still to receive, deposits due back and leases gone month to month show here." />
+          body="Late rent, bills due this week, owner draws ready to pay, month-end, applications, unsigned offers, journal entries waiting, vendor insurance running out, the company's fees left in trust, trust accounts' signers, renters insurance, security deposits still to receive, deposits due back, leases gone month to month, notices to move out and messages waiting for an answer show here." />
       </>
     );
   }

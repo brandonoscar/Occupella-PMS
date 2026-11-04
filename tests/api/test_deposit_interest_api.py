@@ -18,8 +18,16 @@ from helpers import (
 )
 from people import join_as_owner, join_as_staff, join_as_tenant, tenant_of
 
-TODAY = datetime.now(UTC).date()
-START = TODAY - timedelta(days=365)
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, START
+    TODAY = datetime.now(UTC).date()
+    START = TODAY - timedelta(days=365)
+
+
+on_this_day()
 
 
 def noon(day: date) -> datetime:
@@ -52,7 +60,8 @@ def refused(answer, status, detail=None):
         assert detail in str(answer.json()["detail"]), answer.text
 
 
-def set_rate(client, pmc, percent="1.5", starts_on=START):
+def set_rate(client, pmc, percent="1.5", starts_on=None):
+    starts_on = START if starts_on is None else starts_on
     return client.post(
         "/api/setup/deposit-interest",
         json={
@@ -63,7 +72,8 @@ def set_rate(client, pmc, percent="1.5", starts_on=START):
     )
 
 
-def pay(client, lease, through=TODAY, paid_as="rent_credit", request_id=None, **more):
+def pay(client, lease, through=None, paid_as="rent_credit", request_id=None, **more):
+    through = TODAY if through is None else through
     body = {
         "request_id": str(request_id or uuid.uuid4()),
         "through": str(through),

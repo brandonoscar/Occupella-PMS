@@ -14,13 +14,22 @@ from helpers import (
     approve,
     approve_bank,
     charge,
+    fresh,
     make_pmc,
     open_lease,
     post,
 )
 from people import join_as_owner, join_as_staff, join_as_tenant
 
-TODAY = datetime.now(UTC).date()
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY
+    TODAY = datetime.now(UTC).date()
+
+
+on_this_day()
 JAN_1, JAN_31 = date(2026, 1, 1), date(2026, 1, 31)
 
 
@@ -179,10 +188,15 @@ def test_an_ofx_statement_gives_its_days_and_closing_balance(client, conn, staff
             422,
             "say which days the statement covers",
         ),
-        ({"last_day": str(TODAY + timedelta(days=1)), "first_day": str(TODAY)}, 422, "outside"),
+        (
+            {"last_day": lambda: str(TODAY + timedelta(days=1)), "first_day": lambda: str(TODAY)},
+            422,
+            "outside",
+        ),
     ],
 )
 def test_a_statement_that_does_not_add_up_or_fit_is_refused(client, staff, pmc, more, status, why):
+    more = fresh(more)
     body = {"content": csv(("2026-01-05", "Deposit", "100.00", "")), "first_day": JAN_1} | more
     refused(statement(client, pmc, **body), status, why)
     assert bank(client, pmc)["statements"] == []

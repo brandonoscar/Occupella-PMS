@@ -4,6 +4,29 @@ Each release of the PMS, newest first: what changed for staff, owners and tenant
 database migration, anything a company must do to upgrade, and every security fix. How a release
 is made and taken: docs/release.md. Installing for the first time: docs/install.md.
 
+## Unreleased
+
+Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-two.md`).
+
+- **The owner portal in sections:** Overview, Properties, Statements and reports, Bills, Repairs,
+  Documents, Messages and Profile. Each property opens to its units, who rents each (names only),
+  the rent, what each owes, what is vacant since when and who gave notice; Repairs lists the work
+  orders at the owner's properties; Profile changes the owner's own contact details, which staff
+  see they changed.
+- **The tenant portal in sections:** Overview, Payments, Lease, Repairs, Messages and Profile. A
+  tenant gives notice to move out (staff see it on the Dashboard and the lease), sends a document
+  of their lease such as a renters insurance certificate (staff find it with the lease's files),
+  and reads the company's announcements on the Overview.
+- **Messages:** tenants and owners write to the company from their portal; staff answer from
+  Messages, each answer emailed too, and the Dashboard lists those waiting. **Announcements:**
+  staff post one for every property's tenants or one property's.
+- **Daily backups by themselves:** the install (`compose.selfhost.yaml`) gains a `backup`
+  service that dumps the database every day at 07:00 UTC into `./backups`, keeping 35 days and
+  each month's first (docs/install.md, "Every day: backups"). Upgrading as docs/install.md says
+  starts it. Copying the dumps off the server is still yours to set up (docs/backup.md).
+- **Fixed:** the Dashboard asked for a day at the calendar's very ends (year 1 or 9999) answered
+  with a server error; it now says which days it shows (1900 to 9999).
+
 ## v2026.11.0 (first release)
 
 The first tagged release: a whole trust-accounting PMS for property management companies, free

@@ -78,6 +78,20 @@ class Pmc:
         return self.deposit_cash if in_deposit_bank else self.operating_cash
 
 
+def fresh(value):
+    """A test's parameter as of now: each `lambda: ...` in it called, in a dict, list or tuple
+    too. A parametrize decorator runs when the module loads, so a day of today written there is
+    a lambda (`{"on": lambda: str(TODAY + DAY)}`), called once the test runs and its module's
+    on_this_day() has worked out today again (tests/conftest.py, pytest_runtest_setup)."""
+    if callable(value):
+        return value()
+    if isinstance(value, dict):
+        return {key: fresh(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return type(value)(fresh(item) for item in value)
+    return value
+
+
 def _one(connection, query, params=()):
     return connection.execute(query, params).fetchone()[0]
 

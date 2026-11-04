@@ -28,7 +28,16 @@ from helpers import (
 
 JAN_1, JAN_31 = date(2026, 1, 1), date(2026, 1, 31)
 FEB_1, FEB_28 = date(2026, 2, 1), date(2026, 2, 28)
-TODAY = datetime.now(UTC).date()
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY
+    TODAY = datetime.now(UTC).date()
+
+
+on_this_day()
 
 
 def at(day, hour=12):

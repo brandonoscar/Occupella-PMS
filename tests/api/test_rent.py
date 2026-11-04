@@ -17,15 +17,25 @@ from helpers import (
     bank_sums,
     charge,
     draw_owner,
+    fresh,
     hold_payments,
     open_account,
     open_lease,
 )
 from people import join_as_owner, join_as_staff, join_as_tenant
 
-TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
-START = TODAY - timedelta(days=90)
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, START
+    TODAY = datetime.now(UTC).date()
+    START = TODAY - timedelta(days=90)
+
+
+on_this_day()
 
 
 class Home:
@@ -60,11 +70,13 @@ def call(client, path, **body):
     return client.post(f"/api/rent/{path}", json=json.loads(json.dumps(body, default=str)))
 
 
-def run(client, due_on, late_fees_as_of=TODAY):
+def run(client, due_on, late_fees_as_of=None):
+    late_fees_as_of = TODAY if late_fees_as_of is None else late_fees_as_of
     return call(client, "run", due_on=due_on, late_fees_as_of=late_fees_as_of)
 
 
-def pay(client, home, amount, received_on=TODAY, request_id=None, **more):
+def pay(client, home, amount, received_on=None, request_id=None, **more):
+    received_on = TODAY if received_on is None else received_on
     return call(
         client,
         f"leases/{home.lease}/payments",
@@ -154,7 +166,8 @@ def test_the_rent_run_charges_a_lease_starting_later_that_month_its_part_month(
     ]
 
 
-def recur(client, home, amount="35.00", memo="Pet rent", starts_on=START, kind="fee"):
+def recur(client, home, amount="35.00", memo="Pet rent", starts_on=None, kind="fee"):
+    starts_on = START if starts_on is None else starts_on
     return call(
         client,
         f"leases/{home.lease}/recurring-charges",
@@ -708,36 +721,44 @@ def test_only_staff_do_rent_work(client, conn, app_conn, pmc, caller, method, pa
 @pytest.mark.parametrize(
     ("path", "body"),
     [
-        ("payments", {"amount": "10.00", "received_on": str(TODAY)}),  # no request id
-        ("payments", {"request_id": "x", "amount": "10.00", "received_on": str(TODAY)}),
-        ("payments", {"request_id": str(uuid.uuid4()), "amount": "0", "received_on": str(TODAY)}),
+        ("payments", {"amount": "10.00", "received_on": lambda: str(TODAY)}),  # no request id
+        ("payments", {"request_id": "x", "amount": "10.00", "received_on": lambda: str(TODAY)}),
         (
             "payments",
-            {"request_id": str(uuid.uuid4()), "amount": "1.001", "received_on": str(TODAY)},
+            {"request_id": str(uuid.uuid4()), "amount": "0", "received_on": lambda: str(TODAY)},
         ),
         (
             "payments",
-            {"request_id": str(uuid.uuid4()), "amount": "1000000.01", "received_on": str(TODAY)},
-        ),
-        ("charges", {"kind": "rent", "amount": "1.00", "due_on": str(TODAY), "memo": "x"}),
-        ("charges", {"kind": "fee", "amount": "1.00", "due_on": str(TODAY), "memo": " "}),
-        (
-            "recurring-charges",
-            {"kind": "rent", "amount": "1.00", "starts_on": str(TODAY), "memo": "x"},
+            {"request_id": str(uuid.uuid4()), "amount": "1.001", "received_on": lambda: str(TODAY)},
         ),
         (
+            "payments",
+            {
+                "request_id": str(uuid.uuid4()),
+                "amount": "1000000.01",
+                "received_on": lambda: str(TODAY),
+            },
+        ),
+        ("charges", {"kind": "rent", "amount": "1.00", "due_on": lambda: str(TODAY), "memo": "x"}),
+        ("charges", {"kind": "fee", "amount": "1.00", "due_on": lambda: str(TODAY), "memo": " "}),
+        (
             "recurring-charges",
-            {"kind": "fee", "amount": "0", "starts_on": str(TODAY), "memo": "x"},
+            {"kind": "rent", "amount": "1.00", "starts_on": lambda: str(TODAY), "memo": "x"},
         ),
         (
             "recurring-charges",
-            {"kind": "fee", "amount": "1.00", "starts_on": str(TODAY), "memo": " "},
+            {"kind": "fee", "amount": "0", "starts_on": lambda: str(TODAY), "memo": "x"},
+        ),
+        (
+            "recurring-charges",
+            {"kind": "fee", "amount": "1.00", "starts_on": lambda: str(TODAY), "memo": " "},
         ),
         ("recurring-charges", {"kind": "fee", "amount": "1.00", "memo": "x"}),  # no first day
         ("use-prepaid", {"request_id": str(uuid.uuid4())}),
     ],
 )
 def test_bad_input_is_refused(client, staff, home, path, body):
+    body = fresh(body)
     refused(client.post(f"/api/rent/leases/{home.lease}/{path}", json=body), 422)
 
 

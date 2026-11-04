@@ -93,6 +93,7 @@ export function FilesCard({ kind, also = [], listed = [], aboutId, name, note }:
               </a>
               <span className="text-ink-muted">
                 {kindLabel(d.kind)}, {sizeLabel(d.size)}, uploaded {usDate(d.uploaded_at)}
+                {d.uploaded_by?.endsWith(" (the tenant)") && ` by ${d.uploaded_by}`}
               </span>
               <AskFirst variant="secondary" aria-label={`Remove ${d.title}`} danger
                 question={`Remove ${d.title}? It leaves every list here and in the portals, and its download stops. Its record stays.`}

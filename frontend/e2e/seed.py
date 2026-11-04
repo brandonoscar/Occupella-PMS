@@ -644,6 +644,11 @@ FEATURES = (
     "receive-payment",
     "tax-ids",
     "reminders",
+    "owner-portal-two",
+    "portal-messages",
+    "move-out-notice",
+    "announcements",
+    "tenant-uploads",
 )
 
 

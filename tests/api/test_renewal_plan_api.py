@@ -9,7 +9,15 @@ import pytest
 from helpers import add_tenant, add_unit, make_pmc, open_lease
 from people import join_as_owner, join_as_staff, join_as_tenant
 
-TODAY = datetime.now(UTC).date()
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY
+    TODAY = datetime.now(UTC).date()
+
+
+on_this_day()
 DAY = timedelta(days=1)
 
 
