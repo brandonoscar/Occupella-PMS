@@ -383,6 +383,8 @@ EXEMPT = {
     " credential (tests/api/test_calendar.py)",
     "POST /api/payments/webhook/{name}": "the payments partner's signed report: the company is"
     " the payment's (tests/api/test_online_payments_api.py)",
+    "POST /api/payments/webhook/{name}/{pmc_id}": "a company's own Stripe account's signed"
+    " report: it records only that company's payments (tests/api/test_payment_keys_api.py)",
     "GET /api/payments/fake/{payment_id}": "the fake payments partner's own page (development and"
     " tests only), standing in for the partner's: reached by the payment's id, with no caller",
     "POST /api/payments/fake/{payment_id}": "the fake payments partner's own page, as above",

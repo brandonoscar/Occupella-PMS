@@ -456,27 +456,31 @@ STILL_UNSENT = "SELECT 1 FROM trust_autopay_runs AS r" + UNSENT + "  AND r.payme
 
 def submit_waiting(
     conn: psycopg.Connection[Any],
-    partner: payments.Partner,
+    partner: payments.Partner | payments.Resolver,
     pmc_id: UUID | None = None,
     now: datetime | None = None,
 ) -> int:
-    """Sends each autopay payment started and not yet accepted to the partner (of one PMC, or all),
-    each in a transaction of its own; the number accepted. One the partner can't take now waits
-    for the next run, for RETRY_DAYS."""
+    """Sends each autopay payment started and not yet accepted to its company's partner (of one
+    PMC, or all), each in a transaction of its own; the number accepted. One the partner can't
+    take now waits for the next run, for RETRY_DAYS."""
+    resolver = payments.Resolver.of(partner)
     since = (now or datetime.now(UTC)) - timedelta(days=RETRY_DAYS)
     with conn.transaction():
         waiting = conn.execute(WAITING, {"since": since, "pmc": pmc_id}).fetchall()
     accepted = 0
     for pmc, payment, total, lease, name, customer, method, mandate in waiting:
-        if name != partner.name:
-            continue
         with conn.transaction():
+            # The company's partner now: its own keys, else the server's; one that changed
+            # since the payment started doesn't take it.
+            chosen = resolver.for_pmc(conn, pmc)
+            if chosen is None or chosen.name != name:
+                continue
             # Stopped (or given up) since it was listed: never sent.
             if conn.execute(STILL_UNSENT, (payment,)).fetchone() is None:
                 continue
             memo = rent.lease_memo(conn, lease)
         try:
-            ref = partner.charge(
+            ref = chosen.charge(
                 payment,
                 Decimal(total),
                 f"Rent – {memo}",

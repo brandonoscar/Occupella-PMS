@@ -1,12 +1,17 @@
 """Rent paid online, through a payments partner behind one interface (migration 0150, ADR 0009).
 
-The server's PMS_PAYMENTS picks it (pms.api.Settings): "stripe", the company's own Stripe account,
-its keys from the environment (PMS_STRIPE_SECRET_KEY, PMS_STRIPE_WEBHOOK_SECRET), never in
-Settings, which a log or an error could print; "fake" for development and CI, which calls nothing;
-or unset for none, and no tenant can pay online. The partner hosts the page where the tenant gives
-their bank account, so the PMS never sees an account number, and it reports back what the bank did
-(`event`): paid, with the partner's fee; failed; or returned after it was paid. The PMS records
-what it reports (src/pms/api/online_payments.py); the partner moves the money.
+A company's admin may enter its own Stripe keys in Company setup (migration 20261104000800, the
+founder's call of 11/04): its secret key and its webhook's signing secret, sealed under the server's
+PMS_DATA_KEY (src/pms/sealed.py), never sent back to a browser; its payments then go through its own
+Stripe account (`Resolver`). Without them, the server's PMS_PAYMENTS picks the partner
+(pms.api.Settings): "stripe", its keys from the environment (PMS_STRIPE_SECRET_KEY,
+PMS_STRIPE_WEBHOOK_SECRET), never in Settings, which a log or an error could print; "fake" for
+development and CI, which calls nothing; or unset for none, and no tenant can pay online.
+
+The partner hosts the page where the tenant gives their bank account, so the PMS never sees an
+account number, and it reports back what the bank did (`event`): paid, with the partner's fee;
+failed; or returned after it was paid. The PMS records what it reports
+(src/pms/api/online_payments.py); the partner moves the money.
 
 For autopay (migration 0151, src/pms/autopay.py) the partner's page saves the tenant's bank account
 instead (`save_account`), reported back as `Saved` with the partner's references and a label, and
@@ -22,6 +27,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
+import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -32,6 +40,12 @@ from datetime import UTC, datetime
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from typing import Any, Literal, Protocol
 from uuid import UUID
+
+import psycopg
+
+from pms import sealed
+
+log = logging.getLogger(__name__)
 
 CENT = Decimal("0.01")
 # A bank payment's fee as Stripe published it: 0.8%, at most $5.00 (NOT VERIFIED against its
@@ -447,3 +461,95 @@ def partner_named(name: str, environ: Mapping[str, str]) -> Partner | None:
             environ.get("PMS_STRIPE_SECRET_KEY", ""), environ.get("PMS_STRIPE_WEBHOOK_SECRET", "")
         )
     raise NoPartner(f"no payments partner called {chosen!r}; known: fake, stripe")
+
+
+# --- a company's own keys ---------------------------------------------------------------------
+
+# A Stripe secret key (or a restricted key) and a webhook's signing secret, as Stripe writes them
+# (NOT VERIFIED against a live account). Nothing else is ever stored.
+SECRET_KEY = re.compile(r"^(sk|rk)_(test|live)_[A-Za-z0-9]{16,300}$")
+WEBHOOK_SECRET = re.compile(r"^whsec_[A-Za-z0-9+/=]{16,300}$")
+
+LATEST_KEYS = (
+    "SELECT id, secret_key_sealed, webhook_secret_sealed FROM trust_payment_keys"
+    " WHERE pmc_id = %s ORDER BY created_at DESC, id DESC LIMIT 1"
+)
+EVERY_KEYS = (
+    "SELECT id, secret_key_sealed, webhook_secret_sealed FROM trust_payment_keys"
+    " WHERE pmc_id = %s AND secret_key_sealed IS NOT NULL ORDER BY created_at DESC, id DESC"
+)
+
+
+class BadKeys(ValueError):
+    """Keys that aren't a Stripe secret key and a webhook signing secret."""
+
+
+def check_keys(secret_key: str, webhook_secret: str) -> tuple[Literal["test", "live"], str]:
+    """Whether the keys look like Stripe's: their mode (test or live) and the secret key's last
+    four, the only parts ever shown. It never puts either key in what it raises."""
+    found = SECRET_KEY.match(secret_key)
+    if found is None:
+        raise BadKeys("That isn't a Stripe secret key. It starts with sk_live_ or sk_test_.")
+    if WEBHOOK_SECRET.match(webhook_secret) is None:
+        raise BadKeys("That isn't a webhook signing secret. It starts with whsec_.")
+    mode: Literal["test", "live"] = "live" if found.group(2) == "live" else "test"
+    return mode, secret_key[-4:]
+
+
+def seal_keys(row: UUID, secret_key: str, webhook_secret: str, key: bytes) -> tuple[bytes, bytes]:
+    """Each sealed with the row's id and what it is bound in, so neither opens in another row or
+    in the other's place."""
+    return (
+        sealed.seal(secret_key, f"{row}:secret key", key),
+        sealed.seal(webhook_secret, f"{row}:webhook secret", key),
+    )
+
+
+class Resolver:
+    """Which partner takes a company's payments: its own Stripe account once an admin entered its
+    keys, else the server's partner (PMS_PAYMENTS), else none. A company with keys of its own that
+    don't open here (the server lost its PMS_DATA_KEY, or another server's) takes no payment
+    online: it never falls back to the server's account, which isn't where its money goes."""
+
+    def __init__(self, server: Partner | None, environ: Mapping[str, str] = os.environ) -> None:
+        self.server = server
+        self._environ = environ
+
+    @classmethod
+    def of(cls, partner: Partner | Resolver | None) -> Resolver:
+        return partner if isinstance(partner, Resolver) else cls(partner)
+
+    def own(self, conn: psycopg.Connection[Any], pmc_id: UUID) -> Literal[False] | Partner | None:
+        """The company's own partner; None when it has none (it uses the server's); False when
+        it has keys that don't open here."""
+        row = conn.execute(LATEST_KEYS, (pmc_id,)).fetchone()
+        if row is None or row[1] is None:
+            return None
+        return self._opened(pmc_id, row) or False
+
+    def every_own(self, conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Partner]:
+        """Each set of keys the company ever entered that opens here, newest first: a report
+        about a payment started under keys since changed or taken away still lands, signed with
+        the secret it was started under."""
+        rows = conn.execute(EVERY_KEYS, (pmc_id,)).fetchall()
+        return [partner for row in rows if (partner := self._opened(pmc_id, row)) is not None]
+
+    def _opened(self, pmc_id: UUID, row: Any) -> Partner | None:
+        try:
+            key = sealed.key_from(self._environ, "payments keys")
+            secret = sealed.unseal(bytes(row[1]), f"{row[0]}:secret key", key)
+            webhook = sealed.unseal(bytes(row[2]), f"{row[0]}:webhook secret", key)
+        except (sealed.NoKey, sealed.Unreadable) as failed:
+            log.error("company %s's payments keys don't open on this server: %s", pmc_id, failed)
+            return None
+        return StripePartner(secret, webhook)
+
+    def for_pmc(self, conn: psycopg.Connection[Any], pmc_id: UUID) -> Partner | None:
+        own = self.own(conn, pmc_id)
+        if own is False:
+            return None
+        return own if own is not None else self.server
+
+    def name_for(self, conn: psycopg.Connection[Any], pmc_id: UUID) -> str | None:
+        partner = self.for_pmc(conn, pmc_id)
+        return None if partner is None else partner.name
