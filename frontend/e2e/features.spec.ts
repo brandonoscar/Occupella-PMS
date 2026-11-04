@@ -4337,7 +4337,8 @@ test("a tenant changes their own phone and email in the portal, and staff see th
   await joinPortal(page, people.drew);
   await portalSection(page, "Profile", "Your profile");
   const mine = page.getByRole("group", { name: "Contact details, Drew Sample" });
-  await expect(mine).toContainText("No contact details yet.");
+  // The phone they gave when they set their password is already theirs.
+  await expect(mine).toContainText("+15555550123");
   await mine.getByRole("button", { name: "Edit contact details" }).click();
   await mine.getByLabel("Email").fill("drew.new@example.com");
   await mine.getByLabel("Phone", { exact: true }).fill("(555) 555-0142");
