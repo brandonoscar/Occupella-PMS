@@ -1,5 +1,8 @@
 -- migrate:up
 
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '60s';
+
 -- A switch-in import (src/pms/api/switching.py) brings a company's thousands of rows in one
 -- request. Until autovacuum next looks (once a minute, and only once a tenth of a table has
 -- changed), the planner may take the company's thousands of charges for a handful and plan its
@@ -26,4 +29,9 @@ GRANT EXECUTE ON FUNCTION public.trust_analyze_after_import() TO trust_app;
 
 -- migrate:down
 
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '60s';
+
+-- Nothing but the switching import calls it.
+-- squawk-ignore ban-drop-function
 DROP FUNCTION public.trust_analyze_after_import();
