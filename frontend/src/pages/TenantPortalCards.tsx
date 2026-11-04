@@ -8,7 +8,7 @@ import { Said } from "../components/Said";
 import { Card } from "../components/Shell";
 import type { ContentType } from "../documents";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
-import { day, usDate } from "../money";
+import { companyDay, usDate } from "../money";
 
 // The latest notice to move out a tenant on the lease gave (migration 20261103000100).
 export type MoveOutNotice = { leaving_on: string; note: string | null; given_by: string; given_at: string };
@@ -90,7 +90,7 @@ export function MoveOutNoticeCard({
           setError(words(failed));
         }
       }}>
-        <Field label="Last day you will live here" id="leaving-on" type="date" required min={day(new Date())}
+        <Field label="Last day you will live here" id="leaving-on" type="date" required min={companyDay()}
           value={leaving} onChange={(e) => setLeaving(e.target.value)} />
         <label htmlFor="leaving-note" className="flex flex-col gap-1.5 text-sm text-ink-muted">
           Anything to add (optional)

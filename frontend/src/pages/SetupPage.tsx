@@ -6,12 +6,13 @@ import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { Notice } from "../components/Notice";
 import { Said } from "../components/Said";
+import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import type { Company } from "../company";
-import { addressLines, logoHref } from "../company";
+import { addressLines, logoHref, zoneLine } from "../company";
 import { MAX_BYTES, toBase64, typeOf } from "../documents";
-import { money } from "../money";
+import { money, setTimeZone } from "../money";
 import { lateFeeSummary, nsfFeeSummary } from "../setup";
 import { AutomaticEmailsCard } from "./AutomaticEmailsCard";
 import { AutomaticFeesCard } from "./AutomaticFeesCard";
@@ -40,7 +41,11 @@ export function SetupPage({ me }: { me: Me }) {
   const refresh = () => setRuns((n) => n + 1);
   const { said, error: refused, record } = useRecord(refresh);
   useEffect(() => {
-    api.get<Company>("/api/company").then(setCompany)
+    api.get<Company>("/api/company")
+      .then((found) => {
+        setTimeZone(found.time_zone); // a zone just picked is every page's "today" from now on
+        setCompany(found);
+      })
       .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
   }, [runs]);
   const close = () => setOpen("");
@@ -62,6 +67,9 @@ export function SetupPage({ me }: { me: Me }) {
             </address>
             <p className="mt-2 text-sm text-ink-muted" data-testid="reply-to">
               {company.reply_to ? `Replies to its emails go to ${company.reply_to}.` : "Replies to its emails go to the server's From address."}
+            </p>
+            <p className="mt-1 text-sm text-ink-muted" data-testid="time-zone">
+              {`Time zone: ${zoneLine(company)}. Payments, bills and statements are dated by its day.`}
             </p>
             <div className="mt-3"><Button variant="secondary" onClick={() => setOpen("company")}>Edit company</Button></div>
           </Card>
@@ -117,13 +125,14 @@ const blank = (text: string) => (text.trim() === "" ? null : text.trim());
 function standing(company: Company) {
   return {
     name: company.name, address: company.address, late_fees: company.late_fees, nsf_fee: company.nsf_fee,
-    reply_to: company.reply_to,
+    reply_to: company.reply_to, time_zone: company.time_zone,
   };
 }
 
 function CompanyForm({ company, save }: { company: Company; save: Save }) {
   const [name, setName] = useState(company.name);
   const [replyTo, setReplyTo] = useState(company.reply_to ?? "");
+  const [zone, setZone] = useState(company.time_zone);
   const [address, setAddress] = useState({
     address_line_1: company.address?.address_line_1 ?? "",
     address_line_2: company.address?.address_line_2 ?? "",
@@ -140,6 +149,7 @@ function CompanyForm({ company, save }: { company: Company; save: Save }) {
         ...standing(company),
         name,
         reply_to: blank(replyTo),
+        time_zone: zone,
         address: given
           ? { ...address, address_line_2: blank(address.address_line_2) }
           : null,
@@ -153,6 +163,12 @@ function CompanyForm({ company, save }: { company: Company; save: Save }) {
       <Field label="ZIP code" id="company-zip" required={given} maxLength={20} value={address.postal_code} onChange={set("postal_code")} />
       <Field label="Replies to the company's emails go to (optional)" id="company-reply-to" type="email" maxLength={254}
         value={replyTo} onChange={(e) => setReplyTo(e.target.value)} />
+      <Select label="Time zone" id="company-time-zone" value={zone} onChange={(e) => setZone(e.target.value)}>
+        {company.time_zones.map((option) => (
+          <option key={option.id} value={option.id}>{option.name === option.id ? option.id : `${option.name} (${option.id})`}</option>
+        ))}
+      </Select>
+      <p className="text-sm text-ink-muted">Payments, bills, statements and the nightly rent run follow the company&apos;s day here.</p>
       <div><Button type="submit">Save</Button></div>
     </Form>
   );

@@ -9,7 +9,7 @@ import { SidePanel } from "../components/SidePanel";
 import { UpdatedStamp } from "../components/Updated";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
-import { day, money, usDate, usDatesIn } from "../money";
+import { companyDate, companyDay, money, usDate, usDatesIn } from "../money";
 import { downloadHref, FORMATS } from "../reports";
 import type { LeaseDetail, Ledger, LedgerLine } from "../rentals";
 import { LEDGER_KIND } from "../rentals";
@@ -48,7 +48,7 @@ export function LedgerTab({ lease, runs, record }: { lease: LeaseDetail; runs: n
     api.get<Ledger>(`/api/leases/${lease.id}/ledger${query ? `?${query}` : ""}`)
       .then(run.keep((found: Ledger) => {
         setLedger(found);
-        setAt(new Date());
+        setAt(companyDate());
       }))
       .catch(run.keep((why: unknown) => setError(why instanceof ApiError ? why.detail : String(why))));
     return run.stop;
@@ -118,7 +118,7 @@ export function LedgerTab({ lease, runs, record }: { lease: LeaseDetail; runs: n
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Download the ledger">
         <span className="text-sm text-ink-muted">The whole ledger, as a report:</span>
         {FORMATS.map(([format, label]) => (
-          <LinkButton key={format} href={downloadHref("tenant_ledger", [lease.id, day(new Date())], format)}>{label}</LinkButton>
+          <LinkButton key={format} href={downloadHref("tenant_ledger", [lease.id, companyDay()], format)}>{label}</LinkButton>
         ))}
       </div>
       <Card title="Payments received">

@@ -6,7 +6,7 @@ import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
 import type { IncomeStatement, Line } from "../incomeStatement";
 import { groupIncomeStatement } from "../incomeStatement";
-import { money, usDatesIn } from "../money";
+import { companyDate, money, usDatesIn } from "../money";
 import type { YearEndData } from "../yearEnd";
 import { thisYear } from "../yearEnd";
 import { Form } from "../components/Form";
@@ -39,7 +39,7 @@ function Total({ label, amount }: { label: string; amount: string }) {
 // each property and across them, and the Schedule E lines each amount goes on. Their
 // accountant files; the PMS files nothing.
 export function OwnerIncomeStatement() {
-  const [year, setYear] = useState(String(thisYear(new Date())));
+  const [year, setYear] = useState(String(thisYear(companyDate())));
   const [shown, setShown] = useState<IncomeStatement | null>(null);
   const [error, setError] = useState("");
 

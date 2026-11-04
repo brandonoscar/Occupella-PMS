@@ -26,7 +26,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import autopay, exports, notices
+from pms import autopay, days, exports, notices
 from pms.api import outbox
 from pms.api.deps import Conn, Staff, refusal
 
@@ -43,8 +43,9 @@ def cents(value: Decimal) -> str:
     return exports.text(Decimal(value).quantize(CENT))
 
 
-def today() -> date:
-    return datetime.now(UTC).date()
+def today(conn: psycopg.Connection[Any], pmc_id: UUID) -> date:
+    """The company's day (src/pms/days.py)."""
+    return days.today(conn, pmc_id)
 
 
 def at(day: date) -> datetime:
@@ -1103,7 +1104,7 @@ def leases(session: Staff, conn: Conn, as_of: date | None = None) -> list[RentLe
     """Leases in effect on `as_of` (today, UTC, by default) and any other lease that owes
     something or is owed, with their open charges and tenant payments (what the Dashboard's
     late rent reads)."""
-    return built(conn, session.pmc_id, as_of or today())
+    return built(conn, session.pmc_id, as_of or today(conn, session.pmc_id))
 
 
 def lease_detail(
@@ -1296,11 +1297,11 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
     server sends email, it also writes today's emails the company's settings ask for, as the
     nightly run does, and starts the autopay payments due by today (src/pms/autopay.py). First, as
     each night, each fixed-term lease that ran out with no renewal signed goes month to month."""
-    if run.late_fees_as_of > today():
+    if run.late_fees_as_of > today(conn, session.pmc_id):
         raise HTTPException(422, "late fees are assessed as of today or an earlier day")
     # Fixed-term leases that ran out with no renewal go month to month first, as each night.
     rolled = conn.execute(
-        "SELECT trust_roll_over_leases(%s, %s)", (session.pmc_id, today())
+        "SELECT trust_roll_over_leases(%s, %s)", (session.pmc_id, today(conn, session.pmc_id))
     ).fetchone()
     assert rolled is not None
     made = conn.execute(
@@ -1315,18 +1316,20 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
         "SELECT trust_assess_authority_late_fees(%s, %s)", (session.pmc_id, run.late_fees_as_of)
     ).fetchone()
     assert authority is not None
-    prepaid_used = use_prepaid_by_itself(conn, session.pmc_id, today())
+    prepaid_used = use_prepaid_by_itself(conn, session.pmc_id, today(conn, session.pmc_id))
     partners = outbox.PARTNER.get()
     started = autopay.start_due(
         conn,
         session.pmc_id,
-        today(),
+        today(conn, session.pmc_id),
         None if partners is None else partners.name_for(conn, session.pmc_id),
         outbox.SENDING.get(),
         outbox.PUBLIC_URL.get(),
     )
     written = (
-        notices.write_scheduled(conn, session.pmc_id, today(), outbox.PUBLIC_URL.get())
+        notices.write_scheduled(
+            conn, session.pmc_id, today(conn, session.pmc_id), outbox.PUBLIC_URL.get()
+        )
         if outbox.SENDING.get()
         else notices.Written()
     )
@@ -1498,7 +1501,7 @@ def change_rent(session: Staff, conn: Conn, lease_id: UUID, new: NewRentChange) 
     lease_of(conn, session.pmc_id, lease_id)
     if new.effective_on.day != 1:
         raise HTTPException(422, "a rent change starts on the first of a month")
-    if new.notice_given_on > today():
+    if new.notice_given_on > today(conn, session.pmc_id):
         raise HTTPException(422, "notice is recorded once it was given, not before")
     by = first_of_month_before(new.effective_on)
     if new.notice_given_on > by:
@@ -1714,8 +1717,8 @@ def answer(recorded: Recorded) -> Payment:
     )
 
 
-def not_after_today(day: date) -> None:
-    if day > today():
+def not_after_today(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> None:
+    if day > today(conn, pmc_id):
         raise HTTPException(422, "money is recorded on the day it arrived, not a later one")
 
 
@@ -1724,7 +1727,7 @@ def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
     """Records a tenant's payment, maybe paying the charges staff chose first, with what they
     wrote about it and its file; each tenant of the lease is emailed its receipt while the server
     sends email (once per payment, ADR 0010)."""
-    not_after_today(new.received_on)
+    not_after_today(conn, session.pmc_id, new.received_on)
     try:
         recorded = record_payment(
             conn,
@@ -1787,7 +1790,7 @@ class UsePrepaid(BaseModel):
 
 @router.post("/leases/{lease_id}/use-prepaid", status_code=201)
 def prepaid(session: Staff, conn: Conn, lease_id: UUID, use: UsePrepaid) -> Payment:
-    not_after_today(use.on)
+    not_after_today(conn, session.pmc_id, use.on)
     try:
         return answer(
             use_prepaid(conn, session.pmc_id, lease_id, use.request_id, use.on, use.account)
@@ -1917,7 +1920,7 @@ class Posted(BaseModel):
 
 @router.post("/deposits", status_code=201)
 def deposit(session: Staff, conn: Conn, new: NewDeposit) -> Posted:
-    not_after_today(new.received_on)
+    not_after_today(conn, session.pmc_id, new.received_on)
     if (
         conn.execute(
             "SELECT 1 FROM trust_tenants WHERE pmc_id = %s AND id = %s",
@@ -1927,7 +1930,9 @@ def deposit(session: Staff, conn: Conn, new: NewDeposit) -> Posted:
     ):
         raise HTTPException(404, "no such tenant")
     if new.kind == "pet":
-        found = conn.execute(ANIMALS, (session.pmc_id, new.tenant_id, today())).fetchall()
+        found = conn.execute(
+            ANIMALS, (session.pmc_id, new.tenant_id, today(conn, session.pmc_id))
+        ).fetchall()
         animals = [row[0] for row in found]
         if animals and all(animals):
             raise HTTPException(
@@ -1962,7 +1967,7 @@ def bounced(session: Staff, conn: Conn, transfer_id: str, returned: Day) -> Boun
     """Records a returned payment: its money leaves the owner's account (and prepaid rent)
     back to cash, what it paid of each charge is owed again, and the lease is charged the
     property's NSF fee in force that day."""
-    not_after_today(returned.on)
+    not_after_today(conn, session.pmc_id, returned.on)
     try:
         done = bounce(conn, session.pmc_id, transfer_id, returned.on)
     except psycopg.errors.CheckViolation as refused:  # the owner's account would go negative
@@ -2034,10 +2039,13 @@ def place_hold(session: Staff, conn: Conn, lease_id: UUID, new: NewHold) -> Hold
     it is refused unless staff accept it past the hold. One hold at a time: a lease with one not
     released is refused another."""
     lease_of(conn, session.pmc_id, lease_id)
-    if new.starts_on > today():
+    if new.starts_on > today(conn, session.pmc_id):
         raise HTTPException(422, "a hold starts today or on an earlier day")
     lock_lease(conn, lease_id)
-    if any(h.ends_on is None for h in holds_of(conn, session.pmc_id, lease_id, today())):
+    if any(
+        h.ends_on is None
+        for h in holds_of(conn, session.pmc_id, lease_id, today(conn, session.pmc_id))
+    ):
         raise HTTPException(409, "this lease is on a payment hold already: release it first")
     made = conn.execute(
         "INSERT INTO trust_payment_holds (pmc_id, lease_id, starts_on, reason)"
@@ -2045,7 +2053,11 @@ def place_hold(session: Staff, conn: Conn, lease_id: UUID, new: NewHold) -> Hold
         (session.pmc_id, lease_id, new.starts_on, new.reason),
     ).fetchone()
     assert made is not None
-    return next(h for h in holds_of(conn, session.pmc_id, lease_id, today()) if h.id == made[0])
+    return next(
+        h
+        for h in holds_of(conn, session.pmc_id, lease_id, today(conn, session.pmc_id))
+        if h.id == made[0]
+    )
 
 
 class Release(BaseModel):
@@ -2076,7 +2088,11 @@ def release_hold(session: Staff, conn: Conn, hold_id: UUID, release: Release) ->
         raise HTTPException(409, "this hold is released already") from None
     except psycopg.errors.CheckViolation:
         raise HTTPException(422, "a hold ends after the day it started") from None
-    return next(h for h in holds_of(conn, session.pmc_id, row[0], today()) if h.id == hold_id)
+    return next(
+        h
+        for h in holds_of(conn, session.pmc_id, row[0], today(conn, session.pmc_id))
+        if h.id == hold_id
+    )
 
 
 # --- waiving a charge -------------------------------------------------------------------------
@@ -2117,7 +2133,13 @@ def waive(session: Staff, conn: Conn, charge_id: UUID, waive: Waive) -> Waived:
     credit = conn.execute(
         "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)"
         " VALUES (%s, %s, %s, 'credit', %s, %s) RETURNING id",
-        (session.pmc_id, lease, today(), waive.amount, f"Waived: {what}, due {due_on:%m/%d/%Y}"),
+        (
+            session.pmc_id,
+            lease,
+            today(conn, session.pmc_id),
+            waive.amount,
+            f"Waived: {what}, due {due_on:%m/%d/%Y}",
+        ),
     ).fetchone()
     assert credit is not None
     try:

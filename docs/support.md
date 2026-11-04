@@ -66,7 +66,8 @@ The books keep their own record, which staff read in the portal:
 
 **The nightly run failed.** Read the traceback in the log.
 - If the cause has passed (the database restarted, a disk filled and was cleared), an admin runs
-  it now from **Rent roll**, ⋯, **Run rent now**, or leaves it to the next night (06:00 UTC).
+  it now from **Rent roll**, ⋯, **Run rent now**, or leaves it to the next night (just after
+  midnight in the company's time zone, Settings, Company setup).
 - Either way it is safe: each part charges once per lease and date, so a run again charges
   nothing twice, and a failed run charged nothing at all (each company's run is one transaction).
 - If it fails again with the same error, it is a bug: open an issue.

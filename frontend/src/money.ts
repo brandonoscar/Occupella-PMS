@@ -26,6 +26,28 @@ export function day(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
+// The company's time zone (src/pms/days.py): its day is the date there, America/New_York until
+// it picks another in Company setup. The signed-in page sets it from /api/me.
+let timeZone = "America/New_York";
+
+export function setTimeZone(zone: string): void {
+  timeZone = zone;
+}
+
+// The company's day as YYYY-MM-DD: rent paid at 9 pm Eastern on October 31 is October 31's.
+export function companyDay(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" })
+    .formatToParts(now);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+// The company's day as a Date at its UTC midnight, for the helpers that count months and years
+// from a day in UTC.
+export function companyDate(now: Date = new Date()): Date {
+  return new Date(`${companyDay(now)}T00:00:00Z`);
+}
+
 // A day as people in the US write it (ADR 0005): "2026-10-16", or a time on that day (UTC),
 // reads "10/16/2026". The API, the downloads and the reports keep ISO days.
 export function usDate(iso: string | null): string {

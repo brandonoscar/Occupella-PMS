@@ -22,8 +22,11 @@ money, inside trust, from each owner's account to the company's fee account, onc
 month (the founder's answer of 2026-10-18 to q049); charges are what tenants owe, and bills wait
 for staff to pay them.
 
-The API runs it when it starts and then every day at 06:00 UTC, unless PMS_NIGHTLY is "off".
-`python -m pms.nightly` runs it once, for a server that schedules it itself. One run at a time,
+Each company's run is for its own day (src/pms/days.py, migration 20261104000900): the date in its
+time zone. The API runs every company when it starts, then looks a minute past each hour and runs
+each company whose day has begun since (just after its midnight), unless PMS_NIGHTLY is "off".
+`python -m pms.nightly` runs every company once, each for its day, for a server that schedules it
+itself. One run at a time,
 whatever starts it (two API servers, or this command while the API runs): a run holds a database
 lock while it lasts, and one that finds it held leaves the work to that run.
 
@@ -41,14 +44,14 @@ import sys
 import threading
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 import psycopg
 from psycopg import sql
 
-from pms import autopay, email, notices, payments
+from pms import autopay, days, email, notices, payments
 from pms.api import payables, rent
 
 log = logging.getLogger("pms.nightly")
@@ -56,8 +59,9 @@ log = logging.getLogger("pms.nightly")
 # The Scheduler's own argument is named `payments`, so it names the module's helper by this.
 resolver_of = payments.Resolver.of
 
-# When the run starts each day, UTC: after midnight in every US time zone.
-AT = time(6, 0)
+# How long past each hour the scheduler looks for companies whose day has begun: every US time
+# zone's midnight is on an hour, UTC.
+PAST_THE_HOUR = timedelta(minutes=1)
 # How soon a run that failed (the database not up yet) is tried again, in seconds.
 RETRY = 300.0
 # The session advisory lock a run holds while it lasts (the outbox locks each email the same
@@ -156,15 +160,17 @@ def run_pmc(
 
 def run_all(
     conn: psycopg.Connection[Any],
-    day: date,
+    day: date | None,
     public_url: str,
     pmcs: Iterable[UUID] | None = None,
     sending: bool = False,
     partner: str | payments.Resolver | None = None,
+    at: datetime | None = None,
 ) -> list[Ran]:
-    """Every PMC's run for a day (or only those named). One that fails is logged and left for
-    the next run, and while the server sends email its admins are told (once a day); the others
-    still run. While another run holds the lock, this one runs nothing."""
+    """Every PMC's run (or only those named) for a day, or with none for each one's own day at
+    `at` (now by default). One that fails is logged and left for the next run, and while the
+    server sends email its admins are told (once a day); the others still run. While another run
+    holds the lock, this one runs nothing."""
     held = conn.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (LOCK,)).fetchone()
     conn.commit()
     if held is None or not held[0]:
@@ -176,12 +182,14 @@ def run_all(
             conn.commit()
         done = []
         for pmc_id in pmcs:
+            on = day or days.day_at(conn, pmc_id, at or datetime.now(UTC))
+            conn.commit()
             try:
-                done.append(run_pmc(conn, pmc_id, day, public_url, sending, partner))
+                done.append(run_pmc(conn, pmc_id, on, public_url, sending, partner))
             except Exception as failed:
                 log.exception("the nightly run of PMC %s failed; the next run tries again", pmc_id)
                 if sending:
-                    alert(conn, pmc_id, day, failed, public_url)
+                    alert(conn, pmc_id, on, failed, public_url)
         return done
     finally:
         if not conn.closed:
@@ -202,18 +210,33 @@ def alert(
         log.exception("the admins of PMC %s could not be told its nightly run failed", pmc_id)
 
 
-def seconds_until(now: datetime, at: time = AT) -> float:
-    """From now to the next time of day `at` (UTC), later than now."""
-    next_run = datetime.combine(now.date(), at, UTC)
-    if next_run <= now:
-        next_run += timedelta(days=1)
-    return (next_run - now).total_seconds()
+def seconds_until(now: datetime, past: timedelta = PAST_THE_HOUR) -> float:
+    """From now to the next look: `past` after an hour (UTC), later than now."""
+    look = now.replace(minute=0, second=0, microsecond=0) + past
+    if look <= now:
+        look += timedelta(hours=1)
+    return (look - now).total_seconds()
+
+
+def days_at(
+    conn: psycopg.Connection[Any], at: datetime, pmcs: Sequence[UUID] | None = None
+) -> dict[UUID, date]:
+    """Each company's day at a moment (or only those named), in its own time zone."""
+    rows = conn.execute(
+        "SELECT pmc_id, trust_pmc_day(pmc_id, %(at)s) FROM trust_pmcs"
+        " WHERE %(only)s::uuid[] IS NULL OR pmc_id = ANY(%(only)s) ORDER BY pmc_id",
+        {"at": at, "only": None if pmcs is None else list(pmcs)},
+    ).fetchall()
+    conn.commit()
+    return {pmc_id: day for pmc_id, day in rows}
 
 
 class Scheduler:
-    """Runs every PMC's run when started, then every day at `at` (UTC), in a thread of its own
-    with a connection of its own, until stopped. A run that fails is tried again `retry`
-    seconds later. After each run, what it wrote to the outbox goes to the email sender."""
+    """Runs every PMC's run when started, each for its own day, then a minute past each hour the
+    run of each PMC whose day has begun since, in a thread of its own with a connection of its
+    own, until stopped. A look that fails (the database not up) is tried again `retry` seconds
+    later; a company whose own run failed waits for its next day, as its admins are told. After
+    each look, what waits for the payments partner and the email sender goes to them."""
 
     def __init__(
         self,
@@ -222,7 +245,6 @@ class Scheduler:
         public_url: str,
         sender: email.Sender | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
-        at: time = AT,
         retry: float = RETRY,
         pmcs: Sequence[UUID] | None = None,
         payments: payments.Partner | payments.Resolver | None = None,
@@ -232,10 +254,11 @@ class Scheduler:
         self.public_url = public_url
         self.sender = sender
         self.clock = clock
-        self.at = at
         self.retry = retry
         self.pmcs = pmcs
         self.payments = None if payments is None else resolver_of(payments)
+        # The day each company's run last began, in this process.
+        self.days: dict[UUID, date] = {}
         self.ran = threading.Event()  # set after each run that finished
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="pms-nightly", daemon=True)
@@ -247,18 +270,30 @@ class Scheduler:
         self._stop.set()
         self._thread.join()
 
-    def run_once(self) -> list[Ran]:
+    def run_once(self, begun_only: bool = False) -> list[Ran]:
+        """Every company's run for its day at the clock's time, or with `begun_only` only those
+        whose day has begun since their last run here."""
+        at = self.clock()
         with psycopg.connect(self.database_url) as conn:
             conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(self.role)))
             conn.commit()
-            done = run_all(
-                conn,
-                self.clock().date(),
-                self.public_url,
-                self.pmcs,
-                self.sender is not None,
-                self.payments,
+            due = days_at(conn, at, self.pmcs)
+            if begun_only:
+                due = {pmc: day for pmc, day in due.items() if self.days.get(pmc) != day}
+            done = (
+                run_all(
+                    conn,
+                    None,
+                    self.public_url,
+                    list(due),
+                    self.sender is not None,
+                    self.payments,
+                    at=at,
+                )
+                if due
+                else []
             )
+            self.days.update(due)
             conn.autocommit = True
             if self.payments is not None:
                 autopay.submit_waiting(conn, self.payments, now=self.clock())
@@ -268,10 +303,12 @@ class Scheduler:
         return done
 
     def _loop(self) -> None:
+        begun_only = False  # when started, every company runs
         while not self._stop.is_set():
             try:
-                self.run_once()
-                wait = seconds_until(self.clock(), self.at)
+                self.run_once(begun_only)
+                begun_only = True
+                wait = seconds_until(self.clock())
             except Exception:
                 log.exception("the nightly run failed; it is tried again in %s seconds", self.retry)
                 wait = self.retry
@@ -294,7 +331,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         partner = payments.Resolver(
             payments.partner_named(os.environ.get("PMS_PAYMENTS", ""), os.environ)
         )
-        done = run_all(conn, datetime.now(UTC).date(), public_url, sending=sending, partner=partner)
+        done = run_all(conn, None, public_url, sending=sending, partner=partner)
         conn.autocommit = True
         autopay.submit_waiting(conn, partner)
     rents = sum(r.rents for r in done)

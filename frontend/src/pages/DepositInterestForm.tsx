@@ -7,7 +7,7 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import type { DepositInterest, InterestPaid, PaidAs } from "../depositInterest";
 import { PAID_AS, paidLine, rateLine } from "../depositInterest";
-import { day, money, usDate } from "../money";
+import { companyDay, money, usDate } from "../money";
 import type { RentLease } from "../rent";
 import { requestId } from "../rent";
 import type { Recorder } from "./LeaseForms";
@@ -16,7 +16,7 @@ import type { Recorder } from "./LeaseForms";
 // the property's rate (migration 0122), and paying it: credited against the rent while the lease
 // is in effect, or added to the deposit from the owner's account. Each payment made is listed.
 export function DepositInterestForm({ lease, record }: { lease: RentLease; record: Recorder }) {
-  const [through, setThrough] = useState(day(new Date()));
+  const [through, setThrough] = useState(companyDay());
   const [found, setFound] = useState<DepositInterest | null>(null);
   const [error, setError] = useState("");
   const [paidAs, setPaidAs] = useState<PaidAs>("rent_credit");
@@ -49,13 +49,13 @@ export function DepositInterestForm({ lease, record }: { lease: RentLease; recor
       ) : (
         <Form className="flex flex-col gap-3" onSubmit={async (event) => {
           event.preventDefault();
-          const body = { request_id: id, through, paid_as: paidAs, on: day(new Date()), ...(naming ? { owner_account: owner } : {}) };
+          const body = { request_id: id, through, paid_as: paidAs, on: companyDay(), ...(naming ? { owner_account: owner } : {}) };
           if (await record<InterestPaid>(`/api/rent/leases/${lease.id}/deposit-interest`, body, (paid) => `${paidLine(paid)}.`)) {
             setId(requestId());
           }
         }}>
           <Field label="Interest through" id={`interest-through-${lease.id}`} type="date" required value={through}
-            max={day(new Date())} onChange={(e) => setThrough(e.target.value)} />
+            max={companyDay()} onChange={(e) => setThrough(e.target.value)} />
           <ul aria-label="Deposits" className="flex flex-col gap-1 text-base">
             {found.deposits.map((d) => (
               <li key={d.tenant}>{d.tenant}: {money(d.held)} held, {money(d.interest)} earned</li>

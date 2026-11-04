@@ -17,7 +17,7 @@ import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
 import type { Keep } from "../latest";
 import { keepAll, latest } from "../latest";
-import { day, money, sumMoney, usDate } from "../money";
+import { companyDate, companyDay, money, sumMoney, usDate } from "../money";
 import type { Recorder } from "./useRecord";
 import { GoLink } from "./NeedsAttention";
 import { useRecord } from "./useRecord";
@@ -190,7 +190,7 @@ function TermsForm({ leaseId, authorities, record, onAdded }: {
 }) {
   const [authority, setAuthority] = useState(authorities[0]?.id ?? NEW);
   const [name, setName] = useState("");
-  const [startsOn, setStartsOn] = useState(nextFirst(new Date()));
+  const [startsOn, setStartsOn] = useState(nextFirst(companyDate()));
   const [amount, setAmount] = useState("");
   const [contract, setContract] = useState("");
   const [problem, setProblem] = useState("");
@@ -243,7 +243,7 @@ function TermsForm({ leaseId, authorities, record, onAdded }: {
 function ChargeForm({ leaseId, authorities, record }: { leaseId: string; authorities: Authority[]; record: Recorder }) {
   const [authority, setAuthority] = useState(authorities[0]?.id ?? "");
   const [amount, setAmount] = useState("");
-  const [dueOn, setDueOn] = useState(day(new Date()));
+  const [dueOn, setDueOn] = useState(companyDay());
   const [memo, setMemo] = useState("");
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
@@ -276,7 +276,7 @@ function CreditForm({ leaseId, charge, record }: { leaseId: string; charge: Auth
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
       event.preventDefault();
-      const body = { kind: "credit", charge_id: charge.id, amount, due_on: day(new Date()), memo };
+      const body = { kind: "credit", charge_id: charge.id, amount, due_on: companyDay(), memo };
       return record(`/api/assistance/leases/${leaseId}/charges`, body, () => `${money(amount)} credited off ${charge.memo}.`);
     }}>
       <p className="text-sm text-ink-muted" data-testid="credit-of">
@@ -380,7 +380,7 @@ export function CertificationForm({ leaseId, record, note = HOUSING_NOTE }: {
   leaseId: string; record: Recorder; note?: string;
 }) {
   const [kind, setKind] = useState<keyof typeof KINDS>("annual");
-  const [effectiveOn, setEffectiveOn] = useState(day(new Date()));
+  const [effectiveOn, setEffectiveOn] = useState(companyDay());
   const [size, setSize] = useState("");
   const [income, setIncome] = useState("");
   const [nextDue, setNextDue] = useState("");
@@ -419,7 +419,7 @@ export function CertificationForm({ leaseId, record, note = HOUSING_NOTE }: {
 }
 
 function InspectionForm({ leaseId, record }: { leaseId: string; record: Recorder }) {
-  const [inspectedOn, setInspectedOn] = useState(day(new Date()));
+  const [inspectedOn, setInspectedOn] = useState(companyDay());
   const [result, setResult] = useState<"passed" | "failed">("passed");
   const [dueOn, setDueOn] = useState("");
   return (

@@ -156,7 +156,8 @@ def add_recurring(session: Staff, conn: Conn, new: NewRecurring) -> Added:
         raise HTTPException(422, "that unit is not one of the property's") from None
     assert row is not None
     opened = conn.execute(
-        "SELECT trust_open_recurring_work_orders(%s, %s)", (session.pmc_id, today())
+        "SELECT trust_open_recurring_work_orders(%s, %s)",
+        (session.pmc_id, today(conn, session.pmc_id)),
     ).fetchone()
     assert opened is not None
     return Added(id=row[0], opened=opened[0])

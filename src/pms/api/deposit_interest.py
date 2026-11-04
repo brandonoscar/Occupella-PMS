@@ -72,7 +72,7 @@ def deposit_interest(
     """What the lease's deposits have earned since its last interest payment, through a day
     (today unless one is named), and every payment made."""
     lease = lease_of(conn, session.pmc_id, lease_id)
-    day = today()
+    day = today(conn, session.pmc_id)
     through = through or day
     row = conn.execute(
         "SELECT trust_deposit_interest_from(l.id), l.starts_on <= %s"
@@ -197,7 +197,7 @@ def pay_deposit_interest(session: Staff, conn: Conn, lease_id: UUID, pay: Pay) -
     by: credited against its rent, or added to its deposits from the owner's account (whose cash
     moves with it, from the owner's trust bank account to the deposits')."""
     lease_of(conn, session.pmc_id, lease_id)
-    if pay.on > today():
+    if pay.on > today(conn, session.pmc_id):
         raise HTTPException(422, "interest is paid on the day it is credited or added, not later")
     if pay.through > pay.on:
         raise HTTPException(422, "interest is paid for days gone by: through the day it is paid")

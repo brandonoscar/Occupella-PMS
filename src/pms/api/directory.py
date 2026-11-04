@@ -255,7 +255,7 @@ def tenants(
     """The company's tenants a page at a time, found by their name, property or unit: each
     with their lease in effect today (or latest), email and phone. Archived ones on request;
     maybe of a group's properties or one property's."""
-    day = rent.today()
+    day = rent.today(conn, session.pmc_id)
     rows = conn.execute(
         TENANTS,
         {
@@ -366,7 +366,7 @@ def tenant_page(session: Staff, conn: Conn, tenant_id: UUID) -> Tenant:
     lines = lease_lines(
         conn,
         session.pmc_id,
-        rent.today(),
+        rent.today(conn, session.pmc_id),
         "EXISTS (SELECT 1 FROM trust_lease_tenants AS lt"
         " WHERE lt.lease_id = l.id AND lt.tenant_id = %(tenant)s)",
         tenant=tenant_id,
@@ -680,7 +680,9 @@ def owner_page(session: Staff, conn: Conn, owner_id: UUID) -> Owner:
                 reserve,
                 limit,
                 markup,
-            ) in conn.execute(AGREEMENTS, (session.pmc_id, owner_id, rent.today())).fetchall()
+            ) in conn.execute(
+                AGREEMENTS, (session.pmc_id, owner_id, rent.today(conn, session.pmc_id))
+            ).fetchall()
         ],
         portal=portal,
         login_email=login[1],

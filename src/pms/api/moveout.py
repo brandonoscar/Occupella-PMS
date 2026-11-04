@@ -277,7 +277,7 @@ ORDER BY trust_pay_rank(c) = 2, c.due_on, trust_pay_rank(c), c.created_at, c.id
 
 OWNERS = """
 SELECT a.ledger_account_id, o.display_name,
-       (SELECT s.percent FROM trust_ownership_on(a.property_id, (now() AT TIME ZONE 'UTC')::date)
+       (SELECT s.percent FROM trust_ownership_on(a.property_id, trust_pmc_day(a.pmc_id))
         AS s WHERE s.ledger_account_id = a.ledger_account_id)
 FROM trust_ledger_accounts AS a
 JOIN trust_owners AS o ON o.id = a.owner_id
@@ -295,7 +295,7 @@ def move_outs(session: Staff, conn: Conn) -> list[MoveOut]:
     """Every lease that holds a deposit for its tenants or whose deposit was returned, and every
     lease ending (its last day set) that holds none, until 90 days after its last day."""
     found = []
-    since = datetime.now(UTC).date() - RECENT
+    since = rent.today(conn, session.pmc_id) - RECENT
     for row in conn.execute(LEASES, (session.pmc_id,)).fetchall():
         lease, prop, unit, starts, ends, owed, tenants, tenant_ids, held, prop_id, *done = row
         if held <= 0 and done[0] is None and (ends is None or ends < since):
@@ -492,7 +492,9 @@ def transfer(session: Staff, conn: Conn, lease_id: UUID, body: Transfer) -> Tran
     rent.lease_of(conn, session.pmc_id, lease_id)  # another PMC's lease is not found
     if body.ends_on is not None and body.ends_on < body.moved_on:
         raise HTTPException(422, "a lease ends on or after the day it starts")
-    if body.deposit_agreed_on is not None and body.deposit_agreed_on > rent.today():
+    if body.deposit_agreed_on is not None and body.deposit_agreed_on > rent.today(
+        conn, session.pmc_id
+    ):
         raise HTTPException(422, "the tenants agreed on a day that has come, not a later one")
     try:
         used = rent.use_prepaid(
@@ -500,7 +502,7 @@ def transfer(session: Staff, conn: Conn, lease_id: UUID, body: Transfer) -> Tran
             session.pmc_id,
             lease_id,
             uuid5(body.request_id, "prepaid used"),
-            rent.today(),
+            rent.today(conn, session.pmc_id),
             body.owner_account,
         ).to_owner
     except HTTPException as nothing:
@@ -569,7 +571,7 @@ def transfer(session: Staff, conn: Conn, lease_id: UUID, body: Transfer) -> Tran
                 session.pmc_id,
                 key,
                 transfers,
-                rent.today(),
+                rent.today(conn, session.pmc_id),
                 {"key": key, "kind": "prepaid rent moved", "lease_id": str(new)},
             )
     moved = conn.execute(PREPAID_MOVED, (session.pmc_id, key)).fetchone()
@@ -660,7 +662,7 @@ def return_deposit(session: Staff, conn: Conn, lease_id: UUID, body: Return) -> 
     """Keeps what the lease owes from its tenants' deposits and returns the rest, recorded on
     the day the bank paid it."""
     returned(conn, session.pmc_id, lease_id)
-    if body.on > datetime.now(UTC).date():
+    if body.on > rent.today(conn, session.pmc_id):
         raise HTTPException(422, "money is recorded on the day it moved, not a later one")
     try:
         back = conn.execute(
@@ -796,7 +798,7 @@ def statement_of(
     return deposit_statement.Statement(
         company=company.name_of(conn, pmc_id),
         street=company.street_of(conn, pmc_id),
-        dated_on=rent.today(),
+        dated_on=rent.today(conn, pmc_id),
         to_name=named[0],
         to_address=address,
         lines=tuple(

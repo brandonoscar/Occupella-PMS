@@ -47,11 +47,12 @@ from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import psycopg
 from psycopg import sql
 
-from pms import accounts, nightly
+from pms import accounts, days, nightly
 from pms.api import (
     applicant_details,
     assistance,
@@ -195,20 +196,27 @@ def build(
     conn: psycopg.Connection[Any],
     today: date | None = None,
     public_url: str = "http://localhost:8000",
+    time_zone: days.TimeZone = days.DEFAULT,
 ) -> Demo:
-    """Builds a demo PMC on a connection acting as trust_app (autocommit), dated from today:
-    its books, something on every other page, and the founder's demo seed (ADR 0006)."""
-    today = today or datetime.now(UTC).date()
-    demo = books(conn, today)
+    """Builds a demo PMC on a connection acting as trust_app (autocommit), dated from today (its
+    day in its time zone): its books, something on every other page, and the founder's demo seed
+    (ADR 0006)."""
+    today = today or datetime.now(ZoneInfo(time_zone)).date()
+    demo = books(conn, today, time_zone)
     every_page(conn, demo, today)
     showcase(conn, demo, today, public_url)
     return demo
 
 
-def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
-    """A demo PMC's setup and two months of its books, through last month's month-end; each
-    browser test of a feature starts from these (frontend/e2e/seed.py)."""
-    today = today or datetime.now(UTC).date()
+def books(
+    conn: psycopg.Connection[Any],
+    today: date | None = None,
+    time_zone: days.TimeZone = days.DEFAULT,
+) -> Demo:
+    """A demo PMC's setup and two months of its books, through last month's month-end, in a time
+    zone (America/New_York, as a new company is, unless asked); each browser test of a feature
+    starts from these (frontend/e2e/seed.py), in UTC."""
+    today = today or datetime.now(ZoneInfo(time_zone)).date()
     month_ago, last_month, this_month = (first_of_month(today, n) for n in (2, 1, 0))
     with conn.transaction():
         pmc_id = one(
@@ -224,6 +232,11 @@ def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
             " RETURNING id",
             (pmc_id,),
         )
+        if time_zone != days.DEFAULT:
+            conn.execute(
+                "INSERT INTO trust_company_profiles (pmc_id, time_zone) VALUES (%s, %s)",
+                (pmc_id, time_zone),
+            )
         conn.execute(
             "INSERT INTO trust_staff_roles (pmc_id, staff_id, role, granted)"
             " VALUES (%s, %s, 'admin', true)",

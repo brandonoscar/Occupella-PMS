@@ -1143,7 +1143,10 @@ def world(database_url) -> Iterator[World]:
     ):
         env.setenv("PMS_DATA_KEY", base64.b64encode(os.urandom(32)).decode())
         app_conn.execute("SET ROLE trust_app")
-        a, b, c = (Company(n, demo.build(app_conn, public_url=PUBLIC_URL)) for n in "ABC")
+        # UTC, as TODAY counts (a demo company is in New York unless asked).
+        a, b, c = (
+            Company(n, demo.build(app_conn, public_url=PUBLIC_URL, time_zone="UTC")) for n in "ABC"
+        )
         for company in (a, b):
             sign_in(live, company, app_conn)
             fill_in(live, company, conn)

@@ -21,7 +21,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import accounts, notices
+from pms import accounts, days, notices
 from pms.api.deps import Conn, Staff, refusal
 from pms.api.leasing import new_token, public_url
 from pms.api.work_orders import WORK_ORDERS, Priority, query, rows_of
@@ -190,7 +190,7 @@ def open_orders(
                 visit_on=row.scheduled_for,
                 visit_window=row.visit_window,
             )
-            for row, raw in zip(rows_of(found), found, strict=True)
+            for row, raw in zip(rows_of(found, days.today(conn, pmc_id)), found, strict=True)
         ),
         key=lambda w: w.number,
     )

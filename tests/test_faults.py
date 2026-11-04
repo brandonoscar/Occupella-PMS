@@ -97,7 +97,7 @@ def owing_lease(conn: psycopg.Connection[Any], built: demo.Demo) -> uuid.UUID:
 def test_a_payment_cut_off_before_it_commits_leaves_nothing_and_its_retry_lands_once(
     database_url, conn, app_conn
 ):
-    built = demo.books(app_conn)
+    built = demo.books(app_conn, time_zone="UTC")
     day = datetime.now(UTC).date()
     lease = owing_lease(app_conn, built)
     owed = rent.owed(app_conn, lease)
@@ -127,7 +127,7 @@ def test_a_nightly_run_cut_off_midway_leaves_the_night_undone_and_the_next_run_d
 ):
     # Two companies built alike: one night runs whole on the first, and is cut off on the second
     # and run again. They must end the same.
-    whole, cut = demo.books(app_conn), demo.books(app_conn)
+    whole, cut = demo.books(app_conn, time_zone="UTC"), demo.books(app_conn, time_zone="UTC")
     day = datetime.now(UTC).date()
     nightly.run_pmc(app_conn, whole.pmc_id, day, URL)
 
@@ -156,7 +156,7 @@ def test_a_nightly_run_cut_off_midway_leaves_the_night_undone_and_the_next_run_d
 
 @pytest.mark.timing
 def test_pay_owners_cut_off_pays_no_one_and_its_retry_pays_each_once(database_url, conn, app_conn):
-    built = demo.books(app_conn)
+    built = demo.books(app_conn, time_zone="UTC")
     day = datetime.now(UTC).date()
     # A tenant pays this month's rent, so the owner has money to pay out.
     lease = owing_lease(app_conn, built)
@@ -209,7 +209,7 @@ def test_pay_owners_cut_off_pays_no_one_and_its_retry_pays_each_once(database_ur
 def test_an_import_cut_off_brings_in_nothing_and_its_retry_brings_each_tenant_once(
     database_url, conn, app_conn
 ):
-    built = demo.books(app_conn)
+    built = demo.books(app_conn, time_zone="UTC")
     prop = conn.execute(
         "SELECT display_name FROM trust_properties WHERE pmc_id = %s ORDER BY display_name LIMIT 1",
         (built.pmc_id,),

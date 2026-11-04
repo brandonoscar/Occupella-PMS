@@ -13,7 +13,7 @@ import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
 import type { Keep } from "../latest";
 import { keepAll, latest } from "../latest";
-import { day, money, usDate } from "../money";
+import { companyDay, money, usDate } from "../money";
 import type { BilledLease, Method, Plan, Preview, PropertyUtilities, UnitArea, Utility } from "../utilities";
 import { METHODS, UTILITIES, methodLabel, plansInForce, shareAmount, utilityLabel, weightLabel } from "../utilities";
 import { GoLink } from "./NeedsAttention";
@@ -61,7 +61,7 @@ export function PropertyUtilitiesPage({ me, id }: { me: Me; id: string }) {
     if (recorded) setPanel(null);
     return recorded;
   };
-  const today = day(new Date());
+  const today = companyDay();
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
@@ -247,7 +247,7 @@ function UtilitySelect({ id, value, onChange }: { id: string; value: Utility; on
 function PlanForm({ property, record }: { property: string; record: Recorder }) {
   const [utility, setUtility] = useState<Utility>("water");
   const [method, setMethod] = useState<Method | "none">("units");
-  const [startsOn, setStartsOn] = useState(day(new Date()));
+  const [startsOn, setStartsOn] = useState(companyDay());
   const [ownerPercent, setOwnerPercent] = useState("0");
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
@@ -332,7 +332,7 @@ function BillForm({ property, page, inForce, record }: {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [amount, setAmount] = useState("");
-  const [dueOn, setDueOn] = useState(day(new Date()));
+  const [dueOn, setDueOn] = useState(companyDay());
   const [memo, setMemo] = useState("");
   const [master, setMaster] = useState("");
   const [readings, setReadings] = useState<Record<string, string>>({});

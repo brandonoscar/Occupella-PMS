@@ -12,7 +12,7 @@ import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
-import { day, money, usDate, usDatesIn } from "../money";
+import { companyDay, money, usDate, usDatesIn } from "../money";
 import { downloadHref, FORMATS } from "../reports";
 import type { CompanyFees } from "../payables";
 import { companyFeesDue } from "../payables";
@@ -70,7 +70,7 @@ export function BankingPage({ me }: { me: Me }) {
       .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
     api.get<CompanyFees[]>("/api/payables/company-fees").then(setFees).catch(() => setFees([]));
   }, [runs]);
-  const today = day(new Date());
+  const today = companyDay();
   const transferring = fees.find((f) => f.bank_account_id === transfer);
   // A form in the side panel closes once what it recorded is recorded.
   const recordThenClose: typeof record = async (path, body, done) => {

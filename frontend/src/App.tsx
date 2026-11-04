@@ -60,6 +60,7 @@ import { TENANT_SECTIONS, TenantHome } from "./pages/TenantHome";
 import { VendorLinkPage } from "./pages/VendorLinkPage";
 import { VendorsPage } from "./pages/VendorsPage";
 import { navigate, usePath } from "./router";
+import { setTimeZone } from "./money";
 
 export function App() {
   const path = usePath();
@@ -90,7 +91,10 @@ function Home({ path }: { path: string }) {
   useEffect(() => {
     api
       .get<Me>("/api/me")
-      .then(setMe)
+      .then((found) => {
+        if (found.time_zone) setTimeZone(found.time_zone); // every page's "today" is the company's day
+        setMe(found);
+      })
       .catch((failed) => {
         if (failed instanceof ApiError && failed.status === 401) {
           const pmc = localStorage.getItem(PMC_KEY);

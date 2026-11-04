@@ -8,7 +8,7 @@ import { Form } from "../components/Form";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { latest } from "../latest";
-import { day, money } from "../money";
+import { companyDay, money } from "../money";
 import type { PaymentMethod } from "../rent";
 import { PAYMENT_METHODS, requestId } from "../rent";
 import type { LeaseDetail } from "../rentals";
@@ -121,7 +121,7 @@ function AuthorityLines({ page, record, onRecorded }: {
 }) {
   const [request] = useState(requestId);
   const [pastHold, setPastHold] = useState(false);
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const [method, setMethod] = useState<PaymentMethod>("check");
   const [reference, setReference] = useState("");
   const [amounts, setAmounts] = useState<Record<string, string>>({});

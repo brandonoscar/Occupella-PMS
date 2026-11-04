@@ -106,15 +106,28 @@ def open_account(
     )
 
 
-def make_pmc(connection, owners=2) -> Pmc:
+def make_pmc(connection, owners=2, time_zone="UTC") -> Pmc:
     """A synthetic PMC: two trust bank accounts, `owners` owners with one property each, one
-    tenant, and every kind of ledger account. Balances all start at zero."""
+    tenant, and every kind of ledger account. Balances all start at zero. Its day is UTC's, as
+    the tests count days, unless asked for another time zone (None: none picked, so
+    America/New_York, src/pms/days.py; a database migrated only to before time zones has none)."""
     tag = uuid.uuid4().hex[:8]
     pmc_id = _one(
         connection,
         "INSERT INTO trust_pmcs (display_name) VALUES (%s) RETURNING pmc_id",
         (f"Synthetic PMC {tag}",),
     )
+    if (
+        time_zone is not None
+        and connection.execute(
+            "SELECT 1 FROM information_schema.columns"
+            " WHERE table_name = 'trust_company_profiles' AND column_name = 'time_zone'"
+        ).fetchone()
+    ):
+        connection.execute(
+            "INSERT INTO trust_company_profiles (pmc_id, time_zone) VALUES (%s, %s)",
+            (pmc_id, time_zone),
+        )
     banks = {}
     for kind in ("operating", "security_deposit"):
         banks[kind] = _one(

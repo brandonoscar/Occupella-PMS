@@ -3165,7 +3165,7 @@ CREATE FUNCTION public.trust_check_move_out_notice() RETURNS trigger
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
-    today date := (clock_timestamp() AT TIME ZONE 'UTC')::date;
+    today date := trust_pmc_day(NEW.pmc_id, clock_timestamp());
     lease record;
 BEGIN
     SELECT l.starts_on, l.ends_on INTO lease
@@ -3803,7 +3803,7 @@ BEGIN
     IF EXISTS (
         SELECT 1 FROM trust_lease_departures AS d
         WHERE d.lease_id = NEW.lease_id AND d.tenant_id = NEW.tenant_id
-          AND d.left_on <= (clock_timestamp() AT TIME ZONE 'UTC')::date
+          AND d.left_on <= trust_pmc_day(NEW.pmc_id, clock_timestamp())
     ) THEN
         RAISE EXCEPTION 'trust: this tenant has left lease % already', NEW.lease_id
             USING ERRCODE = 'check_violation';
@@ -6750,6 +6750,35 @@ CREATE FUNCTION public.trust_pay_rank(p_charge public.trust_charges) RETURNS int
         ) THEN 1
         ELSE 2
     END
+$$;
+
+
+--
+-- Name: trust_pmc_day(uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_pmc_day(p_pmc_id uuid, p_at timestamp with time zone DEFAULT now()) RETURNS date
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT (p_at AT TIME ZONE trust_pmc_time_zone(p_pmc_id))::date
+$$;
+
+
+--
+-- Name: trust_pmc_time_zone(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_pmc_time_zone(p_pmc_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT coalesce(
+        (SELECT p.time_zone FROM trust_company_profiles AS p
+         WHERE p.pmc_id = p_pmc_id
+         ORDER BY p.created_at DESC, p.id DESC LIMIT 1),
+        'America/New_York'
+    )
 $$;
 
 
@@ -15076,6 +15105,7 @@ CREATE TABLE public.trust_company_profiles (
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     reply_to text,
+    time_zone text,
     CONSTRAINT trust_company_profiles_address_line_1_check CHECK (((btrim(address_line_1) <> ''::text) AND (char_length(address_line_1) <= 200))),
     CONSTRAINT trust_company_profiles_address_line_2_check CHECK (((btrim(address_line_2) <> ''::text) AND (char_length(address_line_2) <= 200))),
     CONSTRAINT trust_company_profiles_check CHECK (((num_nonnulls(address_line_1, city, state, postal_code) = ANY (ARRAY[0, 4])) AND ((address_line_2 IS NULL) OR (address_line_1 IS NOT NULL)))),
@@ -15088,7 +15118,8 @@ CREATE TABLE public.trust_company_profiles (
     CONSTRAINT trust_company_profiles_nsf_fee_check CHECK (((nsf_fee >= (0)::numeric) AND (nsf_fee = round(nsf_fee, 2)))),
     CONSTRAINT trust_company_profiles_postal_code_check CHECK (((btrim(postal_code) <> ''::text) AND (char_length(postal_code) <= 20))),
     CONSTRAINT trust_company_profiles_reply_to_check CHECK (((reply_to ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'::text) AND (char_length(reply_to) <= 254))),
-    CONSTRAINT trust_company_profiles_state_check CHECK (((btrim(state) <> ''::text) AND (char_length(state) <= 50)))
+    CONSTRAINT trust_company_profiles_state_check CHECK (((btrim(state) <> ''::text) AND (char_length(state) <= 50))),
+    CONSTRAINT trust_company_profiles_time_zone_check CHECK ((time_zone = ANY (ARRAY['America/New_York'::text, 'America/Chicago'::text, 'America/Denver'::text, 'America/Phoenix'::text, 'America/Los_Angeles'::text, 'America/Anchorage'::text, 'Pacific/Honolulu'::text, 'America/Puerto_Rico'::text, 'UTC'::text])))
 );
 
 
@@ -34568,4 +34599,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261104000500'),
     ('20261104000600'),
     ('20261104000700'),
-    ('20261104000800');
+    ('20261104000800'),
+    ('20261104000900');

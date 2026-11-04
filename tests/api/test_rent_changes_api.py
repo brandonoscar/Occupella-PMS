@@ -92,7 +92,7 @@ def test_staff_change_a_month_to_month_rent_after_a_full_months_notice(
     ]
     # From its month on, the lease's page shows it in force.
     with monkeypatch.context() as later:
-        later.setattr(rent, "today", lambda: IN_TWO)
+        later.setattr(rent, "today", lambda *_: IN_TWO)
         assert the_lease(client, lease)["monthly_rent"] == "1575.00"
     # The tenant sees the change to come in their portal.
     join_as_tenant(other_client, conn, app_conn, pmc)

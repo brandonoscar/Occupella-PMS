@@ -3,7 +3,7 @@ import { Button } from "../components/Button";
 import { useConfirm } from "../components/Confirm";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
-import { day, money, usDate } from "../money";
+import { companyDay, money, usDate } from "../money";
 import type { CompanyFees } from "../payables";
 import { companyFeesLabel } from "../payables";
 import { requestId } from "../rent";
@@ -15,7 +15,7 @@ import type { Recorder } from "./useRecord";
 export function CompanyFeesForm({ fees, record }: { fees: CompanyFees; record: Recorder }) {
   const [id, setId] = useState(requestId);
   const [amount, setAmount] = useState("");
-  const [on, setOn] = useState(day(new Date()));
+  const [on, setOn] = useState(companyDay());
   const { ask, prompt } = useConfirm();
   return (
     <div className="flex flex-col gap-3">

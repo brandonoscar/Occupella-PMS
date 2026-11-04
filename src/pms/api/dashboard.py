@@ -269,7 +269,7 @@ def next_draw(conn: psycopg.Connection[Any], pmc: UUID, day: date) -> NextDraw:
 def dashboard(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None) -> Dashboard:
     """The Dashboard's figures on the day (today, UTC, by default), each beside its value the same
     day a month before."""
-    day = on or rent.today()
+    day = on or rent.today(conn, session.pmc_id)
     if not FIRST_DAY <= day <= LAST_DAY:
         raise HTTPException(422, "the Dashboard shows a day from 01/01/1900 to 01/01/9999")
     then = month_before(day)

@@ -18,7 +18,7 @@ LATE = {"late_grace_days": 5, "late_flat_fee": "50.00", "late_percent": "0"}
 
 @pytest.fixture
 def pmc(conn):
-    return make_pmc(conn)
+    return make_pmc(conn, time_zone=None)  # no profile row of its own
 
 
 def save(conn, pmc, **fields):
@@ -101,7 +101,7 @@ def test_a_profile_is_append_only_names_who_recorded_it_and_is_logged(conn, pmc)
 
 
 def test_a_profile_names_only_its_own_companys_staff(conn, pmc):
-    other = make_pmc(conn)
+    other = make_pmc(conn, time_zone=None)
     theirs = add_staff(conn, other.pmc_id)
     with acting_as(conn, theirs), refused("foreign key", psycopg.errors.ForeignKeyViolation):
         save(conn, pmc, **ADDRESS)

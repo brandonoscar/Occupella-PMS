@@ -17,7 +17,18 @@ export type Company = {
   // Where replies to the company's emails go; none, to the server's From address.
   reply_to: string | null;
   logo: Logo | null;
+  // Its time zone (src/pms/days.py): its day, for its money, pages and nightly run, is the date
+  // there. America/New_York until it picks another.
+  time_zone: string;
+  time_zones: Zone[];
 };
+export type Zone = { id: string; name: string };
+
+// "Eastern (America/New_York)": the zone as Company setup names it.
+export function zoneLine(company: Pick<Company, "time_zone" | "time_zones">): string {
+  const named = company.time_zones.find((zone) => zone.id === company.time_zone);
+  return named && named.name !== named.id ? `${named.name} (${named.id})` : company.time_zone;
+}
 // What an owner or a tenant sees of their property manager.
 export type ManagerCard = { name: string; address: Address | null; logo: boolean };
 

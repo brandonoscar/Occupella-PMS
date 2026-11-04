@@ -15,7 +15,7 @@ import { Wide } from "../components/Wide";
 import type { Budget } from "../budgets";
 import { MONTHS, budgetVsActualHref, isAmount, lineLabel, spread, total } from "../budgets";
 import { latest } from "../latest";
-import { money } from "../money";
+import { companyDate, money } from "../money";
 import type { OwnerMoney } from "../payables";
 import { fromCents, toCents } from "../reconcile";
 import type { Preview } from "../reports";
@@ -33,7 +33,7 @@ export function BudgetsPage({ me }: { me: Me }) {
   const [owners, setOwners] = useState<OwnerMoney[] | null>(null);
   const [property, setProperty] = useState("");
   const [account, setAccount] = useState("");
-  const [year, setYear] = useState(String(new Date().getUTCFullYear()));
+  const [year, setYear] = useState(String(companyDate().getUTCFullYear()));
   const [view, setView] = useState<View>("budget");
   const [budget, setBudget] = useState<Budget | null>(null);
   const [loads, setLoads] = useState(0);
