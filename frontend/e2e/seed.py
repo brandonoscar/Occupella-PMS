@@ -648,6 +648,7 @@ FEATURES = (
     "payouts",
     "receive-payment",
     "tax-ids",
+    "ai-keys",
     "reminders",
     "owner-portal-two",
     "portal-messages",

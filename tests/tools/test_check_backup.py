@@ -155,6 +155,33 @@ def test_a_restore_makes_the_roles_the_books_grant_to_when_the_server_lacks_them
             conn.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
 
 
+def test_a_restore_lets_the_app_set_the_role_an_api_key_runs_as(archive, database_url):
+    # An API key's request runs as trust_ai_agent (migration 0201): trust_app may set that role and
+    # never inherits it. That membership lives in the server, not the backup; a new server lacks
+    # it. It is taken away for this test (the server's other databases share it) and the restore
+    # gives it back; if the restore fails, the test gives it back itself.
+    def membership(conn):
+        return conn.execute(
+            "SELECT m.set_option, m.inherit_option FROM pg_auth_members AS m"
+            " WHERE m.roleid = 'trust_ai_agent'::regrole AND m.member = 'trust_app'::regrole"
+        ).fetchall()
+
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        assert membership(conn) == [(True, False)]
+        conn.execute("REVOKE trust_ai_agent FROM trust_app")
+    try:
+        with scratch_database(database_url, "pms_restore_test") as url:
+            restored = script("restore", archive, url)
+
+            assert restored.returncode == 0, restored.stderr
+            with psycopg.connect(url) as conn:
+                assert membership(conn) == [(True, False)]
+    finally:
+        with psycopg.connect(database_url, autocommit=True) as conn:
+            if not membership(conn):
+                conn.execute("GRANT trust_ai_agent TO trust_app WITH INHERIT FALSE, SET TRUE")
+
+
 def test_a_restore_whose_ledger_does_not_tie_out_fails(database_url, tmp_path):
     path = tmp_path / "unbalanced.dump"
     with scratch_database(database_url, "pms_backup_test") as url:

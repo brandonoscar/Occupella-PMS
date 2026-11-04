@@ -134,6 +134,32 @@ tests = [
 ]
 
 [[invariant]]
+id = "an-api-key-reads-and-never-moves-money"
+statement = "An API key (ADR 0011) is made and taken back, once, only by an admin (the database refuses anyone else and a key names who made it); its secret is shown once and kept only as its SHA-256, in no list, audit row or export. A request with a standing key runs its whole transaction as trust_ai_agent, which holds no grant that writes: it reads what that role reads, its report is always of the key's own company, and it names no staff member. trust_app may become that role and never inherits its grants. A key that doesn't exist, was taken back or is malformed is refused alike; a key is no session and a session is no key; each key is rate-limited."
+tests = [
+  "tests/properties/test_api_key_properties.py::test_a_key_reads_as_the_ai_only_while_it_stands_and_only_its_company",
+  "tests/properties/test_api_key_properties.py::test_a_key_makes_at_most_its_limit_in_any_window",
+  "tests/api/test_ai_keys.py::test_an_admin_makes_a_key_and_sees_its_secret_once",
+  "tests/api/test_ai_keys.py::test_a_key_taken_back_opens_nothing_from_its_next_request",
+  "tests/api/test_ai_keys.py::test_a_key_is_taken_back_once",
+  "tests/api/test_ai_keys.py::test_only_an_admin_sees_makes_and_takes_back_keys",
+  "tests/api/test_ai_keys.py::test_the_database_takes_a_key_and_its_revocation_from_an_admin_only",
+  "tests/api/test_ai_keys.py::test_keys_and_revocations_are_never_rewritten",
+  "tests/api/test_ai_keys.py::test_a_missing_malformed_or_unknown_key_is_refused_alike",
+  "tests/api/test_ai_keys.py::test_a_key_is_no_session_and_a_session_is_no_key",
+  "tests/api/test_ai_keys.py::test_a_reports_company_is_always_the_keys",
+  "tests/api/test_ai_keys.py::test_a_keys_request_runs_as_the_ai_role",
+  "tests/api/test_ai_keys.py::test_a_report_the_ai_role_may_not_run_is_refused_though_the_app_could",
+  "tests/api/test_ai_keys.py::test_each_key_is_rate_limited",
+  "tests/test_privileges.py::test_the_app_may_become_the_ai_role_and_never_holds_its_grants",
+  "tests/test_privileges.py::test_the_app_as_the_ai_role_reads_only_what_the_ai_reads",
+  "tests/test_privileges.py::test_ai_role_calls_only_the_reports",
+  "tests/test_privileges.py::test_ai_role_has_no_powers_beyond_its_grants",
+  "tests/test_ai_role.py::test_the_ai_role_cannot_move_money_or_change_a_record",
+  "tests/test_records_export.py::test_no_credential_comes_out",
+]
+
+[[invariant]]
 id = "concurrent-postings-all-finish"
 statement = "Concurrent transfers across the same accounts all finish, and the balances still add up: accounts are locked in one global order, and unrelated transfers never wait for each other."
 tests = [

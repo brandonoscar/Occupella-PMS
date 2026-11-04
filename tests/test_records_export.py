@@ -5,6 +5,7 @@ sessions stay out, and so does every token's hash, in its table and in the audit
 rows. Only the company's own rows, the same bytes for the same books."""
 
 import csv
+import hashlib
 import io
 import uuid
 import zipfile
@@ -22,6 +23,14 @@ def everything(database_url):
     with psycopg.connect(database_url, autocommit=True) as app:
         app.execute("SET ROLE trust_app")
         built = demo.build(app)
+        # An API key (ADR 0011), made by the demo's manager, an admin: its hash stays out too.
+        app.execute("SELECT set_config('trust.staff_id', %s, false)", (str(built.manager),))
+        app.execute(
+            "INSERT INTO trust_api_keys (pmc_id, name, prefix, secret_sha256)"
+            " VALUES (%s, 'Export key', 'occ_export01', %s)",
+            (built.pmc_id, hashlib.sha256(b"occ_synthetic-export-key").digest()),
+        )
+        app.execute("SELECT set_config('trust.staff_id', '', false)")
         other = make_pmc(app)
         app.execute(
             "UPDATE trust_pmcs SET display_name = 'Elsewhere Holdings' WHERE pmc_id = %s",
@@ -78,13 +87,16 @@ def test_no_credential_comes_out(everything):
 
     assert "records/trust_login_secrets.csv" not in names
     assert "records/trust_sessions.csv" not in names
+    assert table(archive, "records/trust_api_keys.csv")[0]["prefix"] == "occ_export01"
+    hashes = {"token_hash", "token_sha256", "status_token_sha256", "secret_sha256"}
     for name in names:
         if name.endswith(".csv"):
             header = archive.read(name).decode().splitlines()[0].split(",")
-            assert not set(header) & {"token_hash", "token_sha256", "status_token_sha256"}, name
+            assert not set(header) & hashes, name
             assert not {"password_hash", "totp_secret"} & set(header), name
     audit = archive.read("records/trust_audit_log.csv").decode()
-    assert "token_hash" not in audit and "token_sha256" not in audit
+    assert "trust_api_keys" in audit
+    assert not [h for h in hashes if h in audit]
     assert "trust_sessions" not in audit and "trust_login_secrets" not in audit
 
 

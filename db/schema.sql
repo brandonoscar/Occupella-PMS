@@ -1803,6 +1803,27 @@ $$;
 
 
 --
+-- Name: trust_check_api_key_admin(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_api_key_admin() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM trust_require_role(
+        NEW.pmc_id,
+        NEW.recorded_by,
+        'admin',
+        CASE TG_TABLE_NAME WHEN 'trust_api_keys' THEN 'make an API key'
+            ELSE 'take an API key back' END
+    );
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_application(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14248,6 +14269,36 @@ CREATE TABLE public.trust_announcements (
 
 
 --
+-- Name: trust_api_key_revocations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_api_key_revocations (
+    key_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    recorded_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_api_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_api_keys (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    name text NOT NULL,
+    prefix text NOT NULL,
+    secret_sha256 bytea NOT NULL,
+    recorded_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_api_keys_name_check CHECK (((name = btrim(name)) AND ((char_length(name) >= 1) AND (char_length(name) <= 60)))),
+    CONSTRAINT trust_api_keys_prefix_check CHECK ((prefix ~ '^occ_[A-Za-z0-9_-]{8}$'::text)),
+    CONSTRAINT trust_api_keys_secret_sha256_check CHECK ((length(secret_sha256) = 32))
+);
+
+
+--
 -- Name: trust_applicant_details; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18213,6 +18264,38 @@ ALTER TABLE ONLY public.trust_announcements
 
 
 --
+-- Name: trust_api_key_revocations trust_api_key_revocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_api_key_revocations
+    ADD CONSTRAINT trust_api_key_revocations_pkey PRIMARY KEY (key_id);
+
+
+--
+-- Name: trust_api_keys trust_api_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_api_keys
+    ADD CONSTRAINT trust_api_keys_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_api_keys trust_api_keys_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_api_keys
+    ADD CONSTRAINT trust_api_keys_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_api_keys trust_api_keys_secret_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_api_keys
+    ADD CONSTRAINT trust_api_keys_secret_sha256_key UNIQUE (secret_sha256);
+
+
+--
 -- Name: trust_applicant_details trust_applicant_details_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21542,6 +21625,20 @@ CREATE INDEX trust_announcements_by_pmc ON public.trust_announcements USING btre
 
 
 --
+-- Name: trust_api_key_revocations_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_api_key_revocations_recorded_by ON public.trust_api_key_revocations USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_api_keys_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_api_keys_recorded_by ON public.trust_api_keys USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_application_links_unit_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -24111,6 +24208,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_api_key_revocations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_api_key_revocations FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_api_keys trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_api_keys FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_applicant_details trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25711,6 +25822,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_anno
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_announcements FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_api_key_revocations trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_api_key_revocations FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_api_keys trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_api_keys FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -27856,6 +27981,20 @@ CREATE TRIGGER trust_payout_method BEFORE INSERT ON public.trust_payout_methods 
 
 
 --
+-- Name: trust_api_key_revocations trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_api_key_revocations FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_api_keys trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_api_keys FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_application_withdrawals trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28528,6 +28667,20 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_work_order_detail
 
 
 --
+-- Name: trust_api_key_revocations trust_recorded_by_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by_admin BEFORE INSERT ON public.trust_api_key_revocations FOR EACH ROW EXECUTE FUNCTION public.trust_check_api_key_admin();
+
+
+--
+-- Name: trust_api_keys trust_recorded_by_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by_admin BEFORE INSERT ON public.trust_api_keys FOR EACH ROW EXECUTE FUNCTION public.trust_check_api_key_admin();
+
+
+--
 -- Name: trust_charges trust_recurring_charge_amount; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28907,6 +29060,38 @@ ALTER TABLE ONLY public.trust_announcements
 
 ALTER TABLE ONLY public.trust_announcements
     ADD CONSTRAINT trust_announcements_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_api_key_revocations trust_api_key_revocations_pmc_id_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_api_key_revocations
+    ADD CONSTRAINT trust_api_key_revocations_pmc_id_key_id_fkey FOREIGN KEY (pmc_id, key_id) REFERENCES public.trust_api_keys(pmc_id, id);
+
+
+--
+-- Name: trust_api_key_revocations trust_api_key_revocations_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_api_key_revocations
+    ADD CONSTRAINT trust_api_key_revocations_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_api_keys trust_api_keys_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_api_keys
+    ADD CONSTRAINT trust_api_keys_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_api_keys trust_api_keys_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_api_keys
+    ADD CONSTRAINT trust_api_keys_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -34590,6 +34775,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261027000155'),
     ('20261028000200'),
     ('20261031000200'),
+    ('20261031000201'),
     ('20261102000150'),
     ('20261103000100'),
     ('20261104000100'),
