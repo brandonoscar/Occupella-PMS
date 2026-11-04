@@ -113,6 +113,8 @@ async function joinAsStaff(page: Page, invite: string): Promise<void> {
   await page.goto(`/invite#${invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
   await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
@@ -130,6 +132,8 @@ async function joinPortal(page: Page, invite: string): Promise<void> {
   await page.goto(`/invite#${invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
   await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await expect(page.getByRole("navigation", { name: "Sections" })).toBeVisible();
 }

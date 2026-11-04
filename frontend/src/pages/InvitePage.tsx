@@ -11,7 +11,15 @@ import { PMC_KEY } from "./SignInPage";
 import { firstName } from "../directory";
 import { Form } from "../components/Form";
 
-type Details = { kind: string; email: string; name: string; pmc_name: string; expires_at: string };
+type Details = {
+  kind: string;
+  email: string;
+  name: string;
+  pmc_name: string;
+  expires_at: string;
+  // A tenant or an owner gives a phone and may say texts are OK, beside these words; staff neither.
+  text_consent: string | null;
+};
 
 // An authenticator app reads the setup link as a QR code; the key is shown too, to type in.
 export function qrDataUrl(uri: string): string {
@@ -33,6 +41,8 @@ export function InvitePage() {
   const [error, setError] = useState("");
   const [password, setPassword] = useState("");
   const [again, setAgain] = useState("");
+  const [phone, setPhone] = useState("");
+  const [textsOk, setTextsOk] = useState(false);
   const [totpUri, setTotpUri] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -61,6 +71,7 @@ export function InvitePage() {
       const done = await api.post<Me | { totp_uri: string }>("/api/invites/accept", {
         token,
         password,
+        ...(details?.text_consent ? { phone, texts_ok: textsOk } : {}),
       });
       if ("totp_uri" in done) setTotpUri(done.totp_uri);
       else signedIn(done);
@@ -103,6 +114,17 @@ export function InvitePage() {
           <Field label="Confirm password" id="again" type="password"
             autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)}
             required />
+          {details.text_consent && (
+            <>
+              <Field label="Phone" id="phone" type="tel" autoComplete="tel" maxLength={40}
+                placeholder="(555) 555-0123" value={phone} onChange={(e) => setPhone(e.target.value)} required />
+              <label className="flex items-start gap-2 text-sm text-ink-muted">
+                <input type="checkbox" className="mt-0.5" checked={textsOk}
+                  onChange={(e) => setTextsOk(e.target.checked)} />
+                <span>{details.text_consent}</span>
+              </label>
+            </>
+          )}
           <Notice tone="error">{error}</Notice>
           <Button type="submit" disabled={busy}>
             Set password

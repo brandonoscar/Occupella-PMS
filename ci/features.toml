@@ -17,7 +17,7 @@
 
 [[feature]]
 id = "logins"
-statement = "Staff invite a staff member (from the staff page), owner or tenant (from their own page) by email; the invite sets a password (and for staff an authenticator); people sign in and out; a wrong email or password is refused without saying which; Logins lists everyone's login by status, and an admin disables one for good from its row's menu, which signs it out."
+statement = "Staff invite a staff member (from the staff page), owner or tenant (from their own page) by email; the invite sets a password (and for staff an authenticator); people sign in and out; a wrong email or password is refused without saying which; Logins lists everyone's login by status, and an admin disables one for good from its row's menu, which signs it out. A tenant or an owner gives a phone as they set their password (kept as E.164, and as their contact phone) and says whether the company may text them, the box unchecked unless they check it; each answer is kept with the words shown and when. Staff are asked neither."
 operations = [
   "POST /api/invites",
   "POST /api/invites/view",
@@ -33,6 +33,7 @@ browser = [
   "portal.spec.ts › an owner joins from the invite, reads their statement and signs back in",
   "portal.spec.ts › a wrong password is refused without saying which part was wrong",
   "portal.spec.ts › staff enroll an authenticator, invite a tenant and see a repair through",
+  "features.spec.ts › a tenant gives their phone at sign-up and says texts are OK, the box unchecked until they check it; staff see the phone on their page",
   "features.spec.ts › only staff holding a role do its work: an admin grants pay-out and adds staff, staff sign in again with their code, and a disabled login is signed out for good",
 ]
 

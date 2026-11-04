@@ -651,6 +651,7 @@ FEATURES = (
     "tenant-uploads",
     "ledger-sources",
     "request-details",
+    "signup-phone",
 )
 
 

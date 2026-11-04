@@ -34,6 +34,8 @@ import pyotp
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 
+from pms import phones
+
 INVITE_DAYS = 7
 SESSION_HOURS = 12
 MAX_FAILURES = 10
@@ -133,6 +135,9 @@ class InviteView:
     name: str
     pmc_name: str
     expires_at: datetime
+    # A tenant or an owner gives their phone at sign-up and says whether the company may text
+    # them, beside these words (src/pms/phones.py); staff are asked neither.
+    text_consent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -267,7 +272,8 @@ def names(conn: psycopg.Connection[Any], login_id: UUID) -> tuple[str, str]:
 def view_invite(conn: psycopg.Connection[Any], token: str) -> InviteView:
     _, _, login_id, kind, email, expires_at = _open_invite(conn, token, lock=False)
     name, pmc_name = names(conn, login_id)
-    return InviteView(kind, email, name, pmc_name, expires_at)
+    wording = None if kind == "staff" else phones.text_consent(pmc_name)
+    return InviteView(kind, email, name, pmc_name, expires_at, wording)
 
 
 def accept_invite(conn: psycopg.Connection[Any], token: str, password: str) -> Signed | Enrollment:

@@ -46,7 +46,7 @@ import pytest
 from fastapi import Request
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-from people import PASSWORD, invite_token, totp_from
+from people import PASSWORD, accept, invite_token, totp_from
 from psycopg import sql
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pypdf import PdfReader
@@ -869,7 +869,7 @@ def sign_in(client: TestClient, company: Company, app_conn: psycopg.Connection[A
     ):
         client.cookies.clear()
         token = invite_token(app_conn, made.pmc_id, kind, person, email)
-        ok(client.post("/api/invites/accept", json={"token": token, "password": PASSWORD}))
+        ok(client.post("/api/invites/accept", json=accept(token)))
         company.sessions[kind] = client.cookies[deps.COOKIE]
     client.cookies.clear()
 

@@ -118,7 +118,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   by email; the link carries a token kept only as its SHA-256, in the URL fragment. Accepting
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
   password. Staff invite from the person's own page (staff from the staff page) and disable a
-  login from Settings, Logins, for good: its sessions end and it takes no new invite. `trust_login_secrets` is never audited. The first staff member, their first admin
+  login from Settings, Logins, for good: its sessions end and it takes no new invite. `trust_login_secrets` is never audited.
+  Since migration 20261104000700 (the founder's review of 11/03, item 14) an owner or a tenant
+  setting their password gives a phone, kept as E.164 (`src/pms/phones.py`) and as their contact
+  phone, and says whether the company may text them, unchecked unless they check it
+  (`trust_text_consents`: append-only, the exact words shown and when, of the login's own
+  person; a new password records a new answer, the latest holding). Staff are asked neither. It
+  records consent for A2P 10DLC and sends no text; the AI role never reads it. The first staff member, their first admin
   role and their invite come from `python -m pms.admin`. A demo PMC to show the PMS with
   comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
   route functions as its staff, with last month's reconciliation waiting for approval and

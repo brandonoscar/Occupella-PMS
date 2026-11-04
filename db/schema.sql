@@ -4428,6 +4428,29 @@ $$;
 
 
 --
+-- Name: trust_check_text_consent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_text_consent() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_logins AS l
+        WHERE l.id = NEW.login_id AND l.pmc_id = NEW.pmc_id
+          AND l.tenant_id IS NOT DISTINCT FROM NEW.tenant_id
+          AND l.owner_id IS NOT DISTINCT FROM NEW.owner_id
+    ) THEN
+        RAISE EXCEPTION 'trust: login % is not this person''s', NEW.login_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_transfer_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -17733,6 +17756,26 @@ CREATE TABLE public.trust_tenants (
 
 
 --
+-- Name: trust_text_consents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_text_consents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    login_id uuid NOT NULL,
+    tenant_id uuid,
+    owner_id uuid,
+    phone text NOT NULL,
+    texts_ok boolean NOT NULL,
+    wording text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_text_consents_check CHECK ((num_nonnulls(tenant_id, owner_id) = 1)),
+    CONSTRAINT trust_text_consents_phone_check CHECK ((phone ~ '^\+[1-9][0-9]{7,14}$'::text)),
+    CONSTRAINT trust_text_consents_wording_check CHECK (((wording ~ '\S'::text) AND (length(wording) <= 1000)))
+);
+
+
+--
 -- Name: trust_unit_areas; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21113,6 +21156,14 @@ ALTER TABLE ONLY public.trust_tenants
 
 
 --
+-- Name: trust_text_consents trust_text_consents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_unit_areas trust_unit_areas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -23649,6 +23700,34 @@ CREATE INDEX trust_tenant_links_same_as ON public.trust_tenant_links USING btree
 
 
 --
+-- Name: trust_text_consents_by_login; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_consents_by_login ON public.trust_text_consents USING btree (login_id);
+
+
+--
+-- Name: trust_text_consents_by_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_consents_by_owner ON public.trust_text_consents USING btree (owner_id, created_at);
+
+
+--
+-- Name: trust_text_consents_by_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_consents_by_pmc ON public.trust_text_consents USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_text_consents_by_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_consents_by_tenant ON public.trust_text_consents USING btree (tenant_id, created_at);
+
+
+--
 -- Name: trust_transfers_key; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -25301,6 +25380,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_text_consents trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_text_consents FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_unit_areas trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26932,6 +27018,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tena
 
 
 --
+-- Name: trust_text_consents trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_text_consents FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_unit_areas trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27307,6 +27400,13 @@ CREATE TRIGGER trust_check_tenant_link BEFORE INSERT ON public.trust_tenant_link
 --
 
 CREATE TRIGGER trust_check_tenant_login BEFORE INSERT ON public.trust_logins FOR EACH ROW WHEN ((new.tenant_id IS NOT NULL)) EXECUTE FUNCTION public.trust_check_tenant_login();
+
+
+--
+-- Name: trust_text_consents trust_check_text_consent; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_text_consent BEFORE INSERT ON public.trust_text_consents FOR EACH ROW EXECUTE FUNCTION public.trust_check_text_consent();
 
 
 --
@@ -33789,6 +33889,38 @@ ALTER TABLE ONLY public.trust_tenants
 
 
 --
+-- Name: trust_text_consents trust_text_consents_login_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_login_id_fkey FOREIGN KEY (login_id) REFERENCES public.trust_logins(id);
+
+
+--
+-- Name: trust_text_consents trust_text_consents_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_text_consents trust_text_consents_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_text_consents trust_text_consents_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
 -- Name: trust_unit_areas trust_unit_areas_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34332,4 +34464,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261104000300'),
     ('20261104000400'),
     ('20261104000500'),
-    ('20261104000600');
+    ('20261104000600'),
+    ('20261104000700');

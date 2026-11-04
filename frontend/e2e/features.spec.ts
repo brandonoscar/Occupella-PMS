@@ -58,6 +58,8 @@ async function joinAsStaff(page: Page, invite: string): Promise<string> {
   await page.goto(`/invite#${invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
   await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   const secret = (await page.locator("code").textContent()) ?? "";
   await page.getByLabel("Code").fill(totp(secret));
@@ -66,11 +68,12 @@ async function joinAsStaff(page: Page, invite: string): Promise<string> {
   return secret;
 }
 
-// An owner or a tenant takes their invite: a password, and they are in.
+// An owner or a tenant takes their invite: a password and a phone (a fictional one), and they are in.
 async function joinPortal(page: Page, invite: string): Promise<void> {
   await page.goto(`/invite#${invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
   await page.getByLabel("Confirm password").fill(PASSWORD);
+  await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await expect(page.getByRole("navigation", { name: "Sections" })).toBeVisible();
 }
@@ -1564,6 +1567,34 @@ test("a tenant says what kind of repair and where, sees what to do first in an e
   await expect(theirs.getByRole("list", { name: "Notes on The tap drips" })).toContainText("It drips faster at night.");
   await page.getByLabel("Show done and closed requests too").check();
   await expect(page.getByRole("listitem", { name: "The fridge hums" })).toContainText("Cancelled by the tenant");
+});
+
+test("a tenant gives their phone at sign-up and says texts are OK, the box unchecked until they check it; staff see the phone on their page", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["signup-phone"]!;
+  const tenant = await (await browser.newContext()).newPage();
+  await tenant.goto(`/invite#${people.taylor}`);
+  await tenant.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await tenant.getByLabel("Confirm password").fill(PASSWORD);
+  const ok = tenant.getByRole("checkbox", { name: /^OK to text me\. Demo Property Management may text this number/ });
+  await expect(ok).not.toBeChecked();
+  await expect(ok).toHaveAccessibleName(/Reply STOP to stop, HELP for help\.$/);
+  // A phone is asked: without one the browser won't send it; a number that isn't one is refused.
+  await tenant.getByLabel("Phone").fill("12345");
+  await tenant.getByRole("button", { name: "Set password" }).click();
+  await expect(tenant.getByText("Enter a phone number with its area code, like (555) 555-0123.")).toBeVisible();
+  await tenant.getByLabel("Phone").fill("555.555.0142");
+  await ok.check();
+  await tenant.getByRole("button", { name: "Set password" }).click();
+  await expect(tenant.getByRole("heading", { level: 1, name: "Welcome, Taylor" })).toBeVisible();
+
+  // Staff see the phone it gave, kept as E.164, as the tenant's own.
+  await joinAsStaff(page, people.manager);
+  await section(page, "Tenants");
+  await page.getByRole("link", { name: "Taylor Demo" }).click();
+  await expect(page.getByRole("main")).toContainText("+15555550142");
 });
 
 test("a lease ended mid-month keeps only its days of the month's rent, and its deposit goes back less what it owes", async ({
