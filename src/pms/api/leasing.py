@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from pms import accounts, days, exports, notices
-from pms.api import applicant_details, outbox, scope, screening_criteria
+from pms.api import applicant_details, company, outbox, scope, screening_criteria
 from pms.api.deps import Conn, Staff, download, refusal
 from pms.api.listings import NewListing
 from pms.api.rentals import Page, Paged, PerPage
@@ -79,6 +79,9 @@ class Listing(BaseModel):
     monthly_rent: str
     # The company's screening criteria in words, the same for every applicant (migration 0089).
     criteria: str | None = None
+    # The company's own terms of use and privacy notice, as links (migration 0210).
+    terms_url: str | None = None
+    privacy_url: str | None = None
 
 
 class ApplicantIn(BaseModel):
@@ -159,12 +162,15 @@ def open_link(conn: psycopg.Connection[Any], via: LinkToken) -> tuple[Any, ...]:
 def view_listing(conn: Conn, link: LinkToken) -> Listing:
     """What an open link is for, so the applicant knows what they apply for."""
     _, pmc_id, pmc, prop, unit, rent = open_link(conn, link)
+    legal = company.legal_of(conn, pmc_id)
     return Listing(
         pmc=pmc,
         property=prop,
         unit=unit,
         monthly_rent=exports.text(rent),
         criteria=screening_criteria.in_force(conn, pmc_id).written,
+        terms_url=legal.terms_url,
+        privacy_url=legal.privacy_url,
     )
 
 

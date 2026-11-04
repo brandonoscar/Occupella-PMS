@@ -125,13 +125,16 @@ const blank = (text: string) => (text.trim() === "" ? null : text.trim());
 function standing(company: Company) {
   return {
     name: company.name, address: company.address, late_fees: company.late_fees, nsf_fee: company.nsf_fee,
-    reply_to: company.reply_to, time_zone: company.time_zone,
+    reply_to: company.reply_to, terms_url: company.terms_url, privacy_url: company.privacy_url,
+    time_zone: company.time_zone,
   };
 }
 
 function CompanyForm({ company, save }: { company: Company; save: Save }) {
   const [name, setName] = useState(company.name);
   const [replyTo, setReplyTo] = useState(company.reply_to ?? "");
+  const [termsUrl, setTermsUrl] = useState(company.terms_url ?? "");
+  const [privacyUrl, setPrivacyUrl] = useState(company.privacy_url ?? "");
   const [zone, setZone] = useState(company.time_zone);
   const [address, setAddress] = useState({
     address_line_1: company.address?.address_line_1 ?? "",
@@ -149,6 +152,8 @@ function CompanyForm({ company, save }: { company: Company; save: Save }) {
         ...standing(company),
         name,
         reply_to: blank(replyTo),
+        terms_url: blank(termsUrl),
+        privacy_url: blank(privacyUrl),
         time_zone: zone,
         address: given
           ? { ...address, address_line_2: blank(address.address_line_2) }
@@ -163,6 +168,14 @@ function CompanyForm({ company, save }: { company: Company; save: Save }) {
       <Field label="ZIP code" id="company-zip" required={given} maxLength={20} value={address.postal_code} onChange={set("postal_code")} />
       <Field label="Replies to the company's emails go to (optional)" id="company-reply-to" type="email" maxLength={254}
         value={replyTo} onChange={(e) => setReplyTo(e.target.value)} />
+      <Field label="Your terms of use, a link (optional)" id="company-terms" type="url" maxLength={500}
+        pattern="https://\S+" placeholder="https://" value={termsUrl} onChange={(e) => setTermsUrl(e.target.value)} />
+      <Field label="Your privacy notice, a link (optional)" id="company-privacy" type="url" maxLength={500}
+        pattern="https://\S+" placeholder="https://" value={privacyUrl} onChange={(e) => setPrivacyUrl(e.target.value)} />
+      <p className="text-sm text-ink-muted">
+        The words are yours and your lawyer&apos;s: the PMS writes none. Owners and tenants see the links on their
+        portal, applicants on the apply page and signers on the signing page.
+      </p>
       <Select label="Time zone" id="company-time-zone" value={zone} onChange={(e) => setZone(e.target.value)}>
         {company.time_zones.map((option) => (
           <option key={option.id} value={option.id}>{option.name === option.id ? option.id : `${option.name} (${option.id})`}</option>

@@ -151,6 +151,18 @@ describe("ApplyPage", () => {
     expect(criteria.textContent).toBe("How Synthetic PMC screens every applicantHousehold income of 2.5 times the rent.");
   });
 
+  it("shows the company's own terms of use and privacy notice before anyone applies", async () => {
+    window.history.replaceState(null, "", "/apply#link-token");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      ...LISTING, terms_url: "https://example.com/terms", privacy_url: "https://example.com/privacy",
+    }))));
+    render(<ApplyPage />);
+
+    expect((await screen.findByRole("link", { name: "terms of use" })).getAttribute("href")).toBe("https://example.com/terms");
+    expect(screen.getByRole("link", { name: "privacy notice" }).getAttribute("href")).toBe("https://example.com/privacy");
+    expect(screen.getByText(/Synthetic PMC's/).textContent).toBe("Synthetic PMC's terms of use and privacy notice");
+  });
+
   it("applies through a listing from the public page", async () => {
     window.history.replaceState(null, "", "/apply?listing=v1");
     const fetch = server(

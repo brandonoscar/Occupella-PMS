@@ -1190,7 +1190,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   rename; its mailing address (whole or none) and the late fee and NSF fee terms a property added
   from then on starts with, from its first day, are `trust_company_profiles`
   (append-only, the latest row holding, naming who recorded it; saving the same again writes
-  nothing). A default changes no property already there. The AI role never reads it.
+  nothing). A default changes no property already there. The AI role never reads it. Since
+  migration 0210 a profile row also holds the company's own terms of use and privacy notice as
+  https links (the founder, 11/03: the words are the company's and its lawyer's, never the PMS's),
+  shown on the portals' company card, the apply page and the signing page (`components/LegalLinks.tsx`).
 - A company's day (migration 20261104000900, the founder's review of 11/03, item 13): the date in
   its time zone, America/New_York until staff pick another US zone or UTC in Company setup (the
   profile's `time_zone`; `trust_pmc_time_zone`, `trust_pmc_day`, `src/pms/days.py`). Every zone

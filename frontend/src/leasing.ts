@@ -10,6 +10,9 @@ export type Listing = {
   monthly_rent: string;
   // The company's screening criteria in words, the same for every applicant (migration 0089).
   criteria?: string | null;
+  // The company's own terms of use and privacy notice, as links (migration 0210).
+  terms_url?: string | null;
+  privacy_url?: string | null;
 };
 
 // A unit on a PMC's public vacancy page, and the page.

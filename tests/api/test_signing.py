@@ -173,6 +173,21 @@ def test_a_signer_reads_agrees_opens_and_signs_then_keeps_the_lease_and_certific
     ).fetchone() == (2, 0)
 
 
+def test_a_signer_sees_the_companys_terms_and_privacy_notice(other_client, conn, pmc, made):
+    assert post(other_client, "view", made.tokens[0]).json()["terms_url"] is None
+    conn.execute(
+        "INSERT INTO trust_company_profiles (pmc_id, terms_url, privacy_url) VALUES (%s, %s, %s)",
+        (pmc.pmc_id, "https://example.com/terms", "https://example.com/privacy"),
+    )
+
+    seen = post(other_client, "view", made.tokens[0]).json()
+
+    assert (seen["terms_url"], seen["privacy_url"]) == (
+        "https://example.com/terms",
+        "https://example.com/privacy",
+    )
+
+
 def test_new_links_go_only_to_signers_who_havent_signed(client, other_client, made):
     agree(other_client, made.tokens[0])
     post(other_client, "document", made.tokens[0])

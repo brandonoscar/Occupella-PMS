@@ -23,13 +23,15 @@ const ZONES = [
   { id: "UTC", name: "UTC" },
 ];
 const BARE: Company = {
-  name: "Synthetic PMC", address: null, late_fees: null, nsf_fee: null, reply_to: null, logo: null,
+  name: "Synthetic PMC", address: null, late_fees: null, nsf_fee: null, reply_to: null, terms_url: null, privacy_url: null, logo: null,
   time_zone: "America/New_York", time_zones: ZONES,
 };
 const FULL: Company = {
   name: "Synthetic PMC", address: ADDRESS,
   late_fees: { grace_days: 5, flat_fee: "50.00", percent: "0", maximum: null }, nsf_fee: "35.00",
   reply_to: "office@example.com",
+  terms_url: "https://example.com/terms",
+  privacy_url: "https://example.com/privacy",
   logo: { id: "d1", content_type: "image/png", uploaded_at: "2026-10-17T00:00:00Z" },
   time_zone: "America/Los_Angeles", time_zones: ZONES,
 };
@@ -93,7 +95,9 @@ describe("SetupPage", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(posted(fetch)).toEqual([["/api/company", {
       name: "Synthetic PMC 2", address: { ...ADDRESS, address_line_2: null },
-      late_fees: FULL.late_fees, nsf_fee: "35.00", reply_to: "office@example.com", time_zone: "America/Los_Angeles",
+      late_fees: FULL.late_fees, nsf_fee: "35.00", reply_to: "office@example.com",
+      terms_url: "https://example.com/terms", privacy_url: "https://example.com/privacy",
+      time_zone: "America/Los_Angeles",
     }]]);
   });
 
@@ -148,6 +152,29 @@ describe("SetupPage", () => {
     expect(posted(fetch)[0]?.[1]).toMatchObject({ address: null });
   });
 
+  it("keeps the company's own terms and privacy notice as links, and takes one off", async () => {
+    const fetch = server(BARE);
+    render(<SetupPage me={ME} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit company" }));
+    expect(panel().textContent).toContain("The words are yours and your lawyer's: the PMS writes none.");
+    type("Your terms of use, a link (optional)", " https://example.com/terms ");
+    type("Your privacy notice, a link (optional)", "https://example.com/privacy");
+    fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Saved Synthetic PMC.")).toBeTruthy();
+    expect(posted(fetch)[0]?.[1]).toMatchObject({
+      terms_url: "https://example.com/terms", privacy_url: "https://example.com/privacy",
+    });
+
+    const again = server(FULL);
+    cleanup();
+    render(<SetupPage me={ME} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit company" }));
+    type("Your terms of use, a link (optional)", "");
+    fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Saved Synthetic PMC.")).toBeTruthy();
+    expect(posted(again)[0]?.[1]).toMatchObject({ terms_url: null, privacy_url: "https://example.com/privacy" });
+  });
+
   it("sets the fees new properties start with, or none", async () => {
     const fetch = server(BARE);
     render(<SetupPage me={ME} />);
@@ -163,7 +190,7 @@ describe("SetupPage", () => {
     expect(posted(fetch)).toEqual([["/api/company", {
       name: "Synthetic PMC", address: null,
       late_fees: { grace_days: 3, flat_fee: "25.00", percent: "0", maximum: null }, nsf_fee: "35.00", reply_to: null,
-      time_zone: "America/New_York",
+      terms_url: null, privacy_url: null, time_zone: "America/New_York",
     }]]);
     cleanup();
 
