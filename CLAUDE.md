@@ -59,7 +59,9 @@ associations, built in three lanes with their own migration numbers (the ADR). S
 run as `trust_ai_agent`, drafts that staff approve before the PMS acts, events, an MCP server and
 Enable AI, which pairs a self-hosted PMS with Occupella AI once the company pays for it. The AI
 itself (prompts, models, connectors, billing, chat) is not open source and never ships here.
-Still out of scope: 1099 filing, a mailing service, selling renters insurance, reporting rent to credit
+Since 2026-11-03 (`docs/adr/0012-portals-two.md`): the portals' second version, in sections, with
+an owner's units, tenants and repairs, messages, notices to move out, announcements and a tenant's
+own documents. Still out of scope: 1099 filing, a mailing service, selling renters insurance, reporting rent to credit
 bureaus, and the AI moving money. If one of these looks needed, stop and ask the founder.
 
 ## The standing rule: tests come with the code
@@ -337,6 +339,26 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and the card links to OpenStreetMap at the point. A location counts only for the address it
   was found for (`trust_property_location`). The Properties list shows each address and finds a
   property by it, as `/api/search` does. The AI role reads both tables.
+- The portals' second version (migration 20261103000100, ADR 0012): each portal is in sections
+  in its sidebar (`TENANT_SECTIONS` in `pages/TenantHome.tsx`, `OWNER_SECTIONS` in
+  `pages/OwnerHome.tsx`). An owner's: Overview, Properties (each at `/properties/<id>`,
+  `src/pms/api/owner_portal.py`: its units, who rents each by name only, the rent, what each lease
+  owes today, what is vacant since when and who gave notice), Statements and reports, Bills,
+  Repairs (`/api/owner/work-orders`: the work orders at their properties), Documents, Messages and
+  Profile (their own contact details, `/api/owner/contact`, which staff see they changed). A
+  tenant's: Overview (announcements, the lease and its balance), Payments, Lease (its files,
+  renters insurance, renewals, sending a document of their own and notice to move out), Repairs,
+  Messages and Profile. Messages (`src/pms/api/messages.py`, `trust_messages`): a tenant or an
+  owner writes to the company, 20 a day at most; staff answer at `/messages` (area 'email'), each
+  answer emailed too, and the Dashboard lists those waiting. A notice to move out
+  (`trust_move_out_notices`, `src/pms/api/leaving.py`: the last day they live there, today or
+  later within the lease and two years ahead at most, the latest holding) ends nothing; staff see
+  it on the Dashboard and the lease's page, the owner on the property. Announcements
+  (`src/pms/api/announcements.py`, `trust_announcements`, `trust_announcement_removals`, area
+  'email'): staff post one for every property's tenants or one property's at `/announcements`,
+  shown on the tenant's Overview until taken down. A tenant's own document is a `lease_document`
+  naming them (`trust_documents.uploaded_by_tenant`, 10 a day at most), marked as theirs on the
+  lease's Files. All append-only; the AI role reads none of it (`AI_NEVER_READS`).
 - Leasing (`src/pms/api/leasing.py`, `src/pms/leasing/`): applicants have no login. They apply
   through a link staff open for a unit (`/apply#<token>`) and follow it with a status link;
   both tokens travel in JSON bodies and are kept only as SHA-256. Screening goes through
@@ -423,7 +445,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   logins, invites, sessions or credentials, nor rental applications, applicants and their
   screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes,
   nor notices made for a lease, nor vendors' links, nor leads and showings, nor screening criteria,
-  nor tax IDs and who saw them, nor what applicants give of themselves (`AI_NEVER_READS` in
+  nor tax IDs and who saw them, nor what applicants give of themselves, nor portal messages,
+  notices to move out and announcements (`AI_NEVER_READS` in
   `tests/test_privileges.py`), nor their rows in the audit log: row-level security shows it only
   the audit rows of tables it may read (migration 0043).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it

@@ -58,7 +58,15 @@ from hypothesis.stateful import (
 from pms.accounts import Session
 from pms.api import payables
 
-TODAY = datetime.now(UTC).date()
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY
+    TODAY = datetime.now(UTC).date()
+
+
+on_this_day()
 CENTS = st.integers(min_value=1, max_value=300_000).map(lambda c: Decimal(c) / 100)
 RESERVE = Decimal("100.00")
 FEE = Decimal("25.00")  # each period's management fee: the agreement's minimum

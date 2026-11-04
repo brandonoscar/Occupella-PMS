@@ -14,13 +14,21 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import add_agreement, balance, bank_sums, make_pmc, post
+from helpers import add_agreement, balance, bank_sums, fresh, make_pmc, post
 from people import join_as_owner, join_as_staff, join_as_tenant
 
 from pms import accounts, email
 
-NOW = datetime.now(UTC)
-TODAY = NOW.date()
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global NOW, TODAY
+    NOW = datetime.now(UTC)
+    TODAY = NOW.date()
+
+
+on_this_day()
 DAY = timedelta(days=1)
 PDF = b"%PDF-1.4 synthetic invoice\n"
 
@@ -251,7 +259,7 @@ def test_the_approval_email_names_the_markup(client, conn, staff, pmc):
     ("change", "status", "detail"),
     [
         ({"reference": "USED-1"}, 409, "this vendor has a bill with that reference already"),
-        ({"due_on": str(TODAY - 3 * DAY)}, 422, "a bill is due on or after its date"),
+        ({"due_on": lambda: str(TODAY - 3 * DAY)}, 422, "a bill is due on or after its date"),
         ({"shares": "one"}, 422, None),
         ({"shares": "same account"}, 422, "each share is a different owner's property account"),
         ({"shares": "zero"}, 422, None),
@@ -263,6 +271,7 @@ def test_the_approval_email_names_the_markup(client, conn, staff, pmc):
 def test_bad_shared_bills_are_refused_and_enter_nothing(
     client, conn, staff, pmc, change, status, detail
 ):
+    change = fresh(change)
     terms(conn, pmc, 0)
     terms(conn, pmc, 1, markup="0")
     ok(bill(client, pmc, reference="USED-1"))

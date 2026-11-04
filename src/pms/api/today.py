@@ -12,7 +12,7 @@ someone today.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any
 from uuid import UUID
@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from pms.api import (
     journal,
     leasing,
+    messages,
     moveout,
     offers,
     payables,
@@ -134,6 +135,50 @@ def holdovers(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> list[Ho
     ]
 
 
+class NoticeGiven(BaseModel):
+    lease_id: UUID
+    property: str
+    unit: str
+    tenants: list[str]
+    leaving_on: date
+    given_at: datetime
+
+
+NOTICES = """
+SELECT l.id, p.display_name, u.display_name,
+       ARRAY(SELECT t.display_name FROM trust_lease_tenants AS lt
+             JOIN trust_tenants AS t ON t.id = lt.tenant_id
+             WHERE lt.lease_id = l.id ORDER BY t.display_name COLLATE "C", t.id),
+       n.leaving_on, n.created_at
+FROM trust_leases AS l
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+JOIN LATERAL (
+    SELECT n.leaving_on, n.created_at FROM trust_move_out_notices AS n
+    WHERE n.lease_id = l.id ORDER BY n.created_at DESC, n.id DESC LIMIT 1
+) AS n ON true
+WHERE l.pmc_id = %(pmc)s AND (l.ends_on IS NULL OR l.ends_on > n.leaving_on)
+  AND n.leaving_on >= %(day)s::date - 30
+ORDER BY n.leaving_on, p.display_name COLLATE "C", u.display_name COLLATE "C", l.id
+"""
+
+
+def notices_given(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> list[NoticeGiven]:
+    """Notices to move out whose lease staff haven't ended by the day the tenant leaves (left
+    out once that day is 30 days past)."""
+    return [
+        NoticeGiven(
+            lease_id=row[0],
+            property=row[1],
+            unit=row[2],
+            tenants=list(row[3]),
+            leaving_on=row[4],
+            given_at=row[5],
+        )
+        for row in conn.execute(NOTICES, {"pmc": pmc_id, "day": day}).fetchall()
+    ]
+
+
 class Today(BaseModel):
     on: date
     late_rent: list[LateLease]
@@ -160,6 +205,11 @@ class Today(BaseModel):
     # Fixed-term leases that went month to month in the last 30 days, their term run out with no
     # renewal signed (migration 0154).
     month_to_month: list[Holdover] = []
+    # Notices to move out tenants gave in the portal for leases staff haven't ended by that day
+    # (the portals' second version, migration 20261103000100).
+    move_out_notices: list[NoticeGiven] = []
+    # Conversations whose latest message is a tenant's or an owner's: waiting for an answer.
+    messages_waiting: list[messages.Thread] = []
 
 
 # The leases named as the rent page names them: property, unit and every tenant on it.
@@ -332,6 +382,8 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
         deposits_to_return=moveout.due_back(conn, session.pmc_id, day),
         owner_draws=payouts.waiting_draws_of(conn, session.pmc_id),
         month_to_month=holdovers(conn, session.pmc_id, day),
+        move_out_notices=notices_given(conn, session.pmc_id, day),
+        messages_waiting=[t for t in messages.threads(conn, session.pmc_id) if t.waiting],
         renters_insurance=[
             Uninsured(
                 lease_id=lease,

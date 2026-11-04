@@ -296,6 +296,12 @@ TABLES = {
     "trust_owner_online_payments": {"SELECT", "INSERT"},
     "trust_owner_online_payment_events": {"SELECT", "INSERT"},
     "trust_autopay": {"SELECT", "INSERT"},
+    # The portals, second version (migration 20261103000100): conversations with tenants and
+    # owners, tenants' notices to move out, and staff's announcements with their removals.
+    "trust_messages": {"SELECT", "INSERT"},
+    "trust_move_out_notices": {"SELECT", "INSERT"},
+    "trust_announcements": {"SELECT", "INSERT"},
+    "trust_announcement_removals": {"SELECT", "INSERT"},
     "trust_autopay_accounts": {"SELECT", "INSERT"},
     "trust_autopay_stops": {"SELECT", "INSERT"},
     "trust_autopay_runs": {"SELECT", "INSERT"},
@@ -417,6 +423,12 @@ AI_NEVER_READS = {
     "trust_contacts",
     # What staff write about people and their homes (ADR 0006).
     "trust_notes",
+    # What tenants and owners write to their manager and what they are told, and a tenant's
+    # notice to move out with its note (the portals, migration 20261103000100).
+    "trust_messages",
+    "trust_move_out_notices",
+    "trust_announcements",
+    "trust_announcement_removals",
     # The company's mailing address, with the fee terms new properties start with (ADR 0006).
     "trust_company_profiles",
     # Who else lives in a home, their pets (an assistance animal speaks to a disability) and
@@ -570,6 +582,7 @@ FUNCTIONS = {
     "trust_check_online_payment_event()": set(),  # a trigger's: no one calls it
     "trust_check_owner_online_payment()": set(),  # a trigger's: no one calls it
     "trust_check_owner_online_payment_event()": set(),  # a trigger's: no one calls it
+    "trust_check_move_out_notice()": set(),  # a trigger's: no one calls it
     "trust_check_autopay()": set(),  # a trigger's: no one calls it
     "trust_check_autopay_run()": set(),  # a trigger's: no one calls it
     "trust_lock_autopay_stop()": set(),  # a trigger's: no one calls it

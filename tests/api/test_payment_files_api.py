@@ -16,6 +16,7 @@ from helpers import (
     balance,
     bank_sums,
     charge,
+    fresh,
     hold_payments,
     make_pmc,
     open_lease,
@@ -25,11 +26,20 @@ from people import join_as_owner, join_as_staff, join_as_tenant
 from pms import email
 from pms.api import rent
 
-TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
-START = TODAY - 90 * DAY
 HEADER = "Date,Amount,Property,Unit,Payer,Reference,Method"
-US = f"{TODAY:%m/%d/%Y}"
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, START, US
+    TODAY = datetime.now(UTC).date()
+    START = TODAY - 90 * DAY
+    US = f"{TODAY:%m/%d/%Y}"
+
+
+on_this_day()
 
 
 @pytest.fixture
@@ -360,14 +370,20 @@ def test_another_pmcs_file_line_or_lease_reads_as_not_found(client, conn, staff,
 @pytest.mark.parametrize(
     ("content", "says"),
     [
-        (a_file(f"{TODAY},100.00", header="Date,Amount"), "line 1: no unit or payer column:"),
-        (a_file(f"{TODAY},1A", header="Date,Unit"), "line 1: no amount column"),
-        (a_file(f"{TODAY},-100.00,,1A,,,"), "line 2: a payment file lists money received"),
-        (a_file(f"{TODAY},0.00,,1A,,,"), "line 2: a payment file lists money received"),
-        (a_file(f"{TODAY},12.345,,1A,,,"), "line 2: '12.345' is not an amount in cents"),
-        (a_file(f"{TODAY + DAY},100.00,,1A,,,"), "line 2: "),
+        (
+            lambda: a_file(f"{TODAY},100.00", header="Date,Amount"),
+            "line 1: no unit or payer column:",
+        ),
+        (lambda: a_file(f"{TODAY},1A", header="Date,Unit"), "line 1: no amount column"),
+        (lambda: a_file(f"{TODAY},-100.00,,1A,,,"), "line 2: a payment file lists money received"),
+        (lambda: a_file(f"{TODAY},0.00,,1A,,,"), "line 2: a payment file lists money received"),
+        (lambda: a_file(f"{TODAY},12.345,,1A,,,"), "line 2: '12.345' is not an amount in cents"),
+        (lambda: a_file(f"{TODAY + DAY},100.00,,1A,,,"), "line 2: "),
         (a_file("10/32/2026,100.00,,1A,,,"), "line 2: '10/32/2026' is not a date"),
-        (a_file(f"{TODAY},100.00,,1A,,,barter"), "line 2: 'barter' is not a way money comes"),
+        (
+            lambda: a_file(f"{TODAY},100.00,,1A,,,barter"),
+            "line 2: 'barter' is not a way money comes",
+        ),
         (a_file(",100.00,,1A,,,"), "line 2: no date"),
         ("\n\n", "the file is empty"),
         ("\r0", "line 1: no date, amount column"),  # a bare carriage return ends a line
@@ -377,6 +393,7 @@ def test_another_pmcs_file_line_or_lease_reads_as_not_found(client, conn, staff,
 def test_a_file_that_is_not_payments_received_is_refused_whole(
     client, conn, staff, pmc, homes, content, says
 ):
+    content = fresh(content)
     for path in ("/api/rent/payment-files/preview", "/api/rent/payment-files"):
         answer = post(client, path, file_name="bad.csv", content=content)
         assert answer.status_code == 422, answer.text

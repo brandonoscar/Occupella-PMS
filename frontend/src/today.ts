@@ -48,6 +48,25 @@ export type Today = {
   // Fixed-term leases the nightly run rolled to month to month in the last 30 days, their term
   // run out with no renewal signed (ADR 0010 phase 1c), while they still are.
   month_to_month?: Holdover[];
+  // Notices to move out tenants gave in the portal for leases not yet ended by that day, and
+  // conversations whose latest message is a tenant's or an owner's (the portals' second version).
+  move_out_notices?: NoticeGiven[];
+  messages_waiting?: MessageWaiting[];
+};
+export type NoticeGiven = {
+  lease_id: string;
+  property: string;
+  unit: string;
+  tenants: string[];
+  leaving_on: string;
+  given_at: string;
+};
+export type MessageWaiting = {
+  about: "tenant" | "owner";
+  person_id: string;
+  name: string;
+  last_at: string;
+  preview: string;
 };
 export type Holdover = {
   lease_id: string;
@@ -292,6 +311,18 @@ export function attentionRows(today: Today): AttentionRow[] {
     ...(today.month_to_month ?? []).map((lease) => ({
       key: `holdover:${lease.lease_id}`, what: "Month to month", line: holdoverLine(lease), due: lease.rolled_on,
       action: go("Open lease", `/leases/${lease.lease_id}`),
+    })),
+    ...(today.move_out_notices ?? []).map((notice) => ({
+      key: `notice:${notice.lease_id}`, what: "Notice to move out",
+      line: `${notice.tenants.join(", ")} · ${notice.property}, ${notice.unit} · leaving ${usDate(notice.leaving_on)}`,
+      due: notice.leaving_on,
+      action: go("Open lease", `/leases/${notice.lease_id}`),
+    })),
+    ...(today.messages_waiting ?? []).map((thread) => ({
+      key: `message:${thread.about}:${thread.person_id}`, what: "Message",
+      line: `${thread.name} (${thread.about}): ${thread.preview}`,
+      due: thread.last_at.slice(0, 10),
+      action: go("Answer", `/messages/${thread.about}/${thread.person_id}`),
     })),
   ];
   // A stable sort: rows due the same day keep the order above.

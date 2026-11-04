@@ -20,9 +20,9 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from pms import accounts, exports, notices
-from pms.api import directory, documents, maintenance, moveout, offers, outbox, signing
+from pms.api import directory, documents, leaving, maintenance, moveout, offers, outbox, signing
 from pms.api import rent as rent_api
-from pms.api.deps import Conn, Rows, Tenant, download
+from pms.api.deps import Conn, Rows, Tenant, download, refusal
 from pms.leasing import esign
 
 router = APIRouter(prefix="/api/tenant")
@@ -30,6 +30,9 @@ router = APIRouter(prefix="/api/tenant")
 # and a ceiling on what a stolen session can pile on staff.
 REQUESTS_PER_DAY = 10
 PHOTOS_PER_REQUEST = 3
+# A tenant's own lease documents and notices, at most so many a day per lease (UTC).
+UPLOADS_PER_DAY = 10
+NOTICES_PER_DAY = 5
 
 
 def today() -> date:
@@ -66,6 +69,19 @@ class LeaseFile(BaseModel):
     kind: Literal["signed lease", "signing certificate", "lease document"]
     title: str
     url: str
+    # A document the tenant (or a co-tenant) filed themselves from the portal.
+    from_tenant: bool = False
+
+
+class NewMoveOutNotice(BaseModel):
+    leaving_on: date
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class NewLeaseDocument(BaseModel):
+    title: documents.Title
+    content_type: documents.ContentType
+    content_base64: str = Field(min_length=4, max_length=7_000_000)
 
 
 class Lease(BaseModel):
@@ -97,6 +113,8 @@ class Lease(BaseModel):
     payments: list[rent_api.Paid]
     # The lease as signed, its signing certificate and the lease's documents, to download.
     files: list[LeaseFile]
+    # The latest notice to move out a tenant on it gave, if any.
+    move_out_notice: leaving.MoveOutNotice | None = None
 
 
 class Photo(BaseModel):
@@ -208,6 +226,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             )
         )
     files = {row[0]: files_of(conn, session.pmc_id, row[0]) for row in rows}
+    notices_given = {row[0]: leaving.notice_of(conn, session.pmc_id, row[0]) for row in rows}
     asked = {row[0]: rent_api.deposits_asked(conn, session.pmc_id, row[0]) for row in rows}
     return [
         Lease(
@@ -235,6 +254,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             renters_insurance=insured.get(lease),
             payments=paid.get(lease, []),
             files=files[lease],
+            move_out_notice=notices_given[lease],
         )
         for lease, prop, unit, starts, ends, rent, due_day, names, balance, returned in rows
     ]
@@ -249,7 +269,7 @@ JOIN trust_signature_requests AS r ON r.offer_id = o.id
 WHERE c.pmc_id = %s AND c.lease_id = %s
 """
 LEASE_DOCUMENTS = """
-SELECT d.id, d.title FROM trust_documents AS d
+SELECT d.id, d.title, d.uploaded_by_tenant IS NOT NULL FROM trust_documents AS d
 WHERE d.pmc_id = %s AND d.lease_id = %s AND d.kind = 'lease_document'
   AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)
 ORDER BY d.created_at DESC, d.id
@@ -274,10 +294,75 @@ def files_of(conn: psycopg.Connection[Any], pmc_id: UUID, lease: UUID) -> list[L
                 )
             )
     found += [
-        LeaseFile(kind="lease document", title=title, url=f"{base}/documents/{document}")
-        for document, title in conn.execute(LEASE_DOCUMENTS, (pmc_id, lease)).fetchall()
+        LeaseFile(
+            kind="lease document",
+            title=title,
+            url=f"{base}/documents/{document}",
+            from_tenant=mine,
+        )
+        for document, title, mine in conn.execute(LEASE_DOCUMENTS, (pmc_id, lease)).fetchall()
     ]
     return found
+
+
+def given_today(conn: psycopg.Connection[Any], table: str, column: str, lease_id: UUID) -> int:
+    row = conn.execute(
+        f"SELECT count(*) FROM {table} WHERE lease_id = %s AND {column} IS NOT NULL"  # noqa: S608
+        " AND (created_at AT TIME ZONE 'UTC')::date = (now() AT TIME ZONE 'UTC')::date",
+        (lease_id,),
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+@router.post("/leases/{lease_id}/move-out-notice", status_code=201)
+def give_notice(
+    session: Tenant, conn: Conn, lease_id: UUID, new: NewMoveOutNotice
+) -> leaving.MoveOutNotice:
+    """A tenant on a lease tells the company the last day they will live there; a new notice
+    replaces the one before. Staff see it on the lease and with the move-outs, and end the lease
+    themselves: the notice ends nothing and moves no money."""
+    tenant = still_on(conn, session, lease_id)
+    note = None if new.note is None or not new.note.strip() else new.note.strip()
+    if note is not None and "\x00" in note:
+        raise HTTPException(422, "a note is text")
+    if given_today(conn, "trust_move_out_notices", "tenant_id", lease_id) >= NOTICES_PER_DAY:
+        raise HTTPException(429, f"at most {NOTICES_PER_DAY} notices a day per lease")
+    try:
+        with conn.transaction():
+            conn.execute(
+                "INSERT INTO trust_move_out_notices (pmc_id, lease_id, tenant_id, leaving_on, note)"
+                " VALUES (%s, %s, %s, %s, %s)",
+                (session.pmc_id, lease_id, tenant, new.leaving_on, note),
+            )
+    except psycopg.errors.CheckViolation as refused:
+        raise HTTPException(422, refusal(refused)) from None
+    found = leaving.notice_of(conn, session.pmc_id, lease_id)
+    assert found is not None
+    return found
+
+
+@router.post("/leases/{lease_id}/documents", status_code=201)
+def file_document(session: Tenant, conn: Conn, lease_id: UUID, new: NewLeaseDocument) -> LeaseFile:
+    """A tenant on a lease files a document of it (an insurance certificate, a pet's records):
+    a PDF, JPEG or PNG of at most 5 MB, which staff see with the lease's files, named as the
+    tenant's. It can't be taken back from the portal: staff remove it."""
+    tenant = still_on(conn, session, lease_id)
+    if given_today(conn, "trust_documents", "uploaded_by_tenant", lease_id) >= UPLOADS_PER_DAY:
+        raise HTTPException(
+            429, f"at most {UPLOADS_PER_DAY} files a day per lease; call the office"
+        )
+    made = documents.keep(
+        conn,
+        session.pmc_id,
+        documents.NewDocument(kind="lease_document", about_id=lease_id, **new.model_dump()),
+        uploaded_by_tenant=tenant,
+    )
+    return LeaseFile(
+        kind="lease document",
+        title=new.title,
+        url=f"/api/tenant/leases/{lease_id}/documents/{made}",
+        from_tenant=True,
+    )
 
 
 def signed_offer(

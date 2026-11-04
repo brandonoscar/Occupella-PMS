@@ -125,8 +125,8 @@ function ContactDetails({
   );
 }
 
-// The same, in a card of its own under its label. A tenant's page says when the tenant changed
-// them themselves, in the portal.
+// The same, in a card of its own under its label. A tenant's or an owner's page says when they
+// changed them themselves, in the portal.
 export function ContactCard(props: {
   path: string;
   contact: Contact;
@@ -146,11 +146,11 @@ export function ContactCard(props: {
 
 // A tenant's own contact details in the portal (q121): theirs to change. The company writes to
 // this email from then on; signing in keeps the email they sign in with.
-export function MyContactCard({ name }: { name: string }) {
+export function MyContactCard({ name, who = "tenant" }: { name: string; who?: "tenant" | "owner" }) {
   const [contact, setContact] = useState<Contact | null>(null);
   const [error, setError] = useState("");
   function refresh() {
-    api.get<Contact>("/api/tenant/contact").then(setContact)
+    api.get<Contact>(`/api/${who}/contact`).then(setContact)
       .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
   }
   useEffect(refresh, []);
@@ -159,8 +159,10 @@ export function MyContactCard({ name }: { name: string }) {
       {contact === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : (
-        <ContactDetails path="/api/tenant" contact={contact} refresh={refresh} name={name}
-          note="Your manager writes to you at this email and calls you at these numbers. You still sign in with the email you signed up with." />
+        <ContactDetails path={`/api/${who}`} contact={contact} refresh={refresh} name={name}
+          note={who === "owner"
+            ? "Your manager writes to you, and sends your statements, at this email and calls you at these numbers. You still sign in with the email you signed up with."
+            : "Your manager writes to you at this email and calls you at these numbers. You still sign in with the email you signed up with."} />
       )}
     </Card>
   );

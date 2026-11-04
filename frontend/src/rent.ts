@@ -114,6 +114,8 @@ export type RentLease = {
   carried: string;
   moved_from: Move | null;
   moved_to: Move | null;
+  // The latest notice to move out a tenant on it gave from the portal (staff's lease page only).
+  move_out_notice?: { leaving_on: string; note: string | null; given_by: string; given_at: string } | null;
   on_hold: boolean;
   open_charges: OpenCharge[];
   payments: Paid[];

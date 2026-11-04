@@ -9,12 +9,21 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from helpers import add_nsf_fee_policy, add_tenant, add_unit, charge, make_pmc, open_lease
+from helpers import add_nsf_fee_policy, add_tenant, add_unit, charge, fresh, make_pmc, open_lease
 from people import PASSWORD, invite_token, join_as_owner, join_as_staff, join_as_tenant
 
-TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
-START = TODAY - 60 * DAY
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, START
+    TODAY = datetime.now(UTC).date()
+    START = TODAY - 60 * DAY
+
+
+on_this_day()
 
 
 @pytest.fixture
@@ -31,7 +40,8 @@ def post(client, path, **body):
     return client.post(path, json=json.loads(json.dumps(body, default=str)))
 
 
-def lease_of(conn, pmc, tenants=("Tenant A",), starts=START, ends=None):
+def lease_of(conn, pmc, tenants=("Tenant A",), starts=None, ends=None):
+    starts = START if starts is None else starts
     prop = pmc.owners[0].property_id
     unit = add_unit(conn, pmc.pmc_id, prop, "Unit 1")
     people = [add_tenant(conn, pmc.pmc_id, prop, name) for name in tenants]
@@ -262,12 +272,13 @@ def test_a_ledger_downloads_as_csv_with_its_balance_forward(client, conn, staff,
 @pytest.mark.parametrize(
     "asked",
     [
-        {"start": str(TODAY), "end": str(TODAY - DAY)},
+        {"start": lambda: str(TODAY), "end": lambda: str(TODAY - DAY)},
         {"start": "2026-02-30"},
         {"format": "xlsx"},
     ],
 )
 def test_a_ledger_refuses_days_backwards_or_a_format_it_has_not(client, conn, staff, pmc, asked):
+    asked = fresh(asked)
     lease, _ = lease_of(conn, pmc)
     assert client.get(f"/api/leases/{lease}/ledger", params=asked).status_code == 422
 
