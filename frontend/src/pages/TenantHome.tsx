@@ -78,6 +78,8 @@ export type Lease = {
   // The security deposit the signed lease asked, what is held of it and what is still to give
   // the manager (q036); null when it asked none, or once the deposit was returned.
   deposit_asked: DepositAsked | null;
+  // The security deposit held for the lease's tenants; null when none is held.
+  deposit_held: string | null;
   // Each payment to it, newest first, each with its receipt to download.
   payments: Paid[];
   // The lease as signed, its signing certificate and the lease's documents (q120), the tenant's
@@ -165,6 +167,41 @@ export function rentChangeNotice(lease: Pick<Lease, "rent_changes" | "monthly_re
 
 function negated(amount: string): string {
   return amount.startsWith("-") ? amount.slice(1) : `-${amount}`;
+}
+
+// What the lease card says about it: the home, term, rent (with changes to come), due day and
+// who is on it, then the security deposit held and the lease to read, each only when there is one.
+function leaseDetails(lease: Lease): { key: string; label: string; value: React.ReactNode }[] {
+  const rent = `${money(lease.monthly_rent)} a month` + lease.rent_changes
+    .map((c) => `; ${money(c.monthly_rent)} from ${usDate(c.effective_on)} (notice given ${usDate(c.notice_given_on)})`)
+    .join("");
+  return [
+    { key: "home", label: "Home", value: lease.home },
+    { key: "term", label: "Term", value: leaseTermLabel(lease.starts_on, lease.ends_on) },
+    { key: "rent", label: "Rent", value: rent },
+    { key: "due", label: "Rent due", value: dueDayLabel(lease.rent_due_day) },
+    { key: "tenants", label: "On the lease", value: lease.tenants.join(", ") },
+    ...(lease.deposit_held
+      ? [{ key: "deposit", label: "Security deposit held", value: money(lease.deposit_held) }]
+      : []),
+    ...leaseDocuments(lease).map((f) => ({
+      key: f.url,
+      label: "Lease",
+      value: (
+        <a className="text-iris hover:text-iris-hover hover:underline" href={f.url}>
+          {f.kind === "signed lease" ? `${f.title} (as signed, PDF)` : f.title}
+        </a>
+      ),
+    })),
+  ];
+}
+
+// The lease itself, to read: as signed through the PMS, else the lease documents staff keep for
+// it (not the tenant's own uploads, nor the signing certificate); none when there is none.
+export function leaseDocuments(lease: Pick<Lease, "files">): Lease["files"] {
+  const signed = lease.files.filter((f) => f.kind === "signed lease");
+  if (signed.length > 0) return signed;
+  return lease.files.filter((f) => f.kind === "lease document" && !f.from_tenant);
 }
 
 // "10/23/2026 Key replacement: $50.00" (the kind when it has no memo).
@@ -309,16 +346,8 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
               </label>
             )}
             <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-base sm:grid-cols-4">
-              {[
-                ["Home", lease.home],
-                ["Term", leaseTermLabel(lease.starts_on, lease.ends_on)],
-                ["Rent", `${money(lease.monthly_rent)} a month` + lease.rent_changes
-                  .map((c) => `; ${money(c.monthly_rent)} from ${usDate(c.effective_on)} (notice given ${usDate(c.notice_given_on)})`)
-                  .join("")],
-                ["Rent due", dueDayLabel(lease.rent_due_day)],
-                ["On the lease", lease.tenants.join(", ")],
-              ].map(([label, value]) => (
-                <div key={label}>
+              {leaseDetails(lease).map(({ key, label, value }) => (
+                <div key={key}>
                   <dt className="text-sm text-ink-subtle">{label}</dt>
                   <dd>{value}</dd>
                 </div>

@@ -129,6 +129,20 @@ ORDER BY x.step, x.what COLLATE "C"
 """
 
 
+# The security deposits held for each lease's tenants (a pet or key deposit is its own), as
+# rent_api.DEPOSITS_ASKED counts them.
+DEPOSIT_HELD = """
+SELECT lt.lease_id, sum(b.balance)
+FROM trust_lease_tenants AS lt
+JOIN trust_ledger_accounts AS a
+  ON a.tenant_id = lt.tenant_id AND a.kind = 'tenant_deposit'
+ AND coalesce(a.deposit_kind, 'security') = 'security'
+JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+WHERE lt.lease_id = ANY(%s)
+GROUP BY lt.lease_id
+"""
+
+
 def next_charge(conn: psycopg.Connection[Any], lease_id: UUID, on: date) -> NextCharge | None:
     lines = conn.execute(NEXT_CHARGE, {"lease": lease_id, "on": on}).fetchall()
     if not lines:
@@ -200,6 +214,9 @@ class Lease(BaseModel):
     # The security deposit the signed lease asked, what is held of it and what is still to give
     # the manager; None when it asked none, or once the deposit was returned.
     deposit_asked: rent_api.DepositAsked | None
+    # The security deposit held for the lease's tenants (the founder's review of 11/03, item 11);
+    # None when none is held (none was recorded, or it was returned).
+    deposit_held: str | None
     # A lease in effect: whether it requires renters insurance, and the policy on file.
     renters_insurance: rent_api.RentersInsurance | None
     # Each payment to it, newest first, each with its receipt to download.
@@ -322,6 +339,11 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
     files = {row[0]: files_of(conn, session.pmc_id, row[0]) for row in rows}
     notices_given = {row[0]: leaving.notice_of(conn, session.pmc_id, row[0]) for row in rows}
     asked = {row[0]: rent_api.deposits_asked(conn, session.pmc_id, row[0]) for row in rows}
+    held_deposits = {
+        lease: rent_api.cents(held)
+        for lease, held in conn.execute(DEPOSIT_HELD, ([row[0] for row in rows],)).fetchall()
+        if held > 0
+    }
     return [
         Lease(
             lease_id=lease,
@@ -347,6 +369,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             ],
             deposit_returned=returned,
             deposit_asked=asked[lease].get(lease),
+            deposit_held=held_deposits.get(lease),
             renters_insurance=insured.get(lease),
             payments=paid.get(lease, []),
             files=files[lease],

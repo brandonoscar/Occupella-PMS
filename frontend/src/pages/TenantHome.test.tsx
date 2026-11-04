@@ -9,6 +9,7 @@ import {
   eachMonthLabel,
   firstLease,
   leaseLabel,
+  leaseDocuments,
   leaseTermLabel,
   monthlyLabel,
   nextChargeLabel,
@@ -48,6 +49,7 @@ const lease = (id: string, inEffect: boolean): Lease => ({
   coming_due: [],
   deposit_returned: false,
   deposit_asked: null,
+  deposit_held: null,
   payments: [],
   files: [],
 });
@@ -403,6 +405,36 @@ describe("TenantHome", () => {
     )).toBeTruthy();
   });
 
+  it("shows the security deposit held and the lease to read, and nothing when there is neither", async () => {
+    server({
+      "GET /api/tenant/leases": [
+        {
+          ...lease("1", true),
+          deposit_held: "2250.00",
+          files: [
+            { kind: "signing certificate", title: "Signing certificate", url: "/c" },
+            { kind: "signed lease", title: "Lease, Unit 1", url: "/l" },
+          ],
+        },
+        lease("2", true),
+      ],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+      "GET /api/tenant/leases/2/ledger": LEDGER,
+      "GET /api/tenant/announcements": [],
+    });
+    render(<TenantHome me={ME} />);
+
+    const held = await screen.findByText("Security deposit held");
+    expect(held.nextElementSibling?.textContent).toBe("$2,250.00");
+    expect(screen.getByRole("link", { name: "Lease, Unit 1 (as signed, PDF)" }).getAttribute("href")).toBe("/l");
+
+    fireEvent.change(screen.getByLabelText("Lease"), { target: { value: "2" } });
+    await vi.waitFor(() => expect(screen.queryByText("Security deposit held")).toBeNull());
+    expect(screen.queryByText("Lease", { selector: "dt" })).toBeNull();
+  });
+
   it("says on the Overview when the rent goes up, and what the next charge is", async () => {
     vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-04T12:00:00Z") });
     server({
@@ -572,5 +604,18 @@ describe("the next charge and rent changes in words", () => {
       .toBe("Rent: $2,250.00; $2,300.00 from 12/01/2026");
     expect(eachMonthLabel({ what: "Pet rent", kind: "fee", amount: "25.00", starts_on: "2026-01-01", ends_on: null }, lease, "2026-11-04"))
       .toBe("Pet rent: $25.00");
+  });
+});
+
+describe("leaseDocuments", () => {
+  const file = (kind: "signed lease" | "signing certificate" | "lease document", url: string, from_tenant = false) =>
+    ({ kind, title: url, url, from_tenant });
+
+  it("is the lease as signed, else the lease documents staff keep, never the tenant's own or the certificate", () => {
+    expect(leaseDocuments({ files: [file("signing certificate", "c"), file("signed lease", "s"), file("lease document", "d")] })
+      .map((f) => f.url)).toEqual(["s"]);
+    expect(leaseDocuments({ files: [file("lease document", "d"), file("lease document", "mine", true)] })
+      .map((f) => f.url)).toEqual(["d"]);
+    expect(leaseDocuments({ files: [file("lease document", "mine", true)] })).toEqual([]);
   });
 });

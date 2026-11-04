@@ -1442,6 +1442,8 @@ test("a tenant sees their lease, what comes each month and two months of charges
   // Cedar House's one unit is "House": the home reads the property alone (migration 20261104000500).
   await expect(part(page, "Your lease").getByText("Cedar House", { exact: true })).toBeVisible();
   await expect(page.getByText("Quinn Demo, Taylor Demo", { exact: true })).toBeVisible();
+  // The deposit brought over for both of them is held: $1,125.00 each.
+  await expect(page.getByText("Security deposit held").locator("xpath=following-sibling::dd")).toHaveText("$2,250.00");
   // Last month's rent is paid and this month's not charged yet: nothing is due.
   await expect(page.getByTestId("balance-due")).toHaveText("$0.00");
   await expect(part(page, "Coming up")).toContainText("Rent: $2,250.00");

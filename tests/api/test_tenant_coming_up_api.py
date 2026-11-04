@@ -1,8 +1,11 @@
-"""The tenant's next charge (src/pms/api/tenant.py, the founder's review of 11/03, item 10): the
-first due day after today whose month's rent is not charged yet, with the rent in force then (a
-rent change to come included) and each monthly fee or credit, for the days the lease is in effect,
-as the rent run will charge them. Every name here is synthetic."""
+"""What a tenant's lease says is coming and is held (src/pms/api/tenant.py, the founder's review
+of 11/03, items 10 and 11). The next charge: the first due day after today whose month's rent is
+not charged yet, with the rent in force then (a rent change to come included) and each monthly fee
+or credit, for the days the lease is in effect, as the rent run will charge them. The security
+deposit held for the lease's tenants, or nothing when none is held. Every name here is
+synthetic."""
 
+import uuid
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
@@ -109,3 +112,42 @@ def test_a_lease_ending_before_its_next_due_day_has_no_next_charge(client, conn,
     join_as_tenant(client, conn, app_conn, pmc)
 
     assert next_charge(client, ending) is None
+
+
+# --- the security deposit held (item 11) --------------------------------------------------------
+
+
+def deposit(client, tenant, amount, kind="security"):
+    answer = client.post(
+        "/api/rent/deposits",
+        json={
+            "request_id": str(uuid.uuid4()),
+            "tenant_id": str(tenant),
+            "amount": amount,
+            "received_on": str(TODAY),
+            "kind": kind,
+        },
+    )
+    assert answer.status_code == 201, answer.text
+
+
+def held(client, lease):
+    [mine] = [x for x in ok(client.get("/api/tenant/leases")) if x["lease_id"] == str(lease)]
+    return mine["deposit_held"]
+
+
+def test_the_security_deposit_held_for_the_lease_shows_and_a_key_deposit_is_its_own(
+    client, conn, app_conn, pmc, lease
+):
+    join_as_staff(client, conn, app_conn, pmc)
+    deposit(client, tenant_of(conn, pmc), "2250.00")
+    deposit(client, tenant_of(conn, pmc), "50.00", kind="key")
+    join_as_tenant(client, conn, app_conn, pmc)
+
+    assert held(client, lease) == "2250.00"
+
+
+def test_no_deposit_held_shows_nothing(client, conn, app_conn, pmc, lease):
+    join_as_tenant(client, conn, app_conn, pmc)
+
+    assert held(client, lease) is None
