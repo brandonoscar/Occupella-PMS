@@ -84,6 +84,8 @@ export type Owner = {
   name: string;
   archived: boolean;
   contact: Contact;
+  // When the owner gave the details that hold themselves, in the portal.
+  contact_by_owner_at?: string | null;
   accounts: OwnerMoney[];
   agreements: Agreement[];
   // Whether they can sign in to the portal, and their login's email.

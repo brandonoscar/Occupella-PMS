@@ -40,11 +40,12 @@ describe("Shell", () => {
     const links = within(sections()).getAllByRole("link");
     expect(links.map((link) => link.textContent)).toEqual([
       "Dashboard", "Properties", "Rent roll", "Payment files", "Tenants", "Owners", "Move-outs", "Listings", "Leads", "Applicants", "Draft leases", "Renewals", "Banking", "Bills",
-      "General ledger", "Pay owners", "Management fees", "Budgets", "Work orders", "Vendors", "Files", "Reports", "Settings",
+      "General ledger", "Pay owners", "Management fees", "Budgets", "Work orders", "Vendors", "Messages", "Announcements",
+      "Files", "Reports", "Settings",
     ]);
     const groups = within(sections()).getAllByRole("group");
     expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
-      "Rentals", "Leasing", "Accounting", "Maintenance",
+      "Rentals", "Leasing", "Accounting", "Maintenance", "Communication",
     ]);
     const accounting = within(sections()).getByRole("group", { name: "Accounting" });
     expect(within(accounting).getAllByRole("link").map((link) => link.textContent)).toEqual([

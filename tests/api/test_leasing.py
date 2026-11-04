@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from helpers import (
     add_unit,
     complete_offer,
+    fresh,
     make_pmc,
     offer_lease,
     send_offer,
@@ -235,17 +236,24 @@ def test_a_decision_rests_only_on_its_own_applications_screening(client, other_c
     [
         (notice(reasons=["   "]), "every reason says something"),
         (
-            {"reasons": ["x"], "notice_given_on": (date.today() + timedelta(days=1)).isoformat()},
+            {
+                "reasons": ["x"],
+                "notice_given_on": lambda: (date.today() + timedelta(days=1)).isoformat(),
+            },
             "a notice is given on a day from 30 days ago to today",
         ),
         (
-            {"reasons": ["x"], "notice_given_on": (date.today() - timedelta(days=31)).isoformat()},
+            {
+                "reasons": ["x"],
+                "notice_given_on": lambda: (date.today() - timedelta(days=31)).isoformat(),
+            },
             "a notice is given on a day from 30 days ago to today",
         ),
-        ({"reasons": [], "notice_given_on": date.today().isoformat()}, None),
+        ({"reasons": [], "notice_given_on": lambda: date.today().isoformat()}, None),
     ],
 )
 def test_a_bad_notice_is_refused(client, other_client, staff, unit, action, detail):
+    action = fresh(action)
     apply(other_client, open_link(client, unit), "1000.00")
     application = only_application(client)
     screening = client.post(

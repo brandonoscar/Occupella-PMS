@@ -133,16 +133,22 @@ payment of your own first (NOT VERIFIED).
 
 ## Every day: backups
 
-Nothing backs up by itself. Once a day, after the nightly run (06:00 UTC), for example from cron
-at 07:00 UTC:
+The install backs itself up. Its `backup` service (`scripts/backup-daily.sh`) dumps the whole
+database when it starts, and then every day at 07:00 UTC, after the nightly run has posted the
+day's rent and fees, into the `backups` folder next to `compose.selfhost.yaml`:
 
 ```sh
-docker compose -f compose.selfhost.yaml exec -T db pg_dump -U postgres -Fc pms > pms-$(date +%F).dump
+sudo ls -l backups/                                      # pms-2026-11-03.dump, one a day
+docker compose -f compose.selfhost.yaml logs backup      # each dump, and any that failed
 ```
 
-Copy each dump off the server (it holds everything, so keep it as safe as the database), and test
-a restore now and then. [docs/backup.md](backup.md) has the full procedure, `scripts/backup.sh`,
-which checks a restore ties out.
+It keeps every daily dump for 35 days and each month's first for good, and a dump that fails is
+tried again an hour later. The files are readable by root only: each holds everything the PMS
+keeps. `PMS_BACKUP_AT` and `PMS_BACKUP_DIR` in `.env` change the time (UTC) and the folder.
+
+These protect against a broken database or a mistake, not against losing the server. **Copy
+each day's dump off the server**, encrypted, to storage another provider keeps, and **test a
+restore** now and then: [docs/backup.md](backup.md) has both, and how to get the books back.
 
 Also point an uptime check at `https://pms.example.com/health`; [docs/support.md](support.md)
 says what to look at when something fails.

@@ -186,7 +186,15 @@ def test_bad_listing_input_is_refused(client, conn, staff, pmc, method, path, bo
 
 # --- Leasing, Listings: the units coming free (ADR 0006) --------------------------------------
 
-TODAY = date.today()
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY
+    TODAY = date.today()
+
+
+on_this_day()
 
 
 def vacancies(client, **params):

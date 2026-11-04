@@ -1,6 +1,6 @@
 # Running the PMS for a real company on one server (docs/install.md): Postgres 16 with a password
-# and its data on a volume, the migrations applied at each start, and the API and portal on
-# 127.0.0.1:8000 for an HTTPS proxy in front of it (docs/install.md, step 4).
+# and its data on a volume, the migrations applied at each start, the API and portal on
+# 127.0.0.1:8000 for an HTTPS proxy in front of it (docs/install.md, step 4), and a daily backup.
 #
 #   cp .env.example .env        then fill it in (docs/install.md, "Keys you bring")
 #   docker compose -f compose.selfhost.yaml up -d --build
@@ -57,6 +57,27 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # The daily backup (scripts/backup-daily.sh, docs/install.md "Every day: backups"): a dump at
+  # start if today has none, then each day at PMS_BACKUP_AT (07:00 UTC unless .env says), into
+  # ./backups on this server, readable by root only; 35 days kept, and each month's first.
+  # Postgres's own image, for its pg_dump 16.
+  backup:
+    image: mirror.gcr.io/library/postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+    entrypoint: ["bash", "/scripts/backup-daily.sh"]
+    environment:
+      PGHOST: db
+      PGUSER: postgres
+      PGDATABASE: pms
+      PGPASSWORD: ${PMS_DB_PASSWORD}
+      PMS_BACKUP_AT: ${PMS_BACKUP_AT:-07:00}
+    volumes:
+      - ./scripts:/scripts:ro
+      - ${PMS_BACKUP_DIR:-./backups}:/backups
     depends_on:
       migrate:
         condition: service_completed_successfully

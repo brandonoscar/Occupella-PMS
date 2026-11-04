@@ -222,7 +222,7 @@ function OwnerSummary({ owner, emailOn, refresh }: { owner: Owner; emailOn: bool
   return (
     <div className="flex flex-col gap-6">
       <ContactCard path={`/api/owners/${owner.id}`} contact={owner.contact} refresh={refresh} name={owner.name}
-        editRequest={editContact} />
+        byTenantAt={owner.contact_by_owner_at} editRequest={editContact} />
       <PortalCard kind="owner" personId={owner.id} name={owner.name} portal={owner.portal}
         loginEmail={owner.login_email} contactEmail={owner.contact.email} emailOn={emailOn} refresh={refresh}
         onEditContact={() => setEditContact((n) => n + 1)} />

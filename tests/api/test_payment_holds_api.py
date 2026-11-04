@@ -8,12 +8,21 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import add_unit, balance, charge, make_pmc, open_lease
+from helpers import add_unit, balance, charge, fresh, make_pmc, open_lease
 from people import join_as_owner, join_as_staff, join_as_tenant, tenant_of
 
-TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
-START = TODAY - timedelta(days=60)
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, START
+    TODAY = datetime.now(UTC).date()
+    START = TODAY - timedelta(days=60)
+
+
+on_this_day()
 
 
 @pytest.fixture
@@ -38,7 +47,8 @@ def post(client, path, **body):
     return client.post(path, json=json.loads(json.dumps(body, default=str)))
 
 
-def place(client, lease, starts_on=START + DAY, reason="Eviction filed"):
+def place(client, lease, starts_on=None, reason="Eviction filed"):
+    starts_on = START + DAY if starts_on is None else starts_on
     return post(client, f"/api/rent/leases/{lease}/holds", starts_on=starts_on, reason=reason)
 
 
@@ -146,14 +156,15 @@ def test_another_companys_lease_or_hold_is_not_found(client, conn, app_conn, sta
 @pytest.mark.parametrize(
     "body",
     [
-        {"starts_on": str(TODAY + DAY), "reason": "Eviction filed"},
-        {"starts_on": str(TODAY), "reason": " "},
-        {"starts_on": str(TODAY), "reason": "x" * 501},
+        {"starts_on": lambda: str(TODAY + DAY), "reason": "Eviction filed"},
+        {"starts_on": lambda: str(TODAY), "reason": " "},
+        {"starts_on": lambda: str(TODAY), "reason": "x" * 501},
         {"starts_on": "soon", "reason": "Eviction filed"},
         {"reason": "Eviction filed"},
     ],
 )
 def test_bad_holds_are_refused(client, staff, lease, body):
+    body = fresh(body)
     assert client.post(f"/api/rent/leases/{lease}/holds", json=body).status_code == 422
 
 

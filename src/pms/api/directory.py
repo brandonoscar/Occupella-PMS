@@ -609,6 +609,8 @@ class Owner(BaseModel):
     name: str
     archived: bool
     contact: Contact
+    # When the owner gave the details that hold themselves, in the portal.
+    contact_by_owner_at: datetime | None
     accounts: list[payables.OwnerMoney]
     # The management agreement in force today on each account that has one.
     agreements: list[Agreement]
@@ -654,6 +656,7 @@ def owner_page(session: Staff, conn: Conn, owner_id: UUID) -> Owner:
         name=row[0],
         archived=row[1],
         contact=contact_of(conn, "owner_id", owner_id),
+        contact_by_owner_at=changed_by_person(conn, "owner_id", owner_id),
         accounts=payables.owner_money(conn, session.pmc_id, owner_id),
         agreements=[
             Agreement(

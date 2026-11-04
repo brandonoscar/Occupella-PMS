@@ -111,6 +111,24 @@ describe("FilesCard", () => {
     expect(posted(fetch)[0]?.[1]).toMatchObject({ kind: "lease_document", about_id: "l1", title: "renewal" });
   });
 
+  it("says who sent a file a tenant sent from the portal, and no one for staff's own", async () => {
+    server({
+      ...LIBRARY,
+      documents: [
+        { id: "d4", kind: "lease_document", about_id: "l1", about: "Cedar House, House", title: "Renters insurance",
+          content_type: "application/pdf", size: 4096, uploaded_by: "Taylor Demo (the tenant)",
+          uploaded_at: "2026-11-02T15:00:00Z" },
+        { id: "d5", kind: "lease_document", about_id: "l1", about: "Cedar House, House", title: "Lease",
+          content_type: "application/pdf", size: 4096, uploaded_by: "Staff 1", uploaded_at: "2026-11-01T15:00:00Z" },
+      ],
+    });
+    render(<FilesCard kind="lease_document" aboutId="l1" name="Cedar House, House" />);
+    const files = await screen.findByRole("list", { name: "Files, Cedar House, House" });
+    const [sent, ours] = within(files).getAllByRole("listitem");
+    expect(sent?.textContent).toContain("uploaded 11/02/2026 by Taylor Demo (the tenant)");
+    expect(ours?.textContent).not.toContain(" by ");
+  });
+
   it("says when the files can't be read", async () => {
     server({ detail: "sign in first" }, 401);
     render(<FilesCard kind="move_out_photo" aboutId="l1" name="Unit 1, Property 1" />);

@@ -39,9 +39,18 @@ from hypothesis.stateful import (
 
 from pms.api import rent
 
-TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
-START = TODAY - 400 * DAY
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, START
+    TODAY = datetime.now(UTC).date()
+    START = TODAY - 400 * DAY
+
+
+on_this_day()
 CENTS = st.integers(min_value=1, max_value=300_000).map(lambda c: Decimal(c) / 100)
 # Which open charge a pick names (by its place among them) and how much of what is open of it.
 PICKS = st.lists(st.tuples(st.integers(0, 9), st.integers(1, 100)), min_size=1, max_size=4)
