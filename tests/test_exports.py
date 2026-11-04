@@ -255,9 +255,10 @@ def test_excel_keeps_types_and_never_holds_a_formula():
     assert book.properties.created == datetime(2026, 3, 2, 8, 30)
 
 
-def test_the_pdf_prints_latin1_and_marks_the_rest():
+def test_the_pdf_prints_what_its_font_has_and_marks_the_rest():
     text = read_pdf(exports.to_pdf(TRICKY, GENERATED))[0]
 
+    # Plex has ë but no Japanese (tests/test_pdf_fonts.py has the rest).
     assert "Zoë ??" in text
     assert "1234567.89" in text
     assert "Page 1 of 1" in text

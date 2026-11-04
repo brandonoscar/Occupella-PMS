@@ -14,9 +14,10 @@ cells stay as the database wrote them. Every format keeps the report's figures:
   - Excel: numbers as numbers, days as dates and times as UTC to the second, shown MM/DD/YYYY;
     text stays text, except that control characters XML can't hold read as "?" and line breaks
     as "\n";
-  - PDF: a table on US Letter, landscape, its header row repeated on every page. Its built-in
-    font covers Latin-1 only, so any other character prints as "?": CSV and Excel are the
-    exact copies.
+  - PDF: a table on US Letter, landscape, its header row repeated on every page, in IBM Plex
+    Sans, embedded (pms/pdf_fonts.py): accented and other Latin letters, Greek and Cyrillic
+    print as written, and a letter the font lacks (Arabic, Chinese...) prints as "?". CSV and
+    Excel are the exact copies.
 A spreadsheet runs text that starts with =, +, -, @, a tab or a carriage return as a formula.
 CSV gives such text a leading apostrophe (OWASP's advice on CSV injection), and Excel stores
 it as text. Names come from people outside the PMC (tenants, vendors), so this matters.
@@ -48,7 +49,7 @@ from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Font
 from psycopg import sql
 
-from pms import wording
+from pms import pdf_fonts, wording
 
 REPORT_NAME = re.compile(r"trust_report_[a-z0-9_]+")
 FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
@@ -186,10 +187,10 @@ def _naive_utc(moment: datetime) -> datetime:
     return moment.astimezone(UTC).replace(tzinfo=None)
 
 
-class _Pdf(FPDF):
+class _Pdf(pdf_fonts.Pdf):
     def footer(self) -> None:
         self.set_y(-28)
-        self.set_font("Helvetica", size=7)
+        self.set_font(pdf_fonts.FAMILY, size=7)
         self.cell(0, 10, f"Page {self.page_no()} of {{nb}}", align="C")
 
 
@@ -201,31 +202,31 @@ def to_pdf(table: Table, generated: datetime) -> bytes:
     pdf.set_margins(36, 36, 36)
     pdf.set_auto_page_break(True, margin=40)
     pdf.add_page()
-    pdf.set_font("Helvetica", style="B", size=12)
-    pdf.cell(0, 16, _latin1(table.title), new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", size=7)
+    pdf.set_font(pdf_fonts.FAMILY, style="B", size=12)
+    pdf.cell(0, 16, pdf_fonts.printable(table.title), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font(pdf_fonts.FAMILY, size=7)
     stamp = wording.as_text(generated)
     pdf.cell(0, 12, f"Generated {stamp}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
     shares = _widths(table)
     widths = [pdf.epw * share / sum(shares) for share in shares]
-    pdf.set_font("Helvetica", style="B", size=PDF_SIZE)
+    pdf.set_font(pdf_fonts.FAMILY, style="B", size=PDF_SIZE)
     heading = [
-        _wrap(pdf, _latin1(column), width - 2 * PDF_PAD)
+        _wrap(pdf, pdf_fonts.printable(column), width - 2 * PDF_PAD)
         for column, width in zip(table.columns, widths, strict=True)
     ]
     _pdf_row(pdf, heading, widths)
-    pdf.set_font("Helvetica", size=PDF_SIZE)
+    pdf.set_font(pdf_fonts.FAMILY, size=PDF_SIZE)
     for row in table.rows:
         cells = [
-            _wrap(pdf, _latin1(text(value)), width - 2 * PDF_PAD)
+            _wrap(pdf, pdf_fonts.printable(text(value)), width - 2 * PDF_PAD)
             for value, width in zip(row, widths, strict=True)
         ]
         if pdf.get_y() + _pdf_height(cells) > pdf.page_break_trigger:
             pdf.add_page()
-            pdf.set_font("Helvetica", style="B", size=PDF_SIZE)
+            pdf.set_font(pdf_fonts.FAMILY, style="B", size=PDF_SIZE)
             _pdf_row(pdf, heading, widths)
-            pdf.set_font("Helvetica", size=PDF_SIZE)
+            pdf.set_font(pdf_fonts.FAMILY, size=PDF_SIZE)
         _pdf_row(pdf, cells, widths)
     return bytes(pdf.output())
 
@@ -285,11 +286,6 @@ def _wrap(pdf: FPDF, value: str, width: float) -> list[str]:
             line, room = word, needs
         lines.append(line)
     return lines
-
-
-def _latin1(value: str) -> str:
-    """The PDF's built-in font has Latin-1 only; anything else prints as "?"."""
-    return value.encode("latin-1", "replace").decode("latin-1")
 
 
 def _widths(table: Table) -> tuple[int, ...]:

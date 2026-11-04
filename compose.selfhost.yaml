@@ -46,6 +46,10 @@ services:
       # container doesn't keep it.
       PMS_DB_PASSWORD: ""
       PMS_HOST: 0.0.0.0
+      # The HTTPS proxy names each visitor (X-Forwarded-For), so a signature's evidence keeps the
+      # signer's address, not the proxy's. Safe to trust whoever connects only because the port
+      # below is published on the server's own 127.0.0.1: nothing else reaches the app.
+      PMS_TRUSTED_PROXIES: "*"
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
