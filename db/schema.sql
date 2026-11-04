@@ -484,6 +484,24 @@ $$;
 
 
 --
+-- Name: trust_analyze_after_import(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_analyze_after_import() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    ANALYZE public.trust_owners, public.trust_vendors, public.trust_properties,
+        public.trust_units, public.trust_unit_details, public.trust_tenants, public.trust_leases,
+        public.trust_lease_tenants, public.trust_charges, public.trust_bills, public.trust_contacts,
+        public.trust_history_files, public.trust_history_lines, public.trust_ledger_accounts,
+        public.pgledger_accounts, public.pgledger_transfers, public.pgledger_entries;
+END;
+$$;
+
+
+--
 -- Name: trust_apply_assistance_payment(uuid, uuid, text, numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -34778,6 +34796,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261031000201'),
     ('20261102000150'),
     ('20261103000100'),
+    ('20261103000200'),
     ('20261104000100'),
     ('20261104000200'),
     ('20261104000300'),

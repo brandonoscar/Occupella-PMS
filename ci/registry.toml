@@ -1702,6 +1702,16 @@ tests = [
 ]
 
 [[invariant]]
+id = "an-import-leaves-the-planner-knowing-what-it-brought"
+statement = "A switch-in import that adds rows, and a trust bank account's opening balances, end by analyzing the tables a switch fills (trust_analyze_after_import, migration 20261103000200), in the request's own transaction, so its rows count: however many came in, each table's row count as the planner knows it is within a tenth of what it holds, never unknown, and the next page is planned on that. The same file again adds nothing and analyzes nothing. The function runs as the tables' owner, does nothing but ANALYZE, and only the app may call it."
+tests = [
+  "tests/properties/test_import_stats_properties.py::test_after_an_import_the_planner_knows_how_many_rows_each_table_holds",
+  "tests/api/test_switch.py::test_an_import_leaves_the_planner_knowing_what_it_brought",
+  "tests/api/test_switch.py::test_opening_balances_leave_the_planner_knowing_the_ledger",
+  "tests/test_privileges.py::test_other_roles_cannot_call_money_functions",
+]
+
+[[invariant]]
 id = "payment-keys-own-payments-only"
 statement = "A company's own Stripe keys (migration 20261104000800; the founder's review of 11/03, item 4): an admin's alone, sealed under the server's key, only the last four and the mode ever shown. Each company's payments go through its latest keys, or the server's partner once it has none, never another company's and never keys since taken away; keys that don't open on the server take no payment and never fall back. A company's webhook takes only a report signed with a secret it has held, the latest or one before, and records only that company's payments, each at most once however often reported: another company's webhook never records one."
 tests = [

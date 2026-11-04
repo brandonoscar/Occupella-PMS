@@ -549,6 +549,8 @@ FUNCTIONS = {
     "trust_assess_late_fees(uuid,date)": {"trust_app"},
     "trust_charge_nsf_fee(uuid,text)": {"trust_app"},
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)": {"trust_app"},
+    # Analyzes the tables a switch-in import fills, in its transaction (migration 20261103000200).
+    "trust_analyze_after_import()": {"trust_app"},
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)": {"trust_app"},
     "trust_complete_lease_offer(uuid,uuid,uuid)": {"trust_app"},
     "trust_enter_recurring_bills(uuid,date)": {"trust_app"},
@@ -819,6 +821,7 @@ SECURITY_DEFINER = {
     "trust_assess_late_fees(uuid,date)",
     "trust_charge_nsf_fee(uuid,text)",
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",
+    "trust_analyze_after_import()",  # ANALYZE needs the tables' owner; it writes no record
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)",
     "trust_complete_lease_offer(uuid,uuid,uuid)",
     "trust_match_bank_lines(uuid,uuid,uuid[],text[],uuid[],uuid)",
