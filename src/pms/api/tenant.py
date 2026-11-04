@@ -12,6 +12,7 @@ and see and act on the leases of every record of theirs, each lease as the recor
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -70,6 +71,82 @@ class ComingDue(BaseModel):
     open: str
 
 
+class NextLine(BaseModel):
+    what: str
+    kind: Literal["rent", "fee", "credit"]
+    amount: str
+
+
+class NextCharge(BaseModel):
+    """The next month's charges not entered yet (the founder's review of 11/03, item 10): the rent
+    in force on its due day, a rent change to come included, and each monthly fee or credit, for
+    the days the lease is in effect then, as the rent run will charge them."""
+
+    due_on: date
+    total: str
+    lines: list[NextLine]
+
+
+# The first due day after today, within the next three months, whose month's rent is not charged
+# yet, and what the rent run will charge on it (trust_rent_for_month, as trust_charge_rent_due and
+# trust_charge_recurring_due count a month's days).
+NEXT_CHARGE = """
+WITH months AS (
+    SELECT l.id, l.starts_on, l.ends_on,
+           trust_rent_due_on(
+               l.id, (date_trunc('month', %(on)s::timestamp) + make_interval(months => n))::date
+           ) AS due
+    FROM trust_leases AS l
+    CROSS JOIN generate_series(0, 2) AS n
+    WHERE l.id = %(lease)s
+),
+next AS (
+    SELECT m.* FROM months AS m
+    WHERE m.due > %(on)s
+      AND NOT EXISTS (
+          SELECT 1 FROM trust_charges AS c
+          WHERE c.lease_id = m.id AND c.kind = 'rent'
+            AND date_trunc('month', c.due_on::timestamp) = date_trunc('month', m.due::timestamp)
+      )
+    ORDER BY m.due
+    LIMIT 1
+)
+SELECT x.due, x.kind, x.what, x.amount FROM (
+    SELECT n.due, 'rent' AS kind, 'Rent' AS what, p.amount, 0 AS step
+    FROM next AS n
+    CROSS JOIN LATERAL trust_rent_for_month(
+        n.starts_on, n.ends_on, trust_rent_on(n.id, n.due), n.due
+    ) AS p
+    UNION ALL
+    SELECT n.due, r.kind, r.memo, p.amount, 1
+    FROM next AS n
+    JOIN trust_recurring_charges AS r ON r.lease_id = n.id
+    LEFT JOIN trust_recurring_charge_ends AS e ON e.recurring_charge_id = r.id
+    CROSS JOIN LATERAL trust_rent_for_month(n.starts_on, n.ends_on, r.amount, n.due) AS p
+    WHERE r.starts_on <= n.due AND (e.ends_on IS NULL OR n.due < e.ends_on) AND p.amount > 0
+) AS x
+ORDER BY x.step, x.what COLLATE "C"
+"""
+
+
+def next_charge(conn: psycopg.Connection[Any], lease_id: UUID, on: date) -> NextCharge | None:
+    lines = conn.execute(NEXT_CHARGE, {"lease": lease_id, "on": on}).fetchall()
+    if not lines:
+        return None
+    total = sum(
+        (-Decimal(amount) if kind == "credit" else Decimal(amount) for _, kind, _, amount in lines),
+        Decimal(0),
+    )
+    return NextCharge(
+        due_on=lines[0][0],
+        total=rent_api.cents(total),
+        lines=[
+            NextLine(what=what, kind=kind, amount=rent_api.cents(amount))
+            for _, kind, what, amount in lines
+        ],
+    )
+
+
 class RentChangeNotice(BaseModel):
     effective_on: date
     monthly_rent: str
@@ -115,6 +192,8 @@ class Lease(BaseModel):
     in_effect: bool
     # Nothing for a lease that has ended.
     each_month: list[Monthly]
+    # The next charge not entered yet; None when the lease has none to come.
+    next_charge: NextCharge | None
     coming_due: list[ComingDue]
     # Its tenants' deposits were returned at move-out: the statement can be downloaded.
     deposit_returned: bool
@@ -258,6 +337,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             balance_due=exports.text(balance),
             in_effect=starts <= on and (ends is None or on <= ends),
             each_month=[] if ends is not None and ends < on else monthly(conn, lease, starts, rent),
+            next_charge=next_charge(conn, lease, on),
             coming_due=[
                 ComingDue(due_on=due, kind=kind, memo=memo, open=rent_api.cents(left))
                 for _, _, due, kind, memo, _, left in rent_api.charges_open(

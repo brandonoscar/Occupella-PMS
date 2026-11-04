@@ -2574,6 +2574,16 @@ test("staff raise a month-to-month rent after a full month's notice, and the ten
   const tenant = await browser.newPage();
   await joinPortal(tenant, people.taylor);
   await expect(tenant.getByText(`$2,250.00 a month; $2,400.00 from ${us(from)} (notice given ${us(today())})`)).toBeVisible();
+  // The Overview says it at the top, and the next charge is the rent in force on its due day.
+  const when = new Intl.DateTimeFormat("en-US", {
+    month: "short", day: "numeric", timeZone: "UTC",
+    ...(from.slice(0, 4) === today().slice(0, 4) ? {} : { year: "numeric" }),
+  }).format(new Date(`${from}T00:00:00Z`));
+  await expect(tenant.getByText(`Your rent goes up to $2,400 on ${when}.`)).toBeVisible();
+  const next = firstOfMonthsAgo(-1);
+  await expect(tenant.getByTestId("next-charge")).toContainText(`due ${us(next)}`);
+  await expect(tenant.getByTestId("next-charge")).toContainText(next === from ? "$2,400.00" : "$2,250.00");
+  await expect(part(tenant, "Coming up")).toContainText(`$2,250.00; $2,400.00 from ${us(from)}`);
   await tenant.close();
 });
 

@@ -71,6 +71,11 @@ def home(conn, pmc):
     return Home(conn, pmc)
 
 
+def first_of_next_month():
+    today = datetime.now(UTC).date()
+    return date(today.year + today.month // 12, today.month % 12 + 1, 1)
+
+
 def new_request(home, lease=None, **changes):
     return {
         "lease_id": str(lease or home.lease),
@@ -110,6 +115,12 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
                     "ends_on": None,
                 }
             ],
+            # Next month's rent, not charged yet (test_tenant_next_charge_api.py).
+            "next_charge": {
+                "due_on": str(first_of_next_month()),
+                "total": "1500.00",
+                "lines": [{"what": "Rent", "kind": "rent", "amount": "1500.00"}],
+            },
             "coming_due": [],
             "deposit_returned": False,
             "deposit_asked": None,
@@ -144,6 +155,7 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "balance_due": "0.00",
             "in_effect": False,
             "each_month": [],  # it has ended
+            "next_charge": None,
             "coming_due": [],
             "deposit_returned": False,
             "deposit_asked": None,

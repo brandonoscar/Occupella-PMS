@@ -3,7 +3,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import { holdBack } from "../holdBack";
 import type { Lease } from "./TenantHome";
-import { TenantHome, comingDueLabel, firstLease, leaseLabel, monthlyLabel, leaseTermLabel } from "./TenantHome";
+import {
+  TenantHome,
+  comingDueLabel,
+  eachMonthLabel,
+  firstLease,
+  leaseLabel,
+  leaseTermLabel,
+  monthlyLabel,
+  nextChargeLabel,
+  rentChangeNotice,
+} from "./TenantHome";
 
 afterEach(() => {
   cleanup();
@@ -34,6 +44,7 @@ const lease = (id: string, inEffect: boolean): Lease => ({
   balance_due: "1500.00",
   in_effect: inEffect,
   each_month: [],
+  next_charge: null,
   coming_due: [],
   deposit_returned: false,
   deposit_asked: null,
@@ -392,6 +403,29 @@ describe("TenantHome", () => {
     )).toBeTruthy();
   });
 
+  it("says on the Overview when the rent goes up, and what the next charge is", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-04T12:00:00Z") });
+    server({
+      "GET /api/tenant/leases": [{
+        ...lease("1", true),
+        monthly_rent: "2250.00",
+        rent_changes: [{ effective_on: "2026-12-01", monthly_rent: "2300.00", notice_given_on: "2026-10-22" }],
+        each_month: [{ what: "Rent", kind: "rent", amount: "2250.00", starts_on: "2026-01-01", ends_on: null }],
+        next_charge: { due_on: "2026-12-01", total: "2300.00", lines: [{ what: "Rent", kind: "rent", amount: "2300.00" }] },
+      }],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+      "GET /api/tenant/announcements": [],
+    });
+    render(<TenantHome me={ME} />);
+
+    expect(await screen.findByText("Your rent goes up to $2,300 on Dec 1.")).toBeTruthy();
+    expect(screen.getByTestId("next-charge").textContent).toBe("$2,300.00 due 12/01/2026");
+    expect(screen.getByText("Rent: $2,250.00; $2,300.00 from 12/01/2026")).toBeTruthy();
+    vi.useRealTimers();
+  });
+
   it("shows the lease's renters insurance and records the tenant's own policy", async () => {
     const fetch = server({
       "GET /api/tenant/leases": [{
@@ -501,5 +535,42 @@ describe("leaseTermLabel", () => {
   it("reads month-to-month from its first day, and a fixed term by its two days", () => {
     expect(leaseTermLabel("2025-12-01", null)).toBe("Month-to-month since 12/01/2025");
     expect(leaseTermLabel("2025-12-01", "2026-11-30")).toBe("12/01/2025 to 11/30/2026");
+  });
+});
+
+describe("the next charge and rent changes in words", () => {
+  it("reads the next charge, and what makes it up when it is more than the rent", () => {
+    expect(nextChargeLabel({ due_on: "2026-12-01", total: "2300.00", lines: [{ what: "Rent", kind: "rent", amount: "2300.00" }] }))
+      .toBe("$2,300.00 due 12/01/2026");
+    expect(nextChargeLabel({
+      due_on: "2026-12-01",
+      total: "2315.00",
+      lines: [
+        { what: "Rent", kind: "rent", amount: "2300.00" },
+        { what: "Autopay credit", kind: "credit", amount: "10.00" },
+        { what: "Pet rent", kind: "fee", amount: "25.00" },
+      ],
+    })).toBe("$2,315.00 due 12/01/2026 (Rent $2,300.00 · Autopay credit $10.00 off · Pet rent $25.00)");
+  });
+
+  it("says the rent goes up or down, with the year only when it isn't this year's", () => {
+    const changes = (effective_on: string, monthly_rent: string) => ({
+      monthly_rent: "2250.00",
+      rent_changes: [{ effective_on, monthly_rent, notice_given_on: "2026-10-22" }],
+    });
+    expect(rentChangeNotice(changes("2026-12-01", "2300.00"), "2026-11-04")).toBe("Your rent goes up to $2,300 on Dec 1.");
+    expect(rentChangeNotice(changes("2027-01-01", "2200.50"), "2026-11-04")).toBe(
+      "Your rent goes down to $2,200.50 on Jan 1, 2027.",
+    );
+    expect(rentChangeNotice(changes("2026-12-01", "2250.00"), "2026-11-04")).toBeNull();
+    expect(rentChangeNotice({ monthly_rent: "2250.00", rent_changes: [] }, "2026-11-04")).toBeNull();
+  });
+
+  it("gives each month's rent its changes to come, and leaves fees as they are", () => {
+    const lease = { rent_changes: [{ effective_on: "2026-12-01", monthly_rent: "2300.00", notice_given_on: "2026-10-22" }] };
+    expect(eachMonthLabel({ what: "Rent", kind: "rent", amount: "2250.00", starts_on: "2026-01-01", ends_on: null }, lease, "2026-11-04"))
+      .toBe("Rent: $2,250.00; $2,300.00 from 12/01/2026");
+    expect(eachMonthLabel({ what: "Pet rent", kind: "fee", amount: "25.00", starts_on: "2026-01-01", ends_on: null }, lease, "2026-11-04"))
+      .toBe("Pet rent: $25.00");
   });
 });

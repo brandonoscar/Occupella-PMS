@@ -325,8 +325,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   owner only: no request names an owner, a property or a PMC, and a bill named in a path is
   answered only if it is theirs (they approve or decline those over their limit). A tenant's pages
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered
-  only if they are on it, and reads as not found otherwise. They show what each lease charges
-  every month and what is charged already but due later, and once a deposit was returned at
+  only if they are on it, and reads as not found otherwise. They show the next charge (the rent
+  in force on its due day, a rent change to come included, and the monthly fees and credits, as
+  the rent run will charge them), what each lease charges every month and what is charged already
+  but due later, say at the top when the rent goes up or down, and once a deposit was returned at
   move-out, their statement letter (migration 0120) to download; and a lease's files (q120):
   the lease as signed, its signing certificate when signed on the PMS's page, and the lease
   documents staff keep on its Files tab (move-out photos stay with staff). Both portals open a line

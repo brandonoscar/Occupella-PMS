@@ -13,7 +13,7 @@ import type { ContentType } from "../documents";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
 import type { MaintenanceRequest } from "../maintenance";
 import { PHOTOS_PER_REQUEST, photosLabel, photosProblem, statusLabel, visitLabel, when } from "../maintenance";
-import { day, money, usDate, usDatesIn } from "../money";
+import { day, money, sumMoney, usDate, usDatesIn } from "../money";
 import type { DepositAsked, Paid, RentersInsurance } from "../rent";
 import { dueDayLabel, insuranceLine, tenantDepositLine } from "../rent";
 import { Badge } from "../components/Badge";
@@ -45,6 +45,13 @@ export type Monthly = {
 };
 // A charge entered already and due after today, with what is still open of it.
 export type ComingDue = { due_on: string; kind: "rent" | "fee"; memo: string | null; open: string };
+// The next month's charges not entered yet: the rent in force on its due day (a rent change to
+// come included) and each monthly fee or credit, as the rent run will charge them.
+export type NextCharge = {
+  due_on: string;
+  total: string;
+  lines: { what: string; kind: "rent" | "fee" | "credit"; amount: string }[];
+};
 
 export type Lease = {
   lease_id: string;
@@ -65,6 +72,7 @@ export type Lease = {
   balance_due: string;
   in_effect: boolean;
   each_month: Monthly[];
+  next_charge: NextCharge | null;
   coming_due: ComingDue[];
   deposit_returned: boolean;
   // The security deposit the signed lease asked, what is held of it and what is still to give
@@ -119,6 +127,44 @@ export function monthlyLabel(item: Monthly, today: string): string {
   const from = item.starts_on > today ? `, from ${usDate(item.starts_on)}` : "";
   const until = item.ends_on ? `, until ${usDate(item.ends_on)}` : "";
   return `${item.what}: ${amount}${from}${until}`;
+}
+
+// "$2,300.00 due 12/01/2026", and what makes it up when it is more than the rent:
+// "(Rent $2,300.00 · Pet rent $25.00 · Autopay credit $10.00 off)".
+export function nextChargeLabel(next: NextCharge): string {
+  const total = `${money(next.total)} due ${usDate(next.due_on)}`;
+  if (next.lines.length < 2) return total;
+  const parts = next.lines.map((l) => `${l.what} ${money(l.amount)}${l.kind === "credit" ? " off" : ""}`);
+  return `${total} (${parts.join(" · ")})`;
+}
+
+// "Rent: $2,250.00; $2,300.00 from 12/01/2026": each month's rent with the changes to come.
+export function eachMonthLabel(item: Monthly, lease: Pick<Lease, "rent_changes">, today: string): string {
+  const label = monthlyLabel(item, today);
+  if (item.kind !== "rent") return label;
+  return label + lease.rent_changes.map((c) => `; ${money(c.monthly_rent)} from ${usDate(c.effective_on)}`).join("");
+}
+
+const MONTH_DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const MONTH_DAY_YEAR = new Intl.DateTimeFormat("en-US", {
+  month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
+});
+
+// "Your rent goes up to $2,300 on Dec 1." for the first rent change to come (its year when it
+// isn't this year's); null with none, or one that changes nothing.
+export function rentChangeNotice(lease: Pick<Lease, "rent_changes" | "monthly_rent">, today: string): string | null {
+  const next = lease.rent_changes[0];
+  if (!next) return null;
+  const change = sumMoney([next.monthly_rent, negated(lease.monthly_rent)]);
+  if (change === "0.00") return null;
+  const day = new Date(`${next.effective_on}T00:00:00Z`);
+  const when = (next.effective_on.slice(0, 4) === today.slice(0, 4) ? MONTH_DAY : MONTH_DAY_YEAR).format(day);
+  const amount = money(next.monthly_rent).replace(/\.00$/, "");
+  return `Your rent goes ${change.startsWith("-") ? "down" : "up"} to ${amount} on ${when}.`;
+}
+
+function negated(amount: string): string {
+  return amount.startsWith("-") ? amount.slice(1) : `-${amount}`;
 }
 
 // "10/23/2026 Key replacement: $50.00" (the kind when it has no memo).
@@ -234,6 +280,9 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
     <Shell me={me} nav={TENANT_NAV}>
       <PageHeader title={heading || `Welcome, ${firstName(me.name)}`} description={description} />
       <Notice tone="error">{error}</Notice>
+      {section === "overview" && lease && rentChangeNotice(lease, day(new Date())) && (
+        <Notice tone="info">{rentChangeNotice(lease, day(new Date()))}</Notice>
+      )}
       {section === "overview" && <AnnouncementsCard />}
       {!leaseSection ? null : leases === null ? (
         <Notice tone="info">Loading</Notice>
@@ -324,14 +373,20 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
           </Card>
           )}
 
-          {section === "overview" && (lease.each_month.length > 0 || lease.coming_due.length > 0) && (
+          {section === "overview" && (lease.next_charge || lease.each_month.length > 0 || lease.coming_due.length > 0) && (
             <Card title="Coming up">
+              {lease.next_charge && (
+                <>
+                  <p className="text-sm text-ink-subtle">Next charge</p>
+                  <p className="mb-4 text-base" data-testid="next-charge">{nextChargeLabel(lease.next_charge)}</p>
+                </>
+              )}
               {lease.each_month.length > 0 && (
                 <>
                   <p className="text-sm text-ink-subtle">Each month</p>
                   <ul className="mb-4 flex flex-col gap-1 text-base">
                     {lease.each_month.map((item) => (
-                      <li key={`${item.what}-${item.starts_on}`}>{monthlyLabel(item, day(new Date()))}</li>
+                      <li key={`${item.what}-${item.starts_on}`}>{eachMonthLabel(item, lease, day(new Date()))}</li>
                     ))}
                   </ul>
                 </>
