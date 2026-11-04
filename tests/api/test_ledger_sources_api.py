@@ -14,6 +14,7 @@ from helpers import (
     add_document,
     add_tenant,
     add_unit,
+    apply_payment,
     charge,
     co_own,
     contribute,
@@ -25,8 +26,11 @@ from helpers import (
     post_management_fee,
     set_aside_bill,
     set_ownership,
+    transfer_batch,
 )
 from people import join_as_owner, join_as_staff, join_as_tenant, tenant_of
+
+from pms.api.ledger_sources import came
 
 TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
@@ -515,3 +519,118 @@ def test_only_the_tenant_opens_their_ledgers_lines(client, conn, app_conn, pmc, 
     answer = client.get(f"/api/tenant/leases/{lease}/ledger/sources/charge/{rent}")
 
     assert answer.status_code == (401 if caller == "nobody" else 403)
+
+
+def test_each_payment_reads_as_what_paid_and_how_with_its_receipt(
+    client, conn, app_conn, pmc, lease
+):
+    join_as_staff(client, conn, app_conn, pmc)
+    checked = pay(client, lease, "1600.00", method="check", reference="No. 2101")
+    charge(conn, pmc.pmc_id, lease, TODAY, "40.00", kind="fee", memo="Parking")
+    used = client.post(
+        f"/api/rent/leases/{lease}/use-prepaid",
+        json={"request_id": str(uuid.uuid4()), "on": str(TODAY)},
+    )
+    assert used.status_code == 201, used.text
+    join_as_tenant(client, conn, app_conn, pmc)
+
+    ledger = ok(client.get(f"/api/tenant/leases/{lease}/ledger"))
+
+    item = ledger["columns"].index("item")
+    assert len(ledger["payments"]) == len(ledger["rows"])
+    words = [
+        (row[item], said)
+        for row, said in zip(ledger["rows"], ledger["payments"], strict=True)
+        if row[item] == "payment" or said is not None
+    ]
+    assert words == [
+        (
+            "payment",
+            {
+                "what": "Rent payment",
+                "how": "Check No. 2101",
+                "receipt": f"/api/tenant/payments/{checked}/receipt",
+            },
+        ),
+        ("payment", {"what": "Prepaid rent used", "how": None, "receipt": None}),
+    ]
+
+
+def test_a_payment_nobody_said_how_came_reads_as_a_rent_payment_alone(
+    client, conn, app_conn, pmc, lease
+):
+    join_as_staff(client, conn, app_conn, pmc)
+    pay(client, lease, "100.00")
+    join_as_tenant(client, conn, app_conn, pmc)
+
+    ledger = ok(client.get(f"/api/tenant/leases/{lease}/ledger"))
+
+    said = [p for p in ledger["payments"] if p is not None]
+    assert [(p["what"], p["how"]) for p in said] == [("Rent payment", None)]
+
+
+@pytest.mark.parametrize(
+    ("method", "reference", "said"),
+    [
+        ("check", "2101", "Check 2101"),
+        ("check", "Check 2101", "Check 2101"),  # the method once, when the reference says it
+        ("online", None, "ACH"),
+        (None, "No. 8", "No. 8"),
+        (None, None, None),
+    ],
+)
+def test_how_a_payment_came_reads_as_a_person_says_it(method, reference, said):
+    assert came(method, reference) == said
+
+
+def test_a_payment_with_no_kind_keeps_its_memo(client, conn, app_conn, pmc, lease):
+    rent = conn.execute(
+        "SELECT id FROM trust_charges WHERE lease_id = %s AND kind = 'rent'", (lease,)
+    ).fetchone()[0]
+    [moved] = transfer_batch(conn, [(pmc.operating_cash, pmc.owners[0].account, "500.00")])
+    apply_payment(conn, pmc.pmc_id, rent, moved, "500.00")
+    join_as_tenant(client, conn, app_conn, pmc)
+
+    ledger = ok(client.get(f"/api/tenant/leases/{lease}/ledger"))
+
+    assert [p for p in ledger["payments"] if p] == [
+        {"what": "Payment", "how": None, "receipt": None}
+    ]
+
+
+def test_what_a_payment_held_as_prepaid_rent_has_a_line_of_its_own(
+    client, conn, app_conn, pmc, lease
+):
+    join_as_staff(client, conn, app_conn, pmc)
+    first = pay(client, lease, "1600.00", method="check", reference="2101")  # 50.00 more than owed
+    second = pay(client, lease, "75.00", method="cash")  # nothing owed: all held
+    bounced = client.post(f"/api/rent/payments/{second}/bounce", json={"on": str(TODAY)})
+    assert bounced.status_code == 201, bounced.text
+    join_as_tenant(client, conn, app_conn, pmc)
+
+    ledger = ok(client.get(f"/api/tenant/leases/{lease}/ledger"))
+
+    held = sorted(ledger["held"], key=lambda h: h["amount"])
+    assert [(h["on"], h["what"], h["how"], h["amount"], h["returned"]) for h in held] == [
+        (str(TODAY), "Rent payment", "Check 2101", "50.00", False),
+        (str(TODAY), "Rent payment", "Cash", "75.00", True),
+    ]
+    for line in held:
+        receipt = client.get(line["receipt"])
+        assert receipt.status_code == 200 and receipt.content.startswith(b"%PDF-")
+    # The download is the report as it was: nothing held reads as paid.
+    balance = ledger["rows"][-1]
+    assert balance[ledger["columns"].index("paid")] == "1550.00"
+    assert first
+
+
+def test_another_leases_prepaid_rent_is_not_on_this_ledger(client, conn, app_conn, pmc, lease):
+    join_as_staff(client, conn, app_conn, pmc)
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, name="Unit 7")
+    other = open_lease(conn, pmc.pmc_id, unit, START, None, "900.00", [tenant_of(conn, pmc)])
+    pay(client, other, "40.00")
+    join_as_tenant(client, conn, app_conn, pmc)
+
+    ledger = ok(client.get(f"/api/tenant/leases/{lease}/ledger"))
+
+    assert ledger["held"] == []

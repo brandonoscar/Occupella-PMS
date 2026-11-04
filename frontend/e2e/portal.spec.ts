@@ -114,8 +114,8 @@ test("a tenant joins, sees what is due and asks for a repair", async ({ page }) 
   await expect(page.getByTestId("balance-due")).toHaveText("$950.00");
   await portalSection(page, "Payments");
   const ledger = page.locator("section", { hasText: "Charges and payments" });
-  await expect(ledger.getByRole("row", { name: /Check 101/ })).toContainText("$950.00");
-  await expect(ledger.getByRole("row", { name: /Balance at the end of/ })).toContainText("$950.00");
+  await expect(ledger.getByRole("row", { name: /Payment · Check 101/ })).toContainText("$950.00");
+  await expect(ledger.getByRole("row", { name: /Totals/ })).toContainText("$950.00");
 
   await portalSection(page, "Repairs");
   await page.getByLabel("What needs fixing?").fill("The hallway light is out");

@@ -86,10 +86,34 @@ class StatementRows(Rows):
     sources: list[str | None]
 
 
+class PaymentLine(BaseModel):
+    # A payment row of the tenant's ledger in words (the founder's review of 11/03, item 9): what
+    # paid ("Rent payment"), how ("Check 2101"; None when nobody recorded it) and its receipt.
+    what: str
+    how: str | None
+    receipt: str | None
+
+
+class HeldLine(BaseModel):
+    # What of a tenant's payment was held as prepaid rent (the founder's answer of 11/04, item 9):
+    # a line of the ledger page of its own, its amount neither charged nor paid, so the balance
+    # stays as the report has it; it counts as paid on its "Prepaid rent used" line.
+    on: date
+    what: str
+    how: str | None
+    amount: str
+    receipt: str
+    returned: bool
+
+
 class LedgerRows(Rows):
     # Each row's source: a charge, a payment or a returned payment; None for the lease and the
     # balance.
     sources: list[TenantSource | None]
+    # Each payment row in words; None for every other row.
+    payments: list[PaymentLine | None]
+    # What each payment held as prepaid rent, by day.
+    held: list[HeldLine]
 
 
 def us(day: date) -> str:
@@ -467,7 +491,7 @@ ITEM = {"payment": "payment", "bounced payment": "returned"}
 
 
 def ledger_rows(
-    conn: psycopg.Connection[Any], lease_id: UUID, rows: Rows, as_of: date
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID, rows: Rows, as_of: date
 ) -> LedgerRows:
     """The ledger as the report lists it, each charge, payment and return with its id."""
     cutoff = datetime.combine(as_of + timedelta(days=1), time(0), UTC)
@@ -484,15 +508,100 @@ def ledger_rows(
         for r, source in zip(entries, found, strict=True)
     )
     sources = iter(found)
+    given = [
+        next(sources) if lined_up and r[item] not in ("lease", "balance") else None
+        for r in rows.rows
+    ]
+    words = payment_lines(conn, [s.id for s in given if s is not None and s.kind == "payment"])
     return LedgerRows(
         title=rows.title,
         columns=rows.columns,
         rows=rows.rows,
-        sources=[
-            next(sources) if lined_up and r[item] not in ("lease", "balance") else None
-            for r in rows.rows
-        ],
+        sources=given,
+        payments=[words.get(s.id) if s is not None else None for s in given],
+        held=held_lines(conn, pmc_id, lease_id, cutoff),
     )
+
+
+# Each part of a tenant's payment to the lease held as prepaid rent, before a time, and whether the
+# payment came back since (a bounce posts under its key, "bounce/<key>").
+HELD = """
+SELECT t.id, t.event_at, t.amount, t.metadata,
+       EXISTS (SELECT 1 FROM pgledger_transfers AS b
+               JOIN trust_ledger_accounts AS ba ON ba.ledger_account_id = b.to_account_id
+               WHERE ba.pmc_id = %(pmc)s AND b.event_at < %(cutoff)s
+                 AND b.metadata ->> 'key' = 'bounce/' || (t.metadata ->> 'key'))
+FROM pgledger_transfers AS t
+JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id
+WHERE a.pmc_id = %(pmc)s AND a.kind = 'prepaid_rent'
+  AND t.metadata ->> 'kind' = 'tenant payment' AND t.metadata ->> 'lease_id' = %(lease)s
+  AND t.event_at < %(cutoff)s
+ORDER BY t.event_at, t.id
+"""
+
+
+def held_lines(
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID, cutoff: datetime
+) -> list[HeldLine]:
+    """What each of the lease's payments held as prepaid rent, as the ledger page shows it."""
+    return [
+        HeldLine(
+            on=at.astimezone(UTC).date(),
+            what="Rent payment",
+            how=came((meta or {}).get("method"), (meta or {}).get("reference")),
+            amount=f"{Decimal(amount):.2f}",
+            receipt=f"/api/tenant/payments/{transfer}/receipt",
+            returned=returned,
+        )
+        for transfer, at, amount, meta, returned in conn.execute(
+            HELD, {"pmc": pmc_id, "lease": str(lease_id), "cutoff": cutoff}
+        ).fetchall()
+    ]
+
+
+# How a payment came, as a ledger line says it: a payment made online is a bank debit (ACH).
+HOW = {
+    "check": "Check",
+    "cashier's check": "Cashier's check",
+    "money order": "Money order",
+    "EFT": "EFT",
+    "cash": "Cash",
+    "online": "ACH",
+}
+
+
+def came(method: str | None, reference: str | None) -> str | None:
+    """How a payment came: its method and reference ("Check 2101"), the method once when the
+    reference already says it, None when neither was recorded."""
+    how = HOW.get(method or "")
+    if how and reference and reference.lower().startswith(how.lower()):
+        return reference
+    return " ".join(p for p in (how, reference) if p) or None
+
+
+def payment_lines(conn: psycopg.Connection[Any], transfers: list[str]) -> dict[str, PaymentLine]:
+    """Each payment of a ledger in words: a tenant's own payment is a rent payment, how it came
+    (its method and reference, as staff or the payments partner recorded them) and its receipt;
+    prepaid rent used and a housing authority's payment say what they were."""
+    lines = {}
+    for transfer, meta in conn.execute(
+        "SELECT id, metadata FROM pgledger_transfers WHERE id = ANY(%s)", (transfers,)
+    ).fetchall():
+        meta = meta or {}
+        kind = str(meta.get("kind"))
+        if kind != "tenant payment":
+            # Prepaid rent used, a housing authority's payment; anything else keeps its memo.
+            said = PAID_BY.get(kind)
+            lines[transfer] = PaymentLine(
+                what=said or "Payment", how=None if said else meta.get("memo"), receipt=None
+            )
+            continue
+        lines[transfer] = PaymentLine(
+            what="Rent payment",
+            how=came(meta.get("method"), meta.get("reference")),
+            receipt=f"/api/tenant/payments/{transfer}/receipt",
+        )
+    return lines
 
 
 CHARGE = {"rent": "Rent", "fee": "Fee", "credit": "Credit"}

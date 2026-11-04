@@ -478,12 +478,14 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await joinPortal(taylor, people.taylor);
     await expect(taylor.getByTestId("balance-due")).toHaveText(money(cedarOwes));
     await portalSection(taylor, "Payments");
-    await expect(taylor.getByRole("row", { name: /^Balance at the end of/ }).getByRole("cell").last()).toHaveText(money(cedarOwes));
-    const theirs = taylor.getByRole("list", { name: "Payments" });
-    await expect(theirs.getByRole("listitem").filter({ hasText: "Check 2101" })).toContainText("$1,200.00");
-    await expect(theirs.getByRole("listitem").filter({ hasText: "Check 2102" })).toContainText("Bounced");
+    await expect(taylor.getByRole("row", { name: /^Totals/ }).getByRole("cell").last()).toHaveText(money(cedarOwes));
+    const theirs = taylor.getByRole("table").filter({ hasText: "Charged" });
+    const first = theirs.getByRole("row", { name: /Rent payment · Check 2101/ });
+    await expect(first).toContainText("$1,200.00");
+    await expect(theirs.getByRole("row", { name: /Rent payment · Check 2102/ })).toHaveCount(1);
+    await expect(theirs.getByRole("row", { name: /Payment returned/ })).toHaveCount(1);
     const own = await taylor.request.get(
-      (await theirs.getByRole("listitem").filter({ hasText: "Check 2101" }).getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")) ?? "",
+      (await first.getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")) ?? "",
     );
     expect(own.status()).toBe(200);
     expect(own.headers()["content-type"]).toBe("application/pdf");

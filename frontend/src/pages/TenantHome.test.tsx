@@ -185,30 +185,53 @@ describe("TenantHome", () => {
     ]);
   });
 
-  it("lists each payment with how it came and its receipt, and says one bounced", async () => {
+  it("puts each payment on the ledger as what paid and how, with its receipt, and no list of its own", async () => {
     server({
-      "GET /api/tenant/leases": [{
-        ...lease("1", true),
-        payments: [
-          { transfer_id: "tr2", received_on: "2026-10-03", amount: "1500.00", reference: "No. 8", method: "cashier's check", bounced: false },
-          { transfer_id: "tr1", received_on: "2026-09-02", amount: "1500.00", reference: null, method: "EFT", bounced: true },
-        ],
-      }],
+      "GET /api/tenant/leases": [lease("1", true)],
       "GET /api/tenant/requests": [],
       "GET /api/tenant/renewals": [],
-      "GET /api/tenant/leases/1/ledger": LEDGER,
+      "GET /api/tenant/leases/1/ledger": {
+        ...LEDGER,
+        rows: [
+          ...LEDGER.rows.slice(0, 2),
+          ["3", "2026-01-03", "payment", "Rent – Tenant 1, Property 1", "0.00", "1500.00", "0.00"],
+          ["4", "2026-01-04", "payment", "Prepaid rent", "0.00", "0.00", "0.00"],
+          ["5", "2026-10-11", "balance", "end of day UTC", "1500.00", "1500.00", "0.00"],
+        ],
+        payments: [
+          null,
+          null,
+          { what: "Rent payment", how: "Cashier's check No. 8", receipt: "/api/tenant/payments/tr2/receipt" },
+          { what: "Prepaid rent used", how: null, receipt: null },
+          null,
+        ],
+        held: [{
+          on: "2026-01-03", what: "Rent payment", how: "Cashier's check No. 8", amount: "50.00",
+          receipt: "/api/tenant/payments/tr3/receipt", returned: false,
+        }],
+      },
     });
     render(<TenantHome me={ME} section="payments" />);
 
-    const list = await screen.findByRole("list", { name: "Payments" });
-    const items = within(list).getAllByRole("listitem");
-    expect(items.map((item) => item.textContent)).toEqual([
-      "10/03/2026 · $1,500.00 · Cashier's check No. 8Receipt (PDF)",
-      "09/02/2026 · $1,500.00 · EFTBouncedReceipt (PDF)",
-    ]);
-    expect(within(items[0] as HTMLElement).getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")).toBe(
+    await screen.findAllByRole("row", { name: /Rent payment/ });
+    const row = (start: string) =>
+      screen.getAllByRole("row").find((r) => r.textContent?.startsWith(start)) as HTMLElement;
+    const paid = row("01/03/2026Rent payment · Cashier's check No. 8Receipt");
+    expect(within(paid).getAllByRole("cell")[1]?.textContent).toBe("Rent payment · Cashier's check No. 8Receipt (PDF)");
+    expect(within(paid).getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")).toBe(
       "/api/tenant/payments/tr2/receipt",
     );
+    const held = row("01/03/2026Rent payment · Cashier's check No. 8, $50.00 held");
+    expect(within(held).getAllByRole("cell").map((cell) => cell.textContent)).toEqual([
+      "01/03/2026",
+      "Rent payment · Cashier's check No. 8, $50.00 held as prepaid rentReceipt (PDF)",
+      "",
+      "",
+      "$0.00",
+    ]);
+    const used = row("01/04/2026Prepaid rent used");
+    expect(within(used).queryByRole("link")).toBeNull();
+    expect(screen.queryByRole("list", { name: "Payments" })).toBeNull();
   });
 
   it("shows neither when nothing comes up and no deposit was returned", async () => {
@@ -244,7 +267,14 @@ describe("TenantHome", () => {
     const due = screen.getByTestId("balance-due").parentElement as HTMLElement;
     expect(within(due).getByRole("link", { name: "Payments" }).getAttribute("href")).toBe("/payments");
     rerender(<TenantHome me={ME} section="payments" />);
-    expect(await screen.findByText("Balance at the end of 10/11/2026")).toBeTruthy();
+    const totals = await screen.findByRole("row", { name: /^Totals/ });
+    expect(within(totals).getAllByRole("cell").map((cell) => cell.textContent)).toEqual([
+      "Totals", "$1,500.00", "$0.00", "$1,500.00",
+    ]);
+    const opening = screen.getByRole("row", { name: /Opening balance/ });
+    expect(within(opening).getAllByRole("cell").map((cell) => cell.textContent)).toEqual([
+      "01/01/2026", "Opening balance", "$0.00",
+    ]);
     const rent = screen.getByRole("row", { name: /^01\/01\/2026 Rent/ });
     expect(within(rent).getAllByRole("cell").map((cell) => cell.textContent)).toEqual([
       "01/01/2026", "Rent", "$1,500.00", "", "$1,500.00",
@@ -405,18 +435,22 @@ describe("TenantHome", () => {
       "GET /api/tenant/leases/1/ledger": LEDGER,
       "GET /api/tenant/leases/2/ledger": {
         ...LEDGER,
-        rows: [...LEDGER.rows.slice(0, 2), ["3", "2026-06-30", "balance", "end of day UTC", "1500.00", "0.00", "1500.00"]],
+        rows: [
+          LEDGER.rows[0],
+          ["2", "2026-01-01", "rent", null, "900.00", "0.00", "900.00"],
+          ["3", "2026-06-30", "balance", "end of day UTC", "900.00", "0.00", "900.00"],
+        ],
       },
     });
     const release = holdBack((path) => path === "/api/tenant/leases/1/ledger");
     render(<TenantHome me={ME} section="payments" />);
 
     fireEvent.change(await screen.findByLabelText("Lease"), { target: { value: "2" } });
-    await screen.findByText("Balance at the end of 06/30/2026");
+    const totals = () => screen.getByRole("row", { name: /^Totals/ }).textContent;
+    await screen.findByRole("row", { name: /^Totals/ });
     await release();
 
-    expect(screen.getByText("Balance at the end of 06/30/2026")).toBeTruthy();
-    expect(screen.queryByText("Balance at the end of 10/11/2026")).toBeNull();
+    expect(totals()).toBe("Totals$900.00$0.00$900.00");
   });
 
   it("picks the lease a repair is for on Repairs, and keeps it from section to section", async () => {

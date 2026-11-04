@@ -467,7 +467,7 @@ def ledger(
     """The lease's charges and payments through the end of a day (UTC), today by default, each
     line with the charge, payment or returned payment it shows, which opens its source."""
     rows = Rows.of(ledger_table(conn, session, lease_id, as_of))
-    return ledger_sources.ledger_rows(conn, lease_id, rows, as_of or today())
+    return ledger_sources.ledger_rows(conn, session.pmc_id, lease_id, rows, as_of or today())
 
 
 @router.get("/leases/{lease_id}/ledger/sources/{kind}/{source_id}")

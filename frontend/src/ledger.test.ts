@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { entryWords, itemLabel, readLedger } from "./ledger";
+import { entryWords, itemLabel, ledgerLines, readLedger } from "./ledger";
 
 // The golden tenant ledger (tests/golden/cases/trust_report_tenant_ledger/april), as the API
 // sends it.
@@ -20,9 +20,9 @@ describe("readLedger", () => {
     expect(ledger.through).toBe("2026-04-30");
     expect(ledger.totals).toEqual({ charged: "6000.00", paid: "4000.00", balance: "2000.00" });
     expect(ledger.entries).toEqual([
-      { on: "2026-01-01", item: "rent", detail: "January rent", charged: "1500.00", paid: "0.00", balance: "1500.00", source: null },
-      { on: "2026-01-03", item: "payment", detail: "Check 101", charged: "0.00", paid: "1500.00", balance: "0.00", source: null },
-      { on: "2026-03-05", item: "payment", detail: "", charged: "0.00", paid: "1000.00", balance: "500.00", source: null },
+      { on: "2026-01-01", item: "rent", detail: "January rent", charged: "1500.00", paid: "0.00", balance: "1500.00", source: null, payment: null },
+      { on: "2026-01-03", item: "payment", detail: "Check 101", charged: "0.00", paid: "1500.00", balance: "0.00", source: null, payment: null },
+      { on: "2026-03-05", item: "payment", detail: "", charged: "0.00", paid: "1000.00", balance: "500.00", source: null, payment: null },
     ]);
   });
 
@@ -38,6 +38,23 @@ describe("readLedger", () => {
     const ledger = readLedger({ title: "t", columns: COLUMNS, rows: ROWS, sources });
 
     expect(ledger.entries.map((e) => e.source)).toEqual(sources.slice(1, 4));
+  });
+
+  it("starts from what was owed before the first line: the closing balance less charged, plus paid", () => {
+    expect(readLedger({ title: "t", columns: COLUMNS, rows: ROWS }).opening).toBe("0.00");
+    const carried = ROWS.map((row) => (row[2] === "balance" ? [...row.slice(0, 6), "2150.25"] : row));
+    expect(readLedger({ title: "t", columns: COLUMNS, rows: carried }).opening).toBe("150.25");
+  });
+
+  it("reads a payment as what paid and how, never its memo", () => {
+    const payments = [null, null, { what: "Rent payment", how: "Check 101", receipt: "/r/1" }, null, null];
+
+    const ledger = readLedger({ title: "t", columns: COLUMNS, rows: ROWS, payments });
+
+    expect(ledger.entries[1]?.payment).toEqual(payments[2]);
+    expect(entryWords(ledger.entries[1]!)).toEqual({ what: "Rent payment", detail: "Check 101" });
+    const unrecorded = { ...ledger.entries[1]!, payment: { what: "Rent payment", how: null, receipt: null } };
+    expect(entryWords(unrecorded)).toEqual({ what: "Rent payment", detail: "" });
   });
 
   it("finds its columns by name, and says which is missing", () => {
@@ -64,5 +81,39 @@ describe("entryWords", () => {
     expect(entryWords({ item: "rent", detail: "Rent due 2026-08-01" })).toEqual({ what: "Rent due 08/01/2026", detail: "" });
     expect(entryWords({ item: "fee", detail: "Key replacement" })).toEqual({ what: "Fee", detail: "Key replacement" });
     expect(entryWords({ item: "payment", detail: "" })).toEqual({ what: "Payment", detail: "" });
+  });
+});
+
+describe("ledgerLines", () => {
+  const held = (on: string) => ({
+    on, what: "Rent payment", how: "ACH", amount: "100.00", receipt: `/r/${on}`, returned: false,
+  });
+
+  it("puts each prepaid part after its day's lines, with the balance as it stood", () => {
+    const ledger = readLedger({
+      title: "t",
+      columns: COLUMNS,
+      rows: ROWS,
+      held: [held("2025-12-31"), held("2026-01-03"), held("2026-02-01"), held("2026-05-01")],
+    });
+
+    const lines = ledgerLines(ledger).map((line) =>
+      "held" in line ? `held ${line.held.on} at ${line.balance}` : `${line.entry.item} ${line.entry.on}`,
+    );
+
+    expect(lines).toEqual([
+      "held 2025-12-31 at 0.00",
+      "rent 2026-01-01",
+      "payment 2026-01-03",
+      "held 2026-01-03 at 0.00",
+      "held 2026-02-01 at 0.00",
+      "payment 2026-03-05",
+      "held 2026-05-01 at 500.00",
+    ]);
+  });
+
+  it("is the entries alone when nothing was held", () => {
+    const ledger = readLedger({ title: "t", columns: COLUMNS, rows: ROWS });
+    expect(ledgerLines(ledger).every((line) => "entry" in line)).toBe(true);
   });
 });

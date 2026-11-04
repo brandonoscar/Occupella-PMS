@@ -7,7 +7,7 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
 import type { Ledger, LedgerData, LedgerSource } from "../ledger";
-import { entryWords, readLedger } from "../ledger";
+import { entryWords, ledgerLines, readLedger } from "../ledger";
 import { OpensSource, SourcePanel } from "../components/SourcePanel";
 import type { ContentType } from "../documents";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
@@ -15,7 +15,7 @@ import type { MaintenanceRequest } from "../maintenance";
 import { PHOTOS_PER_REQUEST, photosLabel, photosProblem, statusLabel, visitLabel, when } from "../maintenance";
 import { day, money, usDate, usDatesIn } from "../money";
 import type { DepositAsked, Paid, RentersInsurance } from "../rent";
-import { dueDayLabel, insuranceLine, methodLabel, tenantDepositLine } from "../rent";
+import { dueDayLabel, insuranceLine, tenantDepositLine } from "../rent";
 import { Badge } from "../components/Badge";
 import { PolicyForm } from "./InsuranceForms";
 import { RenewalsCard } from "./RenewalsCard";
@@ -401,17 +401,52 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                     </tr>
                   </thead>
                   <tbody>
-                    {ledger.entries.map((entry, n) => {
+                    <tr className="border-t border-line text-ink-muted">
+                      <td className={`${CELL} whitespace-nowrap`}>{usDate(lease.starts_on)}</td>
+                      <td className={CELL} colSpan={3}>Opening balance</td>
+                      <td className={AMOUNT}>{money(ledger.opening)}</td>
+                    </tr>
+                    {ledgerLines(ledger).map((line, n) => {
+                      if ("held" in line) {
+                        const { held, balance } = line;
+                        return (
+                          <tr key={n} className="border-t border-line">
+                            <td className={`${CELL} whitespace-nowrap text-ink-muted`}>{usDate(held.on)}</td>
+                            <td className={CELL}>
+                              {held.what}
+                              <span className="text-ink-muted">
+                                {held.how && ` · ${held.how}`}, {money(held.amount)} held as prepaid rent
+                                {held.returned && " · came back unpaid"}
+                              </span>
+                              <a href={held.receipt} className="ml-3 text-sm text-iris hover:text-iris-hover hover:underline">
+                                Receipt (PDF)
+                              </a>
+                            </td>
+                            <td className={AMOUNT}>{""}</td>
+                            <td className={AMOUNT}>{""}</td>
+                            <td className={AMOUNT}>{money(balance)}</td>
+                          </tr>
+                        );
+                      }
+                      const entry = line.entry;
                       const words = entryWords(entry);
                       const source = entry.source;
+                      const receipt = entry.payment?.receipt;
                       return (
                       <tr key={n} className="border-t border-line">
                         <td className={`${CELL} whitespace-nowrap text-ink-muted`}>{usDate(entry.on)}</td>
                         <td className={CELL}>
                           <OpensSource onOpen={source ? () => setOpened(source) : null}>
                             {words.what}
-                            {words.detail && <span className="text-ink-muted">: {words.detail}</span>}
+                            {words.detail && (
+                              <span className="text-ink-muted">{entry.payment ? " · " : ": "}{words.detail}</span>
+                            )}
                           </OpensSource>
+                          {receipt && (
+                            <a href={receipt} className="ml-3 text-sm text-iris hover:text-iris-hover hover:underline">
+                              Receipt (PDF)
+                            </a>
+                          )}
                         </td>
                         <td className={AMOUNT}>{entry.charged === "0.00" ? "" : money(entry.charged)}</td>
                         <td className={AMOUNT}>{entry.paid === "0.00" ? "" : money(entry.paid)}</td>
@@ -420,9 +455,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                       );
                     })}
                     <tr className="border-t border-line-strong font-medium">
-                      <td className={CELL} colSpan={2}>
-                        Balance at the end of {usDate(ledger.through)}
-                      </td>
+                      <td className={CELL} colSpan={2}>Totals</td>
                       <td className={AMOUNT}>{money(ledger.totals.charged)}</td>
                       <td className={AMOUNT}>{money(ledger.totals.paid)}</td>
                       <td className={AMOUNT}>{money(ledger.totals.balance)}</td>
@@ -441,34 +474,6 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
 
           {section === "payments" && <PayOnlineCard leaseId={lease.lease_id} />}
           {section === "payments" && <TenantAutopayCard leaseId={lease.lease_id} />}
-
-          {section === "payments" && (
-          <Card title="Payments">
-            {lease.payments.length === 0 ? (
-              <p className="text-sm text-ink-subtle">No payment recorded yet.</p>
-            ) : (
-              <ul className="flex flex-col divide-y divide-line text-base" aria-label="Payments">
-                {lease.payments.map((payment) => (
-                  <li key={payment.transfer_id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-                    <span>
-                      {usDate(payment.received_on)} · {money(payment.amount)}
-                      {(payment.method || payment.reference) && (
-                        <span className="text-ink-muted">
-                          {" · "}{[payment.method && methodLabel(payment.method), payment.reference].filter(Boolean).join(" ")}
-                        </span>
-                      )}
-                    </span>
-                    <span className="flex items-center gap-3">
-                      {payment.bounced && <Badge tone="danger">Bounced</Badge>}
-                      <a href={`/api/tenant/payments/${encodeURIComponent(payment.transfer_id)}/receipt`}
-                        className="text-sm text-iris hover:text-iris-hover hover:underline">Receipt (PDF)</a>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-          )}
 
           {section === "repairs" && (
           <Card title="Maintenance requests">

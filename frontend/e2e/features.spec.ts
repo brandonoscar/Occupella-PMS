@@ -1448,11 +1448,15 @@ test("a tenant sees their lease, what comes each month and two months of charges
 
   await portalSection(page, "Payments");
   const ledger = page.getByRole("table").filter({ hasText: "Charged" });
+  await expect(ledger.getByRole("row", { name: /Opening balance/ })).toContainText("$0.00");
   await expect(ledger.getByRole("row", { name: /^\d{2}\/\d{2}\/\d{4} Rent due/ })).toHaveCount(2);
-  await expect(ledger.getByRole("row", { name: /^\d{2}\/\d{2}\/\d{4} Payment/ })).toHaveCount(2);
-  await expect(ledger.getByRole("row", { name: /^Balance at the end of/ })).toContainText(
-    "$4,500.00$4,500.00$0.00",
-  );
+  // Each payment reads as a rent payment, never its memo, and carries its receipt.
+  const payments = ledger.getByRole("row", { name: /^\d{2}\/\d{2}\/\d{4} Rent payment/ });
+  await expect(payments).toHaveCount(2);
+  await expect(payments.first().getByRole("link", { name: "Receipt (PDF)" })).toBeVisible();
+  await expect(ledger).not.toContainText("Rent – ");
+  await expect(ledger.getByRole("row", { name: /^Totals/ })).toContainText("$4,500.00$4,500.00$0.00");
+  await expect(page.getByRole("list", { name: "Payments" })).toHaveCount(0);
   await downloads(page, "PDF", PDF);
   await downloads(page, "CSV", CSV);
   await downloads(page, "Excel", XLSX);
@@ -1502,7 +1506,7 @@ test("an owner opens a line of their statement to see where it came from, and a 
   await expect(rent).toContainText("Still owed");
   await expect(rent).toContainText("$0.00");
   await rent.getByRole("button", { name: "Close" }).click();
-  await ledger.getByRole("button", { name: /^Payment/ }).first().click();
+  await ledger.getByRole("button", { name: /^Rent payment/ }).first().click();
   const paid = tenant.getByRole("dialog", { name: "Payment" });
   await expect(paid).toContainText("Received from");
   const theirs = (await paid.getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")) ?? "";
@@ -2978,8 +2982,7 @@ test("staff put a lease on a payment hold, accept a cashier's check past it and 
   // The tenant downloads their own receipt.
   await portalSection(tenant, "Payments");
   await tenant.reload();
-  const theirs = tenant.getByRole("list", { name: "Payments" });
-  await expect(theirs).toContainText("Cashier's check CC 9");
+  const theirs = part(tenant, "Charges and payments").getByRole("row", { name: /Rent payment · Cashier's check CC 9/ });
   const href = (await theirs.getByRole("link", { name: "Receipt (PDF)" }).first().getAttribute("href")) ?? "";
   const answer = await tenant.request.get(href);
   expect(answer.status()).toBe(200);
@@ -5071,7 +5074,10 @@ test("a tenant pays rent online on the payments partner's page, it reaches the b
   await expect(tenant.getByTestId("pay-done")).toContainText("a few business days");
   await tenant.getByRole("link", { name: "Back to your payments" }).click();
   await expect(part(tenant, "Pay online").getByRole("listitem").first()).toContainText("Paid");
-  await expect(part(tenant, "Payments")).toContainText("$100.00 · Paid online (bank)");
+  // Nothing was owed: it is held as prepaid rent, on a line of its own with its receipt.
+  const online = part(tenant, "Charges and payments").getByRole("row", { name: /Rent payment · ACH/ });
+  await expect(online).toContainText("$100.00 held as prepaid rent");
+  await expect(online.getByRole("link", { name: "Receipt (PDF)" })).toBeVisible();
 
   // A second payment, its lease put on a payment hold before the bank pays it: it waits.
   await part(tenant, "Pay online").getByLabel("Amount").fill("50.00");
