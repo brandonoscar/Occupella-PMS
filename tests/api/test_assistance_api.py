@@ -24,10 +24,18 @@ from people import join_as_owner, join_as_staff, tenant_of
 
 from pms.api.assistance import a_year_after
 
-TODAY = datetime.now(UTC).date()
-FIRST = TODAY.replace(day=1)
-STARTED = (FIRST - timedelta(days=40)).replace(day=1)
-NEXT = (FIRST + timedelta(days=32)).replace(day=1)
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, FIRST, STARTED, NEXT
+    TODAY = datetime.now(UTC).date()
+    FIRST = TODAY.replace(day=1)
+    STARTED = (FIRST - timedelta(days=40)).replace(day=1)
+    NEXT = (FIRST + timedelta(days=32)).replace(day=1)
+
+
+on_this_day()
 HA = "Synthetic Housing Authority"
 NONE_ON_FILE = {
     "recertify_by": None,
@@ -75,7 +83,8 @@ def add_authority(client, name=HA):
     return ok(post(client, "/api/assistance/authorities", name=name))["id"]
 
 
-def terms(client, lease, authority, amount="800.00", starts_on=FIRST, **more):
+def terms(client, lease, authority, amount="800.00", starts_on=None, **more):
+    starts_on = FIRST if starts_on is None else starts_on
     return post(
         client,
         f"/api/assistance/leases/{lease}/terms",
@@ -491,7 +500,8 @@ def test_a_payment_names_each_lease_once_and_an_authority_of_the_company(
 # --- keeping the lease in compliance (migration 0108, q143) -----------------------------------
 
 
-def certify(client, lease, kind="annual", effective_on=STARTED, **more):
+def certify(client, lease, kind="annual", effective_on=None, **more):
+    effective_on = STARTED if effective_on is None else effective_on
     return post(
         client,
         f"/api/assistance/leases/{lease}/certifications",
@@ -503,7 +513,8 @@ def certify(client, lease, kind="annual", effective_on=STARTED, **more):
     )
 
 
-def inspect(client, lease, result="passed", inspected_on=TODAY, **more):
+def inspect(client, lease, result="passed", inspected_on=None, **more):
+    inspected_on = TODAY if inspected_on is None else inspected_on
     return post(
         client,
         f"/api/assistance/leases/{lease}/inspections",
@@ -671,7 +682,8 @@ def test_records_are_of_a_lease_with_assistance_on_file_of_the_company(client, c
 # --- late fees, returned payments and holds (migration 0116, q034) ----------------------------
 
 
-def late_fee(client, authority, starts_on=STARTED, grace_days=5, flat_fee="25.00"):
+def late_fee(client, authority, starts_on=None, grace_days=5, flat_fee="25.00"):
+    starts_on = STARTED if starts_on is None else starts_on
     return post(
         client,
         f"/api/assistance/authorities/{authority}/late-fees",

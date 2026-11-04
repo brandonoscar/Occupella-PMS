@@ -10,3 +10,5 @@ mutation/
 failing-case/
 .hypothesis/
 mutants/
+# The self-host install's daily dumps (compose.selfhost.yaml): every record the PMS keeps.
+/backups/

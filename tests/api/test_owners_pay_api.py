@@ -9,10 +9,18 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from helpers import add_agreement, balance, contribute, make_pmc
+from helpers import add_agreement, balance, contribute, fresh, make_pmc
 from people import PASSWORD, invite_token, join_as_owner, join_as_staff, join_as_tenant
 
-TODAY = datetime.now(UTC).date()
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY
+    TODAY = datetime.now(UTC).date()
+
+
+on_this_day()
 DAY = timedelta(days=1)
 
 
@@ -167,7 +175,7 @@ def test_pay_owners_pays_none_when_one_cant_be_paid(client, conn, staff, pmc):
     [
         ({"payouts": []}, 422),
         ({"method": "wire"}, 422),
-        ({"on": str(TODAY + DAY)}, 422),
+        ({"on": lambda: str(TODAY + DAY)}, 422),
         ({"payouts": [{"account": "nobody", "amount": "1.00"}]}, 404),
         (
             {"payouts": [{"account": "a", "amount": "1.00"}, {"account": "a", "amount": "2.00"}]},
@@ -177,6 +185,7 @@ def test_pay_owners_pays_none_when_one_cant_be_paid(client, conn, staff, pmc):
     ],
 )
 def test_pay_owners_takes_a_day_a_method_and_each_account_once(client, staff, change, status):
+    change = fresh(change)
     body = {"request_id": str(uuid.uuid4()), "on": str(TODAY), "method": "check"} | change
     assert client.post("/api/payables/draws/batch", json=body).status_code == status
 
@@ -251,14 +260,18 @@ def test_the_fees_page_says_what_collect_fees_takes_and_moves_nothing(client, co
     ("method", "path"),
     [
         ("post", "/api/payables/draws/batch"),
-        ("get", f"/api/payables/management-fees?period_start={TODAY}&period_end={TODAY + DAY}"),
-        ("get", f"/api/owners/{uuid.uuid4()}/statement?start={TODAY}&end={TODAY}"),
-        ("get", f"/api/owners/{uuid.uuid4()}/statement/download?start={TODAY}&end={TODAY}"),
+        (
+            "get",
+            lambda: f"/api/payables/management-fees?period_start={TODAY}&period_end={TODAY + DAY}",
+        ),
+        ("get", lambda: f"/api/owners/{uuid.uuid4()}/statement?start={TODAY}&end={TODAY}"),
+        ("get", lambda: f"/api/owners/{uuid.uuid4()}/statement/download?start={TODAY}&end={TODAY}"),
     ],
 )
 def test_only_staff_pay_owners_and_read_fees_and_statements(
     client, conn, app_conn, pmc, caller, method, path
 ):
+    path = fresh(path)
     if caller == "owner":
         join_as_owner(client, app_conn, pmc)
     elif caller == "tenant":

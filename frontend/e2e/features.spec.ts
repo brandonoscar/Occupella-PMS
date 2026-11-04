@@ -88,6 +88,12 @@ async function section(page: Page, name: string): Promise<void> {
   await expect(page.getByRole("heading", { level: 1, name, exact: true })).toBeVisible();
 }
 
+// A portal's section from its sidebar, by its link and its page's title.
+async function portalSection(page: Page, link: string, title = link): Promise<void> {
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: link, exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
+}
+
 // Records a bill from Bills' side panel (Bills open already); `more` fills anything else.
 async function recordBill(
   page: Page,
@@ -1366,6 +1372,7 @@ test("an owner reads last month's statement and their year-end package, and down
   }
 
   // Last month: rent received, the management fee, the draw; each property ends at its reserve.
+  await portalSection(page, "Statements and reports");
   const statement = part(page, "Statement");
   const birch = statement.getByRole("table", { name: "Birch Flats" });
   // Each rent receipt names its tenants and home (its memo, src/pms/api/rent.py).
@@ -1408,6 +1415,7 @@ test("a tenant sees their lease, what comes each month and two months of charges
   await expect(page.getByTestId("balance-due")).toHaveText("$0.00");
   await expect(part(page, "Coming up")).toContainText("Rent: $2,250.00");
 
+  await portalSection(page, "Payments");
   const ledger = page.getByRole("table").filter({ hasText: "Charged" });
   await expect(ledger.getByRole("row", { name: /^\d{2}\/\d{2}\/\d{4} Rent due/ })).toHaveCount(2);
   await expect(ledger.getByRole("row", { name: /^\d{2}\/\d{2}\/\d{4} Payment/ })).toHaveCount(2);
@@ -1495,6 +1503,7 @@ test("a lease ended mid-month keeps only its days of the month's rent, and its d
   // The tenant downloads the same statement from the portal; with their login, staff email it too.
   const tenant = await (await browser.newContext()).newPage();
   await joinPortal(tenant, people.drew);
+  await portalSection(tenant, "Lease", "Your lease");
   await downloads(tenant, "Deposit statement (PDF)", PDF);
   await lease.getByRole("button", { name: "Email the statement" }).click();
   await expect(page.getByText(`Emailed Drew Sample at ${people.emails.drew}.`)).toBeVisible();
@@ -2024,6 +2033,7 @@ test("staff put bills in expense accounts on Schedule E lines, and the owner rea
   // The owner reads this year's income statement: the water and hose are Utilities.
   const owner = await (await browser.newContext()).newPage();
   await joinPortal(owner, people.owner_b);
+  await portalSection(owner, "Statements and reports");
   const card = owner.locator("section", { has: owner.getByRole("heading", { level: 2, name: "Income statement" }) });
   await card.getByLabel("Year").fill(today().slice(0, 4));
   await card.getByRole("button", { name: "Show" }).click();
@@ -2581,6 +2591,7 @@ test("staff require renters insurance on a lease, Today flags it, the tenant rec
   // The tenant records their policy, from the insurer they chose.
   const tenant = await browser.newPage();
   await joinPortal(tenant, people.taylor);
+  await portalSection(tenant, "Lease", "Your lease");
   const card = part(tenant, "Renters insurance");
   await card.getByLabel("Insurer").fill("Synthetic Mutual");
   await card.getByLabel("Policy number").fill("RI-0001");
@@ -2879,6 +2890,7 @@ test("staff put a lease on a payment hold, accept a cashier's check past it and 
   await downloads(page, "Slip (PDF)", PDF);
 
   // The tenant downloads their own receipt.
+  await portalSection(tenant, "Payments");
   await tenant.reload();
   const theirs = tenant.getByRole("list", { name: "Payments" });
   await expect(theirs).toContainText("Cashier's check CC 9");
@@ -3679,6 +3691,7 @@ test("staff go on call; a tenant files an emergency with a photo and staff see i
   // The tenant files an emergency with a photo; they don't want anyone going in unannounced.
   const tenant = await browser.newPage();
   await joinPortal(tenant, people.taylor);
+  await portalSection(tenant, "Repairs");
   const requests = part(tenant, "Maintenance requests");
   await requests.getByLabel("What needs fixing?").fill("No heat in the bedroom");
   await requests.getByLabel("This is an emergency (no heat, no water, a leak, a gas smell)").check();
@@ -4112,6 +4125,7 @@ test("staff and a tenant each subscribe their calendar app to a link of their ow
   // The tenant's calendar: their rent due days, and nothing of the company's.
   const tenant = await browser.newPage();
   await joinPortal(tenant, people.taylor);
+  await portalSection(tenant, "Profile", "Your profile");
   const theirs = part(tenant, "Calendar");
   await theirs.getByRole("button", { name: "Make a calendar link" }).click();
   await expect(theirs).toContainText("Made your calendar link.");
@@ -4133,6 +4147,7 @@ test("a tenant changes their own phone and email in the portal, and staff see th
 }) => {
   const people = seed.features["own-contact"]!;
   await joinPortal(page, people.drew);
+  await portalSection(page, "Profile", "Your profile");
   const mine = page.getByRole("group", { name: "Contact details, Drew Sample" });
   await expect(mine).toContainText("No contact details yet.");
   await mine.getByRole("button", { name: "Edit contact details" }).click();
@@ -4210,11 +4225,15 @@ test("staff make a tenant a tenant at a second property and lease them a unit th
   const picker = tenant.getByRole("combobox", { name: /^Lease/ });
   await picker.selectOption({ label: `Aspen Row, Unit 2, from ${us(today())}` });
   await expect(part(tenant, "Your lease")).toContainText("Aspen Row, Unit 2");
+  // Repairs asks for one at the lease chosen, which carries from section to section.
+  await portalSection(tenant, "Repairs");
+  await expect(picker.locator("option:checked")).toHaveText(`Aspen Row, Unit 2, from ${us(today())}`);
   await tenant.getByLabel("What needs fixing?").fill("The porch light flickers");
   await tenant.getByRole("button", { name: "Send request" }).click();
   await expect(part(tenant, "Maintenance requests").getByRole("listitem").filter({ hasText: "The porch light flickers" }))
     .toContainText("Received");
   // Newest first: the lease at Aspen Row, then the one at Cedar House.
+  await portalSection(tenant, "Lease", "Your lease");
   await picker.selectOption({ index: 1 });
   await expect(part(tenant, "Your lease")).toContainText("Cedar House, House");
   await tenant.close();
@@ -4452,6 +4471,7 @@ test("staff add charge types and give a lease's fee and monthly charge one; the 
   // The owner's income statement this year: the key on a line of its own.
   const owner = await (await browser.newContext()).newPage();
   await joinPortal(owner, people.owner_a);
+  await portalSection(owner, "Statements and reports");
   const card = owner.locator("section", { has: owner.getByRole("heading", { level: 2, name: "Income statement" }) });
   await card.getByLabel("Year").fill(today().slice(0, 4));
   await card.getByRole("button", { name: "Show" }).click();
@@ -4948,6 +4968,7 @@ test("a tenant pays rent online on the payments partner's page, it reaches the b
   // The tenant pays $100.00 on the (fake) partner's page; the bank pays it.
   const tenant = await (await browser.newContext()).newPage();
   await joinPortal(tenant, people.taylor);
+  await portalSection(tenant, "Payments");
   const pay = part(tenant, "Pay online");
   await pay.getByLabel("Amount").fill("100.00");
   await expect(pay.getByTestId("pay-fee")).toHaveText("$100.00, no fee");
@@ -4958,7 +4979,7 @@ test("a tenant pays rent online on the payments partner's page, it reaches the b
   await expect(tenant.getByText("Paid", { exact: true })).toBeVisible();
   await tenant.getByRole("link", { name: "Back to the portal" }).click();
   await expect(tenant.getByTestId("pay-done")).toContainText("a few business days");
-  await tenant.getByRole("link", { name: "Back to your lease" }).click();
+  await tenant.getByRole("link", { name: "Back to your payments" }).click();
   await expect(part(tenant, "Pay online").getByRole("listitem").first()).toContainText("Paid");
   await expect(part(tenant, "Payments")).toContainText("$100.00 · Paid online (bank)");
 
@@ -5053,6 +5074,7 @@ test("a tenant sets up autopay, saves a bank account and turns it off, Run rent 
   // the (fake) partner's page; it pays from the next rent due day.
   const tenant = await (await browser.newContext()).newPage();
   await joinPortal(tenant, people.taylor);
+  await portalSection(tenant, "Payments");
   const card = part(tenant, "Autopay");
   await card.getByLabel("Up to", { exact: true }).fill("3000.00");
   await card.getByRole("button", { name: "Save a bank account and turn on autopay" }).click();
@@ -5061,7 +5083,7 @@ test("a tenant sets up autopay, saves a bank account and turns it off, Run rent 
   await expect(tenant.getByTestId("fake-save")).toHaveText("Saved: Test bank ••••0000.");
   await tenant.getByRole("link", { name: "Back to the portal" }).click();
   await expect(tenant.getByRole("heading", { name: "Autopay is set up" })).toBeVisible();
-  await tenant.getByRole("link", { name: "Back to your lease" }).click();
+  await tenant.getByRole("link", { name: "Back to your payments" }).click();
   await expect(part(tenant, "Autopay").getByTestId("autopay")).toHaveText(
     "On: pays the balance due, up to $3,000.00, on each rent due day, from Test bank ••••0000",
   );
@@ -5393,4 +5415,225 @@ test("staff send a reminder of rent past due from the Dashboard, seeing who gets
   await expect(page.getByRole("heading", { level: 1, name: "Drew Sample" })).toBeVisible();
   await page.getByRole("tab", { name: "Email", exact: true }).click();
   await expect(page.getByRole("main")).toContainText("Rent past due at Unit 1, Aspen Row");
+});
+
+test("an owner reads a property's units, who rents each and for how much, and what is vacant; follows the repairs there; and keeps their own contact details, which staff see they changed", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["owner-portal-two"]!;
+  // Staff open a repair in Aspen Row's vacant Unit 2.
+  const staff = await browser.newPage();
+  await joinAsStaff(staff, people.manager);
+  await section(staff, "Work orders");
+  await staff.getByRole("button", { name: "New work order" }).click();
+  const opening = staff.getByRole("dialog", { name: "New work order" });
+  await opening.getByRole("combobox", { name: "Property", exact: true }).selectOption({ label: "Aspen Row" });
+  await opening.getByRole("combobox", { name: "Unit", exact: true }).selectOption({ label: "Unit 2" });
+  await opening.getByLabel("Title").fill("Paint the bedroom before it is listed");
+  await opening.getByRole("button", { name: "Open work order" }).click();
+  await expect(staff.getByRole("heading", { level: 1, name: /Paint the bedroom before it is listed$/ })).toBeVisible();
+
+  // The owner's portal opens on its Overview; each part has a section of its own.
+  await joinPortal(page, people.owner_b);
+  await expect(page.getByRole("heading", { level: 1, name: "Your properties" })).toBeVisible();
+  await portalSection(page, "Properties");
+  await part(page, "Your properties").getByRole("link", { name: "Aspen Row", exact: true }).click();
+  await expect(part(page, "Aspen Row")).toContainText("1 rented, 1 vacant");
+  const units = page.getByRole("table", { name: "Units" });
+  await expect(units.getByRole("row", { name: /^Unit 1/ })).toContainText("Drew Sample");
+  await expect(units.getByRole("row", { name: /^Unit 1/ })).toContainText("$1,180.00");
+  await expect(units.getByRole("row", { name: /^Unit 2/ })).toContainText("Vacant");
+  // Tenants' names only: their contact details stay with the manager.
+  await expect(part(page, "Units")).not.toContainText("@");
+
+  const repair = page.getByRole("table", { name: "Repairs" }).getByRole("row", { name: /Paint the bedroom before it is listed/ });
+  await portalSection(page, "Repairs");
+  await expect(repair).toContainText("Aspen Row, Unit 2");
+  await expect(repair).toContainText("Open");
+  // Staff assign a vendor; the owner sees it.
+  await staff.getByRole("button", { name: "Next step" }).click();
+  const next = staff.getByRole("dialog", { name: "Next step" });
+  await next.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Plumbing Co" });
+  await next.getByRole("button", { name: "Record" }).click();
+  await expect(next).toHaveCount(0);
+  await page.reload();
+  await expect(repair).toContainText("Vendor assigned");
+  await expect(repair).toContainText("Demo Plumbing Co");
+
+  await portalSection(page, "Profile", "Your profile");
+  const mine = page.getByRole("group", { name: "Contact details, Demo Owner B" });
+  await mine.getByRole("button", { name: "Edit contact details" }).click();
+  await mine.getByLabel("Email").fill("owner.b.new@example.com");
+  await mine.getByLabel("Phone", { exact: true }).fill("(555) 555-0177");
+  await mine.getByRole("button", { name: "Save contact details" }).click();
+  await expect(mine).toContainText("Contact details saved.");
+  await expect(mine).toContainText("owner.b.new@example.com");
+
+  await section(staff, "Owners");
+  await staff.getByRole("row", { name: /^Demo Owner B/ }).getByRole("link", { name: "Demo Owner B" }).click();
+  const theirs = staff.getByRole("group", { name: "Contact details, Demo Owner B" });
+  await expect(theirs).toContainText("owner.b.new@example.com");
+  await expect(theirs).toContainText(`Demo Owner B changed these in the portal on ${us(today())}.`);
+  await staff.close();
+});
+
+test("a tenant and an owner each write to the company from their portal; staff see both waiting, answer, and each reads the answer", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["portal-messages"]!;
+  await joinPortal(page, people.taylor);
+  await portalSection(page, "Messages");
+  await expect(page.getByText("No messages yet.")).toBeVisible();
+  await page.getByLabel("Write to Demo Property Management").fill("The back gate sticks. Can someone look at it this week?");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByText("Sent to Demo Property Management.")).toBeVisible();
+  const thread = page.getByRole("list", { name: "Messages with Demo Property Management" });
+  await expect(thread).toContainText("The back gate sticks.");
+
+  const owner = await browser.newPage();
+  await joinPortal(owner, people.owner_a);
+  await portalSection(owner, "Messages");
+  await owner.getByLabel("Write to Demo Property Management").fill("Please send me last year's year-end package by mail too.");
+  await owner.getByRole("button", { name: "Send message" }).click();
+  await expect(owner.getByText("Sent to Demo Property Management.")).toBeVisible();
+
+  // Staff see both waiting on the Dashboard and in Messages, and answer the tenant.
+  const staff = await browser.newPage();
+  await joinAsStaff(staff, people.manager);
+  await expect(attention(staff, "Message").filter({ hasText: "Taylor Demo (tenant)" })).toContainText("The back gate sticks.");
+  await expect(attention(staff, "Message").filter({ hasText: "Demo Owner A (owner)" })).toBeVisible();
+  await section(staff, "Messages");
+  const inbox = staff.getByRole("table", { name: "Conversations" });
+  await expect(staff.getByRole("heading", { level: 2, name: "Conversations (2 waiting for an answer)" })).toBeVisible();
+  await inbox.getByRole("link", { name: "Taylor Demo" }).click();
+  await expect(staff.getByRole("heading", { level: 1, name: "Taylor Demo" })).toBeVisible();
+  await staff.getByLabel("Write to Taylor Demo").fill("Our handyman will come by Thursday morning.");
+  await staff.getByRole("button", { name: "Send message" }).click();
+  await expect(staff.getByText("Sent to Taylor Demo.")).toBeVisible();
+  await expect(staff.getByRole("list", { name: "Messages with Taylor Demo" })).toContainText("Demo Manager (Demo Property Management)");
+  await staff.getByRole("link", { name: "All messages" }).click();
+  await expect(staff.getByRole("heading", { level: 2, name: "Conversations (1 waiting for an answer)" })).toBeVisible();
+  await expect(inbox.getByRole("row", { name: /^Taylor Demo/ })).toContainText("Answered");
+  await expect(inbox.getByRole("row", { name: /^Demo Owner A/ })).toContainText("Waiting");
+
+  // The tenant reads the answer; the owner's conversation is theirs alone.
+  await page.reload();
+  await expect(thread).toContainText("Our handyman will come by Thursday morning.");
+  await owner.reload();
+  await expect(owner.getByRole("list", { name: "Messages with Demo Property Management" })).not.toContainText("back gate");
+  await owner.close();
+  await staff.close();
+});
+
+test("a tenant gives notice to move out from their lease; staff see it on the Dashboard and the lease, and the owner sees the unit moving out", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["move-out-notice"]!;
+  const leaving = new Date(Date.now() + 45 * 86_400_000).toISOString().slice(0, 10);
+  await joinPortal(page, people.drew);
+  await portalSection(page, "Lease", "Your lease");
+  const moving = part(page, "Moving out");
+  await expect(moving).toContainText("Leaving? Tell Demo Property Management the last day you will live here.");
+  await moving.getByLabel("Last day you will live here").fill(leaving);
+  await moving.getByLabel("Anything to add (optional)").fill("Moving for work.");
+  await moving.getByRole("button", { name: "Give notice" }).click();
+  await expect(moving.getByTestId("notice-given")).toContainText(`You told Demo Property Management you are leaving on ${us(leaving)}`);
+  await portalSection(page, "Overview", "Welcome, Drew Sample");
+  await expect(page.getByTestId("leaving")).toHaveText(`You gave notice: leaving ${us(leaving)}.`);
+
+  const staff = await browser.newPage();
+  await joinAsStaff(staff, people.manager);
+  const notice = attention(staff, "Notice to move out");
+  await expect(notice).toContainText(`Drew Sample · Aspen Row, Unit 1 · leaving ${us(leaving)}`);
+  await notice.getByRole("link", { name: "Open lease" }).click();
+  await expect(staff.getByRole("heading", { level: 1, name: /^Aspen Row · Unit 1 · / })).toBeVisible();
+  await expect(staff.getByRole("main")).toContainText(
+    `Notice to move out: Drew Sample said in the portal on ${us(today())} they are leaving ${us(leaving)} ("Moving for work.").`,
+  );
+  await staff.close();
+
+  const owner = await browser.newPage();
+  await joinPortal(owner, people.owner_b);
+  await portalSection(owner, "Properties");
+  await part(owner, "Your properties").getByRole("link", { name: "Aspen Row", exact: true }).click();
+  await expect(owner.getByRole("table", { name: "Units" }).getByRole("row", { name: /^Unit 1/ }))
+    .toContainText(`Moving out ${us(leaving)}`);
+  await owner.close();
+});
+
+test("staff announce something to every tenant and something to one property's; tenants see theirs on the Overview until staff take it down", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["announcements"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Announcements");
+  await expect(page.getByText("No announcements yet.")).toBeVisible();
+  await page.getByLabel("Title").fill("Office closed Friday");
+  await page.getByLabel("What to say").fill("The office is closed on Friday. For an emergency, call the usual number.");
+  await page.getByRole("button", { name: "Post announcement" }).click();
+  await expect(page.getByText("Posted for the tenants of every property.")).toBeVisible();
+  await page.getByLabel("Who sees it").selectOption({ label: "Tenants of Aspen Row" });
+  await page.getByLabel("Title").fill("Water off Tuesday morning");
+  await page.getByLabel("What to say").fill("The water is off from 9 to 11 for a pipe repair.");
+  await page.getByRole("button", { name: "Post announcement" }).click();
+  await expect(page.getByText("Posted for the tenants of Aspen Row.")).toBeVisible();
+  const posted = page.getByRole("list", { name: "Announcements" });
+  await expect(posted.getByRole("listitem")).toHaveCount(2);
+
+  // Drew lives at Aspen Row and sees both; Taylor, at Cedar House, the company's only.
+  const drew = await browser.newPage();
+  await joinPortal(drew, people.drew);
+  const theirs = part(drew, "Announcements");
+  await expect(theirs).toContainText("Water off Tuesday morning");
+  await expect(theirs).toContainText("Office closed Friday");
+  const taylor = await browser.newPage();
+  await joinPortal(taylor, people.taylor);
+  await expect(part(taylor, "Announcements")).toContainText("Office closed Friday");
+  await expect(part(taylor, "Announcements")).not.toContainText("Water off");
+  await taylor.close();
+
+  // Taken down: it leaves the tenant's Overview and stays on the list, marked.
+  await page.getByRole("button", { name: "Actions for Water off Tuesday morning" }).click();
+  await page.getByRole("menuitem", { name: "Take down" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Take down" }).click();
+  await expect(page.getByText('"Water off Tuesday morning" was taken down.')).toBeVisible();
+  await expect(posted.getByRole("listitem").filter({ hasText: "Water off Tuesday morning" })).toContainText("Taken down");
+  await drew.reload();
+  await expect(part(drew, "Announcements")).toContainText("Office closed Friday");
+  await expect(part(drew, "Announcements")).not.toContainText("Water off");
+  await drew.close();
+});
+
+test("a tenant sends their renters insurance certificate from the portal; staff find it with the lease's files, as the tenant's", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["tenant-uploads"]!;
+  await joinPortal(page, people.drew);
+  await portalSection(page, "Lease", "Your lease");
+  const lease = part(page, "Your lease");
+  await lease.getByLabel("File (PDF, JPEG or PNG, up to 5 MB)").setInputFiles({
+    name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not a document"),
+  });
+  await expect(lease.getByRole("alert")).toHaveText("A document is a PDF, JPEG or PNG.");
+  await lease.getByLabel("File (PDF, JPEG or PNG, up to 5 MB)").setInputFiles({
+    name: "insurance-certificate.pdf", mimeType: PDF, buffer: Buffer.from("%PDF-1.4\n% synthetic certificate\n"),
+  });
+  await lease.getByLabel("What it is (optional)").fill("Renters insurance certificate");
+  await lease.getByRole("button", { name: "Send document" }).click();
+  await expect(lease.getByText("Sent to Demo Property Management.")).toBeVisible();
+  await expect(page.getByRole("list", { name: "Your lease's files" })).toContainText("Renters insurance certificate (sent by you)");
+
+  const staff = await browser.newPage();
+  await joinAsStaff(staff, people.manager);
+  await openLease(staff, "Aspen Row, Unit 1");
+  await staff.getByRole("tab", { name: "Files" }).click();
+  const files = staff.getByRole("list", { name: /^Files, / });
+  await expect(files.getByRole("listitem").filter({ hasText: "Renters insurance certificate" }))
+    .toContainText(`uploaded ${us(today())} by Drew Sample (the tenant)`);
+  await staff.close();
 });
