@@ -177,6 +177,7 @@ AREA_PATHS = (
     ("/api/utilities/", "rent"),  # utility bills charged to the leases
     ("/api/bank-accounts/", "rent"),  # bank deposits of what came in
     ("/api/payments/settings", "setup"),  # whether tenants pay online, who pays the fee
+    ("/api/payments/keys", "setup"),  # the company's own Stripe keys (an admin's, too)
     ("/api/payments/", "rent"),  # online payments waiting, the company's cover of the fees
     ("/api/payables/bills", "bills"),
     ("/api/payables/recurring", "bills"),

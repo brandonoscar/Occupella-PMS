@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from pms import payments
+from pms import payments, sealed
 
 SECRET = "whsec_test_not_a_real_secret"
 
@@ -202,6 +202,45 @@ def test_a_partner_is_named_and_stripe_needs_its_keys():
         payments.partner_named("stripe", {})
     with pytest.raises(payments.NoPartner):
         payments.partner_named("paypal", {})
+
+
+# Made-up keys, spelled in pieces so no secret scanner mistakes them for real ones.
+TEST_KEY = "sk_" + "test_" + "Synthetic000000000000A1b2"
+LIVE_KEY = "rk_" + "live_" + "Synthetic000000000000Z9y8"
+WEBHOOK = "whsec_" + "Synthetic0000000000000001"
+
+
+def test_a_companys_keys_say_their_mode_and_last_four_and_nothing_else():
+    assert payments.check_keys(TEST_KEY, WEBHOOK) == ("test", "A1b2")
+    assert payments.check_keys(LIVE_KEY, WEBHOOK) == ("live", "Z9y8")
+    for secret_key, webhook in [
+        ("pk_" + "live_" + "Synthetic000000000000Z9y8", WEBHOOK),
+        (TEST_KEY + "!", WEBHOOK),
+        (TEST_KEY, "whsec_short"),
+        (TEST_KEY, WEBHOOK.replace("whsec_", "wh_")),
+    ]:
+        with pytest.raises(payments.BadKeys) as refused:
+            payments.check_keys(secret_key, webhook)
+        assert secret_key not in str(refused.value) and webhook not in str(refused.value)
+
+
+def test_a_companys_sealed_keys_open_only_in_their_own_row_and_place():
+    key, row = bytes(range(32)), uuid4()
+    secret, webhook = payments.seal_keys(row, TEST_KEY, WEBHOOK, key)
+
+    assert sealed.unseal(secret, f"{row}:secret key", key) == TEST_KEY
+    assert sealed.unseal(webhook, f"{row}:webhook secret", key) == WEBHOOK
+    with pytest.raises(sealed.Unreadable):
+        sealed.unseal(secret, f"{row}:webhook secret", key)  # in the other's place
+    with pytest.raises(sealed.Unreadable):
+        sealed.unseal(secret, f"{uuid4()}:secret key", key)  # in another row
+
+
+def test_a_resolver_is_made_once_from_a_partner_or_none():
+    fake = payments.FakePartner()
+    made = payments.Resolver.of(fake)
+    assert made.server is fake and payments.Resolver.of(made) is made
+    assert payments.Resolver.of(None).server is None
 
 
 class Answer:

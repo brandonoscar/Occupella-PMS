@@ -5823,3 +5823,30 @@ test("a tenant sends their renters insurance certificate from the portal; staff 
     .toContainText(`uploaded ${us(today())} by Drew Sample (the tenant)`);
   await staff.close();
 });
+
+test("an admin enters the company's own Stripe keys in Company setup: only the last four show, and removing them goes back to the server's partner", async ({
+  page,
+}) => {
+  const people = seed.features["payment-keys"]!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Company setup");
+  const card = part(page, "Stripe keys");
+  await expect(card.getByTestId("payment-keys")).toHaveText("Using the test payments partner.");
+  await expect(card.getByTestId("webhook-url")).toContainText("/api/payments/webhook/stripe/");
+
+  // Made-up keys, spelled in pieces so no secret scanner mistakes them for real ones.
+  const secretKey = "sk_" + "test_" + "Synthetic000000000000A1b2";
+  await card.getByRole("button", { name: "Enter keys" }).click();
+  const panel = page.getByRole("dialog", { name: "Stripe keys" });
+  await panel.getByLabel("Secret key").fill(secretKey);
+  await panel.getByLabel("Webhook signing secret").fill("whsec_" + "Synthetic0000000000000001");
+  await panel.getByRole("button", { name: "Save keys" }).click();
+  await expect(card.getByTestId("payment-keys")).toHaveText("Your Stripe account, key ending in A1b2");
+  await expect(card.getByText("Test", { exact: true })).toBeVisible();
+  await expect(page.locator("body")).not.toContainText(secretKey);
+
+  await card.getByRole("button", { name: "Actions for Stripe keys" }).click();
+  await page.getByRole("menuitem", { name: "Remove keys" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove keys" }).click();
+  await expect(card.getByTestId("payment-keys")).toHaveText("Using the test payments partner.");
+});

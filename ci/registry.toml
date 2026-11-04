@@ -1674,3 +1674,16 @@ tests = [
   "tests/api/test_applicant_details_api.py::test_the_database_links_a_tenant_only_to_the_applicant_they_were",
   "tests/api/test_applicant_details_api.py::test_a_signer_who_was_not_an_applicant_takes_nothing",
 ]
+
+[[invariant]]
+id = "payment-keys-own-payments-only"
+statement = "A company's own Stripe keys (migration 20261104000800; the founder's review of 11/03, item 4): an admin's alone, sealed under the server's key, only the last four and the mode ever shown. Each company's payments go through its latest keys, or the server's partner once it has none, never another company's and never keys since taken away; keys that don't open on the server take no payment and never fall back. A company's webhook takes only a report signed with a secret it has held, the latest or one before, and records only that company's payments, each at most once however often reported: another company's webhook never records one."
+tests = [
+  "tests/properties/test_payment_keys_properties.py::test_a_companys_keys_take_only_its_own_payments_and_its_latest_keys_hold",
+  "tests/api/test_payment_keys_api.py::test_an_admin_keeps_the_companys_keys_sealed_and_only_the_last_four_show",
+  "tests/api/test_payment_keys_api.py::test_only_an_admin_changes_them",
+  "tests/api/test_payment_keys_api.py::test_the_companys_payments_go_through_its_own_account_and_its_own_webhook",
+  "tests/api/test_payment_keys_api.py::test_a_companys_webhook_records_none_of_another_companys_payments",
+  "tests/api/test_payment_keys_api.py::test_a_payment_started_under_keys_since_changed_or_taken_away_still_reports_in",
+  "tests/api/test_payment_keys_api.py::test_keys_that_dont_open_here_take_no_payment_and_never_fall_back",
+]
