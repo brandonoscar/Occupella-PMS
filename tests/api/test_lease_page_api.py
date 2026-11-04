@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from helpers import add_nsf_fee_policy, add_tenant, add_unit, charge, fresh, make_pmc, open_lease
-from people import PASSWORD, invite_token, join_as_owner, join_as_staff, join_as_tenant
+from people import accept, invite_token, join_as_owner, join_as_staff, join_as_tenant
 
 DAY = timedelta(days=1)
 
@@ -57,7 +57,8 @@ def test_a_lease_shows_its_tenants_contact_and_who_can_sign_in(
         204,
     )
     token = invite_token(app_conn, pmc.pmc_id, "tenant", active, "a.login@example.com")
-    ok(other_client.post("/api/invites/accept", json={"token": token, "password": PASSWORD}))
+    # Tenant A confirms the same phone when they set their password; it is kept as E.164.
+    ok(other_client.post("/api/invites/accept", json=accept(token, phone="555-555-0101")))
     invite_token(app_conn, pmc.pmc_id, "tenant", invited, "b.login@example.com")
 
     found = ok(client.get(f"/api/leases/{lease}"))
@@ -66,7 +67,7 @@ def test_a_lease_shows_its_tenants_contact_and_who_can_sign_in(
     assert [
         (p["name"], p["email"], p["phone"], p["portal"], p["login_email"]) for p in found["people"]
     ] == [
-        ("Tenant A", "a@example.com", "555-555-0101", "active", "a.login@example.com"),
+        ("Tenant A", "a@example.com", "+15555550101", "active", "a.login@example.com"),
         ("Tenant B", None, None, "invited", "b.login@example.com"),
         ("Tenant C", None, None, "no login", None),
     ]

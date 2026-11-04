@@ -139,7 +139,7 @@ def test_the_tenant_turns_it_off(client, tenant_client, staff, tenant, lease):
     refused(
         tenant_client.post(f"/api/payments/leases/{lease}/autopay/stop", json={}),
         404,
-        "you have no autopay of this lease on",
+        "Autopay isn't on for this lease.",
     )
 
 
@@ -168,7 +168,7 @@ def test_a_partner_that_does_not_answer_saves_no_autopay(
             f"/api/payments/leases/{lease}/autopay", json={"rule": "balance", "amount": "1500.00"}
         ),
         502,
-        "the payments partner didn't answer: try again soon",
+        "We couldn't reach our payments partner. Try again in a few minutes.",
     )
     assert conn.execute(
         "SELECT count(*) FROM trust_autopay WHERE lease_id = %s", (lease,)
@@ -186,22 +186,26 @@ def test_a_lease_with_no_rent_due_ahead_shows_no_next_due_day(
 def test_no_autopay_while_payments_online_are_off_or_the_lease_is_on_hold(
     client, conn, tenant_client, staff, tenant, lease, pmc
 ):
-    assert view(tenant_client, lease)["why_not"] == "your manager doesn't take payments online"
+    assert view(tenant_client, lease)["why_not"] == "off"
     refused(
         tenant_client.post(
             f"/api/payments/leases/{lease}/autopay", json={"rule": "fixed", "amount": "1.00"}
         ),
         409,
-        "your manager doesn't take payments online",
+        "Online payments aren't available.",
     )
     turn_on(client)
     hold_payments(conn, pmc.pmc_id, lease, TODAY - DAY)
-    assert view(tenant_client, lease)["available"] is False
+    assert (view(tenant_client, lease)["available"], view(tenant_client, lease)["why_not"]) == (
+        False,
+        "paused",
+    )
     refused(
         tenant_client.post(
             f"/api/payments/leases/{lease}/autopay", json={"rule": "fixed", "amount": "1.00"}
         ),
         409,
+        "Online payments are paused for this lease. Contact your property manager.",
     )
 
 
@@ -314,7 +318,7 @@ def test_staff_see_a_leases_autopays_and_turn_one_off_naming_who(
     refused(
         client.post(f"/api/payments/autopay/{mine}/stop", json={}),
         409,
-        "this autopay is off already",
+        "Autopay is already off.",
     )
     refused(client.post(f"/api/payments/autopay/{uuid4()}/stop", json={}), 404)
     refused(client.get(f"/api/payments/autopay?lease={uuid4()}"), 404)

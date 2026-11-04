@@ -57,7 +57,9 @@ test.afterEach(async ({ page }) => {
 async function joinAsStaff(page: Page, invite: string): Promise<string> {
   await page.goto(`/invite#${invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   const secret = (await page.locator("code").textContent()) ?? "";
   await page.getByLabel("Code").fill(totp(secret));
@@ -66,11 +68,12 @@ async function joinAsStaff(page: Page, invite: string): Promise<string> {
   return secret;
 }
 
-// An owner or a tenant takes their invite: a password, and they are in.
+// An owner or a tenant takes their invite: a password and a phone (a fictional one), and they are in.
 async function joinPortal(page: Page, invite: string): Promise<void> {
   await page.goto(`/invite#${invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await expect(page.getByRole("navigation", { name: "Sections" })).toBeVisible();
 }
@@ -987,40 +990,65 @@ test("a bill over the owner's limit emails them; they decline one and approve an
   await page.getByRole("alertdialog").getByRole("button", { name: "Void" }).click();
   await expect(page.getByText("plb 2002 is void.")).toBeVisible();
 
+  // Over $600.00 the owner types their full name to approve (Settings, Company setup).
+  await page.goto("/settings/setup");
+  await part(page, "Owner approvals").getByRole("button", { name: "Edit owner approvals" }).click();
+  const approvals = page.getByRole("dialog", { name: "Owner approvals" });
+  await approvals.getByLabel("Ask for the owner's typed name over").fill("600.00");
+  await approvals.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("sign-over")).toHaveText("Owners type their full name to approve bills over $600.00.");
+  await section(page, "Bills");
+
   // The owner decides both in the portal.
   await owner.reload();
-  const waiting = owner.getByRole("list", { name: "Waiting for you" });
-  const first = waiting.getByRole("listitem").filter({ hasText: "PLB-2001" });
-  await first.getByRole("button", { name: "Decline…" }).click();
-  await first.getByLabel("Why you decline it").fill("Get a second quote");
-  await first.getByRole("button", { name: "Decline", exact: true }).click();
+  // Each bill is a row of the owner's table: vendor, bill #, property, amount, due, where it stands.
+  const yours = owner.getByRole("table", { name: "Your bills" });
+  const row = (reference: string) => yours.getByRole("row", { name: `Demo Plumbing Co ${reference}` });
+  // Waiting for them, and Birch Flats holds only its reserve: what it would take is said too.
+  await expect(row("PLB-2001").getByRole("cell").nth(5)).toHaveText("Waiting for youSend $800.00");
+  await row("PLB-2001").getByRole("button", { name: "Decline…" }).click();
+  const declining = owner.getByRole("dialog", { name: "Decline this bill?" });
+  await declining.getByLabel("Why you decline it").fill("Get a second quote");
+  await declining.getByRole("button", { name: "Decline", exact: true }).click();
   await expect(owner.getByText("Declined Demo Plumbing Co's PLB-2001.")).toBeVisible();
-  await waiting.getByRole("listitem").filter({ hasText: "PLB-2002" }).getByRole("button", { name: "Approve" }).click();
+  // Approving asks first, with the bill and the balance before and after; over $600.00 it takes
+  // the owner's own name.
+  await row("PLB-2002").getByRole("button", { name: "Approve…" }).click();
+  const approving = owner.getByRole("dialog", { name: "Approve this bill?" });
+  await expect(approving).toContainText("Bill #PLB-2002");
+  await expect(approving).toContainText("Amount$650.00");
+  await expect(approving).toContainText("Balance now");
+  await approving.getByLabel("Type your full name to approve").fill("Somebody Else");
+  await approving.getByRole("button", { name: "Approve" }).click();
+  await expect(approving.getByRole("alert")).toHaveText("That name doesn't match the name on your account.");
+  await approving.getByLabel("Type your full name to approve").fill("Demo Owner A");
+  await approving.getByRole("button", { name: "Approve" }).click();
   await expect(owner.getByText("Approved Demo Plumbing Co's PLB-2002.")).toBeVisible();
-  const decided = owner.getByRole("list", { name: "Decided" });
-  await expect(decided.getByRole("listitem").filter({ hasText: "PLB-2001" })).toContainText("declined");
-  await expect(decided.getByRole("listitem").filter({ hasText: "Demo Plumbing Co, PLB-2002" })).toContainText("approved");
-  await expect(owner.getByText("No bill waits for your approval.")).toBeVisible();
+  await expect(row("PLB-2001").getByRole("cell").nth(5)).toHaveText("DeclinedGet a second quote");
+  // Approved, and Birch Flats holds only its reserve: short all of it.
+  await expect(row("PLB-2002").getByRole("cell").nth(5)).toHaveText("Short on fundsSend $650.00");
+  await expect(owner.getByTestId("waiting-count")).toHaveText("No bill waits for your approval.");
 
   // Staff see both decisions: the declined bill is void; Birch Flats holds only its $250.00
-  // reserve, so the approved one is short and staff ask the owner for the rest. (Staff are on
+  // reserve, which stays in the account, so the approved one is short all of its $650.00 and
+  // staff ask the owner for it. (Staff are on
   // Bills still: the list reads the owner's decisions when the page loads again.)
   await page.reload();
   await expect(bill("PLB-2002").getByTestId("status")).toHaveText("Short");
   await expect(bill("PLB-2001")).toHaveCount(0); // nothing left to pay on it
   await bill("PLB-2002").getByRole("cell").first().click();
   await expect(page.getByTestId("hold")).toHaveText(
-    "$250.00 held from Demo Owner A's balance for this bill. Demo Owner A needs to send $400.00.",
+    "Nothing above Demo Owner A's reserve is left to hold for this bill. Demo Owner A needs to send $650.00.",
   );
-  await page.getByRole("button", { name: "Ask Demo Owner A for $400.00" }).click();
+  await page.getByRole("button", { name: "Ask Demo Owner A for $650.00" }).click();
   const asking = page.getByRole("alertdialog");
-  await expect(asking).toContainText(`Email Demo Owner A at ${people.emails.owner_a} asking them to send $400.00?`);
+  await expect(asking).toContainText(`Email Demo Owner A at ${people.emails.owner_a} asking them to send $650.00?`);
   await asking.getByRole("button", { name: "Send email" }).click();
-  await expect(page.getByText("Demo Owner A is asked to send $400.00.")).toBeVisible();
+  await expect(page.getByText("Demo Owner A is asked to send $650.00.")).toBeVisible();
   await expect(page.getByText("Demo Owner A was asked for it today; you can ask again tomorrow.")).toBeVisible();
   // The owner sees what to send in the portal.
   await owner.reload();
-  await expect(owner.getByTestId("short-bill")).toContainText("your balance is $400.00 short of it. Please send $400.00");
+  await expect(row("PLB-2002").getByTestId("needed")).toHaveText("Send $650.00");
   // The owner sends the money; it covers the approved bill, so nothing more is available to draw.
   await recordContribution(page, "Demo Owner A", "Birch Flats", "650.00", "Shower valve");
   const birch = await ownerProperty(page, "Demo Owner A", "Birch Flats");
@@ -1043,6 +1071,9 @@ test("a bill over the owner's limit emails them; they decline one and approve an
   await expect(bill("PLB-2002").getByTestId("status")).toHaveText("Paid");
   await bill("PLB-2002").getByRole("cell").first().click();
   await expect(page.getByRole("list", { name: "History" })).toContainText("Paid $650.00 by ACH");
+  // The owner sees it paid.
+  await owner.reload();
+  await expect(row("PLB-2002").getByRole("cell").nth(5)).toHaveText("Paid");
   await section(page, "Bills");
   await page.getByRole("tab", { name: "Void", exact: true }).click();
   await expect(bill("PLB-2001").getByTestId("status")).toHaveText("Void");
@@ -1263,6 +1294,8 @@ test("only staff holding a role do its work: an admin grants pay-out and adds st
 }) => {
   const people = seed.features.roles!;
   const secret = await joinAsStaff(page, people.bookkeeper);
+  // Aspen Row holds only its reserve, which stays in the account: the owner sends the $100.00.
+  await recordContribution(page, "Demo Owner B", "Aspen Row", "100.00", "Faucet washer");
   await section(page, "Bills");
   await recordBill(page, "Demo Plumbing Co", "Demo Owner B, Aspen Row", "PLB-3001", "100.00", "Faucet washer");
   const bill = billRow(page, "Demo Plumbing Co", "PLB-3001");
@@ -1408,23 +1441,160 @@ test("a tenant sees their lease, what comes each month and two months of charges
 }) => {
   const people = seed.features["tenant-portal"]!;
   await joinPortal(page, people.taylor);
-  await expect(page.getByRole("heading", { level: 1, name: "Welcome, Taylor Demo" })).toBeVisible();
-  await expect(page.getByText("Cedar House, House")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Welcome, Taylor" })).toBeVisible();
+  // Cedar House's one unit is "House": the home reads the property alone (migration 20261104000500).
+  await expect(part(page, "Your lease").getByText("Cedar House", { exact: true })).toBeVisible();
   await expect(page.getByText("Quinn Demo, Taylor Demo", { exact: true })).toBeVisible();
+  // The deposit brought over for both of them is held: $1,125.00 each.
+  await expect(page.getByText("Security deposit held").locator("xpath=following-sibling::dd")).toHaveText("$2,250.00");
   // Last month's rent is paid and this month's not charged yet: nothing is due.
   await expect(page.getByTestId("balance-due")).toHaveText("$0.00");
   await expect(part(page, "Coming up")).toContainText("Rent: $2,250.00");
 
   await portalSection(page, "Payments");
   const ledger = page.getByRole("table").filter({ hasText: "Charged" });
+  await expect(ledger.getByRole("row", { name: /Opening balance/ })).toContainText("$0.00");
   await expect(ledger.getByRole("row", { name: /^\d{2}\/\d{2}\/\d{4} Rent due/ })).toHaveCount(2);
-  await expect(ledger.getByRole("row", { name: /^\d{2}\/\d{2}\/\d{4} Payment/ })).toHaveCount(2);
-  await expect(ledger.getByRole("row", { name: /^Balance at the end of/ })).toContainText(
-    "$4,500.00$4,500.00$0.00",
-  );
+  // Each payment reads as a rent payment, never its memo, and carries its receipt.
+  const payments = ledger.getByRole("row", { name: /^\d{2}\/\d{2}\/\d{4} Rent payment/ });
+  await expect(payments).toHaveCount(2);
+  await expect(payments.first().getByRole("link", { name: "Receipt (PDF)" })).toBeVisible();
+  await expect(ledger).not.toContainText("Rent – ");
+  await expect(ledger.getByRole("row", { name: /^Totals/ })).toContainText("$4,500.00$4,500.00$0.00");
+  await expect(page.getByRole("list", { name: "Payments" })).toHaveCount(0);
   await downloads(page, "PDF", PDF);
   await downloads(page, "CSV", CSV);
   await downloads(page, "Excel", XLSX);
+});
+
+test("an owner opens a line of their statement to see where it came from, and a tenant a line of their ledger", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["ledger-sources"]!;
+  await joinPortal(page, people.owner_a);
+  await portalSection(page, "Statements and reports");
+  const birch = part(page, "Statement").getByRole("table", { name: "Birch Flats" });
+
+  // A tenant's rent: the payment as its receipt says it, and the receipt to download.
+  await birch.getByRole("button", { name: /^Rent – Morgan Demo/ }).first().click();
+  const payment = page.getByRole("dialog", { name: "Tenant payment" });
+  await expect(payment).toContainText("Received from");
+  await expect(payment).toContainText("Morgan Demo");
+  const receipt = (await payment.getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")) ?? "";
+  const pdf = await page.request.get(receipt);
+  expect(pdf.status(), receipt).toBe(200);
+  expect(pdf.headers()["content-type"]).toContain(PDF);
+  await payment.getByRole("button", { name: "Close" }).click();
+
+  // The management fee: how it was worked out.
+  await birch.getByRole("button", { name: /Demo Property Management/ }).first().click();
+  const fee = page.getByRole("dialog", { name: "Management fee" });
+  await expect(fee).toContainText("Rent and fees collected");
+  await expect(fee).toContainText("of that");
+  await fee.getByRole("button", { name: "Close" }).click();
+
+  // The payout to the owner: its day and amount.
+  await birch.getByRole("button", { name: /^Owner draw/ }).first().click();
+  const draw = page.getByRole("dialog", { name: "Paid to you" });
+  await expect(draw).toContainText("Date");
+  await expect(draw).toContainText("Amount");
+  await draw.getByRole("button", { name: "Close" }).click();
+
+  // A tenant opens a rent charge and a payment of their ledger.
+  const tenant = await (await browser.newContext()).newPage();
+  await joinPortal(tenant, people.taylor);
+  await portalSection(tenant, "Payments");
+  const ledger = tenant.getByRole("table").filter({ hasText: "Charged" });
+  await ledger.getByRole("button", { name: /^Rent due/ }).first().click();
+  const rent = tenant.getByRole("dialog", { name: "Rent" });
+  await expect(rent).toContainText("Still owed");
+  await expect(rent).toContainText("$0.00");
+  await rent.getByRole("button", { name: "Close" }).click();
+  await ledger.getByRole("button", { name: /^Rent payment/ }).first().click();
+  const paid = tenant.getByRole("dialog", { name: "Payment" });
+  await expect(paid).toContainText("Received from");
+  const theirs = (await paid.getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")) ?? "";
+  expect((await tenant.request.get(theirs)).status(), theirs).toBe(200);
+});
+
+test("a tenant says what kind of repair and where, sees what to do first in an emergency, cancels one request and adds a note to another; staff see it all", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["request-details"]!;
+  const tenant = await (await browser.newContext()).newPage();
+  await joinPortal(tenant, people.taylor);
+  await portalSection(tenant, "Repairs");
+  const requests = part(tenant, "Maintenance requests");
+
+  // Checking the emergency box says what to do first, before anything is sent.
+  await requests.getByLabel("This is an emergency (no heat, no water, a leak, a gas smell)").check();
+  await expect(requests).toContainText("Gas smell, fire or flooding? Get out and call 911 or your gas company first.");
+  await requests.getByLabel("This is an emergency (no heat, no water, a leak, a gas smell)").uncheck();
+  await expect(requests).not.toContainText("Get out and call 911");
+
+  // A request sent by mistake, taken back while it is still received.
+  await requests.getByLabel("What needs fixing?").fill("The fridge hums");
+  await requests.getByLabel("What kind of repair?").selectOption("Appliance");
+  await requests.getByRole("button", { name: "Send request" }).click();
+  const fridge = requests.getByRole("listitem").filter({ hasText: "The fridge hums" });
+  await expect(fridge.getByTestId("kind-and-place")).toHaveText("Appliance");
+  await fridge.getByRole("button", { name: "Actions for The fridge hums" }).click();
+  await tenant.getByRole("menuitem", { name: "Cancel request" }).click();
+  const asked = tenant.getByRole("alertdialog");
+  await expect(asked).toContainText("Cancel this request? Your manager won't act on it.");
+  await asked.getByRole("button", { name: "Cancel request" }).click();
+  await expect(fridge).toContainText("Cancelled");
+  await expect(fridge.getByLabel("Add a note")).toHaveCount(0);
+
+  // Another, with where it is, and a note added after.
+  await requests.getByLabel("What needs fixing?").fill("The tap drips");
+  await requests.getByLabel("What kind of repair?").selectOption("Plumbing");
+  await requests.getByLabel("Where in the unit?").fill("Kitchen sink");
+  await requests.getByRole("button", { name: "Send request" }).click();
+  const tap = requests.getByRole("listitem").filter({ hasText: "The tap drips" });
+  await expect(tap.getByTestId("kind-and-place")).toHaveText("Plumbing · Kitchen sink");
+  await tap.getByLabel("Add a note").fill("It drips faster at night.");
+  await tap.getByRole("button", { name: "Add note" }).click();
+  await expect(tap.getByRole("list", { name: "Notes on The tap drips" })).toContainText("It drips faster at night.");
+
+  // Staff see the kind, the place and the note, and the one the tenant took back.
+  await joinAsStaff(page, people.manager);
+  await section(page, "Work orders");
+  const theirs = page.getByRole("listitem", { name: "The tap drips" });
+  await expect(theirs).toContainText("Plumbing · Kitchen sink");
+  await expect(theirs.getByRole("list", { name: "Notes on The tap drips" })).toContainText("It drips faster at night.");
+  await page.getByLabel("Show done and closed requests too").check();
+  await expect(page.getByRole("listitem", { name: "The fridge hums" })).toContainText("Cancelled by the tenant");
+});
+
+test("a tenant gives their phone at sign-up and says texts are OK, the box unchecked until they check it; staff see the phone on their page", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["signup-phone"]!;
+  const tenant = await (await browser.newContext()).newPage();
+  await tenant.goto(`/invite#${people.taylor}`);
+  await tenant.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await tenant.getByLabel("Confirm password").fill(PASSWORD);
+  const ok = tenant.getByRole("checkbox", { name: /^OK to text me\. Demo Property Management may text this number/ });
+  await expect(ok).not.toBeChecked();
+  await expect(ok).toHaveAccessibleName(/Reply STOP to stop, HELP for help\.$/);
+  // A phone is asked: without one the browser won't send it; a number that isn't one is refused.
+  await tenant.getByLabel("Phone").fill("12345");
+  await tenant.getByRole("button", { name: "Set password" }).click();
+  await expect(tenant.getByText("Enter a phone number with its area code, like (555) 555-0123.")).toBeVisible();
+  await tenant.getByLabel("Phone").fill("555.555.0142");
+  await ok.check();
+  await tenant.getByRole("button", { name: "Set password" }).click();
+  await expect(tenant.getByRole("heading", { level: 1, name: "Welcome, Taylor" })).toBeVisible();
+
+  // Staff see the phone it gave, kept as E.164, as the tenant's own.
+  await joinAsStaff(page, people.manager);
+  await section(page, "Tenants");
+  await page.getByRole("link", { name: "Taylor Demo" }).click();
+  await expect(page.getByRole("main")).toContainText("+15555550142");
 });
 
 test("a lease ended mid-month keeps only its days of the month's rent, and its deposit goes back less what it owes", async ({
@@ -1992,6 +2162,10 @@ test("staff put bills in expense accounts on Schedule E lines, and the owner rea
   await moving.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("HOSE-1 is in one expense account.")).toBeVisible();
   await expect(page.getByRole("table", { name: "Lines" })).toContainText("Water$12.00");
+  // Aspen Row holds only its reserve, which stays in the account: the owner sends the $87.00.
+  await section(page, "Bills");
+  await expect(bill("WTR-1")).toContainText("Short");
+  await recordContribution(page, "Demo Owner B", "Aspen Row", "87.00", "Plumbing bills");
   await section(page, "Bills");
   for (const reference of ["WTR-1", "HOSE-1", "FIX-1"]) {
     const paying = await billStep(page, "Demo Plumbing Co", reference, "Record payment");
@@ -2484,6 +2658,16 @@ test("staff raise a month-to-month rent after a full month's notice, and the ten
   const tenant = await browser.newPage();
   await joinPortal(tenant, people.taylor);
   await expect(tenant.getByText(`$2,250.00 a month; $2,400.00 from ${us(from)} (notice given ${us(today())})`)).toBeVisible();
+  // The Overview says it at the top, and the next charge is the rent in force on its due day.
+  const when = new Intl.DateTimeFormat("en-US", {
+    month: "short", day: "numeric", timeZone: "UTC",
+    ...(from.slice(0, 4) === today().slice(0, 4) ? {} : { year: "numeric" }),
+  }).format(new Date(`${from}T00:00:00Z`));
+  await expect(tenant.getByText(`Your rent goes up to $2,400 on ${when}.`)).toBeVisible();
+  const next = firstOfMonthsAgo(-1);
+  await expect(tenant.getByTestId("next-charge")).toContainText(`due ${us(next)}`);
+  await expect(tenant.getByTestId("next-charge")).toContainText(next === from ? "$2,400.00" : "$2,250.00");
+  await expect(part(tenant, "Coming up")).toContainText(`$2,250.00; $2,400.00 from ${us(from)}`);
   await tenant.close();
 });
 
@@ -2892,8 +3076,7 @@ test("staff put a lease on a payment hold, accept a cashier's check past it and 
   // The tenant downloads their own receipt.
   await portalSection(tenant, "Payments");
   await tenant.reload();
-  const theirs = tenant.getByRole("list", { name: "Payments" });
-  await expect(theirs).toContainText("Cashier's check CC 9");
+  const theirs = part(tenant, "Charges and payments").getByRole("row", { name: /Rent payment · Cashier's check CC 9/ });
   const href = (await theirs.getByRole("link", { name: "Receipt (PDF)" }).first().getAttribute("href")) ?? "";
   const answer = await tenant.request.get(href);
   expect(answer.status()).toBe(200);
@@ -3238,6 +3421,10 @@ test("staff share a roofer's invoice across two owners' properties with the mark
   await expect(shares).toContainText("ROOF-77/1Demo Owner ABirch Flats$150.00");
   await expect(shares).toContainText("ROOF-77/2Demo Owner BAspen Row$150.00");
 
+  // Each account holds only its reserve, which stays in it: each owner sends their share first.
+  await recordContribution(page, "Demo Owner A", "Birch Flats", "165.00", "Roof repair");
+  await recordContribution(page, "Demo Owner B", "Aspen Row", "150.00", "Roof repair");
+
   // Pay bills pays both shares at once: Birch Flats gives its share and the markup.
   await section(page, "Bills");
   await page.getByRole("link", { name: "Pay bills" }).click();
@@ -3245,13 +3432,13 @@ test("staff share a roofer's invoice across two owners' properties with the mark
   await page.getByLabel("Pay Demo Roofing Co ROOF-77/2").check();
   const cash = page.getByRole("table", { name: "Each property's cash" });
   await expect(cash.getByRole("row", { name: "Demo Owner A, Birch Flats" }).getByRole("cell")).toHaveText([
-    "Demo Owner A, Birch Flats", "$250.00", "$165.00", "$85.00", "",
+    "Demo Owner A, Birch Flats", "$415.00", "$165.00", "$250.00", "",
   ]);
   await page.getByRole("button", { name: "Pay $300.00" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
   await expect(page.getByText("2 bills of $300.00 paid, by check.")).toBeVisible();
-  await expect((await ownerProperty(page, "Demo Owner A", "Birch Flats")).getByRole("cell").nth(2)).toHaveText("$85.00");
-  await expect((await ownerProperty(page, "Demo Owner B", "Aspen Row")).getByRole("cell").nth(2)).toHaveText("$50.00");
+  await expect((await ownerProperty(page, "Demo Owner A", "Birch Flats")).getByRole("cell").nth(2)).toHaveText("$250.00");
+  await expect((await ownerProperty(page, "Demo Owner B", "Aspen Row")).getByRole("cell").nth(2)).toHaveText("$200.00");
 });
 
 test("staff set Birch Flats' ownership 60/40 between two owners; a payment and a bill split between them to the cent", async ({
@@ -3694,6 +3881,7 @@ test("staff go on call; a tenant files an emergency with a photo and staff see i
   await portalSection(tenant, "Repairs");
   const requests = part(tenant, "Maintenance requests");
   await requests.getByLabel("What needs fixing?").fill("No heat in the bedroom");
+  await requests.getByLabel("What kind of repair?").selectOption("Heating/cooling");
   await requests.getByLabel("This is an emergency (no heat, no water, a leak, a gas smell)").check();
   await requests
     .getByLabel("Photos (up to 3, JPEG, PNG or PDF)")
@@ -4149,7 +4337,8 @@ test("a tenant changes their own phone and email in the portal, and staff see th
   await joinPortal(page, people.drew);
   await portalSection(page, "Profile", "Your profile");
   const mine = page.getByRole("group", { name: "Contact details, Drew Sample" });
-  await expect(mine).toContainText("No contact details yet.");
+  // The phone they gave when they set their password is already theirs.
+  await expect(mine).toContainText("+15555550123");
   await mine.getByRole("button", { name: "Edit contact details" }).click();
   await mine.getByLabel("Email").fill("drew.new@example.com");
   await mine.getByLabel("Phone", { exact: true }).fill("(555) 555-0142");
@@ -4229,13 +4418,14 @@ test("staff make a tenant a tenant at a second property and lease them a unit th
   await portalSection(tenant, "Repairs");
   await expect(picker.locator("option:checked")).toHaveText(`Aspen Row, Unit 2, from ${us(today())}`);
   await tenant.getByLabel("What needs fixing?").fill("The porch light flickers");
+  await tenant.getByLabel("What kind of repair?").selectOption("Electrical");
   await tenant.getByRole("button", { name: "Send request" }).click();
   await expect(part(tenant, "Maintenance requests").getByRole("listitem").filter({ hasText: "The porch light flickers" }))
     .toContainText("Received");
   // Newest first: the lease at Aspen Row, then the one at Cedar House.
   await portalSection(tenant, "Lease", "Your lease");
   await picker.selectOption({ index: 1 });
-  await expect(part(tenant, "Your lease")).toContainText("Cedar House, House");
+  await expect(part(tenant, "Your lease").getByText("Cedar House", { exact: true })).toBeVisible();
   await tenant.close();
 });
 
@@ -4981,7 +5171,10 @@ test("a tenant pays rent online on the payments partner's page, it reaches the b
   await expect(tenant.getByTestId("pay-done")).toContainText("a few business days");
   await tenant.getByRole("link", { name: "Back to your payments" }).click();
   await expect(part(tenant, "Pay online").getByRole("listitem").first()).toContainText("Paid");
-  await expect(part(tenant, "Payments")).toContainText("$100.00 · Paid online (bank)");
+  // Nothing was owed: it is held as prepaid rent, on a line of its own with its receipt.
+  const online = part(tenant, "Charges and payments").getByRole("row", { name: /Rent payment · ACH/ });
+  await expect(online).toContainText("$100.00 held as prepaid rent");
+  await expect(online.getByRole("link", { name: "Receipt (PDF)" })).toBeVisible();
 
   // A second payment, its lease put on a payment hold before the bank pays it: it waits.
   await part(tenant, "Pay online").getByLabel("Amount").fill("50.00");
@@ -5016,15 +5209,23 @@ test("an owner adds money to a property's account online once the company takes 
   page,
 }) => {
   const people = seed.features["owners-pay-online"]!;
-  const owner = await (await browser.newContext()).newPage();
-  await joinPortal(owner, people.owner_a);
-  // Off until the company takes payments online: the owner is told how else to send money.
-  await expect(owner.getByTestId("owner-pay-off")).toHaveText(
-    "Your manager doesn't take payments online. Send money by check or bank transfer to your manager.",
-  );
-
+  // Off until the company takes payments online: the owner reads the company's own words on how
+  // else to send money (Company setup, How to pay us).
   await joinAsStaff(page, people.manager);
   await page.goto("/settings/setup");
+  const howToPay = part(page, "How to pay us");
+  await expect(howToPay.getByTestId("how-to-pay")).toHaveText(
+    'Not set. Tenants and owners see "Contact your property manager to pay."',
+  );
+  await howToPay.getByRole("button", { name: "Edit how to pay us" }).click();
+  const writing = page.getByRole("dialog", { name: "How to pay us" });
+  await writing.getByLabel("How to pay us").fill("Checks to Demo Property Co.\nDrop them at the office.");
+  await writing.getByRole("button", { name: "Save" }).click();
+  await expect(howToPay.getByTestId("how-to-pay")).toHaveText("Checks to Demo Property Co.\nDrop them at the office.");
+  const owner = await (await browser.newContext()).newPage();
+  await joinPortal(owner, people.owner_a);
+  await expect(owner.getByTestId("owner-pay-off")).toHaveText("Checks to Demo Property Co.\nDrop them at the office.");
+
   const card = part(page, "Online payments");
   await card.getByRole("button", { name: "Edit online payments" }).click();
   const settings = page.getByRole("dialog", { name: "Online payments" });
@@ -5541,7 +5742,7 @@ test("a tenant gives notice to move out from their lease; staff see it on the Da
   await moving.getByLabel("Anything to add (optional)").fill("Moving for work.");
   await moving.getByRole("button", { name: "Give notice" }).click();
   await expect(moving.getByTestId("notice-given")).toContainText(`You told Demo Property Management you are leaving on ${us(leaving)}`);
-  await portalSection(page, "Overview", "Welcome, Drew Sample");
+  await portalSection(page, "Overview", "Welcome, Drew");
   await expect(page.getByTestId("leaving")).toHaveText(`You gave notice: leaving ${us(leaving)}.`);
 
   const staff = await browser.newPage();

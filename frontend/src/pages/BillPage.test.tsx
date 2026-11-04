@@ -213,12 +213,16 @@ describe("BillPage", () => {
     render(<BillPage me={ME} id="b1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Record approval" }));
     const panel = screen.getByRole("dialog", { name: "Record approval" });
-    fireEvent.change(within(panel).getByLabelText("Approved by"), { target: { value: "Owner 1" } });
+    // The bill's own owner, not a name typed in; how they approved and a note.
+    expect((within(panel).getByLabelText("Owner") as HTMLSelectElement).selectedOptions[0]?.textContent).toBe(BILL.owner);
+    fireEvent.change(within(panel).getByLabelText("How they approved"), { target: { value: "phone" } });
     fireEvent.change(within(panel).getByLabelText("Approved on"), { target: { value: "2026-10-02" } });
+    fireEvent.change(within(panel).getByLabelText("Note"), { target: { value: "Called at 2pm" } });
     fireEvent.click(within(panel).getByRole("button", { name: "Record approval" }));
 
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(posted(fetch)).toEqual([["/api/payables/bills/b1/approval", { approved_on: "2026-10-02", approved_by: "Owner 1" }]]);
+    expect(posted(fetch)).toEqual([["/api/payables/bills/b1/approval",
+      { approved_on: "2026-10-02", owner_id: BILL.owner_id, method: "phone", note: "Called at 2pm" }]]);
   });
 
   it("changes a split bill to one expense account, and back to lines that come to the bill", async () => {

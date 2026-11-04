@@ -24,7 +24,7 @@ from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from pms import email, exports, notices
 from pms.api import documents, outbox, payouts, scope
@@ -661,10 +661,15 @@ def history_of(
             )
         )
     approved = conn.execute(
-        "SELECT approved_on, approved_by FROM trust_bill_approvals WHERE bill_id = %s", (bill.id,)
+        "SELECT a.approved_on, a.approved_by, s.display_name, a.note"
+        " FROM trust_bill_approvals AS a LEFT JOIN trust_staff AS s ON s.id = a.recorded_by"
+        " WHERE a.bill_id = %s",
+        (bill.id,),
     ).fetchone()
     if approved is not None:
-        events.append(BillEvent(on=approved[0], what=f"Approved by {approved[1]}"))
+        on, by, recorder, note = approved
+        recorded = f". Recorded by {recorder}: {note}" if recorder else ""
+        events.append(BillEvent(on=on, what=f"Approved by {by}{recorded}"))
     declined = conn.execute(
         "SELECT declined_on, declined_by, reason, void FROM trust_bill_declines WHERE bill_id = %s",
         (bill.id,),
@@ -1074,22 +1079,50 @@ def bill_of(conn: psycopg.Connection[Any], pmc_id: UUID, bill: UUID) -> None:
         raise HTTPException(404, "no such bill")
 
 
+ApprovalMethod = Literal["phone", "email", "in_person"]
+METHOD_WORDS = {"phone": "by phone", "email": "by email", "in_person": "in person"}
+
+
 class Approval(BaseModel):
+    """The owner's approval as staff record it (migration 20261104000200): which owner (the
+    bill's own, by id), when, how and a note. Who records it comes from the session."""
+
+    model_config = ConfigDict(extra="forbid")
     approved_on: date
-    # Who approved it for the owner, as staff record it (the owner, or someone they named).
-    approved_by: Text
+    owner_id: UUID
+    method: ApprovalMethod
+    note: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
 
 
 @router.post("/bills/{bill_id}/approval", status_code=201)
 def approve(session: Staff, conn: Conn, bill_id: UUID, approval: Approval) -> None:
-    """Records the owner's approval of a bill over the agreement's approval limit."""
+    """Records the owner's approval of a bill over the agreement's approval limit, naming the
+    owner of its property account, how they approved and the staff member recording it."""
     bill_of(conn, session.pmc_id, bill_id)
+    owner = conn.execute(
+        "SELECT o.display_name FROM trust_bills AS b"
+        " JOIN trust_ledger_accounts AS t ON t.ledger_account_id = b.ledger_account_id"
+        " JOIN trust_owners AS o ON o.id = t.owner_id"
+        " WHERE b.id = %s AND t.owner_id = %s",
+        (bill_id, approval.owner_id),
+    ).fetchone()
+    if owner is None:
+        raise HTTPException(422, "Pick the bill's owner: only they can approve it.")
     try:
         with conn.transaction():  # a savepoint: a refusal leaves the request's transaction usable
             conn.execute(
-                "INSERT INTO trust_bill_approvals (pmc_id, bill_id, approved_on, approved_by)"
-                " VALUES (%s, %s, %s, %s)",
-                (session.pmc_id, bill_id, approval.approved_on, approval.approved_by),
+                "INSERT INTO trust_bill_approvals"
+                " (pmc_id, bill_id, approved_on, approved_by, owner_id, method, note)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (
+                    session.pmc_id,
+                    bill_id,
+                    approval.approved_on,
+                    f"{owner[0]}, {METHOD_WORDS[approval.method]}",
+                    approval.owner_id,
+                    approval.method,
+                    approval.note,
+                ),
             )
     except psycopg.errors.UniqueViolation:
         raise HTTPException(409, decided(conn, bill_id)) from None

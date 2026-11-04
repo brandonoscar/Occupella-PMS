@@ -322,9 +322,7 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
       </label>
       <Notice tone="error">{problem}</Notice>
       <div>
-        <Button type="submit" disabled={problem !== "" || sharesOff} says={shared || byOwnership
-          ? "Nothing is paid; each share is held from its owner's balance from its date. Over a limit, it waits for that owner, emailed if they use the portal."
-          : "Nothing is paid; it's held from the owner's balance from its date. Over their limit, it waits for them, emailed if they use the portal."}>
+        <Button type="submit" disabled={problem !== "" || sharesOff}>
           Record bill
         </Button>
       </div>
@@ -332,22 +330,45 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
   );
 }
 
-// The owner's approval of a bill over their limit, as staff record it (by phone, say).
+// The owner's approval of a bill over their limit, as staff record it: the bill's own owner (each
+// bill is on one owner's account), when, how they approved and a note. Staff are named from the
+// session (migration 20261104000200).
+const APPROVAL_METHODS = [
+  ["phone", "Phone"],
+  ["email", "Email"],
+  ["in_person", "In person"],
+] as const;
+
 export function ApprovalForm({ bill, record }: { bill: Bill; record: Recorder }) {
   const [on, setOn] = useState(day(new Date()));
-  const [by, setBy] = useState("");
+  const [method, setMethod] = useState("");
+  const [note, setNote] = useState("");
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
       event.preventDefault();
-      void record(`/api/payables/bills/${bill.id}/approval`, { approved_on: on, approved_by: by },
-        () => `The owner's approval of ${bill.reference} is recorded.`);
+      void record(`/api/payables/bills/${bill.id}/approval`,
+        { approved_on: on, owner_id: bill.owner_id, method, note },
+        () => `Recorded ${bill.owner}'s approval of ${bill.reference}.`);
     }}>
       <p className="text-sm text-ink-muted">Over the owner's approval limit of {money(bill.approval_limit)}.</p>
-      <Field label="Approved by" id={`approved-by-${bill.id}`} required maxLength={200} value={by}
-        onChange={(e) => setBy(e.target.value)} />
+      <Select label="Owner" id={`approved-owner-${bill.id}`} value={bill.owner_id} disabled onChange={() => undefined}>
+        <option value={bill.owner_id}>{bill.owner}</option>
+      </Select>
+      <Select label="How they approved" id={`approved-how-${bill.id}`} required value={method}
+        onChange={(e) => setMethod(e.target.value)}>
+        <option value="" disabled>Choose one</option>
+        {APPROVAL_METHODS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </Select>
       <Field label="Approved on" id={`approved-on-${bill.id}`} type="date" required value={on}
         onChange={(e) => setOn(e.target.value)} />
-      <div><Button type="submit" says="Nothing is paid now; the bill is ready to pay once the owner's balance covers it.">Record approval</Button></div>
+      <label htmlFor={`approved-note-${bill.id}`} className="flex flex-col gap-1.5 text-sm text-ink-muted">
+        Note
+        <textarea id={`approved-note-${bill.id}`} required maxLength={1000} rows={2} value={note}
+          placeholder="Called 11/3 at 2pm, OK to proceed"
+          onChange={(e) => setNote(e.target.value)}
+          className="rounded-sm border border-line-strong bg-sunken px-3 py-2 text-base text-ink" />
+      </label>
+      <div><Button type="submit">Record approval</Button></div>
     </Form>
   );
 }
@@ -502,8 +523,7 @@ export function ExpenseAccountForm({ bill, books, current, record }: {
         </Select>
       )}
       <div>
-        <Button type="submit" disabled={split && total !== sumMoney([bill.amount])}
-          says="Puts the bill in these expense accounts for the reports; the old choice stays in the history. No money moves.">
+        <Button type="submit" disabled={split && total !== sumMoney([bill.amount])}>
           Save
         </Button>
       </div>

@@ -30,7 +30,7 @@ const PACKAGE: YearEndData = {
 };
 
 describe("OwnerYearEnd", () => {
-  it("shows last year's package by property, the totals and the rents for the 1099-MISC", async () => {
+  it("shows this year's package by property, the totals and the rents for the 1099-MISC", async () => {
     vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-03-01T12:00:00Z") });
     const fetch = answer(PACKAGE);
     vi.stubGlobal("fetch", fetch);
@@ -41,12 +41,12 @@ describe("OwnerYearEnd", () => {
     expect(second.textContent).toContain("$900.00");
     expect(screen.getByRole("table", { name: "All properties" }).textContent).toContain("$2,400.00");
     expect(screen.getByTestId("rents").textContent).toBe("Rents for your 1099-MISC (box 1): $2,400.00");
-    expect(fetch.mock.calls[0]?.[0]).toBe("/api/owner/year-end?year=2025");
+    expect(fetch.mock.calls[0]?.[0]).toBe("/api/owner/year-end?year=2026");
     expect(screen.getByRole("link", { name: "PDF" }).getAttribute("href")).toBe(
-      "/api/owner/year-end/download?year=2025&format=pdf",
+      "/api/owner/year-end/download?year=2026&format=pdf",
     );
     expect(screen.getByRole("link", { name: "The year's statement" }).getAttribute("href")).toBe(
-      "/api/owner/statement/download?start=2025-01-01&end=2025-12-31&format=pdf",
+      "/api/owner/statement/download?start=2026-01-01&end=2026-12-31&format=pdf",
     );
   });
 

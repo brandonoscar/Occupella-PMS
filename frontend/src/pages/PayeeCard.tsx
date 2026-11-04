@@ -109,7 +109,7 @@ function BankForm({ save }: { save: (body: unknown) => Promise<void> }) {
         The account number is kept sealed and shows by its last four only. It goes into an ACH file and nowhere else.
       </p>
       <div>
-        <Button type="submit" says="ACH files from now on pay into it; the account before stays in the history. Nothing is paid now.">
+        <Button type="submit">
           Save
         </Button>
       </div>

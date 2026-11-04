@@ -7,6 +7,7 @@ import pytest
 from helpers import add_staff, make_pmc
 from people import (
     PASSWORD,
+    accept,
     invite_token,
     join_as_owner,
     join_as_staff,
@@ -165,7 +166,7 @@ def test_the_link_shows_who_it_is_for(client, app_conn, pmc):
 def test_a_link_that_cant_be_used_says_so(client, conn, app_conn, pmc, state):
     token = invite_token(app_conn, pmc.pmc_id, "owner", pmc.owners[0].owner_id, "o@example.com")
     if state == "accepted":
-        client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+        client.post("/api/invites/accept", json=accept(token))
     elif state == "expired":
         conn.execute(
             "UPDATE trust_invites SET expires_at = created_at + interval '1 microsecond'"
@@ -195,7 +196,7 @@ def test_a_malformed_token_is_refused(client, token):
 def test_an_owner_accepts_with_a_password_and_is_signed_in(client, conn, app_conn, pmc):
     token = invite_token(app_conn, pmc.pmc_id, "owner", pmc.owners[0].owner_id, "o@example.com")
 
-    answer = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+    answer = client.post("/api/invites/accept", json=accept(token))
 
     assert answer.status_code == 200
     assert answer.json()["kind"] == "owner"
@@ -211,7 +212,7 @@ def test_an_owner_accepts_with_a_password_and_is_signed_in(client, conn, app_con
 def test_a_short_password_is_refused(client, app_conn, pmc):
     token = invite_token(app_conn, pmc.pmc_id, "owner", pmc.owners[0].owner_id, "o@example.com")
 
-    answer = client.post("/api/invites/accept", json={"token": token, "password": "short pw"})
+    answer = client.post("/api/invites/accept", json=accept(token, "short pw"))
 
     assert answer.status_code == 422
     assert answer.json() == {"detail": "a password has 12 to 1024 characters"}
@@ -224,9 +225,7 @@ def test_a_new_invite_resets_the_password_and_ends_old_sessions(
     owner = join_as_owner(client, app_conn, pmc)
     token = invite_token(app_conn, pmc.pmc_id, "owner", owner.person_id, owner.email)
 
-    reset = other_client.post(
-        "/api/invites/accept", json={"token": token, "password": "a brand new passphrase"}
-    )
+    reset = other_client.post("/api/invites/accept", json=accept(token, "a brand new passphrase"))
 
     assert reset.status_code == 200
     assert client.get("/api/me").status_code == 401  # the old browser is signed out

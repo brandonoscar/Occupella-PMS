@@ -85,9 +85,7 @@ function SettingsForm({ settings, save }: { settings: PaymentSettings; save: (bo
         or money order for free. Check your state's rules before passing the fee on.
       </p>
       <div>
-        <Button type="submit" says={online
-          ? "Saves it; tenants can pay online from their lease and owners from their portal. Payments already started keep the fee they had."
-          : "Saves it; tenants and owners can't start a payment online, and autopay starts none. Payments already made stay as they are."}>
+        <Button type="submit">
           Save
         </Button>
       </div>

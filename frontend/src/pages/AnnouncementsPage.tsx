@@ -90,8 +90,7 @@ export function AnnouncementsPage({ me }: { me: Me }) {
           </label>
           <Notice tone="error">{error}</Notice>
           <div className="flex items-center gap-4">
-            <Button type="submit"
-              says={`The tenants of ${to} see it on their portal's Overview right away. It isn't emailed; take it down from its row.`}>
+            <Button type="submit">
               Post announcement
             </Button>
             <Said>{said}</Said>

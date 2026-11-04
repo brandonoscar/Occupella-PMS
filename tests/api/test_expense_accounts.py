@@ -251,7 +251,9 @@ def test_every_schedule_e_line_is_labelled_as_the_income_statement_labels_it(
                 client,
                 f"/api/payables/bills/{entered}/approval",
                 approved_on=TODAY,
-                approved_by="Owner 1, by phone",
+                owner_id=str(pmc.owners[0].owner_id),
+                method="phone",
+                note="Called to approve it",
             )
         )
         ok(
@@ -285,7 +287,9 @@ def test_an_owner_reads_and_downloads_their_years_income_statement(
             other_client,
             f"/api/payables/bills/{entered}/approval",
             approved_on=TODAY,
-            approved_by="Owner 1, by phone",
+            owner_id=str(pmc.owners[0].owner_id),
+            method="phone",
+            note="Called to approve it",
         )
     )
     ok(

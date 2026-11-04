@@ -20,6 +20,9 @@ CONTACT = {
     "postal_code": "00000",
 }
 EMPTY = dict.fromkeys(CONTACT)
+# What signing up left: the phone they gave, as E.164 (tests/api/people.py, migration
+# 20261104000700).
+SIGNED_UP = {**EMPTY, "phone": "+15555550123"}
 
 
 def ok(answer, status=200):
@@ -49,12 +52,12 @@ def test_a_tenant_changes_their_own_contact_details_and_staff_see_they_did(
         (tenant.person_id,),
     ).fetchall()
 
-    assert before == EMPTY and after == CONTACT
+    assert before == SIGNED_UP and after == CONTACT
     assert page["contact"] == CONTACT and page["contact_by_tenant_at"] is not None
     # Their sign-in email stays as it was; only where the company writes to them changes.
     assert page["login_email"] == tenant.email
     assert emails.address_of(conn, pmc.pmc_id, "tenant", tenant.person_id)[1] == CONTACT["email"]
-    assert row == [(True, None)]
+    assert row == [(True, None), (True, None)]  # signing up, then their change
 
 
 def test_a_change_by_staff_after_is_staffs_and_the_same_details_again_write_nothing(
@@ -76,8 +79,8 @@ def test_a_change_by_staff_after_is_staffs_and_the_same_details_again_write_noth
         (str(tenant.person_id),),
     ).fetchone()[0]
 
-    assert rows == [(True, False), (False, True)]
-    assert audited == 2
+    assert rows == [(True, False), (True, False), (False, True)]  # signing up, theirs, staff's
+    assert audited == 3
     assert page["contact"]["phone"] is None and page["contact_by_tenant_at"] is None
 
 
@@ -102,7 +105,7 @@ def test_bad_contact_details_are_refused(other_client, conn, tenant, body):
     answer = other_client.post("/api/tenant/contact", json=body)
 
     assert answer.status_code == 422
-    assert ok(other_client.get("/api/tenant/contact")) == EMPTY
+    assert ok(other_client.get("/api/tenant/contact")) == SIGNED_UP
 
 
 @pytest.mark.parametrize("caller", ["nobody", "owner", "staff"])

@@ -146,11 +146,7 @@ function TemplateForm({ template, fields, leaseFields, onSaved }: {
         className="rounded-sm border border-line-strong bg-sunken px-2 py-1.5 text-base text-ink" />
       <Notice tone="error">{error}</Notice>
       <div>
-        <Button type="submit" says={template !== null
-          ? "Saves a new version; what was made from it before keeps its words. Nothing is sent to anyone."
-          : use === "lease"
-            ? "Adds your lease; a draft lease can then be made from it. Nothing is sent to anyone."
-            : "Adds the template; a lease's Files tab makes notices from it. Nothing is sent to anyone."}>
+        <Button type="submit">
           Save template
         </Button>
       </div>

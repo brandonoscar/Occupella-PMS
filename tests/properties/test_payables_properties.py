@@ -142,9 +142,10 @@ class PayablesMachine(RuleBasedStateMachine):
     def holds(self):
         """What each waiting bill holds of the owner's balance, what it is short and what the
         owner must send for it and those before it: the balance laid over them in the order they
-        are due (all due the same day here, so by reference)."""
+        are due (all due the same day here, so by reference). The reserve stays in the account:
+        only what is above it is laid over them (migration 20261104000300)."""
         laid = {}
-        held = max(self.held, Decimal(0))
+        held = max(self.held - RESERVE, Decimal(0))
         through = Decimal(0)
         for bill in sorted(self.waiting(), key=lambda b: b.reference):
             through += bill.amount
@@ -502,8 +503,11 @@ class PayablesMachine(RuleBasedStateMachine):
             assert shown.held == (None if held is None else f"{held:.2f}")
             assert shown.short == (f"{short:.2f}" if short else None)
             assert shown.needed == (f"{needed:.2f}" if needed else None)
-        # Holds never come to more than the balance, and a void bill holds nothing.
-        assert sum((h for h, _, _ in holds.values()), Decimal(0)) <= max(self.held, Decimal(0))
+        # Holds never come to more than the balance above the reserve, and a void bill holds
+        # nothing.
+        assert sum((h for h, _, _ in holds.values()), Decimal(0)) <= max(
+            self.held - RESERVE, Decimal(0)
+        )
         assert not any(b.void and b.id in holds for b in self.bills)
 
 

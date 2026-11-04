@@ -33,6 +33,8 @@ export function TenantAutopayCard({ leaseId }: { leaseId: string }) {
   }, [path, runs]);
 
   const on = view?.autopays.find((a) => a.stopped === null) ?? null;
+  // Nothing to set up while the tenant can't pay online, unless one is on (to turn off).
+  if (view !== null && !view.available && !on) return null;
   return (
     <Card title="Autopay">
       <Said>{said}</Said>
@@ -55,8 +57,6 @@ export function TenantAutopayCard({ leaseId }: { leaseId: string }) {
                 </Button>
               </div>
             </div>
-          ) : !view.available ? (
-            <p className="text-base text-ink-muted" data-testid="autopay-off">{view.why_not}</p>
           ) : (
             <SetUpForm path={path} view={view} fail={setError} />
           )}
