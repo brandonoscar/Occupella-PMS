@@ -101,10 +101,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and the general ledger page read in plain words from one word list (`src/pms/wording.py`,
   founder 2026-10-26): "Owner: ..." for `owner_property: ...`, "Company" for "PMC", days as
   MM/DD/YYYY, columns as headings. The report functions, their golden cases, what the portals
-  parse (`deps.Rows`) and the audit log's rows keep the ledger's own words.
+  parse (`deps.Rows`) and the audit log's rows keep the ledger's own words. Every PDF prints in
+  IBM Plex Sans, embedded (`src/pms/pdf_fonts.py`): names as people wrote them (Nguyễn, O’Brien,
+  Дмитрий); a letter it lacks (Arabic, Chinese...) reads "?".
 - The API (`src/pms/api`, `python -m pms.api`, FastAPI) runs every request in one transaction
   as `trust_app` (the planner's JIT off: it cost more than it saved), committed before the answer
-  is sent; a staff member's request names them to the audit log. How fast it answers ten staff
+  is sent; a staff member's request names them to the audit log. Behind a proxy it trusts
+  (`PMS_TRUSTED_PROXIES`, as `compose.selfhost.yaml` sets it) a visitor's address is the one the
+  proxy names, as a signature's evidence keeps it. How fast it answers ten staff
   at once on a 1,000-unit company is timed nightly (`tools/speed.py`, `[speed]` ceilings). Every endpoint gets tests in `tests/api/` for success, a caller who isn't
   allowed and bad input. A report's PMC always comes from the session (every report takes
   `p_pmc_id` first; a test pins it). Changes must be JSON from the app's own origin (a browser's
@@ -1016,7 +1020,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   The vendors' bills the old system had not paid come over from a CSV file as ordinary bills
   with their old references and dates, once, so draws hold them back from the first day; one
   over the owner's limit keeps the old system's approval or waits for the owner
-  (`src/pms/api/switching.py`, `docs/law.md`).
+  (`src/pms/api/switching.py`, `docs/law.md`). The portal reads a file as UTF-8, else as
+  Windows-1252, which Excel on Windows saves "CSV" in (`frontend/src/fileText.ts`, also for bank
+  statements and payment files), and a file with a letter that didn't read is refused with its line.
 - Staff roles (migration 0034): admin (changes roles; invites and disables staff logins),
   approve (approves a reconciliation, signs off a cutover, posts a journal entry) and disburse
   (pays a bill, an owner draw). The database refuses those writes to a named staff member

@@ -12,6 +12,8 @@ from tools.check_upgrade_history import Point, main, points, seedable, select
 
 ROOT = Path(__file__).resolve().parents[2]
 SEED = "selfhost/smoke.py"
+# The app as a commit holds it: its code, and its fonts and email template, byte for byte.
+APP_FILES = [p for p in ROOT.glob("src/**/*") if p.is_file() and "__pycache__" not in p.parts]
 
 
 def commit_on(repo, monkeypatch, when, message):
@@ -348,9 +350,9 @@ def test_for_real_an_old_point_that_a_later_edit_never_reaches_fails_alone(
         *ROOT.glob("db/migrations/*.sql"),
         ROOT / "selfhost/__init__.py",
         ROOT / SEED,
-        *ROOT.glob("src/**/*.py"),
+        *APP_FILES,
     ]:
-        repo.write(str(path.relative_to(ROOT)), path.read_text())
+        repo.write(str(path.relative_to(ROOT)), path.read_bytes())
     repo.write(
         "db/migrations/20991231000001_note.sql", "-- migrate:up\nSELECT 1;\n-- migrate:down\n"
     )

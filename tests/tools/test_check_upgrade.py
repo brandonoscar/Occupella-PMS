@@ -10,6 +10,8 @@ from tools.check_rollback import Dbmate
 from tools.scratch_db import scratch_database
 
 ROOT = Path(__file__).resolve().parents[2]
+# The app as a commit holds it: its code, and its fonts and email template, byte for byte.
+APP_FILES = [p for p in ROOT.glob("src/**/*") if p.is_file() and "__pycache__" not in p.parts]
 
 
 @pytest.fixture
@@ -19,9 +21,9 @@ def base(repo):
     for path in [
         *ROOT.glob("db/migrations/*.sql"),
         ROOT / "selfhost/__init__.py",
-        *ROOT.glob("src/**/*.py"),
+        *APP_FILES,
     ]:
-        repo.write(str(path.relative_to(ROOT)), path.read_text())
+        repo.write(str(path.relative_to(ROOT)), path.read_bytes())
     repo.write("selfhost/smoke.py", (ROOT / "selfhost/smoke.py").read_text())
     return repo.commit("base")
 
@@ -33,6 +35,21 @@ def add_migration(repo, sql):
 
 def upgrade(repo, base, database_url):
     return check_upgrade.check(repo.path, base, database_url, shutil.which("dbmate"))
+
+
+def test_the_base_apps_files_come_over_byte_for_byte(repo, tmp_path_factory):
+    """Its fonts are no text: read as text, a font file would fail to decode or come over
+    changed, and the base's seed could print no PDF."""
+    font = bytes(range(256))
+    repo.write("src/pms/__init__.py", '"""pms"""\n')
+    repo.write("src/pms/fonts/Synthetic.ttf", font)
+    base = repo.commit("base")
+    target = tmp_path_factory.mktemp("base")
+
+    check_upgrade.base_app(repo.path, base, target)
+
+    assert (target / "src/pms/fonts/Synthetic.ttf").read_bytes() == font
+    assert (target / "src/pms/__init__.py").read_text() == '"""pms"""\n'
 
 
 def test_migration_that_keeps_the_money_upgrades_cleanly(repo, base, database_url, capsys):

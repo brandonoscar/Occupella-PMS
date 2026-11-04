@@ -13,11 +13,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from fpdf import FPDF
 from fpdf.errors import FPDFException
 from pypdf import PdfReader, PdfWriter
 from pypdf.errors import PyPdfError
 
+from pms import pdf_fonts
 from pms.notice_letters import us
 
 
@@ -53,26 +53,21 @@ class Statement:
     photos: int = 0
 
 
-def _latin1(value: str) -> str:
-    """The PDF's built-in font has Latin-1 only; anything else prints as "?"."""
-    return value.encode("latin-1", "replace").decode("latin-1")
-
-
 def dollars(amount: Decimal) -> str:
     return f"${amount:,.2f}"
 
 
-class _Pdf(FPDF):
+class _Pdf(pdf_fonts.Pdf):
     def footer(self) -> None:
         self.set_y(-30)
-        self.set_font("Helvetica", size=7)
+        self.set_font(pdf_fonts.FAMILY, size=7)
         self.cell(0, 10, f"Page {self.page_no()}", align="C")
 
 
 def _new(title: str, generated: datetime) -> _Pdf:
     pdf = _Pdf(orientation="portrait", unit="pt", format="letter")
     pdf.set_creation_date(generated.astimezone(UTC))
-    pdf.set_title(_latin1(title))
+    pdf.set_title(pdf_fonts.printable(title))
     pdf.set_author("Occupella PMS")
     pdf.set_margins(60, 54, 60)
     pdf.set_auto_page_break(True, margin=54)
@@ -82,38 +77,42 @@ def _new(title: str, generated: datetime) -> _Pdf:
 def _letter(statement: Statement, generated: datetime) -> bytes:
     pdf = _new("Security deposit statement", generated)
     pdf.add_page()
-    pdf.set_font("Helvetica", style="B", size=10)
+    pdf.set_font(pdf_fonts.FAMILY, style="B", size=10)
     head = statement.company if not statement.street else f"{statement.company}\n{statement.street}"
-    pdf.multi_cell(0, 13, _latin1(head), new_x="LMARGIN", new_y="NEXT")
+    pdf.multi_cell(0, 13, pdf_fonts.printable(head), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(12)
-    pdf.set_font("Helvetica", size=10)
+    pdf.set_font(pdf_fonts.FAMILY, size=10)
     pdf.multi_cell(0, 13, us(statement.dated_on), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(10)
     address = statement.to_address or ("No forwarding address on file",)
     pdf.multi_cell(
-        0, 13, _latin1("\n".join((statement.to_name, *address))), new_x="LMARGIN", new_y="NEXT"
+        0,
+        13,
+        pdf_fonts.printable("\n".join((statement.to_name, *address))),
+        new_x="LMARGIN",
+        new_y="NEXT",
     )
     pdf.ln(14)
-    pdf.set_font("Helvetica", style="B", size=13)
+    pdf.set_font(pdf_fonts.FAMILY, style="B", size=13)
     pdf.multi_cell(0, 17, "Security deposit statement", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(6)
-    pdf.set_font("Helvetica", size=10)
+    pdf.set_font(pdf_fonts.FAMILY, size=10)
     width = pdf.epw - 90
     for item, detail, amount in statement.lines:
         if item == "PMC":
             continue
         text = item[:1].upper() + item[1:] + (f": {detail}" if detail else "")
         y = pdf.get_y()
-        pdf.multi_cell(width, 14, _latin1(text), new_x="RIGHT", new_y="TOP")
+        pdf.multi_cell(width, 14, pdf_fonts.printable(text), new_x="RIGHT", new_y="TOP")
         bottom = pdf.get_y()
         if amount is not None:
             pdf.set_xy(pdf.l_margin + width, y)
             pdf.cell(90, 14, dollars(amount), align="R")
         pdf.set_xy(pdf.l_margin, max(bottom, y + 14))
     pdf.ln(10)
-    pdf.set_font("Helvetica", style="B", size=11)
+    pdf.set_font(pdf_fonts.FAMILY, style="B", size=11)
     pdf.multi_cell(0, 15, "Receipts and invoices", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", size=10)
+    pdf.set_font(pdf_fonts.FAMILY, size=10)
     if not statement.kept:
         pdf.multi_cell(0, 14, "Nothing was kept from the deposits.", new_x="LMARGIN", new_y="NEXT")
     for kept in statement.kept:
@@ -121,7 +120,7 @@ def _letter(statement: Statement, generated: datetime) -> bytes:
         pdf.multi_cell(
             0,
             14,
-            _latin1(f"{kept.label}, {dollars(kept.amount)}: {on_file}"),
+            pdf_fonts.printable(f"{kept.label}, {dollars(kept.amount)}: {on_file}"),
             new_x="LMARGIN",
             new_y="NEXT",
         )
@@ -140,7 +139,9 @@ def _letter(statement: Statement, generated: datetime) -> bytes:
     pdf.multi_cell(
         0,
         14,
-        _latin1(f"Questions about this statement: write to {statement.company}{reach}."),
+        pdf_fonts.printable(
+            f"Questions about this statement: write to {statement.company}{reach}."
+        ),
         new_x="LMARGIN",
         new_y="NEXT",
     )
@@ -151,8 +152,8 @@ def _image_page(file: File, generated: datetime) -> bytes:
     """One page holding a receipt's or photo's image, its title above it."""
     pdf = _new(file.title, generated)
     pdf.add_page()
-    pdf.set_font("Helvetica", size=9)
-    pdf.multi_cell(0, 12, _latin1(file.title), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font(pdf_fonts.FAMILY, size=9)
+    pdf.multi_cell(0, 12, pdf_fonts.printable(file.title), new_x="LMARGIN", new_y="NEXT")
     pdf.image(
         io.BytesIO(file.content), x=pdf.l_margin, w=pdf.epw, keep_aspect_ratio=True, h=pdf.eph - 30
     )
@@ -162,11 +163,11 @@ def _image_page(file: File, generated: datetime) -> bytes:
 def _unreadable_page(file: File, generated: datetime) -> bytes:
     pdf = _new(file.title, generated)
     pdf.add_page()
-    pdf.set_font("Helvetica", size=10)
+    pdf.set_font(pdf_fonts.FAMILY, size=10)
     pdf.multi_cell(
         0,
         14,
-        _latin1(f"{file.title} could not be added here: it is with the lease's files."),
+        pdf_fonts.printable(f"{file.title} could not be added here: it is with the lease's files."),
         new_x="LMARGIN",
         new_y="NEXT",
     )

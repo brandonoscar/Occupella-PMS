@@ -85,6 +85,15 @@ class Row:
 
 def rows(content: str, needs: tuple[str, ...]) -> list[Row]:
     """A CSV file's rows, by lower-case column name (spaces and underscores alike)."""
+    # A letter that didn't read as text arrives as the replacement character: refused, rather
+    # than a tenant's name coming into the books as "Jos�". The portal reads a file saved as
+    # Windows-1252 as such (frontend/src/fileText.ts); what reaches here otherwise is broken.
+    if "\ufffd" in content:
+        line = content[: content.index("\ufffd")].count("\n") + 1
+        raise Bad(
+            f"line {line}: a letter didn't read (it shows as \ufffd); save the file as CSV UTF-8"
+            " and import it again"
+        )
     # newline="": the csv module itself reads \r\n, \n and a bare \r as the end of a row.
     reader = csv.reader(io.StringIO(content.lstrip("\ufeff"), newline=""))
     try:

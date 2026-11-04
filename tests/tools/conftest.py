@@ -21,7 +21,10 @@ class GitRepo:
     def write(self, relative, text):
         target = self.path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text)
+        if isinstance(text, bytes):
+            target.write_bytes(text)
+        else:
+            target.write_text(text)
 
     def commit(self, message="change"):
         self.git("add", "-A")

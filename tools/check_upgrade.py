@@ -108,11 +108,15 @@ def fingerprint(
 
 
 def base_app(root: Path, base: str, target: Path) -> None:
-    """Write the base branch's app code (src/) under `target`, for its own seed to import."""
+    """Write the base branch's app code (src/) under `target`, for its own seed to import: every
+    file byte for byte, its fonts too (src/pms/fonts, which its PDFs print with)."""
     for name in git(root, "ls-tree", "-r", "--name-only", base, f"{APP}/").split():
         path = target / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(git(root, "show", f"{base}:{name}"))
+        shown = subprocess.run(
+            ["git", "show", f"{base}:{name}"], cwd=root, capture_output=True, check=True
+        )
+        path.write_bytes(shown.stdout)
 
 
 def run(command: list[str], url: str, cwd: Path, app: Path) -> subprocess.CompletedProcess[str]:
