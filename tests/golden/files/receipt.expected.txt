@@ -2,7 +2,7 @@ Payment receipt
 Generated 02/01/2026 09:30:00 UTC
 item detail
 Received from Tenant 1, Tenant 2
-For Property 1, Unit 1
+For Property 1
 Received on 01/03/2026
 Amount $1,600.00
 How Check 101

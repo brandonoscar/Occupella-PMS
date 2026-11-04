@@ -34,7 +34,9 @@ test.afterEach(async ({ page }) => {
 async function join(page: Page, invite: string, heading: string): Promise<void> {
   await page.goto(`/invite#${invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).tap();
   await expect(page.getByRole("heading", { level: 1, name: heading })).toBeVisible();
 }
@@ -102,7 +104,7 @@ test("an owner reads their properties and statement on a phone", async ({ page }
 });
 
 test("a tenant reads their lease and what they owe, and files a repair request on a phone", async ({ page }, info) => {
-  await join(page, seed.features.phone!.taylor, "Welcome, Taylor Demo");
+  await join(page, seed.features.phone!.taylor, "Welcome, Taylor");
   await theMenuFolds(page);
   await expect(page.getByTestId("balance-due")).toBeVisible();
   await looksRightOnAPhone(page, info, "the tenant's page");
@@ -111,6 +113,7 @@ test("a tenant reads their lease and what they owe, and files a repair request o
   await sectionOnAPhone(page, "Repairs");
   const request = page.locator("section", { has: page.getByRole("heading", { level: 2, name: "Maintenance requests" }) });
   await request.getByLabel("What needs fixing").fill("The kitchen tap drips");
+  await request.getByLabel("What kind of repair?").selectOption("Plumbing");
   await request.getByRole("button", { name: "Send request" }).tap();
   await expect(request).toContainText("The kitchen tap drips");
   await looksRightOnAPhone(page, info, "the tenant's page after a request");

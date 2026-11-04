@@ -4,7 +4,7 @@ import { Button } from "../components/Button";
 import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
 import type { StaffRequest } from "../maintenance";
-import { isOpen, photosLabel, statusLabel, visitLabel, when } from "../maintenance";
+import { isOpen, kindAndPlace, photosLabel, statusLabel, visitLabel, when } from "../maintenance";
 import { Badge } from "../components/Badge";
 import { GoLink } from "./NeedsAttention";
 import { Said } from "../components/Said";
@@ -88,8 +88,19 @@ export function MaintenanceCard() {
                 {request.entry_allowed ? "May enter while they're out." : "Arrange a time to enter."}
                 {photosLabel(request.photos) && ` ${photosLabel(request.photos)}, on its work order.`}
               </p>
+              {kindAndPlace(request) && <p className="text-sm text-ink">{kindAndPlace(request)}</p>}
+              {(request.notes ?? []).length > 0 && (
+                <ul className="flex flex-col gap-1 border-l-2 border-line pl-3 text-sm" aria-label={`Notes on ${request.summary}`}>
+                  {(request.notes ?? []).map((n, i) => (
+                    <li key={i}>
+                      <span className="text-ink">{n.body}</span>
+                      <span className="text-ink-subtle"> · {n.by}, {when(n.at)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
               <p className="text-sm text-ink-muted">
-                {statusLabel(request.status)}
+                {request.taken_back ? "Cancelled by the tenant" : statusLabel(request.status)}
                 {request.vendor && ` (${request.vendor})`}
                 {visitLabel(request) && `. ${visitLabel(request)}`}
               </p>

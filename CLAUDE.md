@@ -118,7 +118,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   by email; the link carries a token kept only as its SHA-256, in the URL fragment. Accepting
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
   password. Staff invite from the person's own page (staff from the staff page) and disable a
-  login from Settings, Logins, for good: its sessions end and it takes no new invite. `trust_login_secrets` is never audited. The first staff member, their first admin
+  login from Settings, Logins, for good: its sessions end and it takes no new invite. `trust_login_secrets` is never audited.
+  Since migration 20261104000700 (the founder's review of 11/03, item 14) an owner or a tenant
+  setting their password gives a phone, kept as E.164 (`src/pms/phones.py`) and as their contact
+  phone, and says whether the company may text them, unchecked unless they check it
+  (`trust_text_consents`: append-only, the exact words shown and when, of the login's own
+  person; a new password records a new answer, the latest holding). Staff are asked neither. It
+  records consent for A2P 10DLC and sends no text; the AI role never reads it. The first staff member, their first admin
   role and their invite come from `python -m pms.admin`. A demo PMC to show the PMS with
   comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
   route functions as its staff, with last month's reconciliation waiting for approval and
@@ -205,9 +211,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `11/01/2025 – Month to month`. Money leaving trust (a draw, a bill paid, the company's fees
   taken out, a deposit returned) waits for staff to confirm a question naming the amount
   (`components/Confirm.tsx`), and a row's risky actions (It bounced, Archive...) sit in its ⋯ menu
-  (`components/RowMenu.tsx`), each confirmed. Every action button has one plain line under it
-  saying what it does and what it doesn't (`Button`'s `says`; `src/buttonRules.test.ts` fails a
-  submit button without one), an action that can't be taken back asks first (`AskFirst`), and a
+  (`components/RowMenu.tsx`), each confirmed. Copy reads like Stripe's or Linear's: short,
+  sentence case, a button's label saying what it does; a line under it (`Button`'s `says`) only
+  where it stops a mistake (money leaving trust or moving between people, someone emailed or shown
+  something, a step that can't be taken back), each listed with why in `src/buttonRules.test.ts`
+  (the founder's review of 11/03). A home reads as tenants, owners, vendors and applicants see it
+  through `trust_unit_shown` (migration 20261104000500, `src/pms/homes.py`): "Cedar House", not
+  "Cedar House, House", when its unit's name is generic or it is the property's only unit; staff's
+  pages keep every unit's name. An action that can't be taken back asks first (`AskFirst`), and a
   page shows who an email goes to before it goes (ADR 0010, phase 4). What a save did shows as a toast
   (`components/Said.tsx`, which keeps an off-screen status line; `components/Toaster.tsx`), a
   refused change's reason too (`api.post`), and a form's submit button is busy while its save runs
@@ -317,16 +328,25 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the account the money left and crediting the one it went to; read only). A lease's inspections are on its move-out row
   (`src/pms/api/inspections.py`).
   npm packages are pinned exactly and their
-  licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
+  licenses checked like Python's. An owner's bills (Bills waiting for you) are a table: vendor, bill #, property, amount, due day, status (Waiting for you, Approved, Paid, Short on funds, Declined; `owner_status`, paid meaning paid in full) and what they can do. An owner's pages (`src/pms/api/owner.py`) show the session's
   owner only: no request names an owner, a property or a PMC, and a bill named in a path is
   answered only if it is theirs (they approve or decline those over their limit). A tenant's pages
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered
-  only if they are on it, and reads as not found otherwise. They show what each lease charges
-  every month and what is charged already but due later, and once a deposit was returned at
+  only if they are on it, and reads as not found otherwise. They show the next charge (the rent
+  in force on its due day, a rent change to come included, and the monthly fees and credits, as
+  the rent run will charge them), what each lease charges every month and what is charged already
+  but due later, say at the top when the rent goes up or down, the
+  security deposit held for the lease and the lease to read (each only when there is one), and once a deposit was returned at
   move-out, their statement letter (migration 0120) to download; and a lease's files (q120):
   the lease as signed, its signing certificate when signed on the PMS's page, and the lease
-  documents staff keep on its Files tab (move-out photos stay with staff). Both portals show the
-  manager's name, mailing address and logo (`/api/company/card`). The portal takes no payments.
+  documents staff keep on its Files tab (move-out photos stay with staff). Both portals open a line
+  of the statement or ledger in a side panel saying where it came from (`src/pms/api/ledger_sources.py`,
+  `components/SourcePanel.tsx`): a tenant's payment and its receipt, a bill and its receipts, how
+  a management fee was worked out, a payout's check number or its bank account's last four. The
+  tenant's ledger starts at its opening balance and ends at its totals; a payment reads as a rent
+  payment and how it came ("Check 2101"), with its receipt, and what it held as prepaid rent is a
+  line of its own that changes no balance (it counts as paid on its "Prepaid rent used" line). Both
+  portals show the manager's name, mailing address and logo (`/api/company/card`). The portal takes no payments.
 - Property addresses (migration 0109, `src/pms/api/addresses.py`, `src/pms/geocoding.py`): a
   property's street address, whole (street, maybe a building or unit, city, a state's USPS code,
   ZIP code), in `trust_property_addresses` (append-only, the latest holding,
@@ -509,7 +529,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   owner's approval recorded first. `trust_set_aside_bill` moves its amount from the owner's
   account to the vendor's (`vendor_payable`); `trust_pay_bill` then sends it out through the
   trust bank account's cash, no earlier than it was set aside. Each step once per bill, at READ
-  COMMITTED. A bill takes one owner's decision (migration 0041): an approval or a decline
+  COMMITTED. An owner approving in the portal confirms first, seeing the bill and the property's balance
+  before and after; over the company's amount (`trust_owner_approval_settings`, $5,000.00 without
+  one, Settings, Company setup) they type their full name, which the API checks against theirs and
+  keeps (`trust_bill_approvals.signed_name`, migration 20261104000100); who approves always comes
+  from the session. An approval staff record names the bill's own owner by id, how they approved
+  (phone, email or in person; an approval carried over by the switching tool says so) and a note,
+  and the staff member from the session (`recorded_by`; migration 20261104000200): the database
+  refuses one a named staff member records without them. A bill takes one owner's decision (migration 0041): an approval or a decline
   (`trust_bill_declines`, with a reason), a decline only before it is set aside, and one taken
   in the owner portal only by the owner of its property account. A declined bill is never set
   aside or paid, and from the day it was declined it holds nothing back from draws and is not
@@ -517,8 +544,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - A bill's life (migration 0152, `docs/adr/0010-design-pass.md`, the founder's design pass):
   "set aside" is no longer a step staff take. A bill dated by today, not paid in full nor
   declined, *holds* its amount and markup from its owner's property account without moving money
-  (`trust_bill_holds`: each account's balance laid over its open bills, the one due first first;
-  what it can't cover is Short, and what the owner must send to cover it and those before it).
+  (`trust_bill_holds`: each account's balance less the reserve of its agreement in force today
+  laid over its open bills, the one due first first, so the reserve stays in the account
+  (migration 20261104000300); what it can't cover is Short, and what the owner must send to cover
+  it and those before it).
   Draws already leave it (`trust_unpaid_bills`), so a draw never pays held money. Paying is
   recorded by staff: `trust_pay_bill_part` (a request key, safe to retry; disburse) sets the whole
   bill and its markup aside at the first payment, as before, and pays its part from the vendor's
@@ -765,7 +794,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   a key to `trust_lease_tenants` refuses anyone else). Staff open at most one work order for it,
   at the lease's unit (`trust_maintenance_request_work_orders`, one each way), and its status is
   that work order's latest step. The portal files them only under a lease in effect, at most
-  10 a day per lease. Since migration 0084 (`docs/law.md`) a tenant marks one an emergency and
+  10 a day per lease. Since migration 20261104000600 a request says what kind of repair it is
+  (plumbing, electrical, appliance, heating/cooling, pests, other) and where in the unit; a tenant
+  on the lease cancels it while it is still received (`trust_maintenance_request_cancellations`,
+  once; staff open no work order for it after, the two waiting for each other) and adds notes
+  while it is open (`trust_maintenance_request_notes`, 20 a day, which the AI role never reads);
+  before an emergency is sent the portal says "Gas smell, fire or flooding? Get out and call 911
+  or your gas company first." (no phone line is built). Since migration 0084 (`docs/law.md`) a tenant marks one an emergency and
   files up to three photos with it (`request_photo` documents about it); its work order opens
   urgent with the tenant's word on entry copied, and each staff member on call
   (`trust_on_call_staff`: append-only, the latest row holding, naming who changed it; Work orders,
@@ -861,6 +896,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and what the company's fee account can't (Record the company's deposit, never more than what
   waits needs, area rent). Each posting has a key of its own (`metadata ->> 'key'`, indexed), so
   a partner reporting twice moves nothing twice. The AI role reads these tables; it moves no money.
+  While a tenant or owner can't pay online, the API says why as a word ("off", or "paused" on a
+  payment hold), never in the server's words, and their Pay online and Add money show the
+  company's How to pay us instead (Company setup, `/api/company/how-to-pay`, migration
+  20261104000400, `trust_payment_instructions`: append-only, the latest holding, naming who; the AI
+  role never reads it), else "Contact your property manager to pay."; Autopay isn't shown then,
+  unless one is on to turn off.
 - Owners pay in online (migration 20261102000150, `src/pms/api/owner_payments.py`, ADR 0009,
   `docs/law.md`, readiness q054): while the company takes payments online (the same switch,
   Tenants and owners may pay online), an owner adds money to one of their property accounts of a

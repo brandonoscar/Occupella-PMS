@@ -112,7 +112,9 @@ async function done(who: Page, name: string): Promise<void> {
 async function joinAsStaff(page: Page, invite: string): Promise<void> {
   await page.goto(`/invite#${invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
@@ -129,7 +131,9 @@ async function portalSection(page: Page, link: string, title = link): Promise<vo
 async function joinPortal(page: Page, invite: string): Promise<void> {
   await page.goto(`/invite#${invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
-  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  // A tenant or an owner gives a phone at sign-up (a fictional one); staff are not asked.
+  if (await page.getByLabel("Phone").count()) await page.getByLabel("Phone").fill("(555) 555-0123");
   await page.getByRole("button", { name: "Set password" }).click();
   await expect(page.getByRole("navigation", { name: "Sections" })).toBeVisible();
 }
@@ -478,12 +482,14 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await joinPortal(taylor, people.taylor);
     await expect(taylor.getByTestId("balance-due")).toHaveText(money(cedarOwes));
     await portalSection(taylor, "Payments");
-    await expect(taylor.getByRole("row", { name: /^Balance at the end of/ }).getByRole("cell").last()).toHaveText(money(cedarOwes));
-    const theirs = taylor.getByRole("list", { name: "Payments" });
-    await expect(theirs.getByRole("listitem").filter({ hasText: "Check 2101" })).toContainText("$1,200.00");
-    await expect(theirs.getByRole("listitem").filter({ hasText: "Check 2102" })).toContainText("Bounced");
+    await expect(taylor.getByRole("row", { name: /^Totals/ }).getByRole("cell").last()).toHaveText(money(cedarOwes));
+    const theirs = taylor.getByRole("table").filter({ hasText: "Charged" });
+    const first = theirs.getByRole("row", { name: /Rent payment · Check 2101/ });
+    await expect(first).toContainText("$1,200.00");
+    await expect(theirs.getByRole("row", { name: /Rent payment · Check 2102/ })).toHaveCount(1);
+    await expect(theirs.getByRole("row", { name: /Payment returned/ })).toHaveCount(1);
     const own = await taylor.request.get(
-      (await theirs.getByRole("listitem").filter({ hasText: "Check 2101" }).getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")) ?? "",
+      (await first.getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")) ?? "",
     );
     expect(own.status()).toBe(200);
     expect(own.headers()["content-type"]).toBe("application/pdf");
@@ -496,7 +502,8 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await portalSection(taylor, "Repairs");
     const requests = part(taylor, "Maintenance requests");
     await requests.getByLabel("What needs fixing?").fill("The kitchen faucet drips");
-    await requests.getByLabel("Someone may come in while I'm out").check();
+    await requests.getByLabel("What kind of repair?").selectOption("Plumbing");
+    await requests.getByLabel("OK to enter if I'm not home").check();
     await requests.getByLabel("Photos (up to 3, JPEG, PNG or PDF)").setInputFiles(PHOTO);
     await expect(requests.getByTestId("photos-chosen")).toHaveText("Photos: faucet");
     await requests.getByRole("button", { name: "Send request" }).click();
@@ -586,9 +593,11 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
 
     // Demo Owner A approves it in the portal, where it waits for them.
     await joinPortal(owner, people.owner_a);
-    const waiting = owner.getByRole("list", { name: "Waiting for you" }).getByRole("listitem").filter({ hasText: "PLB-J101" });
+    const waiting = owner.getByRole("table", { name: "Your bills" }).getByRole("row", { name: `${PLUMBER} PLB-J101` });
     await expect(waiting).toContainText("$640.00");
-    await waiting.getByRole("button", { name: "Approve" }).click();
+    await expect(waiting.getByRole("cell").nth(5)).toHaveText("Waiting for you");
+    await waiting.getByRole("button", { name: "Approve…" }).click();
+    await owner.getByRole("dialog", { name: "Approve this bill?" }).getByRole("button", { name: "Approve" }).click();
     await expect(owner.getByText(`Approved ${PLUMBER}'s PLB-J101.`)).toBeVisible();
 
     // Staff pay it from its page (ADR 0010: the owner's money is held for it, no step between);

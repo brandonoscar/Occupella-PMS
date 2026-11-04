@@ -16,8 +16,6 @@ import { STATUS, payable } from "../payments";
 // partner's page, which takes their bank account; the PMS never sees it. No fee: the company pays
 // the processing fee (the founder, 2026-11-02). Each payment started is listed with what the bank
 // did; it reaches their statement once the bank paid it.
-// "your manager doesn't..." as the start of a sentence.
-const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 export function OwnerPayCard() {
   const [view, setView] = useState<OwnerPayView | null>(null);
@@ -65,8 +63,8 @@ export function OwnerPayCard() {
       {view === null ? (
         !error && <Notice tone="info">Loading</Notice>
       ) : !view.available ? (
-        <p className="text-base text-ink-muted" data-testid="owner-pay-off">
-          {sentence(view.why_not ?? "")}. Send money by check or bank transfer to your manager.
+        <p className="whitespace-pre-line text-base text-ink" data-testid="owner-pay-off">
+          {view.how_to_pay ?? "Contact your property manager to send money."}
         </p>
       ) : view.accounts.length === 0 ? (
         <p className="text-base text-ink-muted">No property accounts are held for you in trust.</p>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { YearEndData } from "./yearEnd";
-import { groupYearEnd, lastYear, partLabel } from "./yearEnd";
+import { groupYearEnd, partLabel, thisYear } from "./yearEnd";
 
 const PARTS = ["opening balance", "collected from tenants", "management fees", "closing balance"];
 
@@ -36,9 +36,10 @@ describe("yearEnd", () => {
   it("refuses a package without the columns it reads", () => {
     expect(() => groupYearEnd({ ...PACKAGE, columns: ["line", "item", "amount"] })).toThrow("no property column");
   });
-  it("picks last year and names a part", () => {
-    expect(lastYear(new Date("2026-01-01T00:30:00Z"))).toBe(2025);
-    expect(lastYear(new Date("2026-12-31T23:59:59Z"))).toBe(2025);
+  it("picks this year (UTC) and names a part", () => {
+    expect(thisYear(new Date("2026-01-01T00:30:00Z"))).toBe(2026);
+    expect(thisYear(new Date("2026-12-31T23:59:59Z"))).toBe(2026);
+    expect(thisYear(new Date("2025-12-31T23:59:59Z"))).toBe(2025);
     expect(partLabel("collected from tenants")).toBe("Collected from tenants");
   });
 });

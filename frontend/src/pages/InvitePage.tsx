@@ -8,9 +8,18 @@ import { Notice } from "../components/Notice";
 import { Wordmark } from "../components/Shell";
 import { navigate } from "../router";
 import { PMC_KEY } from "./SignInPage";
+import { firstName } from "../directory";
 import { Form } from "../components/Form";
 
-type Details = { kind: string; email: string; name: string; pmc_name: string; expires_at: string };
+type Details = {
+  kind: string;
+  email: string;
+  name: string;
+  pmc_name: string;
+  expires_at: string;
+  // A tenant or an owner gives a phone and may say texts are OK, beside these words; staff neither.
+  text_consent: string | null;
+};
 
 // An authenticator app reads the setup link as a QR code; the key is shown too, to type in.
 export function qrDataUrl(uri: string): string {
@@ -32,6 +41,8 @@ export function InvitePage() {
   const [error, setError] = useState("");
   const [password, setPassword] = useState("");
   const [again, setAgain] = useState("");
+  const [phone, setPhone] = useState("");
+  const [textsOk, setTextsOk] = useState(false);
   const [totpUri, setTotpUri] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -60,6 +71,7 @@ export function InvitePage() {
       const done = await api.post<Me | { totp_uri: string }>("/api/invites/accept", {
         token,
         password,
+        ...(details?.text_consent ? { phone, texts_ok: textsOk } : {}),
       });
       if ("totp_uri" in done) setTotpUri(done.totp_uri);
       else signedIn(done);
@@ -88,7 +100,7 @@ export function InvitePage() {
       <Wordmark />
       {details && (
         <div className="flex flex-col gap-1">
-          <h1 className="font-display text-lg font-semibold">Welcome, {details.name}</h1>
+          <h1 className="font-display text-lg font-semibold">Welcome, {firstName(details.name)}</h1>
           <p className="text-sm text-ink-muted">
             {details.pmc_name} invited {details.email} to sign in.
           </p>
@@ -99,13 +111,22 @@ export function InvitePage() {
           <Field label="Choose a password (12 characters or more)" id="password" type="password"
             autoComplete="new-password" minLength={12} value={password}
             onChange={(e) => setPassword(e.target.value)} required />
-          <Field label="The same password again" id="again" type="password"
+          <Field label="Confirm password" id="again" type="password"
             autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)}
             required />
+          {details.text_consent && (
+            <>
+              <Field label="Phone" id="phone" type="tel" autoComplete="tel" maxLength={40}
+                placeholder="(555) 555-0123" value={phone} onChange={(e) => setPhone(e.target.value)} required />
+              <label className="flex items-start gap-2 text-sm text-ink-muted">
+                <input type="checkbox" className="mt-0.5" checked={textsOk}
+                  onChange={(e) => setTextsOk(e.target.checked)} />
+                <span>{details.text_consent}</span>
+              </label>
+            </>
+          )}
           <Notice tone="error">{error}</Notice>
-          <Button type="submit" disabled={busy} says={details.kind === "staff"
-            ? "Sets your password. Next you set up an authenticator app; you aren't signed in until then."
-            : "Sets your password and signs you in. This link then stops working, and other sign-ins of yours end."}>
+          <Button type="submit" disabled={busy}>
             Set password
           </Button>
         </Form>
@@ -121,8 +142,7 @@ export function InvitePage() {
           <Field label="Code" id="code" inputMode="numeric" autoComplete="one-time-code"
             pattern="[0-9]{6}" value={code} onChange={(e) => setCode(e.target.value)} required />
           <Notice tone="error">{error}</Notice>
-          <Button type="submit" disabled={busy}
-            says="Checks the code and signs you in. Each sign-in after this asks for a new code from the app.">
+          <Button type="submit" disabled={busy}>
             Finish
           </Button>
         </Form>

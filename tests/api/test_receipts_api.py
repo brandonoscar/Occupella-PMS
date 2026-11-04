@@ -79,7 +79,7 @@ def test_staff_print_a_payments_receipt(client, conn, app_conn, pmc, lease):
     for part in (
         "Payment receipt",
         "Tenant 1",
-        "Property 1, Unit 4",
+        "For Property 1\n",  # its only unit: the home is the property alone
         us(TODAY),
         "$1,600.00",
         "Cashier's check No. 8",

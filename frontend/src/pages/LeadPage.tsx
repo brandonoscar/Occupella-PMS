@@ -181,7 +181,7 @@ function ShowingForm({ lead, record }: { lead: Lead; record: Recorder }) {
         <option value="">Nobody named</option>
         {staff.map((s) => <option key={s.staff_id} value={s.staff_id}>{s.name}</option>)}
       </Select>
-      <div><Button type="submit" says="Adds the showing to their page. No email or invite goes to them or to whoever shows it.">Schedule</Button></div>
+      <div><Button type="submit">Schedule</Button></div>
     </Form>
   );
 }

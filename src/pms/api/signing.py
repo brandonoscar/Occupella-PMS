@@ -191,7 +191,8 @@ def record(
 
 
 VIEW = """
-SELECT o.document_title, p.display_name || ', ' || u.display_name, o.starts_on, o.ends_on,
+SELECT o.document_title, p.display_name || coalesce(', ' || trust_unit_shown(u.id), ''),
+       o.starts_on, o.ends_on,
        o.monthly_rent, encode(sha256(o.document), 'hex'), s.display_name, s.role
 FROM trust_lease_offers AS o
 JOIN trust_units AS u ON u.id = o.unit_id
@@ -331,7 +332,8 @@ def sign(request: Request, conn: Conn, signature: Signature) -> SigningView:
 # --- the certificate ----------------------------------------------------------------------------
 
 OFFER = """
-SELECT n.display_name, o.document_title, p.display_name || ', ' || u.display_name, o.starts_on,
+SELECT n.display_name, o.document_title,
+       p.display_name || coalesce(', ' || trust_unit_shown(u.id), ''), o.starts_on,
        o.ends_on, o.monthly_rent, encode(sha256(o.document), 'hex'), r.sent_at,
        coalesce(st.display_name, 'the server'), v.offer_id IS NOT NULL, c.offer_id IS NOT NULL
 FROM trust_lease_offers AS o

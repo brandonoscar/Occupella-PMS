@@ -232,8 +232,7 @@ function TermsForm({ leaseId, authorities, record, onAdded }: {
       <Field label="HAP contract (optional)" id="assist-contract" maxLength={100} value={contract}
         onChange={(e) => setContract(e.target.value)} />
       <div>
-        <Button type="submit"
-          says={`${authority === NEW ? "Adds the housing authority and saves" : "Saves"} this from ${usDate(startsOn)}; earlier terms stay listed. Nothing is sent to the authority or the tenant.`}>
+        <Button type="submit">
           Save assistance
         </Button>
       </div>
@@ -263,8 +262,7 @@ function ChargeForm({ leaseId, authorities, record }: { leaseId: string; authori
       <Field label="What it is for" id="authority-charge-memo" required maxLength={200} value={memo}
         onChange={(e) => setMemo(e.target.value)} />
       <div>
-        <Button type="submit" disabled={authorities.length === 0}
-          says={`Adds it to what the authority owes on this lease, due ${usDate(dueOn)}. The tenant's balance doesn't change.`}>
+        <Button type="submit" disabled={authorities.length === 0}>
           Charge the authority
         </Button>
       </div>
@@ -289,7 +287,7 @@ function CreditForm({ leaseId, charge, record }: { leaseId: string; charge: Auth
       <Field label="Why" id="authority-credit-memo" required maxLength={200} value={memo}
         onChange={(e) => setMemo(e.target.value)} />
       <div>
-        <Button type="submit" says="Takes it off what the authority owes on this charge. No money moves and the tenant's balance doesn't change.">
+        <Button type="submit">
           Credit the authority
         </Button>
       </div>
@@ -412,7 +410,7 @@ export function CertificationForm({ leaseId, record, note = HOUSING_NOTE }: {
         Left empty, it is due a year after a move-in or annual one, and an interim one keeps the due day of the one before.
       </p>
       <div>
-        <Button type="submit" says="Adds it to the household's certifications; earlier ones stay as recorded. No rent or charge changes.">
+        <Button type="submit">
           Record certification
         </Button>
       </div>
@@ -452,7 +450,7 @@ function InspectionForm({ leaseId, record }: { leaseId: string; record: Recorder
         <p className="text-sm text-ink-muted">Left empty, the next is due two years on, the longest HUD allows.</p>
       )}
       <div>
-        <Button type="submit" says="Adds it to the home's inspections; earlier ones stay as recorded. Nothing is sent to the authority.">
+        <Button type="submit">
           Record inspection
         </Button>
       </div>

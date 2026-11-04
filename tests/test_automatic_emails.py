@@ -230,7 +230,7 @@ def test_a_rent_reminder_goes_to_each_tenant_from_the_days_before_rent_is_due(co
     ]
     body = sent[0][2]
     assert "Hello Tenant 1," in body
-    assert "Your rent for Property 1, Unit 4 is due on 11/01/2026: $1,000.00 a month." in body
+    assert "Your rent for Property 1 is due on 11/01/2026: $1,000.00 a month." in body
     assert "Owed today" not in body  # nothing charged yet
     assert "tenant portal" not in body  # no login to sign in with
 
@@ -347,7 +347,7 @@ def test_a_late_notice_goes_to_each_tenant_for_the_late_fee_the_run_charged(conn
         "SELECT kind, amount, due_on FROM trust_charges WHERE id = %s", (charge,)
     ).fetchone() == ("fee", Decimal("50.00"), date(2026, 10, 7))
     assert (
-        "Rent for Property 1, Unit 4 due on 10/01/2026 still had $1,000.00 unpaid after its grace"
+        "Rent for Property 1 due on 10/01/2026 still had $1,000.00 unpaid after its grace"
         " days, so a late fee of $50.00 was charged on 10/16/2026.\nOwed today: $1,050.00." in body
     )
 
@@ -533,13 +533,13 @@ def test_a_vendor_hears_of_an_assignment_and_a_schedule_once_each(conn, app_conn
     assert notices.write_work_order(app_conn, pmc.pmc_id, assigned) == "written"  # nothing new
     sent = emails(conn, pmc.pmc_id, "work_order")
     assert [(subject, vendor, s) for _, subject, _, _, _, vendor, _, _, _, s, *_ in sent] == [
-        ("Work order #1 at Property 1, Unit 4: Leaking tap", pmc.vendor_id, assigned),
+        ("Work order #1 at Property 1: Leaking tap", pmc.vendor_id, assigned),
         ("Work order #1 scheduled for 10/19/2026: Leaking tap", pmc.vendor_id, scheduled),
     ]
     body = sent[1][2]
     assert "scheduled your visit for work order #1 on 10/19/2026." in body
     for line in (
-        "Where: Property 1, Unit 4",
+        "Where: Property 1",
         "Details: Kitchen tap drips.",
         "Priority: high",
         "Due by: 10/20/2026",
@@ -595,10 +595,10 @@ def test_each_applicant_gets_the_adverse_action_notice_once(conn, app_conn, pmc)
     assert [(to, subject, a) for to, subject, *_, a, _ in sent] == [
         (
             "applicant.one@example.com",
-            "About your rental application: Property 1, Unit 9",
+            "About your rental application: Property 1",
             application,
         ),
-        (sent[1][0], "About your rental application: Property 1, Unit 9", application),
+        (sent[1][0], "About your rental application: Property 1", application),
     ]
     body = sent[0][2]
     for line in (

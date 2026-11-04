@@ -378,7 +378,17 @@ Email tenants' boxes; "A new housing authority".
 
 Screens before and after: `docs/design-pass/4/`. No migration.
 
-**Rule 1, a plain line under every action button.** `Button` takes `says`, the line under it
+**Rule 1, reversed by the founder's review of 11/03 (item 5).** Copy reads like Stripe's or
+Linear's: short, sentence case, no sentence explaining what the code does. A button's label says
+what it does, and nothing is written under it, except where a line stops a mistake: money leaving
+trust or moving between people, someone outside the company emailed or shown something (a file
+they will see, a link shown once), a step that can't be taken back, an e-sign step, or one that
+does more or less than its label suggests (a bounce charges the NSF fee; a notice to move out
+doesn't end the lease). Of the 173 lines, 66 stay, renters insurance's two among them (the
+founder said it stays as it is). `src/buttonRules.test.ts` lists each button that keeps its line,
+with why: a new line fails until it is listed, and a listed button that lost its line fails.
+
+*As first written:* **Rule 1, a plain line under every action button.** `Button` takes `says`, the line under it
 saying what pressing it does and what it doesn't; the button is described by it, so a screen reader
 reads it too. Every submit button in the portal has one (a report's Show and a Preview change
 nothing and have none), and so does every button that changes something on click without asking

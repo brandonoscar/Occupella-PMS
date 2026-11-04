@@ -11,11 +11,18 @@ export type OnlinePayment = {
   tenant_fee: string;
   status: OnlineStatus;
 };
-// Whether the tenant may pay a lease online now (and if not, why), what it owes and who pays the
-// partner's fee.
+// Why a tenant or owner can't pay online now: the company takes no payment online ("off"), or the
+// lease is on a payment hold ("paused"). The portal says it in its own words.
+export type WhyNot = "off" | "paused";
+// The company's own words on how to pay it (Company setup, How to pay us), or what to do without.
+export const PAUSED = "Online payments are paused for this lease. Contact your property manager.";
+export const NO_HOW_TO_PAY = "Contact your property manager to pay.";
+// Whether the tenant may pay a lease online now (and if not, why, with how the company says to
+// pay it), what it owes and who pays the partner's fee.
 export type PayView = {
   available: boolean;
-  why_not: string | null;
+  why_not: WhyNot | null;
+  how_to_pay: string | null;
   owed: string;
   fee_payer: FeePayer;
   payments: OnlinePayment[];
@@ -111,7 +118,8 @@ export type OwnerAccount = {
 export type OwnerPayment = { id: string; started_at: string; property: string; amount: string; status: OnlineStatus };
 export type OwnerPayView = {
   available: boolean;
-  why_not: string | null;
+  why_not: WhyNot | null;
+  how_to_pay: string | null;
   accounts: OwnerAccount[];
   payments: OwnerPayment[];
 };
@@ -139,7 +147,7 @@ export type Autopay = {
 };
 export type AutopayView = {
   available: boolean;
-  why_not: string | null;
+  why_not: WhyNot | null;
   fee_payer: FeePayer;
   next_due: string | null;
   autopays: Autopay[];

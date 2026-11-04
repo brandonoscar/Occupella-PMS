@@ -30,8 +30,8 @@ describe("group", () => {
         name: "Property 1",
         opening: "1000.00",
         postings: [
-          { postedOn: "2026-01-03", detail: "bank_cash: rent", amount: "1500.00", balance: "2500.00" },
-          { postedOn: "2026-01-05", detail: "pmc_income: fee", amount: "-150.00", balance: "2350.00" },
+          { postedOn: "2026-01-03", detail: "bank_cash: rent", amount: "1500.00", balance: "2500.00", source: null },
+          { postedOn: "2026-01-05", detail: "pmc_income: fee", amount: "-150.00", balance: "2350.00", source: null },
         ],
         closing: "2350.00",
       },
@@ -43,6 +43,14 @@ describe("group", () => {
       moneyOut: "-150.00",
       closing: "2350.00",
     });
+  });
+
+  it("gives each posting the ledger transfer the owner's statement names, which opens its source", () => {
+    const sources = ROWS.map((row) => (row[3] === "posting" ? `pglt_${row[0]}` : null));
+
+    const grouped = group({ title: "t", columns: COLUMNS, rows: ROWS, sources });
+
+    expect(grouped.properties[0]?.postings.map((p) => p.source)).toEqual(["pglt_5", "pglt_6"]);
   });
 
   it("finds the columns by name, whatever their order", () => {

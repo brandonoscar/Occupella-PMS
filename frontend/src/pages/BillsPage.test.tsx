@@ -124,11 +124,12 @@ describe("BillsPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Actions for Vendor 1 INV-1" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Record approval" }));
     const panel = screen.getByRole("dialog", { name: "Record approval" });
-    fireEvent.change(within(panel).getByLabelText("Approved by"), { target: { value: "Owner 1, by phone" } });
+    fireEvent.change(within(panel).getByLabelText("How they approved"), { target: { value: "phone" } });
     fireEvent.change(within(panel).getByLabelText("Approved on"), { target: { value: "2026-10-02" } });
+    fireEvent.change(within(panel).getByLabelText("Note"), { target: { value: "Called at 2pm" } });
     fireEvent.click(within(panel).getByRole("button", { name: "Record approval" }));
     await closed();
-    expect(screen.getByText("The owner's approval of INV-1 is recorded.")).toBeTruthy();
+    expect(screen.getByText(`Recorded ${BILL.owner}'s approval of INV-1.`)).toBeTruthy();
 
     // Short: nothing to pay yet, but it can be voided (nothing was taken for it).
     fireEvent.click(screen.getByRole("button", { name: "Actions for Vendor 1 INV-2" }));
@@ -155,7 +156,8 @@ describe("BillsPage", () => {
 
     const sent = posted(fetch);
     expect(sent.slice(0, 2)).toEqual([
-      ["/api/payables/bills/b1/approval", { approved_on: "2026-10-02", approved_by: "Owner 1, by phone" }],
+      ["/api/payables/bills/b1/approval",
+        { approved_on: "2026-10-02", owner_id: BILL.owner_id, method: "phone", note: "Called at 2pm" }],
       ["/api/payables/bills/b2/void", { reason: "Entered twice" }],
     ]);
     const [path, body] = sent[2] as [string, Record<string, unknown>];

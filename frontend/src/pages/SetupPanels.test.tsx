@@ -227,8 +227,7 @@ describe("setup panels", () => {
     render(<LeaseBreakFeePanel panel={p} propertyId="p1" />);
     type("Flat fee", "250.00");
     type("Months of rent", "1.5");
-    expect(says("Set lease-break fee"))
-      .toBe("Leases starting from that day break under these terms. Nothing is charged unless you end one early and choose to.");
+    expect(says("Set lease-break fee")).toBeUndefined(); // no line: it says it all
     press("Set lease-break fee");
     await vi.waitFor(() => expect(p.said).toEqual(["New lease-break fee for leases starting from 2026-10-17."]));
     expect(posted(fetch)).toEqual([["/api/setup/lease-break-fees", {
@@ -258,7 +257,7 @@ describe("setup panels", () => {
 
     fireEvent.click(screen.getByLabelText("Tenant A"));
     type("Tenant's name", "Tenant C");
-    expect(says("Add tenant")).toBe("Adds them as a tenant of this property and ticks them for this lease. Nothing is sent to them.");
+    expect(says("Add tenant")).toBeUndefined();
     press("Add tenant");
     expect(await screen.findByText("Added Tenant C as a tenant of Property A.")).toBeTruthy();
     type("Starts", "2026-10-01");

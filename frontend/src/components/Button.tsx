@@ -24,10 +24,10 @@ const SIZES = { md: "h-9 px-3.5 text-base", sm: "h-8 px-3 text-sm" };
 // click returned. Busy, it shows a spinner and can't be pressed again. It submits its form only
 // when it says type="submit": a Cancel inside a form once made what it was cancelling.
 //
-// `says` is the one plain line under an action button (ADR 0010, rule 1): what pressing it does
-// and what it doesn't ("Records the payment. Nothing is sent to the tenant."). The button is
-// described by it, so a screen reader reads it too. buttonRules.test.ts holds every submit button
-// to having one.
+// `says` is a plain line under an action button (ADR 0010, rule 1, as the founder's review of 11/03
+// reversed it): only where it stops a mistake, such as money leaving trust or an email going out
+// ("Each tenant with an email on file is emailed a receipt."). The button is described by it, so a
+// screen reader reads it too. buttonRules.test.ts lists each button that keeps one, with why.
 export function Button({
   type = "button",
   variant = "primary",

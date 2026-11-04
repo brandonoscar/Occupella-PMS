@@ -114,8 +114,7 @@ export function NoticesCard({ leaseId }: { leaseId: string }) {
             </article>
           )}
           <div className="flex gap-2">
-            <Button type="submit" disabled={filled === null}
-              says="Keeps it as it reads above, to download as a PDF. Nothing is sent to the tenants; deliver it yourself.">
+            <Button type="submit" disabled={filled === null}>
               Make the notice
             </Button>
             <Button variant="ghost" onClick={() => setWriting(false)}>Cancel</Button>

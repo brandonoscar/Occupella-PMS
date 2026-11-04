@@ -135,7 +135,7 @@ function ProposeCard({ journal, refresh }: { journal: Journal; refresh: () => vo
               Add a line
             </Button>
           )}
-          <Button type="submit" says="It waits until another staff member who may approve presses Post. No money moves until then.">
+          <Button type="submit">
             Propose entry
           </Button>
         </div>

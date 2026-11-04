@@ -234,8 +234,7 @@ export function DraftLeaseForm({ from = "", record, onMade }: {
               says="Makes each signer above a signing link, emailed to them if this server sends email. No lease is made yet.">
               Send for signing
             </Button>
-            <Button type="submit" variant="secondary" disabled={!ready} onClick={() => { sending.current = false; }}
-              says="Keeps it as a draft to send later. Nothing goes to the signers, and no lease is made.">
+            <Button type="submit" variant="secondary" disabled={!ready} onClick={() => { sending.current = false; }}>
               Save draft
             </Button>
           </div>

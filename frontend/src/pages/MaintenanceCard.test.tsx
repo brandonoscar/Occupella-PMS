@@ -64,6 +64,27 @@ describe("MaintenanceCard", () => {
     expect(within(plain).queryByRole("link")).toBeNull();
   });
 
+  it("shows what kind of repair, where, the tenant's notes, and a request the tenant cancelled", async () => {
+    const noted = {
+      ...RECEIVED, category: "plumbing", location: "Kitchen sink",
+      notes: [{ by: "Tenant 2", body: "It drips faster now.", at: "2026-11-03T09:30:00Z" }],
+    };
+    const cancelled = {
+      ...BASE, id: "r4", summary: "Light flickers", status: "cancelled", work_order_id: null, taken_back: true,
+    };
+    server([noted, cancelled]);
+    render(<MaintenanceCard />);
+
+    const tap = await screen.findByRole("listitem", { name: "Tap drips" });
+    expect(within(tap).getByText("Plumbing · Kitchen sink")).toBeTruthy();
+    expect(within(tap).getByRole("list", { name: "Notes on Tap drips" }).textContent).toBe(
+      "It drips faster now. · Tenant 2, 11/03/2026 09:30 UTC",
+    );
+    const light = screen.getByRole("listitem", { name: "Light flickers" });
+    expect(within(light).getByText("Cancelled by the tenant")).toBeTruthy();
+    expect(within(light).queryByRole("button", { name: "Open work order" })).toBeNull();
+  });
+
   it("opens a work order for a new request", async () => {
     const fetch = server();
     render(<MaintenanceCard />);

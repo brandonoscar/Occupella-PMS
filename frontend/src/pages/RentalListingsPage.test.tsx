@@ -75,16 +75,14 @@ describe("RentalListingsPage", () => {
     expect((within(panel).getByLabelText("Rent a month") as HTMLInputElement).value).toBe("1400.00");
     fireEvent.change(within(panel).getByLabelText("Rent a month"), { target: { value: "1450.00" } });
     fireEvent.change(within(panel).getByLabelText("Description (optional)"), { target: { value: " Sunny. " } });
-    expect(says(within(panel).getByRole("button", { name: "List it" })))
-      .toBe("Opens an application link at this rent and puts it on the public page. Nothing goes to listing sites.");
+    expect(says(within(panel).getByRole("button", { name: "List it" }))).toBeUndefined(); // no line: it says it all
     fireEvent.click(within(panel).getByRole("button", { name: "List it" }));
     await screen.findByText("Listed Property 1, Unit 1 at $1,450.00.");
 
     fireEvent.click(within(screen.getByRole("row", { name: "Property 1, Unit 3" })).getByRole("button", { name: "List" }));
     panel = screen.getByRole("dialog", { name: "List on the public page" });
     expect(within(panel).queryByLabelText("Rent a month")).toBeNull();
-    expect(says(within(panel).getByRole("button", { name: "List it" })))
-      .toBe("Puts it on the public page under its open link. Nothing goes to listing sites.");
+    expect(says(within(panel).getByRole("button", { name: "List it" }))).toBeUndefined();
     fireEvent.click(within(panel).getByRole("button", { name: "List it" }));
     await screen.findByText("Listed Property 1, Unit 3 at $1,600.00.");
 

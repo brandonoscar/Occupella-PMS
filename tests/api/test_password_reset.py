@@ -6,7 +6,7 @@ synthetic."""
 
 import pytest
 from helpers import make_pmc
-from people import PASSWORD, join_as_owner, join_as_staff, join_as_tenant, tenant_of
+from people import PASSWORD, accept, join_as_owner, join_as_staff, join_as_tenant, tenant_of
 
 from pms import accounts, email
 
@@ -80,7 +80,7 @@ def test_an_owner_resets_a_forgotten_password_from_the_emailed_link(
     # The old password works until the link is used; then the new one does.
     signed = {"pmc_id": str(pmc.pmc_id), "email": owner.email, "password": PASSWORD}
     assert client.post("/api/sign-in", json=signed).status_code == 200
-    accepted = client.post("/api/invites/accept", json={"token": token, "password": NEW_PASSWORD})
+    accepted = client.post("/api/invites/accept", json=accept(token, NEW_PASSWORD))
     assert accepted.status_code == 200, accepted.text
     assert client.post("/api/sign-in", json=signed).status_code == 401
     renewed = {**signed, "password": NEW_PASSWORD}

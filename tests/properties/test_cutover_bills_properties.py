@@ -8,7 +8,8 @@ sends it, sometimes twice. After it:
     available the balance less the reserve and those bills, at least 0;
   - a bill over the owner's limit without the old system's approval waits for the owner; one
     dated after today is entered, holding nothing yet; every other is ready to pay, or short
-    when the owner's balance, held for the bills due before it first, can't cover it (ADR 0010);
+    when the owner's balance less the reserve, held for the bills due before it first, can't
+    cover it (ADR 0010; the founder's review of 11/03, item 3);
   - the file sent again adds nothing and keeps every bill.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
@@ -96,9 +97,9 @@ def check_bills(conn, bills, resend):
         row = owners[owner.account]
         assert (Decimal(row.balance), Decimal(row.unpaid_bills)) == (HELD, unpaid)
         assert Decimal(row.available) == max(HELD - RESERVE - unpaid, Decimal(0))
-    # Each owner's balance is held for their bills dated by today in the order they are due:
-    # here all on one day, so by reference.
-    left = dict.fromkeys(range(len(pmc.owners)), HELD)
+    # Each owner's balance less the reserve is held for their bills dated by today in the order
+    # they are due: here all on one day, so by reference.
+    left = dict.fromkeys(range(len(pmc.owners)), HELD - RESERVE)
     for i, (n, amount, approved, ahead) in enumerate(bills):
         waits = amount > LIMIT and not approved
         if waits:

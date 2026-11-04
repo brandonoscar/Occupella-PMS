@@ -109,8 +109,7 @@ export function TransferForm({ lease, record }: { lease: LeaseDetail; record: Re
         stays owed to its owner, and a payment on the new lease pays that first.
       </p>
       <div>
-        <Button type="submit"
-          says={`Opens their lease at the new unit${Number(deposit) > 0 ? "; their deposits stay held for it" : ""}. No money leaves trust and nothing is sent.`}>
+        <Button type="submit">
           Move the tenants
         </Button>
       </div>
