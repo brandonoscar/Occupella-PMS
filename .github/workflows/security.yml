@@ -92,7 +92,12 @@ jobs:
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tgz" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
+      # A finding in an old commit is passed only by its fingerprint in .gitleaksignore, and only
+      # when its line holds nothing but example text (tools/check_gitleaks_ignore.py).
+      - name: gitleaks' ignore list passes only example text
+        run: python3 -m tools.check_gitleaks_ignore
       - name: gitleaks on every commit
+        if: ${{ !cancelled() }}
         run: |
           "$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --redact --no-banner .
 

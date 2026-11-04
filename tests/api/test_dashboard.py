@@ -20,10 +20,19 @@ from people import join_as_owner, join_as_staff, join_as_tenant
 
 from pms.api.dashboard import month_before
 
-TODAY = datetime.now(UTC).date()
-THEN = month_before(TODAY)
 DAY = timedelta(days=1)
-START = TODAY - timedelta(days=120)
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, THEN, START
+    TODAY = datetime.now(UTC).date()
+    THEN = month_before(TODAY)
+    START = TODAY - timedelta(days=120)
+
+
+on_this_day()
 
 
 def noon(day: date) -> datetime:
@@ -215,3 +224,19 @@ def test_only_staff_see_the_dashboard(client, conn, app_conn, pmc, caller):
 @pytest.mark.parametrize("on", ["not a day", "2026-02-30"])
 def test_a_day_that_is_not_one_is_refused(client, staff, on):
     assert client.get("/api/dashboard", params={"on": on}).status_code == 422
+
+
+@pytest.mark.parametrize("on", ["0001-01-01", "1899-12-31", "9999-01-02", "9999-12-31"])
+def test_a_day_beyond_what_the_dashboard_counts_is_refused_in_words(client, staff, on):
+    answer = client.get("/api/dashboard", params={"on": on})
+
+    assert answer.status_code == 422
+    assert answer.json()["detail"] == "the Dashboard shows a day from 01/01/1900 to 01/01/9999"
+
+
+@pytest.mark.parametrize("on", ["1900-01-01", "9999-01-01"])
+def test_the_first_and_last_days_it_counts_are_answered(client, staff, on):
+    answer = client.get("/api/dashboard", params={"on": on})
+
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["on"] == on

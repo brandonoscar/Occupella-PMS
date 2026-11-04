@@ -134,28 +134,29 @@ payment of your own first (NOT VERIFIED).
 
 ## Every day: backups
 
-The `backup` service backs the database up by itself every day at 07:00 UTC, after the nightly
-run, into `backups/` next to `compose.selfhost.yaml` (`pms-2026-11-04.dump`, one a day). Each is
-kept only once it reads back, and the newest 14 are kept (`PMS_BACKUP_KEEP` in `.env` changes
-it). A backup that fails says so in `docker compose -f compose.selfhost.yaml logs backup`, and the
-next day's still runs. Take one at once, before an upgrade say:
+The install backs itself up. Its `backup` service (`scripts/backup-daily.sh`) dumps the whole
+database when it starts, and then every day at 07:00 UTC, after the nightly run has posted the
+day's rent and fees, into the `backups` folder next to `compose.selfhost.yaml`:
 
 ```sh
-docker compose -f compose.selfhost.yaml run --rm backup /backups --now
+sudo ls -l backups/                                      # pms-2026-11-03.dump, one a day
+docker compose -f compose.selfhost.yaml logs backup      # each dump, and any that failed
 ```
 
-The backups sit on the same server as the database, so they don't survive losing it: copy each
-off the server (it holds everything, so keep it as safe as the database, encrypted), and test a
-restore now and then. [docs/backup.md](backup.md) has the full procedure: encrypting with `age`,
-copying off-site, and `scripts/backup.sh restore`, which checks a restore ties out.
+It keeps every daily dump for 35 days and each month's first for good, and a dump that fails is
+tried again an hour later. The files are readable by root only: each holds everything the PMS
+keeps. `PMS_BACKUP_AT` and `PMS_BACKUP_DIR` in `.env` change the time (UTC) and the folder.
+
+These protect against a broken database or a mistake, not against losing the server. **Copy
+each day's dump off the server**, encrypted, to storage another provider keeps, and **test a
+restore** now and then: [docs/backup.md](backup.md) has both, and how to get the books back.
 
 Also point an uptime check at `https://pms.example.com/health`; [docs/support.md](support.md)
 says what to look at when something fails.
 
 ## Upgrading
 
-Read [CHANGELOG.md](../CHANGELOG.md), take a backup (`docker compose -f compose.selfhost.yaml run
---rm backup /backups --now`), then:
+Read [CHANGELOG.md](../CHANGELOG.md), back up, then:
 
 ```sh
 git fetch --tags

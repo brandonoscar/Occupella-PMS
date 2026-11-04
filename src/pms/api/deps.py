@@ -218,6 +218,8 @@ AREA_PATHS = (
     ("/api/work-orders", "maintenance"),
     ("/api/invites", "people"),
     ("/api/emails", "email"),
+    ("/api/messages", "email"),  # answering a tenant or an owner in their conversation
+    ("/api/announcements", "email"),  # what the tenants of a property see in their portal
 )
 READS = ("GET", "HEAD", "OPTIONS")
 

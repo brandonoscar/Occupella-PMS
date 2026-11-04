@@ -3,9 +3,11 @@ name: selfhost
 # The self-hosted build on plain Postgres 16, no Supabase-only features: build the image, apply
 # every migration, seed a synthetic 50-door PMC, post one month of rent, export a statement and
 # the ledger, check health, then start the API, ask its health endpoint and load the portal;
-# then bring up the demo (compose.demo.yaml) and ask it the same. Runs nightly, by hand, and on
-# PRs that touch the Dockerfile, a compose file, requirements, migrations or the app code in src/
-# (db.yml calls it after its own job, so PR CI stays within 8 jobs at a time).
+# then bring up the demo (compose.demo.yaml) and ask it the same, and the install for a company
+# (compose.selfhost.yaml): setup, and its daily backup restored. Runs nightly, by hand, and on
+# PRs that touch the Dockerfile, a compose file, .env.example, requirements, migrations, the
+# backup scripts or the app code in src/ (db.yml calls it after its own job, so PR CI stays
+# within 8 jobs at a time).
 on:
   workflow_call:
   schedule:
@@ -83,9 +85,24 @@ jobs:
             > "$RUNNER_TEMP/setup.out"
           grep -c "^company \|^admin " "$RUNNER_TEMP/setup.out" | grep -qx 2
           grep -q "^http://localhost:8000/invite#" "$RUNNER_TEMP/setup.out" && echo "invite made"
-          # The daily backup service, once now: a dump that reads back, under its day's name.
-          docker compose -f compose.selfhost.yaml run --rm backup /backups --now
-          sudo test -s "backups/pms-$(date -u +%F).dump" && echo "backup made"
+      - name: The install backs itself up, and the backup comes back whole
+        # compose.selfhost.yaml's backup service dumps the database at start (there is no dump of
+        # today yet) into ./backups; that dump restores into a new database with
+        # scripts/backup.sh restore, which checks the ledger ties out (docs/backup.md).
+        run: |
+          docker compose -f compose.selfhost.yaml up -d backup
+          for _ in $(seq 1 60); do
+            docker compose -f compose.selfhost.yaml exec -T backup sh -c 'ls /backups/pms-*.dump' \
+              && break
+            sleep 2
+          done
+          docker compose -f compose.selfhost.yaml logs backup
+          docker compose -f compose.selfhost.yaml exec -T db createdb -U postgres pms_restored
+          docker compose -f compose.selfhost.yaml exec -T -e PGDATABASE=pms_restored backup \
+            bash -c '/scripts/backup.sh restore "$(ls /backups/pms-*.dump | tail -n 1)"' \
+            2>&1 | tee "$RUNNER_TEMP/restore.out"
+          grep -q "the ledger ties out" "$RUNNER_TEMP/restore.out"
+          test "$(docker compose -f compose.selfhost.yaml exec -T backup bash /scripts/backup-daily.sh next)" -gt 0
       - name: Logs
         if: failure()
         run: |
@@ -99,4 +116,3 @@ jobs:
           docker compose -f compose.demo.yaml down -v
           docker compose -f compose.selfhost.yaml down -v || true
           rm -f .env
-          sudo rm -rf backups

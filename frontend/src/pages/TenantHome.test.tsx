@@ -71,6 +71,9 @@ const REQUEST = {
 function server(answers: Record<string, unknown>) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     const key = `${init?.method ?? "GET"} ${path}`;
+    if (key === "GET /api/tenant/announcements" && !(key in answers)) {
+      return new Response("[]", { status: 200 });
+    }
     if (!(key in answers)) return new Response(JSON.stringify({ detail: key }), { status: 404 });
     return new Response(JSON.stringify(answers[key]), { status: key.startsWith("POST") ? 201 : 200 });
   });
@@ -126,12 +129,15 @@ describe("TenantHome", () => {
       "GET /api/tenant/renewals": [],
       "GET /api/tenant/leases/1/ledger": LEDGER,
     });
-    render(<TenantHome me={ME} />);
+    const { rerender } = render(<TenantHome me={ME} />);
 
     const card = (await screen.findByRole("heading", { name: "Coming up" })).closest("section") as HTMLElement;
     expect(within(card).getByText("Rent: $1,500.00")).toBeTruthy();
     expect(within(card).getByText("Pet rent: $35.00")).toBeTruthy();
     expect(within(card).getByText("01/01/2099 Key replacement: $50.00")).toBeTruthy();
+    // The deposit statement is with the lease, in its own section.
+    expect(screen.queryByRole("link", { name: "Deposit statement (PDF)" })).toBeNull();
+    rerender(<TenantHome me={ME} section="lease" />);
     expect(screen.getByRole("link", { name: "Deposit statement (PDF)" }).getAttribute("href")).toBe(
       "/api/tenant/leases/1/deposit-statement",
     );
@@ -147,7 +153,7 @@ describe("TenantHome", () => {
       "GET /api/tenant/renewals": [],
       "GET /api/tenant/leases/1/ledger": LEDGER,
     });
-    render(<TenantHome me={ME} />);
+    render(<TenantHome me={ME} section="lease" />);
 
     expect((await screen.findByTestId("deposit-asked")).textContent).toBe(
       "Security deposit your lease asks: $1,500.00. Held: $1,000.00; $500.00 still to give the manager.",
@@ -168,7 +174,7 @@ describe("TenantHome", () => {
       "GET /api/tenant/renewals": [],
       "GET /api/tenant/leases/1/ledger": LEDGER,
     });
-    render(<TenantHome me={ME} />);
+    render(<TenantHome me={ME} section="lease" />);
 
     const files = await screen.findByRole("list", { name: "Your lease's files" });
     expect(within(files).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
@@ -191,7 +197,7 @@ describe("TenantHome", () => {
       "GET /api/tenant/renewals": [],
       "GET /api/tenant/leases/1/ledger": LEDGER,
     });
-    render(<TenantHome me={ME} />);
+    render(<TenantHome me={ME} section="payments" />);
 
     const list = await screen.findByRole("list", { name: "Payments" });
     const items = within(list).getAllByRole("listitem");
@@ -226,13 +232,17 @@ describe("TenantHome", () => {
       "GET /api/tenant/leases/1/ledger": LEDGER,
       "POST /api/tenant/requests": REQUEST,
     });
-    render(<TenantHome me={ME} />);
+    const { rerender } = render(<TenantHome me={ME} />);
 
     expect((await screen.findByTestId("balance-due")).textContent).toBe("$1,500.00");
     // The balance is a figure in the page's own face, 28px, not code.
     expect(screen.getByTestId("balance-due").className).toContain("text-xl");
     expect(screen.getByTestId("balance-due").className).not.toContain("font-mono");
     expect(screen.getByText("Tenant 1, Tenant 2")).toBeTruthy();
+    // What makes the balance up is on Payments, and repairs on Repairs.
+    const due = screen.getByTestId("balance-due").parentElement as HTMLElement;
+    expect(within(due).getByRole("link", { name: "Payments" }).getAttribute("href")).toBe("/payments");
+    rerender(<TenantHome me={ME} section="payments" />);
     expect(await screen.findByText("Balance at the end of 10/11/2026")).toBeTruthy();
     const rent = screen.getByRole("row", { name: /^01\/01\/2026 Rent/ });
     expect(within(rent).getAllByRole("cell").map((cell) => cell.textContent)).toEqual([
@@ -243,6 +253,7 @@ describe("TenantHome", () => {
       "/api/tenant/leases/1/ledger/download?format=pdf",
     );
 
+    rerender(<TenantHome me={ME} section="repairs" />);
     fireEvent.change(screen.getByLabelText("What needs fixing?"), {
       target: { value: "Tap drips" },
     });
@@ -274,7 +285,7 @@ describe("TenantHome", () => {
       "GET /api/tenant/leases/1/ledger": LEDGER,
       "POST /api/tenant/requests": urgent,
     });
-    render(<TenantHome me={ME} />);
+    render(<TenantHome me={ME} section="repairs" />);
     expect((await screen.findByTestId("visit")).textContent).toBe("Visit on 11/03/2026, 8-10 am");
     expect(screen.getByText(/1 photo\./)).toBeTruthy();
 
@@ -310,7 +321,7 @@ describe("TenantHome", () => {
       "GET /api/tenant/renewals": [],
       "GET /api/tenant/leases/1/ledger": LEDGER,
     });
-    render(<TenantHome me={ME} />);
+    render(<TenantHome me={ME} section="repairs" />);
     fireEvent.change(await screen.findByLabelText("What needs fixing?"), { target: { value: "Tap drips" } });
     const page = new File(["<html>"], "tap.html", { type: "text/html" });
     fireEvent.change(screen.getByLabelText("Photos (up to 3, JPEG, PNG or PDF)"), { target: { files: [page] } });
@@ -364,7 +375,7 @@ describe("TenantHome", () => {
       "GET /api/tenant/leases/1/ledger": LEDGER,
       "POST /api/tenant/leases/1/renters-insurance": { id: "ri2" },
     });
-    render(<TenantHome me={ME} />);
+    render(<TenantHome me={ME} section="lease" />);
 
     expect((await screen.findByTestId("renters-insurance")).textContent).toBe(
       "Renters insurance required: Carrier A RI-1 through 11/30/2026 (expires in 20 days)",
@@ -397,7 +408,7 @@ describe("TenantHome", () => {
       },
     });
     const release = holdBack((path) => path === "/api/tenant/leases/1/ledger");
-    render(<TenantHome me={ME} />);
+    render(<TenantHome me={ME} section="payments" />);
 
     fireEvent.change(await screen.findByLabelText("Lease"), { target: { value: "2" } });
     await screen.findByText("Balance at the end of 06/30/2026");
@@ -407,6 +418,25 @@ describe("TenantHome", () => {
     expect(screen.queryByText("Balance at the end of 10/11/2026")).toBeNull();
   });
 
+  it("picks the lease a repair is for on Repairs, and keeps it from section to section", async () => {
+    server({
+      "GET /api/tenant/leases": [lease("1", true), lease("2", false)],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/announcements": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+      "GET /api/tenant/leases/2/ledger": LEDGER,
+    });
+    const { rerender } = render(<TenantHome me={ME} section="overview" />);
+    fireEvent.change(await screen.findByLabelText("Lease"), { target: { value: "2" } });
+
+    rerender(<TenantHome me={ME} section="repairs" />);
+    expect((screen.getByLabelText("Lease") as HTMLSelectElement).value).toBe("2");
+    expect(await screen.findByText(/This lease has ended/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Lease"), { target: { value: "1" } });
+    expect(await screen.findByRole("button", { name: "Send request" })).toBeTruthy();
+  });
+
   it("takes no request under a lease that has ended", async () => {
     server({
       "GET /api/tenant/leases": [lease("1", false)],
@@ -414,7 +444,7 @@ describe("TenantHome", () => {
       "GET /api/tenant/renewals": [],
       "GET /api/tenant/leases/1/ledger": LEDGER,
     });
-    render(<TenantHome me={ME} />);
+    render(<TenantHome me={ME} section="repairs" />);
 
     expect(await screen.findByText(/This lease has ended/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Send request" })).toBeNull();

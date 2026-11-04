@@ -13,6 +13,7 @@ import pytest
 from helpers import (
     add_staff,
     add_unit,
+    fresh,
     record_adverse_action,
     record_decision,
     record_screening,
@@ -199,8 +200,8 @@ def test_a_made_up_status_token_is_not_found(client):
 @pytest.mark.parametrize(
     "changes",
     [
-        {"move_in_on": (date.today() - timedelta(days=1)).isoformat()},
-        {"move_in_on": (date.today() + timedelta(days=367)).isoformat()},
+        {"move_in_on": lambda: (date.today() - timedelta(days=1)).isoformat()},
+        {"move_in_on": lambda: (date.today() + timedelta(days=367)).isoformat()},
         {"move_in_on": "not a day"},
         {"monthly_income": "-1.00"},
         {"monthly_income": "100.001"},
@@ -219,6 +220,7 @@ def test_a_made_up_status_token_is_not_found(client):
     ],
 )
 def test_a_bad_application_is_refused_and_nothing_is_kept(client, conn, listing, changes):
+    changes = fresh(changes)
     answer = client.post("/api/apply", json=application(listing, **changes))
 
     assert answer.status_code == 422, answer.text

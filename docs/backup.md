@@ -2,7 +2,9 @@
 
 How a company that self-hosts the PMS backs up its books and gets them back. The PMS has no
 hosted database (CLAUDE.md, rule 4): each company runs its own Postgres 16, so each company keeps
-its own backups. Nothing here runs by itself; the company sets it up on its own server.
+its own backups. The install for a company (docs/install.md, `compose.selfhost.yaml`) dumps
+the database every day by itself (`scripts/backup-daily.sh`, below); copying the dumps off the
+server, encrypted, and testing a restore are the company's to set up.
 
 The database keeps every record for good: trust records are append-only, and nothing in a PMC is
 deleted (archived instead). A backup isn't how records are kept; it is how they come back when
@@ -48,10 +50,7 @@ secrets. Treat every copy as you would the database itself.
 
 - **Every day**, after the nightly run (06:00 UTC, `src/pms/nightly.py`) has posted the day's
   rent and fees: say 07:00 UTC. A daily backup loses at most a day: whatever staff recorded after
-  it was taken has to be entered again from the bank's records and the day's paperwork. With
-  `compose.selfhost.yaml` the `backup` service does it by itself at 07:00 UTC
-  (`scripts/backup_daily.sh`: this script's dump into `backups/`, the newest 14 kept); copying
-  them off the server, encrypted, is still yours to set up (below).
+  it was taken has to be entered again from the bank's records and the day's paperwork.
 - **Before every upgrade**, whatever the time (docs/release.md, step 3).
 - **More often** if a day's work is too much to enter again: the dump runs while the PMS keeps
   serving. Measured on a laptop for the demo company plus 50 doors (1.6 MB): 0.3 s to dump,
@@ -60,6 +59,18 @@ secrets. Treat every copy as you would the database itself.
 Losing less than the time since the last dump needs Postgres's continuous archiving (WAL
 archiving and point-in-time recovery, for example with pgBackRest). It is not set up or tested
 here: NOT VERIFIED.
+
+## The install's daily dump
+
+`compose.selfhost.yaml`'s `backup` service runs `scripts/backup-daily.sh` in Postgres's own image
+(pg_dump 16): `scripts/backup.sh dump` when it starts if today has no dump yet, then every day at
+`PMS_BACKUP_AT` (07:00 UTC unless `.env` says), into `PMS_BACKUP_DIR` (`./backups`) as
+`pms-YYYY-MM-DD.dump`, readable by root only. It keeps the 35 days and each month's first below
+and removes the rest, and tries a failed dump again an hour later (`docker compose -f
+compose.selfhost.yaml logs backup` shows each). The dumps sit on the database's server, so they
+are not yet a backup against losing it: copy them off as "Where" and "Encrypted at rest" say.
+`tests/tools/test_backup_daily.py` tests the script; selfhost.yml starts the service on every PR
+that touches it and every night, and restores its first dump with `scripts/backup.sh restore`.
 
 ## How long to keep them
 

@@ -1,0 +1,11 @@
+# Findings in old commits that gitleaks may pass, one fingerprint each: commit:file:rule:line.
+# A fingerprint names one line of one commit, so the same text in any other commit is still a
+# finding. tools/check_gitleaks_ignore.py reads each line back from git, before every scan of
+# the whole history, and fails unless it holds only example text. History is never rewritten,
+# so without this the scans of every commit (security.yml, daily-scan.yml) failed each day.
+#
+# Only commits GitHub has belong here: a fingerprint of a commit that never left someone's
+# machine fails the check where the scans run (a fresh checkout), as 42 such lines did on 11/03.
+
+# 10/23: a comment in the jurisdiction rules showing what a rule's key looks like.
+11c516a28210f7612f75f8f032343f97ac5ca41b:src/pms/jurisdiction_rules.toml:generic-api-key:16

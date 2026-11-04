@@ -26,18 +26,3 @@ def test_the_app_trusts_the_proxy_only_because_the_server_alone_reaches_it():
     # ...which is safe only while the app's port is published on the server's own 127.0.0.1.
     assert '- "127.0.0.1:8000:8000"' in app
     assert "0.0.0.0:8000" not in app and '- "8000:8000"' not in app
-
-
-def test_the_database_is_backed_up_every_day_into_a_folder_git_ignores():
-    backup = service("backup")
-
-    assert 'entrypoint: ["/scripts/backup_daily.sh"]' in backup
-    assert 'command: ["/backups"]' in backup
-    assert "- ./scripts:/scripts:ro" in backup
-    assert "- ./backups:/backups" in backup
-    assert "restart: unless-stopped" in backup
-    # The same Postgres image as the database, so pg_dump matches its server.
-    db_image = service("db").split("image: ")[1].split("\n")[0]
-    assert f"image: {db_image}" in backup
-    # The backups hold everything the PMS keeps: never committed.
-    assert "/backups/" in (COMPOSE.parent / ".gitignore").read_text().splitlines()
