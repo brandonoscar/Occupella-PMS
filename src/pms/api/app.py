@@ -87,6 +87,7 @@ from pms.api import (
     owner_portal,
     payables,
     payment_files,
+    payment_keys,
     payouts,
     people,
     quickbooks,
@@ -308,8 +309,9 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.pool = pool
     app.state.screening = screening.partner_named(settings.screening_partner)
     app.state.geocoder = geocoding.geocoder_named(settings.geocoder)
-    # Like the SMTP settings, the partner's keys come straight from the environment.
-    app.state.payments = payments.partner_named(settings.payments, os.environ)
+    # Like the SMTP settings, the server's partner's keys come straight from the environment; a
+    # company's own keys, entered in Settings, are sealed in the database (pms.payments.Resolver).
+    app.state.payments = payments.Resolver(payments.partner_named(settings.payments, os.environ))
     # The SMTP settings come straight from the environment, so a password is never part of
     # Settings (which a log or an error could print).
     app.state.email = email.sender_named(settings.email_sender, os.environ)
@@ -334,9 +336,7 @@ def create_app(settings: Settings) -> FastAPI:
                 return JSONResponse({"detail": "send JSON"}, 415)
         outbox.PUBLIC_URL.set(settings.public_url)
         outbox.SENDING.set(request.app.state.email is not None)
-        outbox.PARTNER.set(
-            None if request.app.state.payments is None else request.app.state.payments.name
-        )
+        outbox.PARTNER.set(request.app.state.payments)
         response = await call_next(request)
         sender = request.app.state.email
         partner = request.app.state.payments
@@ -607,6 +607,8 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(setup.router)
     app.include_router(payment_files.router)
     app.include_router(rent.router)
+    # Before online_payments, whose paths it shares a prefix with.
+    app.include_router(payment_keys.router)
     app.include_router(online_payments.router)
     app.include_router(owner_payments.router)
     app.include_router(owner_portal.router)

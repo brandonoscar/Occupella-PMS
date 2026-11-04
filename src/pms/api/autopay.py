@@ -115,7 +115,7 @@ def autopays(
     ]
 
 
-def submit(pool: ConnectionPool[Any], partner: payments.Partner) -> None:
+def submit(pool: ConnectionPool[Any], partner: payments.Partner | payments.Resolver) -> None:
     """Sends the autopay payments started and not yet accepted to the partner (after a request
     that may have started some committed: an admin's Run rent now)."""
     with pool.connection() as conn:
@@ -181,7 +181,7 @@ def set_up(session: Tenant, conn: Conn, request: Request, lease_id: UUID, body: 
     payer = tenant.still_on(conn, session, lease_id)
     chosen, _ = op.settings_of(conn, session.pmc_id)
     reason = op.why_not(conn, request, session.pmc_id, lease_id, chosen)
-    partner = op.partner_of(request)
+    partner = op.partner_of(request, conn, session.pmc_id)
     if reason is not None or partner is None:
         raise HTTPException(409, op.SAID[reason] if reason else op.OFF)
     for before in autopays(conn, session.pmc_id, lease_id, payer):
@@ -241,7 +241,7 @@ class FakeSave(BaseModel):
 
 
 def fake_autopay(request: Request, conn: psycopg.Connection[Any], autopay_id: UUID) -> Any:
-    partner = op.partner_of(request)
+    partner = op.server_partner(request)
     row = conn.execute(
         "SELECT a.lease_id, t.display_name, a.partner,"
         " EXISTS (SELECT 1 FROM trust_autopay_accounts AS x WHERE x.autopay_id = a.id)"
@@ -279,7 +279,7 @@ class FakeQueued(BaseModel):
 def fake_queue(request: Request, conn: Conn) -> list[FakeQueued]:
     """The fake partner's payments nothing was reported of yet, newest first: where a test (or a
     developer) finds an autopay's payment to say what the bank did."""
-    partner = op.partner_of(request)
+    partner = op.server_partner(request)
     if partner is None or partner.name != "fake":
         raise HTTPException(404, "no fake payments partner on this server")
     rows = conn.execute(

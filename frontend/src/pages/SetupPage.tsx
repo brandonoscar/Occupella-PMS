@@ -19,6 +19,7 @@ import { DrawDayCard } from "./DrawDayCard";
 import { AutomaticPrepaidCard } from "./AutomaticPrepaidCard";
 import { HowToPayCard } from "./HowToPayCard";
 import { OnlinePaymentsCard } from "./OnlinePaymentsCards";
+import { PaymentKeysCard } from "./PaymentKeysCard";
 import { OwnerApprovalsCard } from "./OwnerApprovalsCard";
 import { ScreeningCriteriaCard } from "./ScreeningCriteriaCard";
 import { STAFF_NAV } from "./staffNav";
@@ -87,6 +88,7 @@ export function SetupPage({ me }: { me: Me }) {
           <OwnerApprovalsCard />
           <AutomaticPrepaidCard />
           <OnlinePaymentsCard />
+          <PaymentKeysCard />
           <HowToPayCard />
           <AutomaticEmailsCard />
           <ScreeningCriteriaCard />
