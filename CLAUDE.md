@@ -129,7 +129,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`trust_text_consents`: append-only, the exact words shown and when, of the login's own
   person; a new password records a new answer, the latest holding). Staff are asked neither. It
   records consent for A2P 10DLC and sends no text; the AI role never reads it. The first staff member, their first admin
-  role and their invite come from `python -m pms.admin`. A demo PMC to show the PMS with
+  role and their invite come from `python -m pms.admin`. A self-hosted install's app logs in as
+  `pms_app` (`python -m pms.app_login`, run after the migrations), which holds nothing of its own
+  and may only act as trust_app, never as the database's owner. A demo PMC to show the PMS with
   comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
   route functions as its staff, with last month's reconciliation waiting for approval and
   something on every other page, the founder's seed among it (six properties, one of 48 units,

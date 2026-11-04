@@ -21,12 +21,15 @@ services:
       retries: 30
     restart: unless-stopped
 
-  # The image's own command: every migration not yet applied, then it exits.
+  # Every migration not yet applied, as the database's owner, then the app's login (pms_app,
+  # python -m pms.app_login: it may only act as trust_app), then it exits.
   migrate:
     build: .
     image: occupella-pms:local
+    command: ["sh", "-c", "dbmate --wait up && python -m pms.app_login"]
     environment:
       DATABASE_URL: postgres://postgres:${PMS_DB_PASSWORD}@db:5432/pms?sslmode=disable
+      PMS_APP_DB_PASSWORD: ${PMS_APP_DB_PASSWORD:?set PMS_APP_DB_PASSWORD in .env}
     depends_on:
       db:
         condition: service_healthy
@@ -37,7 +40,11 @@ services:
     command: ["python", "-m", "pms.api"]
     env_file: .env
     environment:
-      DATABASE_URL: postgres://postgres:${PMS_DB_PASSWORD}@db:5432/pms?sslmode=disable
+      # Never the superuser: pms_app holds nothing of its own and may only act as trust_app.
+      DATABASE_URL: postgres://pms_app:${PMS_APP_DB_PASSWORD:?set PMS_APP_DB_PASSWORD in .env}@db:5432/pms?sslmode=disable
+      # .env holds the superuser's password for the database and migrate services; the app's
+      # container doesn't keep it.
+      PMS_DB_PASSWORD: ""
       PMS_HOST: 0.0.0.0
       # The HTTPS proxy names each visitor (X-Forwarded-For), so a signature's evidence keeps the
       # signer's address, not the proxy's. Safe to trust whoever connects only because the port
