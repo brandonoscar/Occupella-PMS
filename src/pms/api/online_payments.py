@@ -48,9 +48,23 @@ FeePayer = Literal["company", "tenant"]
 Status = Literal["started", "paid", "failed", "returned", "expired"]
 
 
-def partner_of(request: Request) -> payments.Partner | None:
-    found: payments.Partner | None = request.app.state.payments
+def resolver_of(request: Request) -> payments.Resolver:
+    found: payments.Resolver = request.app.state.payments
     return found
+
+
+def partner_of(
+    request: Request, conn: psycopg.Connection[Any], pmc_id: UUID
+) -> payments.Partner | None:
+    """The partner a company's payments go through: its own Stripe account once an admin entered
+    its keys (src/pms/api/payment_keys.py), else the server's."""
+    return resolver_of(request).for_pmc(conn, pmc_id)
+
+
+def server_partner(request: Request) -> payments.Partner | None:
+    """The server's own partner (PMS_PAYMENTS): the fake partner's pages and the server's webhook
+    are its."""
+    return resolver_of(request).server
 
 
 # --- a company's choices ---------------------------------------------------------------------
@@ -84,7 +98,7 @@ def settings_of(
 @router.get("/settings")
 def get_settings(session: Staff, conn: Conn, request: Request) -> SettingsView:
     chosen, changed = settings_of(conn, session.pmc_id)
-    partner = partner_of(request)
+    partner = partner_of(request, conn, session.pmc_id)
     return SettingsView(
         **chosen.model_dump(), partner=None if partner is None else partner.name, changed_at=changed
     )
@@ -243,7 +257,7 @@ def why_not(
     chosen: PaymentSettings,
 ) -> WhyNot | None:
     """Why this lease takes no payment online now, or None when it does."""
-    if partner_of(request) is None or not chosen.online:
+    if partner_of(request, conn, pmc_id) is None or not chosen.online:
         return "off"
     day = rent.today()
     if conn.execute(rent.IN_FORCE, {"pmc": pmc_id, "lease": lease_id, "day": day}).fetchone():
@@ -307,7 +321,7 @@ def checkout(session: Tenant, conn: Conn, request: Request, lease_id: UUID, body
     payer = tenant.still_on(conn, session, lease_id)
     chosen, _ = settings_of(conn, session.pmc_id)
     reason = why_not(conn, request, session.pmc_id, lease_id, chosen)
-    partner = partner_of(request)
+    partner = partner_of(request, conn, session.pmc_id)
     if reason is not None or partner is None:
         raise HTTPException(409, SAID[reason] if reason else OFF)
     fee = fee_for(chosen, body.amount)
@@ -591,24 +605,30 @@ async def raw_body(request: Request) -> bytes:
     return await request.body()
 
 
-@router.post("/webhook/{name}")
-def webhook(
-    request: Request, conn: Conn, name: str, body: Annotated[bytes, Depends(raw_body)]
-) -> Received:
-    """The partner's report of what the bank did (Stripe's webhook). It carries the partner's
-    signature, not a session; a report about a payment the PMS didn't start is acknowledged and
-    ignored, so the partner stops sending it."""
-    partner = partner_of(request)
-    if partner is None or partner.name != name or name == "fake":
-        raise HTTPException(404, "no such payments partner on this server")
+def read(
+    partner: payments.Partner, body: bytes, headers: Any
+) -> payments.Event | payments.Saved | None:
+    """A partner's signed report, read; refused when its signature isn't the partner's."""
     try:
-        event = partner.event(body, request.headers)
+        return partner.event(body, headers)
     except payments.NotTheirs as wrong:
         raise HTTPException(400, str(wrong)) from None
     except payments.PartnerFailed:
         raise HTTPException(502, "the payments partner didn't answer: send it again") from None
+
+
+def receive(
+    conn: psycopg.Connection[Any],
+    partner: payments.Partner,
+    event: payments.Event | payments.Saved | None,
+    pmc_id: UUID | None = None,
+) -> Received:
+    """Records a partner's report; with `pmc_id` (a company's own webhook), only a report about
+    that company's payment or autopay."""
     if event is None:
         return Received(recorded=False)
+    if pmc_id is not None and company_of(conn, event) != pmc_id:
+        return Received(recorded=False)  # another company's, or none of ours: acknowledged
     if isinstance(event, payments.Saved):
         return Received(recorded=record_saved(conn, event, partner.name))
     from pms.api import owner_payments  # it reads this module's helpers; owners pay in online too
@@ -616,6 +636,59 @@ def webhook(
     return Received(
         recorded=apply(conn, event, partner.name) or owner_payments.apply(conn, event, partner.name)
     )
+
+
+def company_of(
+    conn: psycopg.Connection[Any], event: payments.Event | payments.Saved
+) -> UUID | None:
+    """The company whose payment (a tenant's or an owner's) or autopay a report is about."""
+    from pms.api import owner_payments  # it reads this module's helpers; owners pay in online too
+
+    if isinstance(event, payments.Saved):
+        found = conn.execute(
+            "SELECT pmc_id FROM trust_autopay WHERE id = %s", (event.autopay_id,)
+        ).fetchone()
+        return None if found is None else found[0]
+    row = row_of(conn, event.payment_id) or owner_payments.row_of(conn, event.payment_id)
+    return None if row is None else row.pmc_id
+
+
+@router.post("/webhook/{name}")
+def webhook(
+    request: Request, conn: Conn, name: str, body: Annotated[bytes, Depends(raw_body)]
+) -> Received:
+    """The server's partner's report of what the bank did (Stripe's webhook, under the server's
+    keys). It carries the partner's signature, not a session; a report about a payment the PMS
+    didn't start is acknowledged and ignored, so the partner stops sending it."""
+    partner = server_partner(request)
+    if partner is None or partner.name != name or name == "fake":
+        raise HTTPException(404, "no such payments partner on this server")
+    return receive(conn, partner, read(partner, body, request.headers))
+
+
+@router.post("/webhook/{name}/{pmc_id}")
+def company_webhook(
+    request: Request,
+    conn: Conn,
+    name: str,
+    pmc_id: UUID,
+    body: Annotated[bytes, Depends(raw_body)],
+) -> Received:
+    """A company's own Stripe account's report (its webhook, signed with its own secret): it
+    records only that company's payments. A report signed with a secret the company used before
+    (keys since changed or taken away) still lands: a bank payment reports for days."""
+    keys = [p for p in resolver_of(request).every_own(conn, pmc_id) if p.name == name]
+    if not keys:
+        raise HTTPException(404, "no such payments partner for this company")
+    for partner in keys:
+        try:
+            event = partner.event(body, request.headers)
+        except payments.NotTheirs:
+            continue
+        except payments.PartnerFailed:
+            raise HTTPException(502, "the payments partner didn't answer: send it again") from None
+        return receive(conn, partner, event, pmc_id)
+    raise HTTPException(400, "the report's signature isn't this company's")
 
 
 # --- the fake partner's page ------------------------------------------------------------------
@@ -639,7 +712,7 @@ def fake_row(request: Request, conn: psycopg.Connection[Any], payment_id: UUID) 
     """A tenant's or an owner's payment at the fake partner (owner_payments.Row for an owner's)."""
     from pms.api import owner_payments  # it reads this module's helpers; owners pay in online too
 
-    partner = partner_of(request)
+    partner = server_partner(request)
     row = row_of(conn, payment_id) or owner_payments.row_of(conn, payment_id)
     if partner is None or partner.name != "fake" or row is None or row.partner != "fake":
         raise HTTPException(404, "no such payment at the fake partner")

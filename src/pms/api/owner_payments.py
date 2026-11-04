@@ -419,8 +419,13 @@ def accounts_of(conn: psycopg.Connection[Any], pmc_id: UUID, owner_id: UUID) -> 
     ]
 
 
-def why_not(request: Request, chosen: online.PaymentSettings) -> online.WhyNot | None:
-    if online.partner_of(request) is None or not chosen.online:
+def why_not(
+    request: Request,
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    chosen: online.PaymentSettings,
+) -> online.WhyNot | None:
+    if online.partner_of(request, conn, pmc_id) is None or not chosen.online:
         return "off"
     return None
 
@@ -428,7 +433,7 @@ def why_not(request: Request, chosen: online.PaymentSettings) -> online.WhyNot |
 @router.get("")
 def pay_view(session: Owner, conn: Conn, request: Request) -> OwnerPayView:
     chosen, _ = online.settings_of(conn, session.pmc_id)
-    reason = why_not(request, chosen)
+    reason = why_not(request, conn, session.pmc_id, chosen)
     rows = conn.execute(
         "SELECT p.id, p.created_at, pr.display_name, p.amount"
         " FROM trust_owner_online_payments AS p"
@@ -458,8 +463,8 @@ def pay_view(session: Owner, conn: Conn, request: Request) -> OwnerPayView:
 @router.post("/checkout", status_code=201)
 def checkout(session: Owner, conn: Conn, request: Request, body: OwnerPay) -> online.Started:
     chosen, _ = online.settings_of(conn, session.pmc_id)
-    reason = why_not(request, chosen)
-    partner = online.partner_of(request)
+    reason = why_not(request, conn, session.pmc_id, chosen)
+    partner = online.partner_of(request, conn, session.pmc_id)
     if reason is not None or partner is None:
         raise HTTPException(409, online.OFF)
     account = next(

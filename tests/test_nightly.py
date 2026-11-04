@@ -256,7 +256,8 @@ def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     seen = []
 
     def run_all(conn, day, url, sending, partner=None):
-        seen.append((day, url, sending, partner))
+        # The server's partner, which each company without keys of its own pays through.
+        seen.append((day, url, sending, partner.server and partner.server.name))
         return [
             nightly.Ran(
                 pmc_id=None,

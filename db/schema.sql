@@ -3524,6 +3524,21 @@ $$;
 
 
 --
+-- Name: trust_check_payment_keys(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_payment_keys() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM trust_require_role(NEW.pmc_id, NEW.recorded_by, 'admin', 'change the payments keys');
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_payout_item(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16862,6 +16877,27 @@ CREATE TABLE public.trust_payment_instructions (
 
 
 --
+-- Name: trust_payment_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_keys (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    secret_key_sealed bytea,
+    webhook_secret_sealed bytea,
+    secret_key_last4 text,
+    mode text,
+    recorded_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_payment_keys_check CHECK ((num_nulls(secret_key_sealed, webhook_secret_sealed, secret_key_last4, mode) = ANY (ARRAY[0, 4]))),
+    CONSTRAINT trust_payment_keys_mode_check CHECK ((mode = ANY (ARRAY['test'::text, 'live'::text]))),
+    CONSTRAINT trust_payment_keys_secret_key_last4_check CHECK ((secret_key_last4 ~ '^[A-Za-z0-9]{4}$'::text)),
+    CONSTRAINT trust_payment_keys_secret_key_sealed_check CHECK (((octet_length(secret_key_sealed) >= 30) AND (octet_length(secret_key_sealed) <= 600))),
+    CONSTRAINT trust_payment_keys_webhook_secret_sealed_check CHECK (((octet_length(webhook_secret_sealed) >= 30) AND (octet_length(webhook_secret_sealed) <= 600)))
+);
+
+
+--
 -- Name: trust_payment_notes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -20444,6 +20480,14 @@ ALTER TABLE ONLY public.trust_payment_instructions
 
 
 --
+-- Name: trust_payment_keys trust_payment_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_keys
+    ADD CONSTRAINT trust_payment_keys_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_payment_notes trust_payment_notes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -23133,6 +23177,20 @@ CREATE INDEX trust_payment_instructions_recorded_by ON public.trust_payment_inst
 
 
 --
+-- Name: trust_payment_keys_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_keys_pmc ON public.trust_payment_keys USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_payment_keys_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_keys_recorded_by ON public.trust_payment_keys USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_payment_notes_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -25044,6 +25102,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_payment_keys trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_keys FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_payment_notes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26640,6 +26705,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_paym
 
 
 --
+-- Name: trust_payment_keys trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_keys FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_payment_notes trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28159,6 +28231,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_instructi
 
 
 --
+-- Name: trust_payment_keys trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_keys FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_payment_notes trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28471,6 +28550,13 @@ CREATE TRIGGER trust_request_work_order_unit BEFORE INSERT ON public.trust_maint
 --
 
 CREATE TRIGGER trust_reveal_by_admin BEFORE INSERT ON public.trust_tax_id_reveals FOR EACH ROW EXECUTE FUNCTION public.trust_check_tax_id_reveal();
+
+
+--
+-- Name: trust_payment_keys trust_set_by_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_set_by_admin BEFORE INSERT ON public.trust_payment_keys FOR EACH ROW EXECUTE FUNCTION public.trust_check_payment_keys();
 
 
 --
@@ -32657,6 +32743,22 @@ ALTER TABLE ONLY public.trust_payment_instructions
 
 
 --
+-- Name: trust_payment_keys trust_payment_keys_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_keys
+    ADD CONSTRAINT trust_payment_keys_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payment_keys trust_payment_keys_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_keys
+    ADD CONSTRAINT trust_payment_keys_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_payment_notes trust_payment_notes_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34465,4 +34567,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261104000400'),
     ('20261104000500'),
     ('20261104000600'),
-    ('20261104000700');
+    ('20261104000700'),
+    ('20261104000800');

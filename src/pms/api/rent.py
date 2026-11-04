@@ -1316,11 +1316,12 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
     ).fetchone()
     assert authority is not None
     prepaid_used = use_prepaid_by_itself(conn, session.pmc_id, today())
+    partners = outbox.PARTNER.get()
     started = autopay.start_due(
         conn,
         session.pmc_id,
         today(),
-        outbox.PARTNER.get(),
+        None if partners is None else partners.name_for(conn, session.pmc_id),
         outbox.SENDING.get(),
         outbox.PUBLIC_URL.get(),
     )

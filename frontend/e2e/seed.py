@@ -652,6 +652,7 @@ FEATURES = (
     "ledger-sources",
     "request-details",
     "signup-phone",
+    "payment-keys",
 )
 
 

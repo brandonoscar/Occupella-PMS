@@ -27,7 +27,7 @@ three are needed to start; add the others when you turn those parts on.
 | `PMS_PUBLIC_URL` | The address people open the PMS at, like `https://pms.example.com` | Your web address | Yes |
 | `PMS_DATA_KEY` | Seals owners' and vendors' bank account numbers and tax IDs | Make one: `openssl rand -base64 32`. **Keep a copy safe and never change it**: what it sealed can't be read without it | Yes, for ACH payout files and tax IDs |
 | `PMS_EMAIL_SENDER=smtp`, `PMS_SMTP_HOST`, `PMS_SMTP_PORT`, `PMS_SMTP_USERNAME`, `PMS_SMTP_PASSWORD`, `PMS_EMAIL_FROM` | Sends invites, password resets, receipts, notices and owners' statements | Your email provider's SMTP settings (any provider that offers SMTP with STARTTLS) | Strongly recommended. Without it, emails wait in the PMS and you hand invite links over yourself |
-| `PMS_PAYMENTS=stripe`, `PMS_STRIPE_SECRET_KEY`, `PMS_STRIPE_WEBHOOK_SECRET` | Tenants pay rent online by bank, with autopay; owners pay into their accounts | Your company's own Stripe account: Developers, API keys; and Webhooks (below) | Optional |
+| `PMS_PAYMENTS=stripe`, `PMS_STRIPE_SECRET_KEY`, `PMS_STRIPE_WEBHOOK_SECRET` | Tenants pay rent online by bank, with autopay; owners pay into their accounts | Easier: leave these out and enter your Stripe keys in Company setup (below). These are the fallback for a company that enters none | Optional |
 | `PMS_GEOCODER=census` | Puts each property on a map from its address | Nothing: the U.S. Census Bureau's geocoder is free and needs no key | Optional |
 
 Your bank's ACH details (its routing number and the IDs it gives your company, for payout files)
@@ -114,13 +114,22 @@ In the PMS, as that admin:
 
 ## Payments online
 
-With `PMS_PAYMENTS=stripe` and your Stripe keys in `.env`, add a webhook in Stripe (Developers,
-Webhooks) at `https://pms.example.com/api/payments/webhook/stripe` for these events, and put
-its signing secret in `PMS_STRIPE_WEBHOOK_SECRET`:
+An admin enters your company's own Stripe keys in Settings, Company setup, Stripe keys: the
+secret key (Developers, API keys; a restricted key works too) and the signing secret of a webhook
+you add in Stripe (Developers, Webhooks) at the address the card shows,
+`https://pms.example.com/api/payments/webhook/stripe/<your company>`. The PMS seals both under
+`PMS_DATA_KEY` (so set that first) and only ever shows the secret key's last four. Choose these
+events for the webhook:
 
 `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
 `checkout.session.async_payment_failed`, `checkout.session.expired`, `payment_intent.succeeded`,
 `payment_intent.payment_failed`, `setup_intent.succeeded`, `charge.dispute.created`.
+
+Or, for a server that runs one company, put the keys in `.env` instead (`PMS_PAYMENTS=stripe`,
+`PMS_STRIPE_SECRET_KEY`, `PMS_STRIPE_WEBHOOK_SECRET`) with the webhook at
+`https://pms.example.com/api/payments/webhook/stripe`; keys entered in Company setup take over
+from them. A tenant's autopay bank account stays with the Stripe account it was saved at: after
+changing accounts, tenants set autopay up again.
 
 Then turn it on in Company setup, Online payments. Payments are by bank (ACH) for now. They were
 tested against answers in the shape Stripe documents, not a live Stripe account: try one small
