@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
-from fpdf import FPDF
+from pms import pdf_fonts
 
 # The blanks a template may use, and what each is filled with.
 FIELDS: dict[str, str] = {
@@ -81,15 +81,10 @@ class Letter:
     body: str
 
 
-def _latin1(value: str) -> str:
-    """The PDF's built-in font has Latin-1 only; anything else prints as "?"."""
-    return value.encode("latin-1", "replace").decode("latin-1")
-
-
-class _Pdf(FPDF):
+class _Pdf(pdf_fonts.Pdf):
     def footer(self) -> None:
         self.set_y(-30)
-        self.set_font("Helvetica", size=7)
+        self.set_font(pdf_fonts.FAMILY, size=7)
         self.cell(0, 10, f"Page {self.page_no()}", align="C")
 
 
@@ -97,20 +92,20 @@ def render(letter: Letter, generated: datetime) -> bytes:
     """The notice as a letter: the company's letterhead, the day, the title, then its text."""
     pdf = _Pdf(orientation="portrait", unit="pt", format="letter")
     pdf.set_creation_date(generated.astimezone(UTC))
-    pdf.set_title(_latin1(letter.title))
+    pdf.set_title(pdf_fonts.printable(letter.title))
     pdf.set_author("Occupella PMS")
     pdf.set_margins(60, 54, 60)
     pdf.set_auto_page_break(True, margin=54)
     pdf.add_page()
-    pdf.set_font("Helvetica", style="B", size=10)
-    pdf.multi_cell(0, 13, _latin1(letter.letterhead), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font(pdf_fonts.FAMILY, style="B", size=10)
+    pdf.multi_cell(0, 13, pdf_fonts.printable(letter.letterhead), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(12)
-    pdf.set_font("Helvetica", size=10)
+    pdf.set_font(pdf_fonts.FAMILY, size=10)
     pdf.multi_cell(0, 13, us(letter.dated_on), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(12)
-    pdf.set_font("Helvetica", style="B", size=13)
-    pdf.multi_cell(0, 17, _latin1(letter.title), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font(pdf_fonts.FAMILY, style="B", size=13)
+    pdf.multi_cell(0, 17, pdf_fonts.printable(letter.title), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(8)
-    pdf.set_font("Helvetica", size=10)
-    pdf.multi_cell(0, 14, _latin1(letter.body), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font(pdf_fonts.FAMILY, size=10)
+    pdf.multi_cell(0, 14, pdf_fonts.printable(letter.body), new_x="LMARGIN", new_y="NEXT")
     return bytes(pdf.output())

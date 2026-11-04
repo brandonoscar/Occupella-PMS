@@ -72,3 +72,19 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+## IBM Plex Sans (the PDFs' font)
+
+- Source: IBM Plex Sans 3.201, Regular and Bold, as Google Fonts builds them, from the npm
+  package `@expo-google-fonts/ibm-plex-sans` 0.4.1
+  (https://registry.npmjs.org/@expo-google-fonts/ibm-plex-sans/-/ibm-plex-sans-0.4.1.tgz).
+  Upstream: https://github.com/IBM/plex
+- Copied verbatim: `400Regular/IBMPlexSans_400Regular.ttf` and `700Bold/IBMPlexSans_700Bold.ttf`
+  into `src/pms/fonts/IBMPlexSans-Regular.ttf` and `src/pms/fonts/IBMPlexSans-Bold.ttf`, and the
+  package's `LICENSE_FONT` into `src/pms/fonts/OFL.txt`
+- SHA-256: Regular `8685116dfbcfa639621631c4af0ad62e52ddeb9979acbec0007ccef2e4801a27`, Bold
+  `cf74841e461235ac7205369329b14fd13a126af4c93927f8b287cad9aa6ffaab`, license
+  `7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da`
+- License: SIL Open Font License 1.1 (`src/pms/fonts/OFL.txt`), Copyright © 2017 IBM Corp. with
+  Reserved Font Name "Plex". The PDFs embed subsets of the fonts; they aren't sold on their own.
+- Check: `tests/test_pdf_fonts.py` pins the three files' SHA-256.

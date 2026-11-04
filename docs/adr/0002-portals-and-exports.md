@@ -53,7 +53,8 @@ it.
 - Excel keeps types. A cell is never a formula, times are UTC to the second, control
   characters XML can't hold become "?", and line breaks are "\n".
 - The PDF uses the built-in Latin-1 font, so other characters print as "?". CSV and Excel are
-  the exact copies.
+  the exact copies. (Since 11/03/2026 the PDFs embed IBM Plex Sans, `src/pms/pdf_fonts.py`:
+  only a letter it lacks, such as Arabic or Chinese, prints as "?".)
 
 ## Order
 
