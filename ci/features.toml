@@ -301,6 +301,17 @@ browser = [
 ]
 
 [[feature]]
+id = "request-details"
+statement = "A tenant says what kind of repair a request is and where in the unit, sees what to do first before sending an emergency, cancels a request while it is still received (no work order follows) and adds notes while it is open; staff see the kind, the place, the notes and that the tenant cancelled it."
+operations = [
+  "POST /api/tenant/requests/{request_id}/cancel",
+  "POST /api/tenant/requests/{request_id}/notes",
+]
+browser = [
+  "features.spec.ts › a tenant says what kind of repair and where, sees what to do first in an emergency, cancels one request and adds a note to another; staff see it all",
+]
+
+[[feature]]
 id = "recurring-work-orders"
 statement = "Staff add a job that comes back every few months at a property or unit; the ones already due open at once and the nightly run opens the rest on their days; staff stop one from a day, and charge a tenant a fee for a work order (a repair they caused) on a lease at its unit."
 operations = [

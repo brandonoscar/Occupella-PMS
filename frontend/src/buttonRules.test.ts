@@ -119,7 +119,6 @@ const KEEP: [string, string, Why][] = [
   ["pages/SwitchPage.tsx", "Import", "sends"],
   ["pages/SwitchPage.tsx", "Open with balances", "for good"],
   ["pages/TaxIdCard.tsx", "Reveal", "more than said"],
-  ["pages/TenantHome.tsx", "Send request", "more than said"],
   ["pages/TenantPortalCards.tsx", "Give notice", "more than said"],
   ["pages/TenantPortalCards.tsx", "Send document", "who sees"],
   ["pages/VendorLinkPage.tsx", "The work is done", "for good"],

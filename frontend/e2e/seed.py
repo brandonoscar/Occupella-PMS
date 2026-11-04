@@ -650,6 +650,7 @@ FEATURES = (
     "announcements",
     "tenant-uploads",
     "ledger-sources",
+    "request-details",
 )
 
 

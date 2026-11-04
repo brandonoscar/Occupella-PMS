@@ -1515,6 +1515,57 @@ test("an owner opens a line of their statement to see where it came from, and a 
   expect((await tenant.request.get(theirs)).status(), theirs).toBe(200);
 });
 
+test("a tenant says what kind of repair and where, sees what to do first in an emergency, cancels one request and adds a note to another; staff see it all", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["request-details"]!;
+  const tenant = await (await browser.newContext()).newPage();
+  await joinPortal(tenant, people.taylor);
+  await portalSection(tenant, "Repairs");
+  const requests = part(tenant, "Maintenance requests");
+
+  // Checking the emergency box says what to do first, before anything is sent.
+  await requests.getByLabel("This is an emergency (no heat, no water, a leak, a gas smell)").check();
+  await expect(requests).toContainText("Gas smell, fire or flooding? Get out and call 911 or your gas company first.");
+  await requests.getByLabel("This is an emergency (no heat, no water, a leak, a gas smell)").uncheck();
+  await expect(requests).not.toContainText("Get out and call 911");
+
+  // A request sent by mistake, taken back while it is still received.
+  await requests.getByLabel("What needs fixing?").fill("The fridge hums");
+  await requests.getByLabel("What kind of repair?").selectOption("Appliance");
+  await requests.getByRole("button", { name: "Send request" }).click();
+  const fridge = requests.getByRole("listitem").filter({ hasText: "The fridge hums" });
+  await expect(fridge.getByTestId("kind-and-place")).toHaveText("Appliance");
+  await fridge.getByRole("button", { name: "Actions for The fridge hums" }).click();
+  await tenant.getByRole("menuitem", { name: "Cancel request" }).click();
+  const asked = tenant.getByRole("alertdialog");
+  await expect(asked).toContainText("Cancel this request? Your manager won't act on it.");
+  await asked.getByRole("button", { name: "Cancel request" }).click();
+  await expect(fridge).toContainText("Cancelled");
+  await expect(fridge.getByLabel("Add a note")).toHaveCount(0);
+
+  // Another, with where it is, and a note added after.
+  await requests.getByLabel("What needs fixing?").fill("The tap drips");
+  await requests.getByLabel("What kind of repair?").selectOption("Plumbing");
+  await requests.getByLabel("Where in the unit?").fill("Kitchen sink");
+  await requests.getByRole("button", { name: "Send request" }).click();
+  const tap = requests.getByRole("listitem").filter({ hasText: "The tap drips" });
+  await expect(tap.getByTestId("kind-and-place")).toHaveText("Plumbing · Kitchen sink");
+  await tap.getByLabel("Add a note").fill("It drips faster at night.");
+  await tap.getByRole("button", { name: "Add note" }).click();
+  await expect(tap.getByRole("list", { name: "Notes on The tap drips" })).toContainText("It drips faster at night.");
+
+  // Staff see the kind, the place and the note, and the one the tenant took back.
+  await joinAsStaff(page, people.manager);
+  await section(page, "Work orders");
+  const theirs = page.getByRole("listitem", { name: "The tap drips" });
+  await expect(theirs).toContainText("Plumbing · Kitchen sink");
+  await expect(theirs.getByRole("list", { name: "Notes on The tap drips" })).toContainText("It drips faster at night.");
+  await page.getByLabel("Show done and closed requests too").check();
+  await expect(page.getByRole("listitem", { name: "The fridge hums" })).toContainText("Cancelled by the tenant");
+});
+
 test("a lease ended mid-month keeps only its days of the month's rent, and its deposit goes back less what it owes", async ({
   browser,
   page,
@@ -3799,6 +3850,7 @@ test("staff go on call; a tenant files an emergency with a photo and staff see i
   await portalSection(tenant, "Repairs");
   const requests = part(tenant, "Maintenance requests");
   await requests.getByLabel("What needs fixing?").fill("No heat in the bedroom");
+  await requests.getByLabel("What kind of repair?").selectOption("Heating/cooling");
   await requests.getByLabel("This is an emergency (no heat, no water, a leak, a gas smell)").check();
   await requests
     .getByLabel("Photos (up to 3, JPEG, PNG or PDF)")
@@ -4334,6 +4386,7 @@ test("staff make a tenant a tenant at a second property and lease them a unit th
   await portalSection(tenant, "Repairs");
   await expect(picker.locator("option:checked")).toHaveText(`Aspen Row, Unit 2, from ${us(today())}`);
   await tenant.getByLabel("What needs fixing?").fill("The porch light flickers");
+  await tenant.getByLabel("What kind of repair?").selectOption("Electrical");
   await tenant.getByRole("button", { name: "Send request" }).click();
   await expect(part(tenant, "Maintenance requests").getByRole("listitem").filter({ hasText: "The porch light flickers" }))
     .toContainText("Received");

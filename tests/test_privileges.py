@@ -84,6 +84,9 @@ TABLES = {
     # Maintenance requests: tenants file them through the API, staff link a work order.
     "trust_maintenance_requests": {"SELECT", "INSERT"},
     "trust_maintenance_request_work_orders": {"SELECT", "INSERT"},
+    # A request its tenant took back, and a tenant's notes on an open one (fix-list item 12).
+    "trust_maintenance_request_cancellations": {"SELECT", "INSERT"},
+    "trust_maintenance_request_notes": {"SELECT", "INSERT"},
     # Rental applications: applicants apply through the API, staff screen and decide.
     "trust_application_links": {"SELECT", "INSERT"},
     "trust_application_link_closings": {"SELECT", "INSERT"},
@@ -429,6 +432,8 @@ AI_NEVER_READS = {
     # notice to move out with its note (the portals, migration 20261103000100).
     "trust_messages",
     "trust_move_out_notices",
+    # A tenant's own words on their request, as a message is (fix-list item 12).
+    "trust_maintenance_request_notes",
     "trust_announcements",
     "trust_announcement_removals",
     # The company's mailing address, with the fee terms new properties start with (ADR 0006).
@@ -585,6 +590,8 @@ FUNCTIONS = {
     "trust_check_owner_online_payment()": set(),  # a trigger's: no one calls it
     "trust_check_owner_online_payment_event()": set(),  # a trigger's: no one calls it
     "trust_check_move_out_notice()": set(),  # a trigger's: no one calls it
+    "trust_check_request_change()": set(),  # a trigger's: no one calls it
+    "trust_refuse_cancelled_request_order()": set(),  # a trigger's: no one calls it
     "trust_check_autopay()": set(),  # a trigger's: no one calls it
     "trust_check_autopay_run()": set(),  # a trigger's: no one calls it
     "trust_lock_autopay_stop()": set(),  # a trigger's: no one calls it

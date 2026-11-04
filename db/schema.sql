@@ -3768,6 +3768,58 @@ $$;
 
 
 --
+-- Name: trust_check_request_change(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_request_change() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_lease uuid;
+    v_order uuid;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('maintenance request ' || NEW.request_id, 0));
+    SELECT r.lease_id INTO v_lease FROM trust_maintenance_requests AS r WHERE r.id = NEW.request_id;
+    IF v_lease IS DISTINCT FROM NEW.lease_id THEN
+        RAISE EXCEPTION 'trust: request % is not of lease %', NEW.request_id, NEW.lease_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM trust_lease_departures AS d
+        WHERE d.lease_id = NEW.lease_id AND d.tenant_id = NEW.tenant_id
+          AND d.left_on <= (clock_timestamp() AT TIME ZONE 'UTC')::date
+    ) THEN
+        RAISE EXCEPTION 'trust: this tenant has left lease % already', NEW.lease_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM trust_maintenance_request_cancellations AS c
+        WHERE c.request_id = NEW.request_id
+    ) THEN
+        RAISE EXCEPTION 'trust: request % was cancelled', NEW.request_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT w.work_order_id INTO v_order
+    FROM trust_maintenance_request_work_orders AS w WHERE w.request_id = NEW.request_id;
+    IF TG_TABLE_NAME = 'trust_maintenance_request_cancellations' AND v_order IS NOT NULL THEN
+        RAISE EXCEPTION 'trust: request % has a work order; it can no longer be cancelled',
+            NEW.request_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF TG_TABLE_NAME = 'trust_maintenance_request_notes' AND EXISTS (
+        SELECT 1 FROM trust_work_order_steps AS s
+        WHERE s.work_order_id = v_order AND s.step IN ('completed', 'cancelled')
+    ) THEN
+        RAISE EXCEPTION 'trust: request % is closed', NEW.request_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_request_work_order(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7446,6 +7498,28 @@ BEGIN
         pmc_id, request_key, ledger_account_id, amount, transfer_id
     ) VALUES (p_pmc_id, p_request_key, p_account, p_amount, v_transfer_id);
     RETURN v_transfer_id;
+END;
+$$;
+
+
+--
+-- Name: trust_refuse_cancelled_request_order(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_refuse_cancelled_request_order() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('maintenance request ' || NEW.request_id, 0));
+    IF EXISTS (
+        SELECT 1 FROM trust_maintenance_request_cancellations AS c
+        WHERE c.request_id = NEW.request_id
+    ) THEN
+        RAISE EXCEPTION 'trust: request % was cancelled by its tenant', NEW.request_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -16106,6 +16180,35 @@ CREATE TABLE public.trust_logins (
 
 
 --
+-- Name: trust_maintenance_request_cancellations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_maintenance_request_cancellations (
+    request_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_maintenance_request_notes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_maintenance_request_notes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    body text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_maintenance_request_notes_body_check CHECK (((body ~ '\S'::text) AND (length(body) <= 2000)))
+);
+
+
+--
 -- Name: trust_maintenance_request_work_orders; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16131,6 +16234,10 @@ CREATE TABLE public.trust_maintenance_requests (
     submitted_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     emergency boolean DEFAULT false NOT NULL,
+    category text,
+    location text,
+    CONSTRAINT trust_maintenance_requests_category_check CHECK ((category = ANY (ARRAY['plumbing'::text, 'electrical'::text, 'appliance'::text, 'heating_cooling'::text, 'pests'::text, 'other'::text]))),
+    CONSTRAINT trust_maintenance_requests_location_check CHECK (((location ~ '\S'::text) AND (length(location) <= 200) AND (location !~ '[\r\n]'::text))),
     CONSTRAINT trust_maintenance_requests_summary_check CHECK (((summary ~ '\S'::text) AND (length(summary) <= 2000)))
 );
 
@@ -19758,6 +19865,22 @@ ALTER TABLE ONLY public.trust_logins
 
 
 --
+-- Name: trust_maintenance_request_cancellations trust_maintenance_request_cancellations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_cancellations
+    ADD CONSTRAINT trust_maintenance_request_cancellations_pkey PRIMARY KEY (request_id);
+
+
+--
+-- Name: trust_maintenance_request_notes trust_maintenance_request_notes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_notes
+    ADD CONSTRAINT trust_maintenance_request_notes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_maintenance_request_work_orders trust_maintenance_request_work_orders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22539,6 +22662,27 @@ CREATE INDEX trust_ledger_accounts_pmc_id ON public.trust_ledger_accounts USING 
 
 
 --
+-- Name: trust_maintenance_request_cancellations_by_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_maintenance_request_cancellations_by_pmc ON public.trust_maintenance_request_cancellations USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_maintenance_request_notes_by_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_maintenance_request_notes_by_pmc ON public.trust_maintenance_request_notes USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_maintenance_request_notes_by_request; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_maintenance_request_notes_by_request ON public.trust_maintenance_request_notes USING btree (request_id, created_at);
+
+
+--
 -- Name: trust_maintenance_requests_lease_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -24548,6 +24692,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_maintenance_request_cancellations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_maintenance_request_cancellations FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_maintenance_request_notes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_maintenance_request_notes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_maintenance_request_work_orders trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26116,6 +26274,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_logi
 
 
 --
+-- Name: trust_maintenance_request_cancellations trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_maintenance_request_cancellations FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_maintenance_request_notes trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_maintenance_request_notes FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_maintenance_request_work_orders trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27093,6 +27265,20 @@ CREATE TRIGGER trust_check_payout_item BEFORE INSERT ON public.trust_payout_run_
 --
 
 CREATE TRIGGER trust_check_recurring_bill BEFORE INSERT ON public.trust_recurring_bills FOR EACH ROW EXECUTE FUNCTION public.trust_check_recurring_bill();
+
+
+--
+-- Name: trust_maintenance_request_cancellations trust_check_request_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_request_change BEFORE INSERT ON public.trust_maintenance_request_cancellations FOR EACH ROW EXECUTE FUNCTION public.trust_check_request_change();
+
+
+--
+-- Name: trust_maintenance_request_notes trust_check_request_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_request_change BEFORE INSERT ON public.trust_maintenance_request_notes FOR EACH ROW EXECUTE FUNCTION public.trust_check_request_change();
 
 
 --
@@ -28136,6 +28322,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_work_order_detail
 --
 
 CREATE TRIGGER trust_recurring_charge_amount BEFORE INSERT ON public.trust_charges FOR EACH ROW WHEN ((new.recurring_charge_id IS NOT NULL)) EXECUTE FUNCTION public.trust_check_recurring_charge_amount();
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_refuse_cancelled_request_order; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_refuse_cancelled_request_order BEFORE INSERT ON public.trust_maintenance_request_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_cancelled_request_order();
 
 
 --
@@ -31460,6 +31653,38 @@ ALTER TABLE ONLY public.trust_logins
 
 
 --
+-- Name: trust_maintenance_request_cancellations trust_maintenance_request_cancellations_lease_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_cancellations
+    ADD CONSTRAINT trust_maintenance_request_cancellations_lease_id_tenant_id_fkey FOREIGN KEY (lease_id, tenant_id) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_maintenance_request_cancellations trust_maintenance_request_cancellations_pmc_id_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_cancellations
+    ADD CONSTRAINT trust_maintenance_request_cancellations_pmc_id_request_id_fkey FOREIGN KEY (pmc_id, request_id) REFERENCES public.trust_maintenance_requests(pmc_id, id);
+
+
+--
+-- Name: trust_maintenance_request_notes trust_maintenance_request_notes_lease_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_notes
+    ADD CONSTRAINT trust_maintenance_request_notes_lease_id_tenant_id_fkey FOREIGN KEY (lease_id, tenant_id) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_maintenance_request_notes trust_maintenance_request_notes_pmc_id_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_notes
+    ADD CONSTRAINT trust_maintenance_request_notes_pmc_id_request_id_fkey FOREIGN KEY (pmc_id, request_id) REFERENCES public.trust_maintenance_requests(pmc_id, id);
+
+
+--
 -- Name: trust_maintenance_request_work_orders trust_maintenance_request_work_orders_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34106,4 +34331,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261104000200'),
     ('20261104000300'),
     ('20261104000400'),
-    ('20261104000500');
+    ('20261104000500'),
+    ('20261104000600');

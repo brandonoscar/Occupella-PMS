@@ -18,7 +18,7 @@ from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, HTTPException, Path, Query, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from pms import accounts, exports, notices
 from pms.api import (
@@ -243,6 +243,21 @@ class NewRequest(BaseModel):
     # emergencies is emailed while the server sends email (migration 0084).
     emergency: bool = False
     photos: list[Photo] = Field(default=[], max_length=PHOTOS_PER_REQUEST)
+    # What kind of repair it is and where in the unit (fix-list item 12); the portal asks both.
+    category: maintenance.Category | None = None
+    location: (
+        Annotated[
+            str,
+            StringConstraints(
+                strip_whitespace=True, min_length=1, max_length=200, pattern=r"^[^\r\n]*$"
+            ),
+        ]
+        | None
+    ) = None
+
+
+class NewRequestNote(BaseModel):
+    body: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
 
 
 # The leases of every record of the signed-in person: their own and any linked to it.
@@ -677,8 +692,8 @@ def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Re
         )
     created = conn.execute(
         "INSERT INTO trust_maintenance_requests"
-        " (pmc_id, lease_id, tenant_id, summary, entry_allowed, emergency)"
-        " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        " (pmc_id, lease_id, tenant_id, summary, entry_allowed, emergency, category, location)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (
             session.pmc_id,
             new.lease_id,
@@ -686,6 +701,8 @@ def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Re
             summary,
             new.entry_allowed,
             new.emergency,
+            new.category,
+            new.location,
         ),
     ).fetchone()
     assert created is not None
@@ -698,3 +715,75 @@ def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Re
     if new.emergency and outbox.SENDING.get():
         notices.write_emergency(conn, session.pmc_id, created[0], outbox.PUBLIC_URL.get())
     return maintenance.for_tenant(maintenance.one(conn, session.pmc_id, created[0]))
+
+
+NOTES_PER_DAY = 20
+
+
+def my_request(
+    conn: psycopg.Connection[Any], session: accounts.Session, request_id: UUID
+) -> tuple[maintenance.StaffRequest, UUID]:
+    """A request under a lease the tenant is still on, and their record on it; any other reads
+    as not found."""
+    found = maintenance.requests(
+        conn, maintenance.FOR_TENANT, pmc=session.pmc_id, person=session.person_id
+    )
+    request = next((r for r in found if r.id == request_id), None)
+    if request is None:
+        raise HTTPException(404, "no such request of yours")
+    return request, still_on(conn, session, request.lease_id)
+
+
+@router.post("/requests/{request_id}/cancel")
+def cancel_request(session: Tenant, conn: Conn, request_id: UUID) -> maintenance.Request:
+    """Take a request back while it is still received (no work order yet), once."""
+    request, tenant = my_request(conn, session, request_id)
+    if request.taken_back:
+        return maintenance.for_tenant(request)  # taken back already: sent again, nothing new
+    if request.status != "received":
+        raise HTTPException(
+            409, "It's being worked on, so it can't be cancelled. Send a note instead."
+        )
+    try:
+        conn.execute(
+            "INSERT INTO trust_maintenance_request_cancellations"
+            " (pmc_id, request_id, lease_id, tenant_id) VALUES (%s, %s, %s, %s)",
+            (session.pmc_id, request_id, request.lease_id, tenant),
+        )
+    except psycopg.errors.CheckViolation:
+        # Staff opened its work order at the same moment.
+        raise HTTPException(
+            409, "It's being worked on, so it can't be cancelled. Send a note instead."
+        ) from None
+    return maintenance.for_tenant(maintenance.one(conn, session.pmc_id, request_id))
+
+
+@router.post("/requests/{request_id}/notes", status_code=201)
+def add_request_note(
+    session: Tenant, conn: Conn, request_id: UUID, note: NewRequestNote
+) -> maintenance.Request:
+    """A note on an open request (not cancelled, its work order not closed), 20 a day at most."""
+    request, tenant = my_request(conn, session, request_id)
+    if request.status in maintenance.CLOSED:
+        raise HTTPException(409, "This request is closed. Send a new one if you still need help.")
+    recent = conn.execute(
+        "SELECT count(*) FROM trust_maintenance_request_notes"
+        " WHERE pmc_id = %s AND lease_id = %s AND created_at > %s",
+        (session.pmc_id, request.lease_id, datetime.now(UTC) - timedelta(days=1)),
+    ).fetchone()
+    if recent is not None and recent[0] >= NOTES_PER_DAY:
+        raise HTTPException(
+            429, f"You can add {NOTES_PER_DAY} notes a day. If it can't wait, call your manager."
+        )
+    try:
+        conn.execute(
+            "INSERT INTO trust_maintenance_request_notes"
+            " (pmc_id, request_id, lease_id, tenant_id, body) VALUES (%s, %s, %s, %s, %s)",
+            (session.pmc_id, request_id, request.lease_id, tenant, note.body),
+        )
+    except psycopg.errors.CheckViolation:
+        # Closed, or cancelled, at the same moment.
+        raise HTTPException(
+            409, "This request is closed. Send a new one if you still need help."
+        ) from None
+    return maintenance.for_tenant(maintenance.one(conn, session.pmc_id, request_id))

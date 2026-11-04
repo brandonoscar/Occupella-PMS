@@ -376,6 +376,12 @@ def test_a_tenant_files_a_request_and_their_co_tenant_sees_it(
         "visit_on",
         "visit_window",
         "photos",
+        # What kind, where, taken back and notes (test_request_details_api.py); never a work
+        # order or its vendor.
+        "category",
+        "location",
+        "taken_back",
+        "notes",
     }
     assert (
         request["filed_by"],

@@ -12,11 +12,11 @@ import { OpensSource, SourcePanel } from "../components/SourcePanel";
 import type { ContentType } from "../documents";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
 import type { MaintenanceRequest } from "../maintenance";
-import { PHOTOS_PER_REQUEST, photosLabel, photosProblem, statusLabel, visitLabel, when } from "../maintenance";
+import { CATEGORIES, EMERGENCY_FIRST, PHOTOS_PER_REQUEST, photosProblem } from "../maintenance";
+import { TenantRequest } from "./TenantRequest";
 import { day, money, sumMoney, usDate, usDatesIn } from "../money";
 import type { DepositAsked, Paid, RentersInsurance } from "../rent";
 import { dueDayLabel, insuranceLine, tenantDepositLine } from "../rent";
-import { Badge } from "../components/Badge";
 import { PolicyForm } from "./InsuranceForms";
 import { RenewalsCard } from "./RenewalsCard";
 import { useRecord } from "./useRecord";
@@ -244,6 +244,8 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
   const [summary, setSummary] = useState("");
   const [entryAllowed, setEntryAllowed] = useState(false);
   const [emergency, setEmergency] = useState(false);
+  const [category, setCategory] = useState("");
+  const [location, setLocation] = useState("");
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [sent, setSent] = useState("");
   const [error, setError] = useState("");
@@ -289,12 +291,16 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
         summary,
         entry_allowed: entryAllowed,
         emergency,
+        category,
+        location: location.trim() || null,
         photos: photos.map((p) => ({ title: p.title, content_type: p.type, content_base64: p.base64 })),
       });
       setRequests([filed, ...requests]);
       setSummary("");
       setEntryAllowed(false);
       setEmergency(false);
+      setCategory("");
+      setLocation("");
       setPhotos([]);
       setSent(
         emergency ? `Sent to ${me.pmc_name} as an emergency. If anyone is in danger, call 911.` : `Sent to ${me.pmc_name}.`,
@@ -575,6 +581,22 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                     className="rounded-sm border border-line-strong bg-sunken px-3 py-2 text-base text-ink"
                   />
                 </label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label htmlFor="category" className="flex flex-col gap-1.5 text-sm text-ink-muted">
+                    What kind of repair?
+                    <select id="category" required value={category} onChange={(e) => setCategory(e.target.value)}
+                      className="h-9 rounded-sm border border-line-strong bg-sunken px-3 text-base text-ink">
+                      <option value="" disabled>Pick one</option>
+                      {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                    </select>
+                  </label>
+                  <label htmlFor="location" className="flex flex-col gap-1.5 text-sm text-ink-muted">
+                    Where in the unit?
+                    <input id="location" maxLength={200} value={location} placeholder="Kitchen sink"
+                      onChange={(e) => setLocation(e.target.value)}
+                      className="h-9 rounded-sm border border-line-strong bg-sunken px-3 text-base text-ink" />
+                  </label>
+                </div>
                 <label className="flex items-center gap-2 text-sm text-ink-muted">
                   <input
                     type="checkbox"
@@ -587,6 +609,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                   <input type="checkbox" checked={emergency} onChange={(e) => setEmergency(e.target.checked)} />
                   This is an emergency (no heat, no water, a leak, a gas smell)
                 </label>
+                {emergency && <Notice tone="error">{EMERGENCY_FIRST}</Notice>}
                 <label htmlFor="request-photos" className="flex flex-col gap-1.5 text-sm text-ink-muted">
                   Photos (up to {PHOTOS_PER_REQUEST}, JPEG, PNG or PDF)
                   <input
@@ -616,11 +639,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                   </p>
                 )}
                 <div className="flex items-center gap-4">
-                  <Button type="submit" says={emergency
-                    ? `Sends it to ${me.pmc_name} as an emergency. You can't change it after; if anyone is in danger, call 911.`
-                    : `Sends it to ${me.pmc_name}; how it's going shows below. You can't change it after it's sent.`}>
-                    Send request
-                  </Button>
+                  <Button type="submit">Send request</Button>
                   <Said>{sent}</Said>
                 </div>
               </Form>
@@ -632,21 +651,8 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
             ) : (
               <ul className="flex flex-col divide-y divide-line">
                 {requests.map((request) => (
-                  <li key={request.id} className="py-3">
-                    <p className="flex flex-wrap items-center gap-2">
-                      {request.summary}
-                      {request.emergency && <Badge tone="danger">Emergency</Badge>}
-                    </p>
-                    <p className="text-sm text-ink-subtle">
-                      {request.unit}, sent by {request.filed_by} {when(request.submitted_at)}.{" "}
-                      {photosLabel(request.photos) && `${photosLabel(request.photos)}. `}
-                      <span className="text-ink-muted">{statusLabel(request.status)}</span>
-                      {request.status !== "received" && ` (${when(request.status_at)})`}
-                    </p>
-                    {visitLabel(request) && (
-                      <p className="text-sm text-ink" data-testid="visit">{visitLabel(request)}</p>
-                    )}
-                  </li>
+                  <TenantRequest key={request.id} request={request} canChange={lease.in_effect}
+                    onChange={(changed) => setRequests(requests.map((r) => (r.id === changed.id ? changed : r)))} />
                 ))}
               </ul>
             )}

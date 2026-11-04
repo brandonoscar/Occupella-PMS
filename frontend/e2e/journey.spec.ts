@@ -498,6 +498,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await portalSection(taylor, "Repairs");
     const requests = part(taylor, "Maintenance requests");
     await requests.getByLabel("What needs fixing?").fill("The kitchen faucet drips");
+    await requests.getByLabel("What kind of repair?").selectOption("Plumbing");
     await requests.getByLabel("OK to enter if I'm not home").check();
     await requests.getByLabel("Photos (up to 3, JPEG, PNG or PDF)").setInputFiles(PHOTO);
     await expect(requests.getByTestId("photos-chosen")).toHaveText("Photos: faucet");

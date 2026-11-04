@@ -787,7 +787,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   a key to `trust_lease_tenants` refuses anyone else). Staff open at most one work order for it,
   at the lease's unit (`trust_maintenance_request_work_orders`, one each way), and its status is
   that work order's latest step. The portal files them only under a lease in effect, at most
-  10 a day per lease. Since migration 0084 (`docs/law.md`) a tenant marks one an emergency and
+  10 a day per lease. Since migration 20261104000600 a request says what kind of repair it is
+  (plumbing, electrical, appliance, heating/cooling, pests, other) and where in the unit; a tenant
+  on the lease cancels it while it is still received (`trust_maintenance_request_cancellations`,
+  once; staff open no work order for it after, the two waiting for each other) and adds notes
+  while it is open (`trust_maintenance_request_notes`, 20 a day, which the AI role never reads);
+  before an emergency is sent the portal says "Gas smell, fire or flooding? Get out and call 911
+  or your gas company first." (no phone line is built). Since migration 0084 (`docs/law.md`) a tenant marks one an emergency and
   files up to three photos with it (`request_photo` documents about it); its work order opens
   urgent with the tenant's word on entry copied, and each staff member on call
   (`trust_on_call_staff`: append-only, the latest row holding, naming who changed it; Work orders,

@@ -111,6 +111,7 @@ test("a tenant reads their lease and what they owe, and files a repair request o
   await sectionOnAPhone(page, "Repairs");
   const request = page.locator("section", { has: page.getByRole("heading", { level: 2, name: "Maintenance requests" }) });
   await request.getByLabel("What needs fixing").fill("The kitchen tap drips");
+  await request.getByLabel("What kind of repair?").selectOption("Plumbing");
   await request.getByRole("button", { name: "Send request" }).tap();
   await expect(request).toContainText("The kitchen tap drips");
   await looksRightOnAPhone(page, info, "the tenant's page after a request");

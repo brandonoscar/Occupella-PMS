@@ -119,6 +119,7 @@ test("a tenant joins, sees what is due and asks for a repair", async ({ page }) 
 
   await portalSection(page, "Repairs");
   await page.getByLabel("What needs fixing?").fill("The hallway light is out");
+  await page.getByLabel("What kind of repair?").selectOption("Electrical");
   await page.getByLabel("OK to enter if I'm not home").check();
   await page.getByRole("button", { name: "Send request" }).click();
   const requests = page.locator("section", { hasText: "Maintenance requests" });

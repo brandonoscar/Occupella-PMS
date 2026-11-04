@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import { holdBack } from "../holdBack";
+import { EMERGENCY_FIRST } from "../maintenance";
 import type { Lease } from "./TenantHome";
 import {
   TenantHome,
@@ -301,6 +302,8 @@ describe("TenantHome", () => {
     fireEvent.change(screen.getByLabelText("What needs fixing?"), {
       target: { value: "Tap drips" },
     });
+    fireEvent.change(screen.getByLabelText("What kind of repair?"), { target: { value: "plumbing" } });
+    fireEvent.change(screen.getByLabelText("Where in the unit?"), { target: { value: " Kitchen sink " } });
     fireEvent.click(screen.getByLabelText("OK to enter if I'm not home"));
     fireEvent.click(screen.getByRole("button", { name: "Send request" }));
 
@@ -309,6 +312,8 @@ describe("TenantHome", () => {
     expect(JSON.parse(String(posted?.[1]?.body))).toEqual({
       lease_id: "1",
       summary: "Tap drips",
+      category: "plumbing",
+      location: "Kitchen sink",
       entry_allowed: true,
       emergency: false,
       photos: [],
@@ -334,7 +339,11 @@ describe("TenantHome", () => {
     expect(screen.getByText(/1 photo\./)).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("What needs fixing?"), { target: { value: "No heat" } });
+    fireEvent.change(screen.getByLabelText("What kind of repair?"), { target: { value: "heating_cooling" } });
+    expect(screen.queryByText(EMERGENCY_FIRST)).toBeNull();
     fireEvent.click(screen.getByLabelText("This is an emergency (no heat, no water, a leak, a gas smell)"));
+    // Before it is sent: what to do first when it can't wait for anyone.
+    expect(screen.getByText(EMERGENCY_FIRST)).toBeTruthy();
     const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "radiator.png", { type: "image/png" });
     const jpeg = new File([new Uint8Array([0xff, 0xd8, 0xff])], "boiler.jpg", { type: "image/jpeg" });
     fireEvent.change(screen.getByLabelText("Photos (up to 3, JPEG, PNG or PDF)"), { target: { files: [png, jpeg] } });
@@ -346,6 +355,8 @@ describe("TenantHome", () => {
     expect(JSON.parse(String(posted?.[1]?.body))).toEqual({
       lease_id: "1",
       summary: "No heat",
+      category: "heating_cooling",
+      location: null,
       entry_allowed: false,
       emergency: true,
       photos: [
@@ -367,6 +378,7 @@ describe("TenantHome", () => {
     });
     render(<TenantHome me={ME} section="repairs" />);
     fireEvent.change(await screen.findByLabelText("What needs fixing?"), { target: { value: "Tap drips" } });
+    fireEvent.change(screen.getByLabelText("What kind of repair?"), { target: { value: "plumbing" } });
     const page = new File(["<html>"], "tap.html", { type: "text/html" });
     fireEvent.change(screen.getByLabelText("Photos (up to 3, JPEG, PNG or PDF)"), { target: { files: [page] } });
     await screen.findByTestId("photos-chosen");
