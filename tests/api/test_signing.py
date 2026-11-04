@@ -8,10 +8,12 @@ import base64
 import hashlib
 import io
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 from helpers import (
     LEASE_PDF,
     PDF,
@@ -32,6 +34,7 @@ from people import join_as, join_as_owner, join_as_staff
 from pypdf import PdfReader
 
 from pms.api import offers, signing
+from pms.api.app import create_app
 from pms.leasing import esign
 
 SHA = hashlib.sha256(LEASE_PDF).hexdigest()
@@ -474,6 +477,32 @@ def test_the_evidence_keeps_the_address_and_browser_a_step_came_from():
 
 
 # --- the tenant keeps the lease as signed (q120) ------------------------------------------------
+
+
+def steps_seen_from(conn, offer):
+    return {
+        kind: str(ip) if ip is not None else None
+        for kind, ip in conn.execute(
+            "SELECT e.kind, e.ip FROM trust_signing_events AS e"
+            " JOIN trust_signing_links AS l ON l.id = e.link_id WHERE l.offer_id = %s",
+            (offer,),
+        ).fetchall()
+    }
+
+
+@pytest.mark.parametrize("trusted", ["*", ""])
+def test_behind_a_trusted_proxy_the_evidence_keeps_the_signers_address(
+    conn, settings, made, trusted
+):
+    """docs/install.md puts an HTTPS proxy in front of the app: trusted (PMS_TRUSTED_PROXIES, as
+    compose.selfhost.yaml sets it), the evidence keeps the address the proxy names; not trusted,
+    a request can't name its own address."""
+    proxied = replace(settings, trusted_proxies=trusted)
+    with TestClient(create_app(proxied), headers={"X-Forwarded-For": "203.0.113.7"}) as browser:
+        assert agree(browser, made.tokens[0]).status_code == 200
+
+    # The test client connects from "testclient", which isn't an address, so none is kept.
+    assert steps_seen_from(conn, made.offer) == {"consented": "203.0.113.7" if trusted else None}
 
 
 def leased(client, other_client, conn, made):

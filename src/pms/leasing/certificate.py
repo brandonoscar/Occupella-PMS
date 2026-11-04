@@ -13,7 +13,7 @@ import struct
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from fpdf import FPDF
+from pms import pdf_fonts
 
 PNG = b"\x89PNG\r\n\x1a\n"
 
@@ -69,11 +69,6 @@ def when(moment: datetime) -> str:
     return moment.astimezone(UTC).strftime("%m/%d/%Y %H:%M:%S UTC")
 
 
-def _latin1(value: str) -> str:
-    """The PDF's built-in font has Latin-1 only; anything else prints as "?"."""
-    return value.encode("latin-1", "replace").decode("latin-1")
-
-
 def _step(step: Step) -> str:
     where = ", ".join(
         part
@@ -86,10 +81,10 @@ def _step(step: Step) -> str:
     return f"{when(step.at)}" + (f" ({where})" if where else "")
 
 
-class _Pdf(FPDF):
+class _Pdf(pdf_fonts.Pdf):
     def footer(self) -> None:
         self.set_y(-30)
-        self.set_font("Helvetica", size=7)
+        self.set_font(pdf_fonts.FAMILY, size=7)
         self.cell(0, 10, f"Page {self.page_no()}", align="C")
 
 
@@ -103,21 +98,21 @@ def render(certificate: Certificate, generated: datetime) -> bytes:
     pdf.add_page()
 
     def heading(text: str, size: int = 11) -> None:
-        pdf.set_font("Helvetica", style="B", size=size)
-        pdf.multi_cell(0, size + 4, _latin1(text), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font(pdf_fonts.FAMILY, style="B", size=size)
+        pdf.multi_cell(0, size + 4, pdf_fonts.printable(text), new_x="LMARGIN", new_y="NEXT")
 
     def line(label: str, value: str) -> None:
-        pdf.set_font("Helvetica", style="B", size=8)
-        pdf.cell(130, 11, _latin1(label))
-        pdf.set_font("Helvetica", size=8)
-        pdf.multi_cell(0, 11, _latin1(value), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font(pdf_fonts.FAMILY, style="B", size=8)
+        pdf.cell(130, 11, pdf_fonts.printable(label))
+        pdf.set_font(pdf_fonts.FAMILY, size=8)
+        pdf.multi_cell(0, 11, pdf_fonts.printable(value), new_x="LMARGIN", new_y="NEXT")
 
     heading("Signing certificate", 14)
-    pdf.set_font("Helvetica", size=8)
+    pdf.set_font(pdf_fonts.FAMILY, size=8)
     pdf.multi_cell(
         0,
         11,
-        _latin1(
+        pdf_fonts.printable(
             f"{certificate.company}. Made {when(generated)} from the records of the PMS's signing"
             " page. It carries no digital seal: the lease below is identified by its SHA-256."
         ),
@@ -149,12 +144,12 @@ def render(certificate: Certificate, generated: datetime) -> bytes:
         if signer.typed_name is not None:
             line("Name typed", signer.typed_name)
         if signer.drawing is not None:
-            pdf.set_font("Helvetica", style="B", size=8)
+            pdf.set_font(pdf_fonts.FAMILY, style="B", size=8)
             pdf.cell(130, 11, "Signature drawn")
             try:
                 pdf.image(io.BytesIO(signer.drawing), h=48)
             except Exception:  # noqa: BLE001 - a PNG fpdf2 can't read still leaves the record
-                pdf.set_font("Helvetica", size=8)
+                pdf.set_font(pdf_fonts.FAMILY, size=8)
                 pdf.multi_cell(0, 11, "(kept, but it can't be shown here)", new_x="LMARGIN")
         if signer.disclosure is not None:
             if signer.disclosure not in disclosures:
@@ -164,6 +159,6 @@ def render(certificate: Certificate, generated: datetime) -> bytes:
     for n, text in enumerate(disclosures, 1):
         pdf.ln(6)
         heading(f"Disclosures, text {n}")
-        pdf.set_font("Helvetica", size=8)
-        pdf.multi_cell(0, 11, _latin1(text), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font(pdf_fonts.FAMILY, size=8)
+        pdf.multi_cell(0, 11, pdf_fonts.printable(text), new_x="LMARGIN", new_y="NEXT")
     return bytes(pdf.output())

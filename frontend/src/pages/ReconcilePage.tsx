@@ -48,6 +48,7 @@ import { Said } from "../components/Said";
 import { Form } from "../components/Form";
 import type { BankKind } from "../setup";
 import { AskFirst } from "../components/Confirm";
+import { fileText } from "../fileText";
 
 // Accounting → Banking (ADR 0005): each trust bank account with what the books hold in it, how
 // far it is reconciled and whether a month waits for approval, each opening its own page. Add
@@ -355,7 +356,7 @@ function StatementsCard({ bank, refresh }: BankProps) {
             className="text-sm text-ink"
             onChange={async (e) => {
               const chosen = e.target.files?.[0];
-              setFile(chosen ? { name: chosen.name, content: await chosen.text() } : null);
+              setFile(chosen ? { name: chosen.name, content: await fileText(chosen) } : null);
             }} />
         </label>
         <Field label="First day" id="statement-first" type="date" value={firstDay}

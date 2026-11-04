@@ -42,8 +42,8 @@ WORDS = {
     "bills not yet set aside": "bills held, nothing paid yet",
 }
 
-# A column whose name, its underscores read as spaces, isn't the heading people use. The PDF's
-# font is Latin-1, so a range takes a hyphen.
+# A column whose name, its underscores read as spaces, isn't the heading people use. A range
+# takes a hyphen, as people type it.
 COLUMNS = {
     "days_1_30": "1-30 days",
     "days_31_60": "31-60 days",
