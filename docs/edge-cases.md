@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1144 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1146 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -29,11 +29,11 @@ answer in the portal for everything that can fail.
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 159 | 81 | 15 | 63 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 63 | 30 | 49 | 2 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 65 | 8 | 92 | 26 |
-| [Bad files and imports](#bad-files-and-imports) | 147 | 61 | 16 | 70 | 5 |
+| [Bad files and imports](#bad-files-and-imports) | 149 | 63 | 16 | 70 | 4 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 167 | 69 | 14 | 84 | 9 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1144** | **579** | **110** | **455** | **67** |
+| **All** | **1146** | **581** | **110** | **455** | **66** |
 
 ## Open, high risk: the work list
 
@@ -104,7 +104,6 @@ its ten most pressing, each with the test that would close it.
 - F-010: A PDF with JavaScript (OpenAction, /JS), uploaded by a tenant as their own lease document or by an anonymous applicant as proof of income
 - F-061: Day-first dates from a UK or European file ("05/01/2026" meaning 5 January)
 - F-077: A charge dated after a new lease started at the unit (the old tenant's move-out fee dated after the next move-in)
-- F-122: An audit log report over a day a lease offer or a drawn signature was saved
 - F-126: The everything export (records.zip) of a company with GBs of files
 
 **People doing the unexpected, permissions and security**
@@ -824,7 +823,6 @@ its ten most pressing, each with the test that would close it.
 | F-010 | A PDF with JavaScript (OpenAction, /JS), uploaded by a tenant as their own lease document or by an anonymous applicant as proof of income | Kept and served byte for byte. It goes out as an attachment with nosniff and a CSP sandbox, which only protects the browser, so a desktop reader opening it may run its script. Staff and co-tenants receive it | Open | src/pms/api/documents.py:452-469; src/pms/api/tenant.py:535-548; src/pms/api/applicant_details.py:141-150 | H |
 | F-061 | Day-first dates from a UK or European file ("05/01/2026" meaning 5 January) | Read as May 1 with no warning; "13/01/2026" is refused. A payment file records a payment in the wrong month, and charges get wrong due days | Open | src/pms/statements.py:77 | H |
 | F-077 | A charge dated after a new lease started at the unit (the old tenant's move-out fee dated after the next move-in) | Goes to the newest lease started by its due day, so the new tenant owes the old tenant's charge. The file has no tenant or lease column to say otherwise | Open | src/pms/api/switching.py:441-447 | H |
-| F-122 | An audit log report over a day a lease offer or a drawn signature was saved | to_jsonb of the row carries the offer's 5 MB PDF as 10 million hex characters into one detail cell. The PDF export wraps it a character at a time, copying the rest each line, and effectively never finishes; the Excel cell runs far past 32,767. NOT VERIFIED by running | Open | db/schema.sql trust_audit (to_jsonb(NEW)) and trust_report_audit_log (jsonb_each_text detail); src/pms/exports.py:279-286 | H |
 | F-126 | The everything export (records.zip) of a company with GBs of files | Built whole in memory: each table fetched in full, every document's bytes, the zip in a BytesIO, one response. Each table is sorted by row_to_json(r)::text, which turns every 5 MB file into 10 MB of hex to sort. May exhaust memory or never finish; not timed | Open | src/pms/exports.py:433-491 | H |
 | F-088 | The same payments again under other bytes (renamed, re-exported, a trailing newline) | Another SHA, but each line looks recorded already (same lease, day and amount) and waits for staff | Guarded | src/pms/api/payment_files.py:160-214 (the nearest test is tests/api/test_payment_files_api.py::test_a_payment_that_looks_recorded_already_waits) | H |
 | F-015 | A PNG bomb: a 5 MB PNG declaring 30000 x 30000 pixels, kept as a move-out photo or a receipt | The statement still goes: the photo's page says it could not be added here and is with the lease's files, whatever error the image library raises | Tested | tests/test_deposit_statement.py::test_a_photo_that_says_it_is_huge_leaves_the_letter_whole | H |
@@ -839,6 +837,7 @@ its ten most pressing, each with the test that would close it.
 | F-100 | An OFX with a DOCTYPE or an external entity | Never expanded: plain text matching, no XML parser | Tested | tests/test_statement_files.py::test_an_ofx_entity_or_doctype_is_never_expanded | H |
 | F-109 | A report cell starting =, +, -, @, a tab or a carriage return, or one already starting "'=" | CSV puts one apostrophe before it and reads back as it was | Tested | tests/properties/test_export_properties.py::test_csv_holds_every_cell | H |
 | F-110 | The same cells in an Excel download | Never a formula: stored as text | Tested | tests/properties/test_export_properties.py::test_excel_holds_every_value_and_no_formula | H |
+| F-122 | An audit log report over a day a lease offer or a drawn signature was saved | The audit report reads a binary field as its size, "(N bytes)", before and after an update; a PDF export cuts a cell at 48 lines and wraps only what could fill them, an Excel cell at 32,767 characters, each ending in "…"; the CSV keeps it whole | Tested | tests/test_audit_log.py::test_a_files_bytes_read_as_their_size_never_as_millions_of_characters; tests/test_exports.py::test_a_cell_of_millions_of_characters_is_cut_where_a_file_cant_hold_it | H |
 | F-128 | Logins' secrets, sessions and token hashes in records.zip, in a table or in the audit log's copies | Left out | Tested | tests/test_records_export.py::test_no_credential_comes_out | H |
 | F-129 | Two tenants of the same name at different properties, in the QuickBooks export | No two accounts share a PMS-made name: the oldest keeps the plain name, each after it adds its tenant's property, then a number; a name once given never changes | Tested | tests/properties/test_quickbooks_properties.py::test_no_two_accounts_share_a_pms_made_name_and_none_ever_changes; tests/test_quickbooks.py::test_two_people_of_one_name_never_share_a_quickbooks_account | H |
 | F-138 | An ACH file downloaded again | Byte for byte the file made when the run was paid; each download is logged. The bank pays twice if it is uploaded twice | Tested | tests/api/test_payouts_api.py::test_an_ach_file_taken_again_is_the_one_made_when_the_run_was_paid | H |
@@ -886,6 +885,7 @@ its ten most pressing, each with the test that would close it.
 | F-137 | Two ACH files for one bank on one day (two Pay owners runs) | Every file's File ID Modifier is "A", and banks commonly reject a second file with the same one as a duplicate | Open | src/pms/payouts/nacha.py:73; src/pms/api/payouts.py:686 | M |
 | F-141 | A long payee name or memo on a printed check | fpdf's cell doesn't clip, so the name runs past its 130 mm box into the amount figure | Open | src/pms/payouts/checks.py:124-127,135 | M |
 | F-146 | A PMS-made QuickBooks name longer than QuickBooks Desktop takes (a long tenant and property name, 31 characters a name part in Desktop) | The IIF line carries the whole name; whether Desktop refuses the file, cuts the name (two cut alike would share an account again) or takes it is NOT VERIFIED; nothing shortens it | Open | src/pms/quickbooks.py (accounts, part) | M |
+| F-148 | The audit log itself holds each lease offer's PDF and each drawn signature as hex in its row, and the everything export (records.zip) writes the log as CSV | Every offer adds up to 10 MB of text to the log forever, and records.zip carries it whole; the report reads it as a size now, the log and the export still hold it (whether to keep a file's hash instead is the founder's: the log keeps every row as written) | Open | db/schema.sql trust_audit (to_jsonb(NEW)); src/pms/exports.py records_zip | M |
 | F-096 | A line dated in a period month-end has closed | The books refuse it; it waits with their reason | Guarded | src/pms/api/payment_files.py:398-405 | M |
 | F-035 | A CSV Excel on Windows saved as Windows-1252, with "José O’Brien" | Read as Windows-1252; the letters survive | Tested | frontend/src/fileText.test.ts "reads a file Excel on Windows saved as CSV (Windows-1252) without losing its letters" | M |
 | F-036 | A file whose letters arrive as the replacement character | Refused whole with its line: "save the file as CSV UTF-8" | Tested | tests/api/test_switch.py::test_a_file_whose_letters_didnt_read_is_refused_with_its_line | M |
@@ -968,6 +968,7 @@ its ten most pressing, each with the test that would close it.
 | F-120 | A long name or a word with no spaces in a PDF cell | Wraps inside the word only when it must | Tested | tests/test_exports.py::test_a_cells_text_wraps_at_spaces_and_inside_a_word_only_when_it_must | L |
 | F-125 | Control characters (a bell) in an Excel cell | Read as "?" | Tested | tests/test_exports.py::test_excel_keeps_types_and_never_holds_a_formula | L |
 | F-135 | Accented letters in an ACH name ("Bö & Sons") | Become spaces: "B  & SONS, LTD." | Tested | tests/test_payout_files.py::test_an_ach_file_writes_names_in_capitals_with_its_own_characters_only | L |
+| F-149 | A PDF export of a table whose many columns leave one column a few points wide, holding long text | Each cell is cut at 48 lines ending in "…", so the row stays on its page; what is cut reads only in the CSV or Excel | Tested | tests/test_exports.py::test_a_cell_of_millions_of_characters_is_cut_where_a_file_cant_hold_it | L |
 
 ### Most pressing open, with the test that would close each
 

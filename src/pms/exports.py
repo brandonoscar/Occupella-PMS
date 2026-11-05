@@ -178,8 +178,10 @@ def to_xlsx(table: Table, generated: datetime) -> bytes:
 
 def _sheet_text(value: str) -> str:
     """Text as a spreadsheet can hold it: control characters XML can't carry become "?", and
-    line breaks are "\n" (XML would turn a carriage return into one when the file is read)."""
-    return ILLEGAL_CHARACTERS_RE.sub("?", value).replace("\r\n", "\n").replace("\r", "\n")
+    line breaks are "\n" (XML would turn a carriage return into one when the file is read), and
+    no more than a cell holds."""
+    value = ILLEGAL_CHARACTERS_RE.sub("?", value).replace("\r\n", "\n").replace("\r", "\n")
+    return value if len(value) <= SHEET_MOST else value[: SHEET_MOST - len(CUT)] + CUT
 
 
 def _naive_utc(moment: datetime) -> datetime:
@@ -219,7 +221,7 @@ def to_pdf(table: Table, generated: datetime) -> bytes:
     pdf.set_font(pdf_fonts.FAMILY, size=PDF_SIZE)
     for row in table.rows:
         cells = [
-            _wrap(pdf, pdf_fonts.printable(text(value)), width - 2 * PDF_PAD)
+            _cell_lines(pdf, text(value), width - 2 * PDF_PAD)
             for value, width in zip(row, widths, strict=True)
         ]
         if pdf.get_y() + _pdf_height(cells) > pdf.page_break_trigger:
@@ -235,6 +237,12 @@ def to_pdf(table: Table, generated: datetime) -> bytes:
 PDF_SIZE = 7
 PDF_LINE = 9
 PDF_PAD = 2
+# A row stays on one page: a cell is cut after this many lines, its last line "…" (an audit row
+# can carry a file's bytes as millions of characters: docs/edge-cases.md F-122).
+PDF_MOST_LINES = 48
+# An Excel cell holds 32,767 characters; a longer one is cut, its last "…". The CSV keeps all.
+SHEET_MOST = 32_767
+CUT = "…"
 
 
 def _pdf_height(cells: list[list[str]]) -> float:
@@ -255,9 +263,20 @@ def _pdf_row(pdf: FPDF, cells: list[list[str]], widths: list[float]) -> None:
     pdf.set_y(y + height)
 
 
-def _wrap(pdf: FPDF, value: str, width: float) -> list[str]:
+def _cell_lines(pdf: FPDF, value: str, width: float) -> list[str]:
+    """A cell's lines, cut after PDF_MOST_LINES. Only as much text is wrapped as could fill them
+    (a character is wider than half a point), so a cell of millions takes no longer than one."""
+    most = PDF_MOST_LINES * (int(width) + 1) * 2
+    lines = _wrap(pdf, pdf_fonts.printable(value[:most]), width, PDF_MOST_LINES)
+    if len(lines) > PDF_MOST_LINES or len(value) > most:
+        return lines[: PDF_MOST_LINES - 1] + [CUT]
+    return lines
+
+
+def _wrap(pdf: FPDF, value: str, width: float, most: int | None = None) -> list[str]:
     """A cell's text in lines no wider than `width` points in the current font: broken at
-    spaces where it can and inside a word where it must, its own line breaks kept."""
+    spaces where it can and inside a word where it must, its own line breaks kept; past `most`
+    lines, if given, the rest is left unwrapped."""
     font, size = pdf.current_font, pdf.font_size_pt
     assert font is not None  # to_pdf sets the font before any text
 
@@ -277,13 +296,19 @@ def _wrap(pdf: FPDF, value: str, width: float) -> list[str]:
             if line:
                 lines.append(line)
             while needs > width:
-                fits = 1
-                while fits < len(word) and wide(word[: fits + 1]) <= width:
-                    fits += 1
+                if most is not None and len(lines) > most:
+                    return lines
+                # The longest start of the word that fits (at least a character), by halves.
+                fits, over = 1, len(word)
+                while over - fits > 1:
+                    middle = (fits + over) // 2
+                    fits, over = (middle, over) if wide(word[:middle]) <= width else (fits, middle)
                 lines.append(word[:fits])
                 word = word[fits:]
                 needs = wide(word)
             line, room = word, needs
+            if most is not None and len(lines) > most:
+                return lines
         lines.append(line)
     return lines
 

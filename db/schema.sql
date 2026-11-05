@@ -8422,8 +8422,19 @@ BEGIN
                    -- An update: each field it changed, from what to what.
                    WHEN a.action = 'update' THEN (
                        SELECT coalesce(string_agg(
-                           n.key || ': ' || coalesce(a.before ->> n.key, 'null') || ' to '
-                           || coalesce(n.value #>> '{}', 'null'),
+                           n.key || ': ' || CASE WHEN EXISTS (
+                               SELECT att.attnum FROM pg_attribute AS att
+                               WHERE att.attrelid = to_regclass(a.table_name)
+                                 AND att.attname = n.key AND att.atttypid = 'bytea'::regtype
+                           )
+                               -- A file's bytes, as hex: its size before and after.
+                               THEN coalesce('(' || (length(a.before ->> n.key) - 2) / 2
+                                       || ' bytes)', 'null')
+                                   || ' to ' || coalesce('(' || (length(n.value #>> '{}') - 2) / 2
+                                       || ' bytes)', 'null')
+                               ELSE coalesce(a.before ->> n.key, 'null') || ' to '
+                                   || coalesce(n.value #>> '{}', 'null')
+                           END,
                            ', ' ORDER BY n.key COLLATE "C"
                        ), 'no change')
                        FROM jsonb_each(a.row_data) AS n
@@ -8433,7 +8444,16 @@ BEGIN
                    -- (the log's own time says when).
                    ELSE (
                        SELECT string_agg(
-                           n.key || ': ' || n.value, ', ' ORDER BY n.key COLLATE "C"
+                           n.key || ': ' || CASE WHEN EXISTS (
+                               SELECT att.attnum FROM pg_attribute AS att
+                               WHERE att.attrelid = to_regclass(a.table_name)
+                                 AND att.attname = n.key AND att.atttypid = 'bytea'::regtype
+                           )
+                               -- A file's bytes, as hex ("\\x2550..."): their size.
+                               THEN '(' || (length(n.value) - 2) / 2 || ' bytes)'
+                               ELSE n.value
+                           END,
+                           ', ' ORDER BY n.key COLLATE "C"
                        )
                        FROM jsonb_each_text(a.row_data) AS n
                        WHERE n.value IS NOT NULL AND n.key <> 'id' AND n.key NOT LIKE '%\_id'
@@ -35681,4 +35701,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261105000500'),
     ('20261105000600'),
     ('20261105000700'),
-    ('20261105000800');
+    ('20261105000800'),
+    ('20261105000900');

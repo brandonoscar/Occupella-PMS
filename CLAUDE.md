@@ -97,7 +97,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   except through the `trust_*` write paths.
 - Exports: `src/pms/exports.py` turns any `trust_report_*` (named through the catalog, run
   under the caller's role) into CSV, Excel or PDF, and a PMC's ledger into a zip of CSV.
-  Text a spreadsheet would run as a formula is never a formula. A download, Reports on screen
+  Text a spreadsheet would run as a formula is never a formula, and a cell a file can't hold is
+  cut, ending in "…" (a PDF's at 48 lines, an Excel cell's at 32,767 characters; the CSV keeps
+  it whole); the audit report reads a file's bytes as their size (migration 20261105000900). A download, Reports on screen
   and the general ledger page read in plain words from one word list (`src/pms/wording.py`,
   founder 2026-10-26): "Owner: ..." for `owner_property: ...`, "Company" for "PMC", days as
   MM/DD/YYYY, columns as headings. The report functions, their golden cases, what the portals

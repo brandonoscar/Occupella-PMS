@@ -77,6 +77,11 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   are all positive, with a column saying Debit or Credit (Type, Transaction type, Dr/Cr), went in
   with every check and fee as a deposit. Each line's way now comes from that column; a type saying
   neither is refused with its line, and a bank that signs its amounts keeps its signs.
+- **Fixed: the audit log report over a day a lease was offered never finished as a PDF.** The log
+  keeps each row as written, so a lease offer's PDF read as millions of characters in one cell.
+  The report now shows a file's bytes as their size ("(5000000 bytes)"), and a PDF export cuts a
+  cell at a page's lines and an Excel export at the 32,767 characters a cell holds, each ending
+  in "…"; the CSV keeps everything. Migration `20261105000900`.
 - **Fixed: two tenants of one name shared a QuickBooks account.** The QuickBooks export named a
   tenant's prepaid rent and deposits by their name alone, so two Pat Samples (or two vendors of
   one name) posted to one account. The oldest keeps the plain name; each after it adds its
