@@ -89,3 +89,28 @@ def test_a_server_with_the_nightly_run_off_says_so_at_start(database_url, caplog
     with TestClient(create_app(on)):
         pass
     assert not [r for r in caplog.records if r.name == "pms.api"]
+
+
+def test_the_server_starts_and_stops_the_webhook_courier(database_url, monkeypatch):
+    """PMS_WEBHOOKS on (the default): the API runs the courier while it serves (pms.webhooks)."""
+    from fastapi.testclient import TestClient
+
+    from pms.api import create_app
+
+    seen = []
+
+    class Courier:
+        def __init__(self, url, role):
+            seen.append(("made", role))
+
+        def start(self):
+            seen.append("started")
+
+        def stop(self):
+            seen.append("stopped")
+
+    monkeypatch.setattr("pms.webhooks.Courier", Courier)
+    on = Settings(database_url=database_url, cookie_secure=False, webhooks=True)
+    with TestClient(create_app(on)):
+        assert seen == [("made", "trust_app"), "started"]
+    assert seen[-1] == "stopped"

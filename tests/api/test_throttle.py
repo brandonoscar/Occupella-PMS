@@ -34,6 +34,16 @@ def test_an_address_waits_once_it_hits_the_limit_until_its_oldest_leaves_the_win
     assert limiter.wait("198.51.100.7") is None
 
 
+def test_an_address_whose_hits_all_left_the_window_is_forgotten():
+    clock = Clock()
+    limiter = throttle.Limiter(1, 60.0, clock)
+    limiter.hit("198.51.100.9")
+    assert limiter.wait("198.51.100.9") is not None
+    clock.now += 61
+    assert limiter.wait("198.51.100.9") is None
+    assert "198.51.100.9" not in limiter._seen  # nothing kept of it
+
+
 def test_it_forgets_the_address_heard_from_longest_ago(monkeypatch):
     monkeypatch.setattr(throttle, "REMEMBERED", 2)
     limiter = throttle.Limiter(1, 60.0, Clock())

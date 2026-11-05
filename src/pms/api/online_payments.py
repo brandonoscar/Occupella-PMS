@@ -920,14 +920,9 @@ def waiting(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Waiting]:
             continue
         paid_on = day_of(conn, pmc_id, paid_at)
         choices = owner_choices(conn, row, paid_on) if items == [("payment", None)] else []
-        try:
-            bank = bank_of(conn, row, paid_on)
-        except HTTPException:
-            if not choices:
-                raise
-            # Its owners' accounts in more than one trust bank account (P-163): listed in the
-            # first choice's until staff choose.
-            bank = bank_of(conn, row, paid_on, choices[0].account_id)
+        # Waiting for staff to choose whose it is: listed in the first choice's trust bank account
+        # (its owners' accounts may sit in more than one, P-163).
+        bank = bank_of(conn, row, paid_on, choices[0].account_id if choices else None)
         holds = rent.cents(held(conn, company_account(conn, pmc_id, bank)))
         memo = rent.lease_memo(conn, row.lease_id)
         found += [

@@ -177,6 +177,11 @@ def test_an_admin_adds_a_webhook_sees_its_secret_once_and_takes_it_back(
     assert made["secret"].encode() not in bytes(sealed)
 
     ok(client.post(f"/api/ai/webhooks/{made['id']}/revoke", json={}), 204)
+    refused(
+        client.post(f"/api/ai/webhooks/{made['id']}/revoke", json={}),
+        409,
+        "this webhook was taken back already",
+    )
     assert ok(client.get("/api/ai/webhooks"))[0]["revoked_at"] is not None
     refused(
         client.post(f"/api/ai/webhooks/{made['id']}/revoke", json={}),

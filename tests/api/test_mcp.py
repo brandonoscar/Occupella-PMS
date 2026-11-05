@@ -288,3 +288,30 @@ def test_a_tool_that_breaks_tells_the_client_nothing_of_why(settings, key, monke
         )
     assert answer.status_code == 500
     assert "internal detail" not in answer.text
+
+
+def test_a_tool_asked_wrongly_says_how_to_ask(software, key, monkeypatch):
+    refused = tool(software, key, "run_report", name="rent_roll", args="2026-11-05")
+    assert refused["isError"] is True
+    assert refused["content"][0]["text"] == (
+        "args is a list of text, one for each of the report's arguments"
+    )
+    # An event id that is none of this company's.
+    refused = tool(software, key, "recent_events", after=2_000_000_000)
+    assert refused["content"][0]["text"] == "after names no event of this company"
+    # Params that are no object.
+    assert rpc(software, key, "ping", params=[1])["error"] == {
+        "code": -32602,
+        "message": "params are an object",
+    }
+    # A report the key's role may not run says so, never the database's words.
+    import psycopg
+
+    from pms import exports
+
+    def refuse(conn, name, args):
+        raise psycopg.errors.InsufficientPrivilege("permission denied for table trust_secret")
+
+    monkeypatch.setattr(exports, "run_report", refuse)
+    refused = tool(software, key, "run_report", name="rent_roll", args=["2026-11-05"])
+    assert refused["content"][0]["text"] == "this key may not run the rent_roll report"

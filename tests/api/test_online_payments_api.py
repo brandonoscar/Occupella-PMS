@@ -24,6 +24,7 @@ from helpers import (
     import_statement,
     open_account,
     open_lease,
+    set_ownership,
     staff_named,
 )
 from people import join_as_staff, join_as_tenant, tenant_of
@@ -521,11 +522,42 @@ def test_a_payment_paid_after_a_second_owner_account_waits_for_staff_to_choose_o
         client.post(f"/api/payments/{payment}/record", json={"account": pmc.owners[1].account}),
         404,
     )
+    # An account that is no owner's is no choice at all.
+    refused(
+        client.post(f"/api/payments/{payment}/record", json={"account": pmc.operating_cash}),
+        404,
+        "no such owner account for this lease's property",
+    )
     before = balance(conn, second)
     ok(client.post(f"/api/payments/{payment}/record", json={"account": second}), 204)
     assert f"payment/{payment}" in keys(conn, pmc)
     assert balance(conn, second) == before + Decimal("300.00")
     assert "payment" not in [w["what"] for w in ok(client.get("/api/payments/waiting"))]
+
+
+def test_owners_in_shares_leave_no_choice_to_staff(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    """Two owner accounts in shares: a payment paid during a hold waits for staff to accept it,
+    and splits by the shares, so nobody chooses whose it is."""
+    turn_on(client)
+    second = second_owner_account(conn, pmc)
+    set_ownership(
+        conn,
+        pmc.pmc_id,
+        pmc.owners[0].property_id,
+        TODAY - 30 * DAY,
+        [(pmc.owners[0].account, "50"), (second, "50")],
+    )
+    payment = pay(tenant_client, lease, "300.00")["id"]
+    conn.execute(
+        "INSERT INTO trust_payment_holds (pmc_id, lease_id, starts_on, reason)"
+        " VALUES (%s, %s, %s, 'filed')",
+        (pmc.pmc_id, lease, TODAY - DAY),
+    )
+    bank_says(tenant_client, payment, "paid")
+    (waiting,) = ok(client.get("/api/payments/waiting"))
+    assert (waiting["what"], waiting["choose_account"]) == ("payment", [])
 
 
 def test_owner_accounts_in_two_trust_bank_accounts_still_list_the_payment(

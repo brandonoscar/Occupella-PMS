@@ -308,3 +308,236 @@ def test_public_rejects_every_inside_range():
     for inside in ("10.0.0.1", "172.16.0.1", "192.168.0.1", "127.0.0.1", "169.254.1.1", "::1"):
         assert not webhooks.public(ipaddress.ip_address(inside))
     assert webhooks.public(ipaddress.ip_address("93.184.215.14"))
+
+
+def test_an_address_over_500_characters_is_refused():
+    with pytest.raises(webhooks.Refused, match="at most 500 characters"):
+        webhooks.parts_of("https://hooks.example.com/" + "a" * 500)
+
+
+def test_a_host_that_resolves_to_nothing_is_refused():
+    with pytest.raises(webhooks.Refused, match="doesn't resolve"):
+        webhooks.addresses_of("hooks.example.com", 443, lambda host, port, **kind: [])
+
+
+# --- the post itself: HTTPS to the address checked, the certificate checked against the name ---
+
+
+def certificate_for(directory, name):
+    """A throwaway certificate authority and a certificate it signs for `name`: the CA's file and
+    the server's certificate and key files."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    def made(subject, issuer, key, signer, extensions):
+        now = datetime.now(UTC)
+        builder = (
+            x509.CertificateBuilder()
+            .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, subject)]))
+            .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, issuer)]))
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(minutes=5))
+            .not_valid_after(now + timedelta(hours=1))
+        )
+        for extension, critical in extensions:
+            builder = builder.add_extension(extension, critical=critical)
+        return builder.sign(signer, hashes.SHA256())
+
+    ca_key = ec.generate_private_key(ec.SECP256R1())
+    ca = made(
+        "Synthetic test CA",
+        "Synthetic test CA",
+        ca_key,
+        ca_key,
+        [(x509.BasicConstraints(ca=True, path_length=None), True)],
+    )
+    server_key = ec.generate_private_key(ec.SECP256R1())
+    server = made(
+        name,
+        "Synthetic test CA",
+        server_key,
+        ca_key,
+        [(x509.SubjectAlternativeName([x509.DNSName(name)]), False)],
+    )
+    files = {}
+    for label, data in (
+        ("ca.pem", ca.public_bytes(serialization.Encoding.PEM)),
+        ("server.pem", server.public_bytes(serialization.Encoding.PEM)),
+        (
+            "server.key",
+            server_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            ),
+        ),
+    ):
+        path = directory / label
+        path.write_bytes(data)
+        files[label] = str(path)
+    return files
+
+
+@pytest.fixture
+def receiver(tmp_path, monkeypatch):
+    """An HTTPS receiver on 127.0.0.1 whose certificate names hooks.example.com, signed by a CA
+    the post is made to trust; the loopback address passed as public for this test alone."""
+    import http.server
+    import ssl
+    import threading
+
+    files = certificate_for(tmp_path, "hooks.example.com")
+    got = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers["Content-Length"])
+            got.append((self.path, self.headers["Host"], self.rfile.read(length)))
+            self.send_response(202)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    serving = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    serving.load_cert_chain(files["server.pem"], files["server.key"])
+    server.socket = serving.wrap_socket(server.socket, server_side=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    trusting = ssl.create_default_context(cafile=files["ca.pem"])
+    monkeypatch.setattr(webhooks.ssl, "create_default_context", lambda: trusting)
+    monkeypatch.setattr(webhooks, "public", lambda address: True)
+    port = server.server_address[1]
+
+    def resolve(host, port_asked, **kind):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))]
+
+    try:
+        yield port, resolve, got
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_post_goes_over_https_to_the_address_checked_by_its_name(receiver):
+    port, resolve, got = receiver
+    status = webhooks.post(
+        f"https://hooks.example.com:{port}/occupella?team=1",
+        b'{"id":1}',
+        {"Content-Type": "application/json"},
+        resolve,
+    )
+    assert status == 202
+    assert got == [("/occupella?team=1", f"hooks.example.com:{port}", b'{"id":1}')]
+
+
+def test_a_post_to_a_name_its_certificate_doesnt_carry_is_refused(receiver):
+    """The connection goes to the address checked, but the certificate is checked against the
+    host's name: one for another name fails before anything is sent."""
+    import ssl
+
+    port, resolve, got = receiver
+    with pytest.raises(ssl.SSLCertVerificationError):
+        webhooks.post(f"https://other.example.com:{port}/x", b"{}", {}, resolve)
+    assert got == []
+
+
+# --- what a delivery records ----------------------------------------------------------------
+
+
+def test_an_event_another_process_is_sending_is_left_to_it(conn, app_conn, pmc, key, database_url):
+    sub = webhook(conn, pmc, key)
+    opened(conn, pmc)
+    ((event, _, _),) = events_of(conn, pmc)
+    with psycopg.connect(database_url, autocommit=True) as other:
+        other.execute(
+            "SELECT pg_advisory_lock(hashtextextended(%s, 0))",
+            (f"trust_event_delivery:{sub}:{event}",),
+        )
+        sent = Receiver()
+        assert webhooks.deliver_pending(app_conn, key, sent) == 0
+    assert sent.got == []
+    assert deliveries(conn, sub) == []
+
+
+def test_a_status_no_receiver_answers_is_a_failed_attempt(conn, app_conn, pmc, key):
+    ours = "https://hooks.example.com/answers-42"
+    sub = webhook(conn, pmc, key, url=ours)
+    opened(conn, pmc)
+    webhooks.deliver_pending(app_conn, key, lambda url, body, headers: 42 if url == ours else 200)
+    assert deliveries(conn, sub)[0][1:] == (None, "the receiver answered 42")
+
+
+def test_a_sender_that_fails_strangely_is_recorded_and_logged(conn, app_conn, pmc, key, caplog):
+    ours = "https://hooks.example.com/fails-oddly"
+    sub = webhook(conn, pmc, key, url=ours)
+    opened(conn, pmc)
+
+    def send(url, body, headers):
+        if url == ours:
+            raise ValueError("odd")
+        return 200
+
+    webhooks.deliver_pending(app_conn, key, send)
+    assert deliveries(conn, sub)[0][1:] == (None, "ValueError: odd")
+    assert any("could not be sent" in r.getMessage() for r in caplog.records)
+
+
+# --- the courier and the command -------------------------------------------------------------
+
+
+def test_the_courier_sends_nothing_without_a_data_key(monkeypatch, database_url):
+    monkeypatch.delenv("PMS_DATA_KEY", raising=False)
+    assert webhooks.Courier(database_url, "trust_app").once() == 0
+
+
+def test_the_courier_delivers_what_waits_as_the_app(conn, pmc, key, database_url, monkeypatch):
+    webhook(conn, pmc, key)
+    opened(conn, pmc)
+    sent = Receiver()
+    monkeypatch.setattr(webhooks, "post", sent)
+    assert webhooks.Courier(database_url, "trust_app").once() >= 1
+    assert any(json.loads(body)["company"] == str(pmc.pmc_id) for _, body, _ in sent.got)
+
+
+def test_the_courier_looks_again_after_a_look_that_failed(database_url, monkeypatch, caplog):
+    import threading
+
+    looked = threading.Event()
+    tries = []
+
+    def once(self):
+        tries.append(1)
+        if len(tries) == 1:
+            raise RuntimeError("the database was away")
+        looked.set()
+        return 0
+
+    monkeypatch.setattr(webhooks.Courier, "once", once)
+    courier = webhooks.Courier(database_url, "trust_app", interval=0.01)
+    courier.start()
+    try:
+        assert looked.wait(5)
+    finally:
+        courier.stop()
+    assert any("delivering what waits failed" in r.getMessage() for r in caplog.records)
+
+
+def test_the_command_delivers_what_waits(conn, pmc, key, database_url, monkeypatch, capsys):
+    webhook(conn, pmc, key)
+    opened(conn, pmc)
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    monkeypatch.setattr(webhooks, "post", Receiver())
+    assert webhooks.main(["deliver"]) == 0
+    assert capsys.readouterr().out.startswith("delivered ")
+
+
+def test_the_command_says_so_without_a_data_key(monkeypatch, capsys):
+    monkeypatch.delenv("PMS_DATA_KEY", raising=False)
+    assert webhooks.main(["deliver"]) == 1
+    assert capsys.readouterr().err.strip()

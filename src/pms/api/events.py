@@ -174,20 +174,16 @@ def add_webhook(session: Admin, conn: Conn, new: NewWebhook) -> MadeWebhook:
 def revoke_webhook(session: Admin, conn: Conn, subscription_id: UUID) -> None:
     """Takes the webhook back: nothing more is sent to it."""
     found = conn.execute(
-        "SELECT EXISTS (SELECT 1 FROM trust_event_subscription_revocations AS r"
-        "   WHERE r.subscription_id = s.id)"
-        " FROM trust_event_subscriptions AS s WHERE s.pmc_id = %s AND s.id = %s",
+        "SELECT 1 FROM trust_event_subscriptions WHERE pmc_id = %s AND id = %s",
         (session.pmc_id, subscription_id),
     ).fetchone()
     if found is None:
         raise HTTPException(404, "no such webhook")
-    if found[0]:
+    # Once: a second take-back, or two at once, writes nothing more.
+    taken = conn.execute(
+        "INSERT INTO trust_event_subscription_revocations (subscription_id, pmc_id)"
+        " VALUES (%s, %s) ON CONFLICT (subscription_id) DO NOTHING RETURNING subscription_id",
+        (subscription_id, session.pmc_id),
+    ).fetchone()
+    if taken is None:
         raise HTTPException(409, "this webhook was taken back already")
-    try:
-        conn.execute(
-            "INSERT INTO trust_event_subscription_revocations (subscription_id, pmc_id)"
-            " VALUES (%s, %s)",
-            (subscription_id, session.pmc_id),
-        )
-    except psycopg.errors.UniqueViolation:
-        raise HTTPException(409, "this webhook was taken back already") from None

@@ -40,3 +40,30 @@ def test_the_largest_file_the_pms_takes_still_fits(client):
         "/api/documents", content=body, headers={"Content-Type": "application/json"}
     )
     assert answer.status_code == 401
+
+
+def test_a_client_that_goes_away_mid_request_is_not_answered_413():
+    """A client gone before its body was whole, under the limit: the app's ClientDisconnect
+    stands (the server drops it), never turned into a 413 for a body that wasn't too large."""
+    import asyncio
+
+    import pytest
+    from starlette.requests import ClientDisconnect
+
+    async def app(scope, receive, send):
+        await receive()
+        raise ClientDisconnect()
+
+    sent = []
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        sent.append(message)
+
+    limited = app_module.BodyLimit(app)
+    scope = {"type": "http", "method": "POST", "path": "/api/notes", "headers": []}
+    with pytest.raises(ClientDisconnect):
+        asyncio.run(limited(scope, receive, send))
+    assert sent == []

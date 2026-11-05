@@ -378,9 +378,7 @@ def name_of(conn: psycopg.Connection[Any], pmc_id: UUID, about: str, record: UUI
         return Named(about=about, id=record, name=row[0] if row else str(record))
     if about == "lease":
         found = conn.execute(LEASE, (pmc_id, record)).fetchone()
-        if found is None:
-            return Named(about=about, id=record, name=str(record))
-        home, tenants = found
+        home, tenants = found if found is not None else (str(record), [])
         return Named(
             about=about, id=record, name=f"{home} ({', '.join(tenants)})" if tenants else home
         )
