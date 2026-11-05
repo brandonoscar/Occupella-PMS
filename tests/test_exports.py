@@ -174,6 +174,24 @@ def test_a_role_without_the_report_is_refused(conn):
         conn.execute(f"DROP ROLE {role}")
 
 
+def test_a_report_runs_from_the_schema_the_catalog_found_it_in(conn):
+    """run_report finds the report in public's catalog, so it calls that one: a function of the
+    same name and arguments earlier on the search_path (a schema named for the role, "$user",
+    comes first by default) never runs in its place."""
+    shadow = f"pms_shadow_{uuid.uuid4().hex[:8]}"
+    with conn.transaction(force_rollback=True):
+        conn.execute(f"CREATE SCHEMA {shadow}")
+        conn.execute(
+            f"CREATE FUNCTION {shadow}.trust_report_vendor_payments(uuid, integer)"
+            " RETURNS TABLE (shadow text) LANGUAGE sql AS $$ SELECT 'not the report' $$"
+        )
+        conn.execute(f"SET LOCAL search_path = {shadow}, public")
+
+        # The report refuses a company it doesn't know; the shadow would have answered a row.
+        with pytest.raises(psycopg.errors.InvalidParameterValue, match="no PMC"):
+            exports.run_report(conn, "trust_report_vendor_payments", [uuid.uuid4(), 2026])
+
+
 def test_an_unknown_format_is_refused():
     with pytest.raises(exports.ExportError, match="no export format 'docx'"):
         exports.export(exports.Table("t", ("a",), ()), "docx")
