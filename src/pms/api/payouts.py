@@ -626,6 +626,10 @@ def take_file(
 ) -> RunShown:
     """The run, once staff who may pay out money ask for its file; logs who took it. A file
     taken before is given again only when asked for `again`."""
+    # Two takes at once wait for each other, so the second sees the first (C-143).
+    conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"payout-file:{run_id}",)
+    )
     found = runs_of(conn, session.pmc_id, run=run_id)
     if not found:
         raise HTTPException(404, "no such payout run")

@@ -8,14 +8,21 @@ import base64
 import io
 import json
 import os
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
+from uuid import UUID
 
+import psycopg
 import pytest
+from fastapi import HTTPException
 from helpers import add_agreement, post
 from people import join_as_owner, join_as_staff
 from pypdf import PdfReader
+
+from pms.api import payouts
 
 NOW = datetime.now(UTC)
 TODAY = NOW.date()
@@ -415,6 +422,42 @@ def test_an_ach_file_taken_already_is_given_again_only_when_asked_for_again(
     refused(client.get(f"/api/payouts/runs/{run}/ach?again=maybe"), 422)
     assert client.get(f"/api/payouts/runs/{run}/ach?again=true").content == first.content
     assert ok(client.get("/api/payouts/runs?kind=owners"))[0]["downloads"] == 2
+
+
+@pytest.mark.timing
+def test_two_first_takes_at_once_give_the_ach_file_once(client, conn, staff, pmc, database_url):
+    """docs/edge-cases.md C-143: two staff asking for a run's ACH file at the same moment each
+    read no take yet, so both got it without the question a second take asks."""
+    fund(conn, pmc, "500.00")
+    ach_details(client, pmc)
+    owner_bank(client, pmc)
+    run = UUID(ok(pay_owners(client, pmc, "EFT"), 201)[0]["run_id"])
+    session = SimpleNamespace(pmc_id=pmc.pmc_id, person_id=staff.person_id)
+    outcome: list[object] = []
+
+    with psycopg.connect(database_url) as first, psycopg.connect(database_url) as second:
+        for each in (first, second):
+            each.execute("SET ROLE trust_app")
+            each.execute("SELECT set_config('trust.staff_id', %s, false)", (str(staff.person_id),))
+            each.commit()
+        payouts.take_file(first, session, run, "EFT", again=False)  # not committed yet
+
+        def take_too() -> None:
+            try:
+                payouts.take_file(second, session, run, "EFT", again=False)
+                outcome.append("taken")
+            except HTTPException as refused:
+                outcome.append(refused.status_code)
+            second.rollback()
+
+        other = threading.Thread(target=take_too)
+        other.start()
+        other.join(1)
+        assert other.is_alive()  # it waits for the first take
+        first.commit()
+        other.join(10)
+
+    assert outcome == [409]
 
 
 def test_owners_paid_by_check_get_their_checks_numbered_on(client, conn, staff, pmc):

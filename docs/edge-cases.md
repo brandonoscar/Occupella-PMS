@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1152 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1155 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -27,13 +27,13 @@ answer in the portal for everything that can fail.
 |---|---|---|---|---|---|
 | [Money and the ledger](#money-and-the-ledger) | 151 | 113 | 7 | 31 | 4 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 160 | 82 | 15 | 63 | 14 |
-| [Concurrency and retries](#concurrency-and-retries) | 142 | 64 | 30 | 48 | 1 |
+| [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 69 | 8 | 88 | 22 |
-| [Bad files and imports](#bad-files-and-imports) | 151 | 64 | 16 | 71 | 3 |
+| [Bad files and imports](#bad-files-and-imports) | 152 | 64 | 16 | 72 | 3 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 170 | 73 | 14 | 83 | 5 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 171 | 73 | 14 | 84 | 5 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1152** | **592** | **110** | **450** | **55** |
+| **All** | **1155** | **593** | **110** | **452** | **55** |
 
 ## Open, high risk: the work list
 
@@ -582,6 +582,7 @@ its ten most pressing, each with the test that would close it.
 | C-125 | A decision while a withdrawal is on its way | Refused in words | Tested | `tests/api/test_leasing.py::test_a_decision_made_while_a_withdrawal_was_on_its_way_refuses_it_in_words` | M |
 | C-139 | Two admins take each other's admin role at once | One stays an admin | Tested | `tests/test_staff_roles.py::test_two_admins_taking_each_others_role_leave_one` | M |
 | C-140 | Two brokers named for one trust bank account at once | The second waits and is refused | Tested | `tests/test_trust_account_signers.py::test_two_brokers_named_at_once_the_second_waits_and_is_refused` | M |
+| C-143 | Two staff press Download the ACH file of a run never taken, at the same moment | A take locks the run (an advisory lock on payout-file:<run>) before it reads the takes, so two at once wait for each other and the second is refused as taken already | Tested | tests/api/test_payouts_api.py::test_two_first_takes_at_once_give_the_ach_file_once | M |
 | C-015 | Ownership shares change while a payment waits for the lease lock | Owners and shares were read before the lock; the payment splits by the old shares | Open | src/pms/api/rent.py:469 (owners_of before lock_lease) | L |
 | C-033 | A history file submitted twice at once | Read check then insert; the unique key stops the second as a 500 | Open | src/pms/api/switching.py:621 | L |
 | C-037 | A bill payment resent with the same request id but a new amount | The first payment comes back as success with no comparison; staff believe the new amount was paid | Open | src/pms/api/payables.py:1271 | L |
@@ -922,6 +923,7 @@ its ten most pressing, each with the test that would close it.
 | F-145 | A year of general ledger or audit log as a PDF for a 1,000-unit company | Built in memory in the request. tools/speed.py times a month's PDFs only (10 s p95 ceiling), never a year's. NOT VERIFIED | Open | src/pms/exports.py:197-231; ci/thresholds.toml [speed] | L |
 | F-147 | Staff give an account exactly the name the PMS made for another account | Both post to one QuickBooks account; a company that keeps one account for both does this on purpose, so nothing refuses it or warns | Open | src/pms/quickbooks.py (accounts: defaults avoid each other, not staff's names) | L |
 | F-151 | The everything export of a company with gigabytes of files, on a server whose temporary directory is small | The zip is written to a temporary file before it is sent: a full disk there fails the download rather than the process running out of memory (what the answer says then is NOT VERIFIED: likely a server error, not deps.DISK_FULL); nothing is kept after | Open | src/pms/api/app.py (records); tempfile.TemporaryFile | L |
+| F-152 | The audit log report as a PDF over a busy month (tens of thousands of changes) | Each row is drawn at up to 48 lines a cell, a page at a time; how long a month of a 1,000-unit company takes is not measured (tools/speed.py times other reports) | Open | src/pms/exports.py (to_pdf); tools/speed.py | L |
 | F-003 | An iPhone HEIC photo renamed .jpg | Its first bytes aren't JPEG's, so it is refused with "the file isn't a JPG", which doesn't say it is HEIC | Guarded | src/pms/api/documents.py:368 | L |
 | F-006 | A file of exactly 5 MiB (5,242,880 bytes) | Accepted: its base64 is 6,990,508 characters, under 7,000,000. Only the over-limit side has a test | Guarded | src/pms/api/documents.py:58,335,366 | L |
 | F-020 | A password-protected receipt PDF | pypdf's FileNotDecryptedError is a PyPdfError, so the statement prints the could-not-be-added page | Guarded | src/pms/deposit_statement.py:184-188 | L |
@@ -1262,6 +1264,7 @@ its ten most pressing, each with the test that would close it.
 | H-160 | The docs of the nightly's time | .env.example and app.py's Settings still say 06:00 UTC; it runs just after each company's midnight | Open | .env.example (PMS_NIGHTLY); src/pms/api/app.py Settings.nightly comment | L |
 | H-169 | A self-hosted company adds a migration of its own to the database (an index, a view) | The PMS refuses it as "migrated by a newer PMS" and answers busy until the version is removed from schema_migrations or the file ships in db/migrations; nothing lets an operator mark a migration as theirs | Open | src/pms/schema.py (check: any version the code lacks) | L |
 | H-170 | The app starts with the migrations not yet applied (the migrate service failed, or was skipped) | Each pooled connection is refused with "lacks this PMS's migration ...", so every request waits 30 s and answers busy; the log says why, the page does not | Open | src/pms/api/app.py (configure); src/pms/schema.py | L |
+| H-171 | The API runs as several processes (uvicorn workers, or several app containers) | Delivery and autopay's submissions are one at a time per process, so each process may hold one pooled connection on a hung mail server or partner at once; with ten connections a process the pool still answers, but the database's own connection limit is shared by all of them | Open | src/pms/api/outbox.py (OneAtATime, per process) | L |
 | H-034 | The backup time comes before a Pacific or Hawaii company's night | Docs say to set PMS_BACKUP_AT=11:00; a server with companies in several zones has one time for all | Guarded | docs/install.md "Every day: backups"; compose.selfhost.yaml:79 | L |
 | H-039 | A restore with Postgres 17 client tools | Refused unless pg_dump, pg_restore and psql are 16 | Guarded | scripts/backup.sh:24-33 | L |
 | H-040 | A backup taken on an older release restored under a newer one | Step 5 of the restore applies the newer release's migrations | Guarded | docs/backup.md "Getting the books back" step 5 | L |

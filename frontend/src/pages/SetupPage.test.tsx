@@ -36,12 +36,21 @@ const FULL: Company = {
   time_zone: "America/Los_Angeles", time_zones: ZONES,
 };
 
+// The Stripe keys card's answer (PaymentKeysCard): the server's partner, no keys of its own.
+const KEYS = {
+  using: "server", server_partner: "fake", mode: null, ends_in: null,
+  webhook_url: "http://localhost:8000/api/payments/webhook/stripe/c1",
+  webhook_events: ["checkout.session.async_payment_succeeded"], changed_at: null, changed_by: null,
+  can_keep: true, may_change: true,
+};
+
 function server(company: Company, refuse = "") {
-  const fetch = vi.fn(async (_path: string, init?: RequestInit) => {
+  const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method === "POST") {
       if (refuse) return new Response(JSON.stringify({ detail: refuse }), { status: 422 });
       return new Response(JSON.stringify(company), { status: 200 });
     }
+    if (path === "/api/payments/keys") return new Response(JSON.stringify(KEYS), { status: 200 });
     return new Response(JSON.stringify(company), { status: 200 });
   });
   vi.stubGlobal("fetch", fetch);

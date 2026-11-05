@@ -108,7 +108,8 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
 - **Fixed: an ACH file could be taken twice without a question.** A bank pays every file it is
   given, so one uploaded twice pays everyone in it twice. Once a run's ACH file was taken, the
   Payout files list offers Download again, which asks first, and the API gives it again only when
-  asked again. Checks still print as often as needed.
+  asked again; two first takes at the same moment wait for each other, so the second is asked
+  too. Checks still print as often as needed.
 - **Fixed: a lease entered on the evening of its last day never went month to month.** Whether a
   lease was entered while its term ran read the day it was entered in UTC, so one entered after
   8 pm in New York on its last day counted as entered after its end, and its rent stopped. It is
