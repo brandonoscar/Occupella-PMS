@@ -70,6 +70,10 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   the owners to choose among (Record it, naming whose), a lease at such a property takes no
   payment online (the tenant sees the company's How to pay us), and the card says when the list
   couldn't load instead of showing nothing.
+- **The Dashboard says when rent stopped posting.** When no rent run (the nightly one, or an
+  admin's Run rent now) ran in two days while the company has leases, because the nightly run
+  failed every night, its thread died or it was off, Needs attention says so first, with the last
+  day rent posted, so it is no longer only in the server's log.
 - **Fixed: rent charged twice in a month.** Run rent now with Rent due on set to a day other than
   the first (the 15th, say) charged every lease due on the first a second month's rent and each
   monthly charge a second time, and a rent the old system's unpaid charges carried over on another

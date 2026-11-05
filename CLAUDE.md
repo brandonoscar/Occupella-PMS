@@ -255,7 +255,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   groups their pages as Buildium does. They open on the Dashboard at `/`: until the company is ready to go live, Getting started (`src/pms/api/go_live.py`, `GET /api/go-live`: each step worked out from its own records; `pages/GoLiveCard.tsx`), then the company's figures
   (`src/pms/api/dashboard.py`, each counted by its report, each beside the same day a month
   before; ADR 0010) and what needs attention (`src/pms/api/today.py`: read only, each part the work
-  page's own answer; one list, the longest overdue first, each row with its action). Rentals
+  page's own answer; one list, the longest overdue first, each row with its action; first of all,
+  rent not posting: no rent run in two days while the company has leases). Rentals
   (`src/pms/api/rentals.py`): properties a page at a time at `/properties`, each at
   `/properties/<id>` (its owners' money, its units and their leases), a unit at `/units/<id>`
   (its details, `src/pms/api/unit_details.py`, and every lease it had), the rent roll at

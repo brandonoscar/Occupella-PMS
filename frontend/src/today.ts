@@ -54,7 +54,10 @@ export type Today = {
   messages_waiting?: MessageWaiting[];
   // What software proposed with an API key, waiting for a staff member to decide (ADR 0011).
   drafts_waiting?: DraftWaiting[];
+  // No rent run in two days while the company has leases (docs/edge-cases.md H-021).
+  rent_not_posted?: RentNotPosted | null;
 };
+export type RentNotPosted = { last_posted_on: string | null; waiting_since: string };
 export type DraftWaiting = { id: string; what: string; key: string; made_at: string };
 export type NoticeGiven = {
   lease_id: string;
@@ -334,7 +337,17 @@ export function attentionRows(today: Today): AttentionRow[] {
     })),
   ];
   // A stable sort: rows due the same day keep the order above.
-  return rows.map((row, n) => ({ row, n }))
+  const sorted = rows.map((row, n) => ({ row, n }))
     .sort((a, b) => (a.row.due < b.row.due ? -1 : a.row.due > b.row.due ? 1 : a.n - b.n))
     .map(({ row }) => row);
+  // Rent that stopped posting comes first, whatever its day: everything else waits on it.
+  const stopped = today.rent_not_posted;
+  if (!stopped) return sorted;
+  return [{
+    key: "rent-not-posted", what: "Rent not posting",
+    line: `${stopped.last_posted_on === null ? "Rent has never posted by itself" : `No rent run since ${usDate(stopped.last_posted_on)}`}:`
+      + " rent, late fees and recurring bills aren't posting by themselves. Tell whoever runs the PMS; an admin can Run rent now.",
+    due: stopped.waiting_since,
+    action: go("Open rent roll", "/rent-roll"),
+  }, ...sorted];
 }
