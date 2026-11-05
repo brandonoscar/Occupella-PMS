@@ -1253,6 +1253,14 @@ browser = [
 ]
 
 [[feature]]
+id = "mcp"
+statement = "Any MCP client, an AI assistant such as Claude, plugs in at /mcp with an API key as its bearer (ADR 0011): it initializes, lists the tools and calls them, as the AI's role, for the key's company alone. Read tools find the company's tenants, owners, vendors, properties, units, leases and work orders with their ids, and read its reports, rent roll, delinquency, work orders, a lease's ledger, its events and its own drafts; propose tools write drafts that wait for staff in Drafts. No tool moves money."
+operations = ["POST /mcp"]
+browser = [
+  "features.spec.ts › an MCP client plugs in with an API key: it lists the tools, finds a tenant with their id and proposes a note, which waits for staff in Drafts",
+]
+
+[[feature]]
 id = "tax-ids"
 statement = "Staff keep an owner's or a vendor's tax ID (an EIN or an SSN), sealed by the server and shown by its last four; an admin reveals one whole and takes the year's 1099 export from the 1099 summary with each payee's tax ID, each time recorded with their name; staff who aren't admins see the last four only (ADR 0010, part F)."
 operations = [

@@ -451,8 +451,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   never inherits it), naming no staff member. A key unknown, taken back or malformed is one 401;
   a key opens no cookie endpoint and a session no key endpoint; a key makes at most
   `ai_keys.PER_MINUTE` (120) requests a minute in a process (429, Retry-After). The everything
-  export leaves its hash out, and the AI role reads neither table. The MCP server and Enable AI
-  come later, each its own piece.
+  export leaves its hash out, and the AI role reads neither table. Enable AI comes later.
 - Drafts (ADR 0011's second piece, migration 20261105000300, `src/pms/api/drafts.py`): software
   with a key proposes (`POST /api/ai/drafts`, as `trust_ai_agent`, whose one write is that INSERT
   into `trust_drafts`) an email to tenants, owners or vendors, a notice from a notice template for
@@ -488,6 +487,17 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   seconds (`PMS_WEBHOOKS`, on unless "off") or `python -m pms.webhooks deliver`. Events and
   deliveries are not audited (each repeats an audited write); the AI role reads the events, never
   a webhook or a delivery.
+- The MCP server (ADR 0011's fourth piece, `src/pms/api/mcp.py`): any MCP client plugs in at
+  `POST /mcp` with a key as its bearer, the request run as the key's (`ai_keys.with_key`: the
+  key's company, as `trust_ai_agent`, rate-limited). Model Context Protocol over Streamable HTTP,
+  stateless: one JSON-RPC message a POST (`initialize`, protocol 2025-06-18 or 2025-03-26;
+  `ping`; `tools/list`; `tools/call`), answered as JSON, a notification with 202; no session or
+  event stream. Read tools: `find` (tenants, owners, vendors, properties, units, leases in effect
+  or to come, work orders, with their ids, by a part of the name), `list_reports`, `run_report`,
+  `rent_roll`, `delinquency`, `work_orders`, `lease_ledger`, `recent_events`, `my_drafts`;
+  propose tools write drafts (`propose_email`, `_notice`, `_work_order`, `_vendor`, `_visit`,
+  `_note`). A tool refused says why as its result (`isError`), in a savepoint; none moves money.
+  The key carries its company's day (`Key.today`, read before the role changes), the default day.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`

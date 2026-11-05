@@ -671,6 +671,7 @@ FEATURES = (
     "ai-keys",
     "drafts",
     "events",
+    "mcp",
     "reminders",
     "owner-portal-two",
     "portal-messages",

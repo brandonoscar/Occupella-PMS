@@ -42,6 +42,10 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   recorded as tried, stayed first in the queue so every email behind it waited, and the nightly
   run failed with it. The statement now says that photo is with the lease's files, and any error
   making an email's file is recorded as that email's failed attempt.
+- **An MCP server at `/mcp` (ADR 0011):** any MCP client, an AI assistant such as Claude, plugs in
+  with an API key: it finds the company's records with their ids, reads its reports, ledgers and
+  events, and proposes emails, notices, work orders and notes as drafts for staff to approve.
+  Nothing it does moves money.
 - **Events and webhooks (ADR 0011):** what happens in the books (a payment recorded or returned,
   a late fee, a lease opened or its end changed, a bill waiting for its owner, a work order's
   steps, a repair requested, a draft decided) is written as an event, kinds and ids only. Software

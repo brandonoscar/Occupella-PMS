@@ -43,7 +43,9 @@ Rentvine and DoorLoop. [Try the demo](#try-the-demo) · [Install it](docs/instal
 - **Reports and exports:** income statement (cash and accrual), balance sheet, rent roll,
   delinquency, general ledger, trial balance, budgets and more, as CSV, Excel or PDF; QuickBooks
   Desktop and Online exports; and an export of everything.
-- **For AI and other software:** API keys that read the books and can never move money.
+- **For AI and other software:** API keys that read the books and can never move money; an MCP
+  server at `/mcp` any MCP client (Claude, say) plugs into; drafts the AI proposes and staff
+  approve; events, read in order or sent to signed webhooks.
 
 Built with Python 3.11, FastAPI, PostgreSQL 16 (plain SQL), React 19, Vite and Tailwind CSS.
 Apache License 2.0 (see `LICENSE`). Third-party code and its licenses: `THIRD_PARTY_NOTICES.md`.

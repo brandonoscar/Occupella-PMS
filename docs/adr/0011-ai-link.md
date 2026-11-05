@@ -76,7 +76,7 @@ stays true whatever the AI is sold as.
   - Delivered as webhooks signed with HMAC-SHA256 under a secret per subscription, retried with
     backoff, each with an id so a repeat is harmless. Also readable by polling
     (`GET /api/events?after=`).
-- **The MCP server** (`pms.mcp`, at `/mcp`, the key as its bearer).
+- **The MCP server** (`pms.mcp`, built as `pms.api.mcp`, at `/mcp`, the key as its bearer).
   - Read tools: the reports, the rent roll, delinquency, a lease's ledger, work orders.
   - "Propose" tools that write drafts.
   - Any Claude, or any MCP client, plugs in with a key. The plan makes it the free way to try
@@ -99,7 +99,7 @@ The work, in this order, each piece a PR with its tests:
 1. Keys (built: migration 20261031000201).
 2. Drafts (built: migration 20261105000300, `src/pms/api/drafts.py`).
 3. Events (built: migration 20261105000500, `src/pms/api/events.py`, `src/pms/webhooks.py`).
-4. The MCP server.
+4. The MCP server (built: `src/pms/api/mcp.py`, at `/mcp`).
 5. Enable AI and its screens.
 6. Then, in `occupella-ai`, the connector to this API. AgenticHelixis is added to a session
    for that, last.

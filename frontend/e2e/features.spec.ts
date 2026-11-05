@@ -5811,6 +5811,47 @@ test("an admin adds a webhook and sees its secret once; software reads the compa
   await expect(page.getByRole("row", { name: hook })).toContainText("Taken back");
 });
 
+test("an MCP client plugs in with an API key: it lists the tools, finds a tenant with their id and proposes a note, which waits for staff in Drafts", async ({
+  page,
+  request,
+}) => {
+  const people = seed.features.mcp!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "AI");
+  await page.getByRole("button", { name: "Make a key" }).click();
+  const made = page.getByRole("dialog", { name: "Make a key" });
+  await made.getByLabel("Name").fill("Claude");
+  await made.getByRole("button", { name: "Make key" }).click();
+  const key = { Authorization: `Bearer ${await made.getByLabel("Secret key").inputValue()}` };
+  await made.getByRole("button", { name: "Done" }).click();
+
+  // The Model Context Protocol over HTTP, as any MCP client speaks it: one JSON-RPC message each.
+  let id = 0;
+  const mcp = async (method: string, params: object = {}) => {
+    const answer = await request.post("/mcp", { headers: key, data: { jsonrpc: "2.0", id: ++id, method, params } });
+    expect(answer.status()).toBe(200);
+    return ((await answer.json()) as { result: Record<string, unknown> }).result;
+  };
+  const started = await mcp("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "e2e" } });
+  expect(started.protocolVersion).toBe("2025-06-18");
+  const tools = (await mcp("tools/list")).tools as { name: string }[];
+  expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(["find", "rent_roll", "propose_note"]));
+
+  type Found = { structuredContent: { found: { id: string; name: string }[] } };
+  const found = (await mcp("tools/call", { name: "find", arguments: { kind: "tenant", name: "Drew" } })) as unknown as Found;
+  const drew = found.structuredContent.found.find((t) => t.name === "Drew Sample")!;
+  const proposed = await mcp("tools/call", {
+    name: "propose_note",
+    arguments: { about: "tenant", about_id: drew.id, body: "Prefers a call after 5.", why: "From their message." },
+  });
+  expect(proposed.isError).toBe(false);
+
+  // Nothing is done yet: staff find it waiting in Drafts.
+  await section(page, "Drafts");
+  await expect(page.getByRole("table", { name: "Drafts" }).getByRole("row", { name: "Note about tenant Drew Sample" }))
+    .toContainText("From their message.");
+});
+
 test("staff send a reminder of rent past due from the Dashboard, seeing who gets it first, once a day", async ({
   page,
 }) => {

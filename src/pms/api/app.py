@@ -90,6 +90,7 @@ from pms.api import (
     leasing,
     listings,
     maintenance,
+    mcp,
     messages,
     moveout,
     notes,
@@ -743,6 +744,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(ai_keys.router)
     app.include_router(drafts.router)
     app.include_router(events.router)
+    app.include_router(mcp.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
     return app

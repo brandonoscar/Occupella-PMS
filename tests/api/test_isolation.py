@@ -410,6 +410,8 @@ EXEMPT = {
     " (tests/api/test_drafts.py)",
     "GET /api/events": "software reads its company's events with an API key: the key's company's"
     " alone, and an id of another's is refused (tests/api/test_events.py)",
+    "POST /mcp": "an MCP client calls it with an API key: every tool reads and proposes for the"
+    " key's company, and another's record is refused (tests/api/test_mcp.py)",
 }
 # Where a route refuses another company's record in its path otherwise than as not found, and
 # why (none does today).
