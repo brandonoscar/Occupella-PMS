@@ -31,9 +31,9 @@ answer in the portal for everything that can fail.
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 160 | 59 | 8 | 93 | 29 |
 | [Bad files and imports](#bad-files-and-imports) | 145 | 60 | 16 | 69 | 6 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 155 | 86 | 10 | 59 | 7 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 160 | 57 | 14 | 89 | 18 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 160 | 59 | 14 | 87 | 16 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1126** | **552** | **110** | **464** | **88** |
+| **All** | **1126** | **554** | **110** | **462** | **86** |
 
 ## Open, high risk: the work list
 
@@ -146,8 +146,6 @@ its ten most pressing, each with the test that would close it.
 - H-068: "*" trusted, with nginx's $proxy_add_x_forwarded_for as install.md says
 - H-089: The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st)
 - H-097: The everything export of a large company
-- H-115: A session signed out after an hour idle, page still open
-- H-152: Any error while drawing a page (an answer of an unexpected shape after an upgrade, a status the page doesn't know)
 
 ## Money and the ledger
 
@@ -1186,9 +1184,9 @@ its ten most pressing, each with the test that would close it.
 | H-068 | "*" trusted, with nginx's $proxy_add_x_forwarded_for as install.md says | uvicorn takes the leftmost address, which the visitor writes: the sign-in throttle is bypassed with a new forged address each try, and a signer's address in the evidence can be forged | Open | uvicorn 0.54 ProxyHeadersMiddleware (always_trust takes the first host); docs/install.md step 4 | H |
 | H-089 | The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st) | The next run charges only the new month, so that rent is never charged by itself, and nothing says so | Open | src/pms/nightly.py:116-118; db/schema.sql:1688-1720 (only the run's month) | H |
 | H-097 | The everything export of a large company | Every table and every document's bytes are fetched and zipped in memory in one request; it can exhaust the process and take the PMS down for everyone | Open | src/pms/exports.py:433-491 | H |
-| H-115 | A session signed out after an hour idle, page still open | Only the first /api/me sends people to sign in; afterwards every load and save says "sign in first" in notices and toasts, nothing signs them in, and the page test pins it | Open | frontend/src/App.tsx:100; frontend/src/pages/RentPage.test.tsx > says when no lease is listed, and when the leases can't be read | H |
-| H-152 | Any error while drawing a page (an answer of an unexpected shape after an upgrade, a status the page doesn't know) | No error boundary: the whole portal goes blank white | Open | frontend/src/main.tsx (no boundary); e.g. frontend/src/pages/PayOnlineCard.tsx:105 | H |
 | H-072 | A very large JSON body (hundreds of MB) to /api/apply or /api/sign-in, no sign-in needed | Refused 413 above 10 MB before it is read: at once when it says its length, counted as it streams otherwise; a 5 MB file as base64 still fits | Tested | tests/api/test_body_limit.py | H |
+| H-115 | A session signed out after an hour idle, page still open | Once signed in, a request answering "sign in first" takes the person to sign in, saying they were signed out after a while away; a wrong password or a key's refusal doesn't | Tested | frontend/src/api.test.ts > api > tells the page a session ended, once someone was signed in, and only for that (H-115); frontend/src/pages/SignInPage.test.tsx | H |
+| H-152 | Any error while drawing a page (an answer of an unexpected shape after an upgrade, a status the page doesn't know) | An error boundary around the portal: a page that fails to draw says it couldn't be shown and that nothing saved is lost, with Reload and the way to the start; never the error's words | Tested | frontend/src/components/ErrorBoundary.test.tsx | H |
 | H-003 | The database is down while staff open pages | Each request waits 30 s for a pool connection, then gets 503 "the PMS is busy just now: try again in a moment": it says busy, not down, and every click takes 30 s | Open | src/pms/api/deps.py:121-132 (PoolTimeout always read as busy); no test of a page with the database down | M |
 | H-004 | The database is down when the portal first loads | Home renders nothing while /api/me waits 30 s (a white page), then shows one error line with no menu, no retry button and no word of what to do | Open | frontend/src/App.tsx:96-109 | M |
 | H-005 | The database restarts in the middle of the day | The pool has no connection check, so each idle pooled connection fails once after the restart: those requests answer 500 and the portal says "the server answered 500" | Open | src/pms/api/app.py:310-311 (ConnectionPool with no check=) | M |

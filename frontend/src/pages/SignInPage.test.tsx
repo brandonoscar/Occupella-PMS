@@ -35,6 +35,21 @@ function server(reset: boolean) {
 }
 
 describe("SignInPage", () => {
+  it("says why when a session ended and sent the person back here (H-115)", async () => {
+    window.history.replaceState(null, "", "/sign-in?pmc=p1&ended=1");
+    server(false);
+    render(<SignInPage />);
+    expect(await screen.findByText("You were signed out after a while away. Sign in again to go on.")).toBeTruthy();
+  });
+
+  it("says nothing of it on an ordinary sign-in", async () => {
+    window.history.replaceState(null, "", "/sign-in?pmc=p1");
+    server(false);
+    render(<SignInPage />);
+    await screen.findByLabelText("Email");
+    expect(screen.queryByText(/You were signed out/)).toBeNull();
+  });
+
   it("asks for the authenticator code once the server says it is needed", async () => {
     window.history.replaceState(null, "", "/sign-in?pmc=p1");
     const fetch = server(false);

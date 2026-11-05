@@ -33,6 +33,20 @@ export type Me = {
 };
 export type Role = "admin" | "approve" | "disburse";
 
+// What a page does when the session it was opened with has ended (signed out after an hour
+// idle, or its twelve hours up): set while someone is signed in (App), so every request that
+// then answers "sign in first" takes them to sign in, saying why, instead of a page of refusals
+// (docs/edge-cases.md H-115). Returns the way to stop.
+const SIGNED_OUT = "sign in first";
+let signedOut: (() => void) | null = null;
+
+export function whenSignedOut(handler: () => void): () => void {
+  signedOut = handler;
+  return () => {
+    if (signedOut === handler) signedOut = null;
+  };
+}
+
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method,
@@ -45,7 +59,9 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   }
   const data: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(response.status, detailOf(data) ?? `the server answered ${response.status}`);
+    const detail = detailOf(data) ?? `the server answered ${response.status}`;
+    if (response.status === 401 && detail === SIGNED_OUT) signedOut?.();
+    throw new ApiError(response.status, detail);
   }
   return data as T;
 }

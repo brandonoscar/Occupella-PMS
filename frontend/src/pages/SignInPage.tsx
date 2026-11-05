@@ -72,6 +72,9 @@ export function SignInPage() {
         <h1 className="font-display text-lg font-semibold">Sign in</h1>
         {companyName && <p className="text-sm text-ink-muted">{companyName}</p>}
       </div>
+      {new URLSearchParams(window.location.search).get("ended") === "1" && (
+        <Notice tone="info">You were signed out after a while away. Sign in again to go on.</Notice>
+      )}
       {pmcId ? (
         <Form className="flex flex-col gap-4" onSubmit={submit}>
           <Field label="Email" id="email" type="email" autoComplete="username" value={email}

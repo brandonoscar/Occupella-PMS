@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Me } from "./api";
-import { ApiError, api } from "./api";
+import { ApiError, api, whenSignedOut } from "./api";
 import { Notice } from "./components/Notice";
 import { AiKeysPage } from "./pages/AiKeysPage";
 import { ApplicationStatusPage } from "./pages/ApplicationStatusPage";
@@ -106,6 +106,15 @@ function Home({ path }: { path: string }) {
         }
       });
   }, []);
+  // Once signed in, a session that ends (an hour idle, or twelve hours up) takes the person to
+  // sign in again, saying so (H-115).
+  useEffect(() => {
+    if (!me) return undefined;
+    return whenSignedOut(() => {
+      const pmc = localStorage.getItem(PMC_KEY) ?? me.pmc_id;
+      navigate(`/sign-in?pmc=${pmc}&ended=1`);
+    });
+  }, [me]);
   if (error) return <Notice tone="error">{error}</Notice>;
   if (!me) return null;
   if (me.kind === "owner") {

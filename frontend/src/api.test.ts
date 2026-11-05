@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, api, saveFile } from "./api";
+import { ApiError, api, saveFile, whenSignedOut } from "./api";
 
 function answer(status: number, body: unknown) {
   return vi.fn().mockResolvedValue(
@@ -10,6 +10,22 @@ function answer(status: number, body: unknown) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("api", () => {
+  it("tells the page a session ended, once someone was signed in, and only for that (H-115)", async () => {
+    const ended = vi.fn();
+    const stop = whenSignedOut(ended);
+    vi.stubGlobal("fetch", answer(401, { detail: "sign in first" }));
+    await api.get("/api/rentals").catch(() => undefined);
+    expect(ended).toHaveBeenCalledTimes(1);
+    // A wrong password, or a key's refusal, is no session ending.
+    vi.stubGlobal("fetch", answer(401, { detail: "the email or password is wrong" }));
+    await api.post("/api/sign-in", {}).catch(() => undefined);
+    expect(ended).toHaveBeenCalledTimes(1);
+    stop();
+    vi.stubGlobal("fetch", answer(401, { detail: "sign in first" }));
+    await api.get("/api/rentals").catch(() => undefined);
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+
   it("sends changes as JSON with the session cookie", async () => {
     const fetch = answer(200, { ok: true });
     vi.stubGlobal("fetch", fetch);

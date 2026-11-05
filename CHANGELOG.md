@@ -31,6 +31,9 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   second person for month-end, email sending, then the optional portals and rent paid online),
   each done or not by the company's own records and linking to where it is done
   (`GET /api/go-live`).
+- **The portal fails gently:** a page that can't be drawn says so, that nothing saved is lost,
+  and offers Reload, instead of going blank; and a session that ends while a page is open (an
+  hour away) takes the person to sign in again, saying why, instead of a page of "sign in first".
 - **Fixed, from the edge-case catalog:** a decimal comma in a file ("1234,56") is refused instead
   of read as $123,456.00; the uncleared checks and deposits file sent twice no longer carries them
   over twice; two identical charges in one switching file both come in; a tenant's emergency
