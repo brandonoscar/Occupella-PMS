@@ -236,7 +236,8 @@ def soak(url: str, workers: int, seconds: float, seed: int) -> tuple[Tally, list
     """Builds the demo's books on a migrated database, runs the workers, then checks them."""
     today = datetime.now(UTC).date()
     with as_app(url) as conn:
-        books = demo.books(conn, today)
+        # The company keeps UTC's day, as the soak counts its days (a new company's is New York's).
+        books = demo.books(conn, today, "UTC")
     tally = Tally()
     until = time.monotonic() + seconds
     # A soak's choices, no secret: a seeded generator repeats them.

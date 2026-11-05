@@ -18,12 +18,16 @@ LATER = TODAY + timedelta(days=30)
 
 @pytest.fixture
 def blank(conn):
-    """A PMC with nothing set up yet."""
-    return SimpleNamespace(
-        pmc_id=conn.execute(
-            "INSERT INTO trust_pmcs (display_name) VALUES ('Blank PMC') RETURNING pmc_id"
-        ).fetchone()[0]
+    """A PMC with nothing set up yet, its day UTC's as the tests count days (make_pmc's too; a
+    company that picked no time zone is on America/New_York's day, which is the day before UTC's
+    from midnight to about 5 am UTC)."""
+    pmc_id = conn.execute(
+        "INSERT INTO trust_pmcs (display_name) VALUES ('Blank PMC') RETURNING pmc_id"
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO trust_company_profiles (pmc_id, time_zone) VALUES (%s, 'UTC')", (pmc_id,)
     )
+    return SimpleNamespace(pmc_id=pmc_id)
 
 
 @pytest.fixture

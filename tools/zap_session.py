@@ -109,7 +109,8 @@ def prepare(url: str, origin: str, cookie_file: Path, schema_file: Path) -> int:
     session and the schema written. The number of operations the schema keeps."""
     with psycopg.connect(url, autocommit=True) as conn:
         conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier("trust_app")))
-        built = demo.build(conn, datetime.now(UTC).date(), origin)
+        # The company keeps UTC's day, as the scan's dates are (a new one's is New York's).
+        built = demo.build(conn, datetime.now(UTC).date(), origin, "UTC")
         token = sign_in(conn, built, origin)
     write_private(cookie_file, f"{COOKIE}={token}")
     made = schema(origin)
