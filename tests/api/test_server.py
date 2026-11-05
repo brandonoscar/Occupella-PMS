@@ -1,5 +1,6 @@
 """`python -m pms.api`: the server reads its settings from the environment."""
 
+import logging
 import runpy
 
 from pms.api import Settings
@@ -54,3 +55,37 @@ def test_each_pooled_connection_acts_as_the_app_with_the_planners_jit_off(client
             "trust_app",
             "off",
         )
+
+
+def test_a_server_with_the_nightly_run_off_says_so_at_start(database_url, caplog, monkeypatch):
+    """docs/edge-cases.md H-022: PMS_NIGHTLY=off with no cron running `python -m pms.nightly`
+    posts nothing by itself, and nothing said the run was off. The log says it at start, and what
+    to run instead."""
+    from fastapi.testclient import TestClient
+
+    from pms.api import create_app
+
+    caplog.set_level(logging.WARNING, logger="pms.api")
+    off = Settings(database_url=database_url, cookie_secure=False, nightly=False)
+    with TestClient(create_app(off)):
+        pass
+    said = [r.getMessage() for r in caplog.records if r.name == "pms.api"]
+    assert said == [
+        "the nightly run is off (PMS_NIGHTLY=off): rent, recurring charges, late fees, recurring"
+        " bills and draws post only when `python -m pms.nightly` runs, once a day, or an admin"
+        " presses Run rent now"
+    ]
+
+    caplog.clear()
+
+    class Quiet:  # the scheduler, which would run every test company's night
+        def __init__(self, *args, **kwargs):
+            pass
+
+        start = stop = lambda self: None
+
+    monkeypatch.setattr("pms.nightly.Scheduler", Quiet)
+    on = Settings(database_url=database_url, cookie_secure=False, nightly=True)
+    with TestClient(create_app(on)):
+        pass
+    assert not [r for r in caplog.records if r.name == "pms.api"]

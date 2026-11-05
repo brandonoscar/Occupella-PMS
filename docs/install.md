@@ -94,8 +94,8 @@ pms.example.com {
 Any proxy works (nginx, your host's load balancer) as long as it serves HTTPS, passes requests
 to `127.0.0.1:8000` and names each visitor in `X-Forwarded-For` (Caddy does by itself; with
 nginx, `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` and
-`proxy_set_header X-Forwarded-Proto $scheme;`). The app takes the visitor's address from it
-(`PMS_TRUSTED_PROXIES` in `compose.selfhost.yaml`), so the evidence of a lease signed on the PMS's
+`proxy_set_header X-Forwarded-Proto $scheme;`). The app takes the visitor's address from it, the
+last one, which the proxy wrote (`PMS_TRUSTED_PROXIES` in `compose.selfhost.yaml`), so the evidence of a lease signed on the PMS's
 page keeps the signer's address, not the proxy's. Keep the app's port on `127.0.0.1`: only a
 proxy on the server itself may name visitors. Sign-in needs HTTPS: the session cookie is never
 sent over plain HTTP.

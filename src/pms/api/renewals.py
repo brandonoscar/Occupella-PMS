@@ -198,9 +198,9 @@ def renewal_plan(
         row = conn.execute(LOWEST, window).fetchone()
         lowest = Decimal(row[0]) if row and row[0] is not None else Decimal(now)
         first = conn.execute(LIVED_FROM, window).fetchone()
-        lived = (new_starts - (first[0] if first and first[0] else began)).days
-        term = (ends_on - began).days + 1 if ends_on else 0
-        years = max(lived, term) * 4 // 1461  # whole years, a leap day every four
+        lived = rent_notice.whole_years(first[0] if first and first[0] else began, new_starts)
+        term = rent_notice.whole_years(began, ends_on + timedelta(days=1)) if ends_on else 0
+        years = max(lived, term)
         rule = rent_notice.needed(address.state, Decimal(now), lowest, new_rent, years)
         if rule is not None:
             notice = RenewalNotice(

@@ -108,7 +108,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   as `trust_app` (the planner's JIT off: it cost more than it saved), committed before the answer
   is sent; a staff member's request names them to the audit log. Behind a proxy it trusts
   (`PMS_TRUSTED_PROXIES`, as `compose.selfhost.yaml` sets it) a visitor's address is the one the
-  proxy names, as a signature's evidence keeps it. It refuses to start at `.env.example`'s
+  proxy names, as a signature's evidence keeps it (trusting "*", the last X-Forwarded-For
+  address, the one the proxy wrote: `app.NearestProxy`). It refuses to start at `.env.example`'s
   `PMS_PUBLIC_URL` or one that isn't an http(s) origin (`pms.deployment`), and logs each origin a
   change was refused from once. How fast it answers ten staff
   at once on a 1,000-unit company is timed nightly (`tools/speed.py`, `[speed]` ceilings). Every endpoint gets tests in `tests/api/` for success, a caller who isn't
@@ -119,7 +120,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   or loaded into one's page (CORP), the camera and the like, and over https anything but https (HSTS). A refusal from the database
   reaches people in words, without internal ids (`deps.refusal`: an account short of money, a
   draw over what is available, the last admin), and a request that finds every database connection
-  busy for 30 s is told so (503, `deps.BUSY`), never a server error. An address that failed 20
+  busy for 30 s is told so (503, `deps.BUSY`), never a server error, as is a full disk
+  (`deps.DISK_FULL`, logged). An address that failed 20
   sign-ins in 15 minutes is refused (429, Retry-After) whatever email it tries, and an address asks
   for at most 10 password resets an hour (`src/pms/api/throttle.py`, counted per process). No
   request sends more than 10 MB (`app.MAX_BODY`, 413, counted as it streams too): a 5 MB file as

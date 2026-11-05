@@ -520,6 +520,19 @@ def test_behind_a_trusted_proxy_the_evidence_keeps_the_signers_address(
     assert steps_seen_from(conn, made.offer) == {"consented": "203.0.113.7" if trusted else None}
 
 
+def test_behind_the_proxy_a_signer_cant_write_their_own_address_into_the_evidence(
+    conn, settings, made
+):
+    """docs/edge-cases.md U-033: nginx appends the signer's address to an X-Forwarded-For they
+    sent themselves; the evidence keeps the one the proxy wrote, the last."""
+    proxied = replace(settings, trusted_proxies="*")
+    forged = {"X-Forwarded-For": "192.0.2.66, 203.0.113.7"}
+    with TestClient(create_app(proxied), headers=forged) as browser:
+        assert agree(browser, made.tokens[0]).status_code == 200
+
+    assert steps_seen_from(conn, made.offer) == {"consented": "203.0.113.7"}
+
+
 def leased(client, other_client, conn, made):
     """Both applicants sign and staff make it the lease: the lease and Applicant A's tenant id."""
     for token, name in zip(made.tokens, ("Applicant A", "Applicant B"), strict=True):

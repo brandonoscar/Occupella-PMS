@@ -26,14 +26,14 @@ answer in the portal for everything that can fail.
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
 | [Money and the ledger](#money-and-the-ledger) | 150 | 110 | 7 | 33 | 7 |
-| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 157 | 79 | 15 | 63 | 17 |
+| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 157 | 81 | 15 | 61 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 61 | 30 | 51 | 4 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 160 | 59 | 8 | 93 | 29 |
 | [Bad files and imports](#bad-files-and-imports) | 145 | 60 | 16 | 69 | 6 |
-| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 155 | 86 | 10 | 59 | 7 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 160 | 61 | 14 | 85 | 14 |
+| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 155 | 87 | 10 | 58 | 6 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 160 | 64 | 14 | 82 | 11 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1126** | **556** | **110** | **460** | **84** |
+| **All** | **1126** | **562** | **110** | **454** | **78** |
 
 ## Open, high risk: the work list
 
@@ -58,8 +58,6 @@ its ten most pressing, each with the test that would close it.
 - D-055: A lease entered on the evening of its last day (after 8 pm Eastern)
 - D-065: A rent change from 03/01 with notice given 02/01
 - D-066: A rent increase recorded on the rent page in CA, OR, WA, NV or NY
-- D-067: New York renewal of a 12-month lease (365 days, no February 29)
-- D-068: New York tenant there exactly two years (730 days)
 - D-069: California increase notice served by mail
 - D-078: A check received on the last grace day, recorded the next morning dated back
 - D-079: A lockbox file line dated within grace brought in after the fee
@@ -123,7 +121,6 @@ its ten most pressing, each with the test that would close it.
 - U-010: An owner's or tenant's login is disabled by mistake
 - U-014: A staff member uses the invite link shown on screen to become an owner or tenant who already has a password
 - U-015: An admin re-invites another staff member (an approver, the trust account's broker) and uses the link
-- U-033: PMS_TRUSTED_PROXIES "*" behind nginx set as the install guide says ($proxy_add_x_forwarded_for)
 - U-085: A former owner (the property sold, or its ownership moved to another owner)
 - U-099: Staff mark the wrong person's record as "the same person"
 - U-100: A tenant left a lease others stay on
@@ -134,14 +131,11 @@ its ten most pressing, each with the test that would close it.
 - H-016: The mail server is slow or down
 - H-020: The nightly run fails on a server that sends no email (compose sets none by default)
 - H-021: The nightly hasn't run for days (its thread died, it fails every night, or it is off)
-- H-022: PMS_NIGHTLY=off with no cron running python -m pms.nightly
-- H-027: The disk fills
 - H-028: The disk fills, and the backups live on it
 - H-031: The daily backup fails (password changed, pg_dump error, disk)
 - H-041: A newer backup restored under an older tag, or the old tag checked out after migrations ran
 - H-055: PMS_DATA_KEY changed while bank payments are on their way
 - H-067: PMS_TRUSTED_PROXIES empty behind a proxy on another host or network
-- H-068: "*" trusted, with nginx's $proxy_add_x_forwarded_for as install.md says
 - H-089: The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st)
 - H-097: The everything export of a large company
 
@@ -323,8 +317,6 @@ its ten most pressing, each with the test that would close it.
 | D-055 | A lease entered on the evening of its last day (after 8 pm Eastern) | created_at::date reads the next day in a UTC session, so it counts as entered after its end and never rolls over; its rent stops | Open | db/migrations/20261024000154_receive_payment_and_lease_rules.sql:163 | H |
 | D-065 | A rent change from 03/01 with notice given 02/01 | Allowed: one month before is only 28 days in February, short of a 30-day rule (California's least), and no state warning runs | Open | db/migrations/20261015000061_rent_changes.sql:44 | H |
 | D-066 | A rent increase recorded on the rent page in CA, OR, WA, NV or NY | No state notice check runs there (rent_notice is called only by the renewal plan); the database asks a month | Open | src/pms/api/rent.py:1504; src/pms/api/renewals.py:190 | H |
-| D-067 | New York renewal of a 12-month lease (365 days, no February 29) | years = 365 x 4 // 1461 = 0, so the panel asks 30 days; RPL 226-c asks 60 for a lease term of at least a year | Open | src/pms/api/renewals.py:203 | H |
-| D-068 | New York tenant there exactly two years (730 days) | Counts as one year: 60 days asked instead of 90 | Open | src/pms/api/renewals.py:203 | H |
 | D-069 | California increase notice served by mail | The 5 extra days for mail (CCP 1013) are not added; days are counted from today | Open | src/pms/rent_notice.py:83 | H |
 | D-078 | A check received on the last grace day, recorded the next morning dated back | The night already charged the fee; nothing undoes a late fee when a payment dated within grace comes in later | Open | db/migrations/20261031000200_late_fees_skip_paid_rents.sql:208 | H |
 | D-079 | A lockbox file line dated within grace brought in after the fee | Same: the fee stays until staff waive it | Open | src/pms/api/payment_files.py:109 | H |
@@ -361,6 +353,8 @@ its ten most pressing, each with the test that would close it.
 | D-061 | A new lease starting on the old one's last day | Refused: one lease at a time per unit | Tested | tests/test_leases_and_charges.py::test_two_leases_of_one_unit_never_overlap | H |
 | D-062 | A rent change with less than a month's written notice | Refused: notice by the 1st of the month before | Tested | tests/test_rent_changes.py::test_written_notice_of_a_full_month_comes_first | H |
 | D-063 | A rent change for a month already charged | Refused; that month keeps its rent | Tested | tests/test_rent_changes.py::test_a_month_already_charged_keeps_its_rent | H |
+| D-067 | New York renewal of a 12-month lease (365 days, no February 29) | Whole years are anniversaries (rent_notice.whole_years): a 12-month lease is a year, 60 days asked | Tested | tests/api/test_renewal_plan_api.py::test_new_york_counts_a_twelve_month_lease_as_a_year; tests/test_rent_notice.py::test_whole_years_count_anniversaries_not_days | H |
+| D-068 | New York tenant there exactly two years (730 days) | Two years to the day count as two: 90 days asked; a day short, one | Tested | tests/api/test_renewal_plan_api.py::test_new_york_counts_a_tenant_there_exactly_two_years_as_two | H |
 | D-072 | California 30 versus 90 days at 10% | As recorded in docs/law.md | Tested | tests/test_rent_notice.py::test_california_asks_30_days_up_to_ten_percent_and_90_over_it | H |
 | D-073 | New York tenant in their first year | 30 days | Tested | tests/api/test_renewal_plan_api.py::test_new_york_asks_30_days_in_the_first_year | H |
 | D-074 | A payment dated the last grace day versus the day after | The first counts, the second doesn't (cutoff at the next UTC midnight; money is dated at 00:00 UTC of the company's day) | Tested | tests/test_rent_automation.py::test_a_payment_counts_only_if_dated_before_the_grace_runs_out | H |
@@ -996,7 +990,6 @@ its ten most pressing, each with the test that would close it.
 | U-010 | An owner's or tenant's login is disabled by mistake | No way back: nothing re-enables it, a new invite is refused at its link, and a second login for the person is impossible (one per person) | Open | src/pms/accounts.py:487 disable_login only sets disabled_at; db/migrations/20261011000028_logins.sql:43-46 UNIQUE (pmc_id, owner_id) and (pmc_id, tenant_id) | H |
 | U-014 | A staff member uses the invite link shown on screen to become an owner or tenant who already has a password | Possible: whoever has the area makes an invite, sees its link once, sets a password and acts as the owner (approves bills over the limit by typing the owner's name) | Open | src/pms/api/app.py:508 invite returns the link; src/pms/api/owner.py:433 approve_bill trusts the session | H |
 | U-015 | An admin re-invites another staff member (an approver, the trust account's broker) and uses the link | The admin sets their password and authenticator and acts as them, defeating prepared-by-one-approved-by-another and the signer rules; the audit log shows only who made the invite | Open | src/pms/accounts.py:303 accept_invite replaces the password and TOTP secret; db/migrations/20261012000034_staff_roles.sql trust_check_staff_invite | H |
-| U-033 | PMS_TRUSTED_PROXIES "*" behind nginx set as the install guide says ($proxy_add_x_forwarded_for) | The app takes the leftmost X-Forwarded-For, which the visitor writes: the sign-in limit is bypassed and a signature's evidence keeps a made-up address | Open | src/pms/api/app.py:338; uvicorn 0.54.0 picks the first host when every host is trusted; docs/install.md:94; tests/api/test_signing.py::test_behind_a_trusted_proxy_the_evidence_keeps_the_signers_address sends one value only | H |
 | U-085 | A former owner (the property sold, or its ownership moved to another owner) | Still sees the property's units, tenants' names, rents, what each lease owes, repairs and files, as their account there remains | Open | src/pms/api/owner_portal.py:63 owned_properties (any owner_property account, no share or date) | H |
 | U-099 | Staff mark the wrong person's record as "the same person" | Nothing undoes a link: the wrong person signs in to the other's lease, ledger, receipts and files, and may pay or file under it | Open | src/pms/api/directory.py:463 same_person; db/migrations/20261021000105_tenant_records.sql:25 (no removal table) | H |
 | U-100 | A tenant left a lease others stay on | Still reads it: the staying tenant's later payments, rent changes, files and the property's announcements | Open | src/pms/api/tenant.py:268 lease_of ignores departures; tests/api/test_lease_people_api.py::test_a_tenant_who_left_reads_the_lease_and_files_nothing_more; src/pms/api/announcements.py:145 | H |
@@ -1005,6 +998,7 @@ its ten most pressing, each with the test that would close it.
 | U-003 | A's staff, owner or tenant lists, searches or runs reports hoping to see B's rows | Every list, page and report is swept; nothing of B's shows | Tested | tests/api/test_isolation.py::test_a_list_or_page_shows_nothing_of_another_companys; ::test_no_report_shows_another_companys_books | H |
 | U-009 | A staff member without admin, or whose custom role lacks "who can sign in", disables an owner's or tenant's login | Disabling an owner's or a tenant's login takes the area their invite takes, who can sign in (403 without it); a staff login still takes admin | Tested | tests/api/test_custom_roles.py::test_disabling_an_owners_or_tenants_login_takes_who_can_sign_in | H |
 | U-013 | Two invites (or a reset email and an invite) are open for one login; the person uses the newer | Only a login's newest invite opens: a newer invite or password reset retires the older links, which read as can't be used | Tested | tests/api/test_invites.py::test_a_link_that_cant_be_used_says_so | H |
+| U-033 | PMS_TRUSTED_PROXIES "*" behind nginx set as the install guide says ($proxy_add_x_forwarded_for) | Trusting "*", the app keeps only the last X-Forwarded-For address, the one the proxy on the server wrote (app.NearestProxy) | Tested | tests/api/test_throttle.py::test_behind_the_proxy_a_visitor_cant_dodge_the_limit_by_naming_another_address; tests/api/test_signing.py::test_behind_the_proxy_a_signer_cant_write_their_own_address_into_the_evidence | H |
 | U-039 | Another site posts to the API (CSRF) | Refused when the browser says cross-site or same-site, with or without an Origin | Tested | tests/api/test_sign_in.py::test_a_browser_saying_another_site_is_refused_with_or_without_an_origin | H |
 | U-049 | The last admin takes away their own admin role | Refused "the company keeps an admin: give another staff member admin first" | Tested | tests/api/test_staff.py::test_an_admin_adds_a_staff_member_and_changes_roles; tests/test_staff_roles.py::test_a_pmc_keeps_an_admin | H |
 | U-050 | Two admins take each other's admin role at once | One admin is left | Tested | tests/test_staff_roles.py::test_two_admins_taking_each_others_role_leave_one | H |
@@ -1170,18 +1164,18 @@ its ten most pressing, each with the test that would close it.
 | H-016 | The mail server is slow or down | After every write a background delivery takes a pooled connection and works through up to 100 emails at a 20 s SMTP timeout each; a handful of them fill the pool and the whole PMS answers busy | Open | src/pms/api/outbox.py:25-32; src/pms/email.py:128,610 | H |
 | H-020 | The nightly run fails on a server that sends no email (compose sets none by default) | Nobody is told; the log is the only place it shows | Open | tests/test_reserve_and_failure_alerts.py::test_no_alert_while_the_server_sends_no_email pins the silence; docs/support.md "What does not reach anyone" | H |
 | H-021 | The nightly hasn't run for days (its thread died, it fails every night, or it is off) | The Dashboard and Needs attention never say when rent last posted; rent, late fees and draws are silently not posted | Open | src/pms/api/today.py and src/pms/api/dashboard.py read no rent run's age | H |
-| H-022 | PMS_NIGHTLY=off with no cron running python -m pms.nightly | Nothing posts by itself and no page or log line says the run is off | Open | src/pms/api/app.py:318-326; .env.example ("off" stops it) | H |
-| H-027 | The disk fills | Postgres refuses writes; every save reads "the server answered 500"; nothing says the disk is full | Open | src/pms/api/app.py:406-437 (no handler for DiskFull) | H |
 | H-028 | The disk fills, and the backups live on it | The dump fails, its .partial stays, and old dumps are pruned only after a dump succeeds, so the disk never frees itself | Open | scripts/backup-daily.sh:54-56; scripts/backup.sh:51 | H |
 | H-031 | The daily backup fails (password changed, pg_dump error, disk) | "FAIL" goes to the backup container's log only: no admin email, no health status, nothing on the Dashboard | Open | scripts/backup-daily.sh:77,81-84; docs/support.md ("A backup that failed") | H |
 | H-041 | A newer backup restored under an older tag, or the old tag checked out after migrations ran | Nothing compares schema_migrations to the code: the old app starts and posts money on a schema it was never tested on | Open | no schema version check in src/ (only scripts/backup.sh:155 prints the version) | H |
 | H-055 | PMS_DATA_KEY changed while bank payments are on their way | The company's webhook answers 404, Stripe retries then stops; rent the bank paid never reaches the books; one log line | Open | src/pms/api/online_payments.py:680-683; src/pms/payments.py:551-556 | H |
 | H-067 | PMS_TRUSTED_PROXIES empty behind a proxy on another host or network | Every visitor has the proxy's address: 20 failed sign-ins by anyone lock the whole company out for 15 minutes, 10 resets an hour for everyone, signatures record the proxy's address | Open | src/pms/api/throttle.py:84-86 | H |
-| H-068 | "*" trusted, with nginx's $proxy_add_x_forwarded_for as install.md says | uvicorn takes the leftmost address, which the visitor writes: the sign-in throttle is bypassed with a new forged address each try, and a signer's address in the evidence can be forged | Open | uvicorn 0.54 ProxyHeadersMiddleware (always_trust takes the first host); docs/install.md step 4 | H |
 | H-089 | The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st) | The next run charges only the new month, so that rent is never charged by itself, and nothing says so | Open | src/pms/nightly.py:116-118; db/schema.sql:1688-1720 (only the run's month) | H |
 | H-097 | The everything export of a large company | Every table and every document's bytes are fetched and zipped in memory in one request; it can exhaust the process and take the PMS down for everyone | Open | src/pms/exports.py:433-491 | H |
+| H-022 | PMS_NIGHTLY=off with no cron running python -m pms.nightly | The server's log says at start that the run is off and what to run instead; the Dashboard saying when rent last posted is H-021 | Tested | tests/api/test_server.py::test_a_server_with_the_nightly_run_off_says_so_at_start | H |
+| H-027 | The disk fills | DiskFull, at a write or at commit, answers 503 in words (deps.DISK_FULL, Retry-After 60), logged; nothing saved | Tested | tests/api/test_refusals.py::test_a_full_disk_is_told_in_words_not_as_a_server_error[write,commit] | H |
 | H-059 | PMS_PUBLIC_URL isn't the address people use (www or not, http or https, another domain) | Start-up refuses an address that is no http(s) origin (no scheme or host, a path, query or fragment); a change refused for its origin is logged once per origin with PMS_PUBLIC_URL's (a valid but wrong origin can't be told at start-up) | Tested | tests/test_deployment.py::test_the_app_refuses_to_start_at_an_address_no_browser_opens_it_at; tests/api/test_sign_in.py::test_a_refused_origin_is_logged_with_the_one_expected_once, ::test_the_log_of_refused_origins_stops_at_its_cap | H |
 | H-060 | PMS_PUBLIC_URL left as .env.example's https://pms.example.com | The server and its commands refuse to start at .env.example's PMS_PUBLIC_URL, naming what to set | Tested | tests/test_deployment.py::test_the_app_refuses_to_start_at_the_example_address, ::test_the_commands_refuse_the_example_address_before_they_connect, ::test_env_example_still_offers_the_placeholder_the_server_refuses | H |
+| H-068 | "*" trusted, with nginx's $proxy_add_x_forwarded_for as install.md says | Same fix as U-033: the last X-Forwarded-For address, which nginx's $proxy_add_x_forwarded_for appends | Tested | tests/api/test_throttle.py::test_behind_the_proxy_a_visitor_cant_dodge_the_limit_by_naming_another_address | H |
 | H-072 | A very large JSON body (hundreds of MB) to /api/apply or /api/sign-in, no sign-in needed | Refused 413 above 10 MB before it is read: at once when it says its length, counted as it streams otherwise; a 5 MB file as base64 still fits | Tested | tests/api/test_body_limit.py | H |
 | H-115 | A session signed out after an hour idle, page still open | Once signed in, a request answering "sign in first" takes the person to sign in, saying they were signed out after a while away; a wrong password or a key's refusal doesn't | Tested | frontend/src/api.test.ts > api > tells the page a session ended, once someone was signed in, and only for that (H-115); frontend/src/pages/SignInPage.test.tsx | H |
 | H-152 | Any error while drawing a page (an answer of an unexpected shape after an upgrade, a status the page doesn't know) | An error boundary around the portal: a page that fails to draw says it couldn't be shown and that nothing saved is lost, with Reload and the way to the start; never the error's words | Tested | frontend/src/components/ErrorBoundary.test.tsx | H |

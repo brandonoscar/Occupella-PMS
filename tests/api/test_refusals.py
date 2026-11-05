@@ -123,3 +123,50 @@ def test_a_request_that_finds_every_connection_busy_is_told_so_in_words(
     assert busy.headers["Retry-After"] == "5"
     # Once one is free again, the same request is answered.
     assert client.get("/api/dashboard").status_code == 200
+
+
+@pytest.fixture
+def full_disk(conn):
+    """The database's disk full, as Postgres says it (SQLSTATE 53100, disk_full), on a write to
+    trust_notes: when it is made, or when its transaction commits."""
+
+    def fill(when):
+        conn.execute(
+            "CREATE FUNCTION pg_temp.disk_full() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
+            " RAISE EXCEPTION 'could not extend file \"base/16384/2619\": No space left on device'"
+            " USING ERRCODE = 'disk_full'; END $$"
+        )
+        timing = "DEFERRABLE INITIALLY DEFERRED" if when == "commit" else ""
+        conn.execute(
+            f"CREATE CONSTRAINT TRIGGER zz_disk_full AFTER INSERT ON trust_notes {timing}"
+            " FOR EACH ROW EXECUTE FUNCTION pg_temp.disk_full()"
+        )
+
+    yield fill
+    conn.execute("DROP TRIGGER IF EXISTS zz_disk_full ON trust_notes")
+    conn.execute("DROP FUNCTION IF EXISTS pg_temp.disk_full()")
+
+
+@pytest.mark.parametrize("when", ["write", "commit"])
+def test_a_full_disk_is_told_in_words_not_as_a_server_error(
+    client, conn, app_conn, pmc, full_disk, when, caplog
+):
+    """docs/edge-cases.md H-027: Postgres refuses every write once its disk is full. Each save
+    said "the server answered 500"; it says what happened, that nothing was saved, and whom to
+    tell, and the server's log says it too."""
+    join_as_staff(client, conn, app_conn, pmc)
+    prop = pmc.owners[0].property_id
+    full_disk(when)
+
+    note = {"about": "property", "about_id": str(prop), "body": "Gutters cleaned"}
+    answer = client.post("/api/notes", json=note)
+
+    assert answer.status_code == 503
+    assert answer.json() == {"detail": deps.DISK_FULL}
+    assert answer.headers["Retry-After"] == "60"
+    assert any("disk is full" in r.getMessage() for r in caplog.records if r.name == "pms.api")
+    # Nothing was saved.
+    assert conn.execute(
+        "SELECT count(*) FROM trust_notes WHERE body = 'Gutters cleaned' AND pmc_id = %s",
+        (pmc.pmc_id,),
+    ).fetchone() == (0,)

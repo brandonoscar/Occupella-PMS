@@ -120,6 +120,9 @@ def refusal(error: psycopg.Error) -> str:
 # fifty staff on slow pages filled the pool, and the wait ran out as a 500).
 BUSY_AFTER = 30.0
 BUSY = "the PMS is busy just now: try again in a moment"
+# Postgres refuses every write once its disk is full (docs/edge-cases.md H-027): said in words, with
+# whom to tell, never as a server error.
+DISK_FULL = "the PMS's database is out of disk space, so nothing was saved: tell whoever runs it"
 
 
 def connection(request: Request) -> Iterator[psycopg.Connection[Any]]:

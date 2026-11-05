@@ -136,7 +136,7 @@ from pms.api import (
     work_orders,
     year_close,
 )
-from pms.api.deps import COOKIE, Conn, Current, Staff, download, refusal
+from pms.api.deps import COOKIE, DISK_FULL, Conn, Current, Staff, download, refusal
 from pms.leasing import screening
 
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
@@ -144,6 +144,27 @@ log = logging.getLogger("pms.api")
 # Each origin a change was refused from is logged once per process, at most this many.
 LOGGED_ORIGINS = 50
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+class NearestProxy:
+    """With PMS_TRUSTED_PROXIES "*" the only one that connects is the HTTPS proxy on the server
+    itself (compose.selfhost.yaml), and the address it adds to X-Forwarded-For is the last: nginx
+    as docs/install.md sets it ($proxy_add_x_forwarded_for) appends it to whatever the visitor
+    sent. uvicorn, trusting everyone, would take the first, the visitor's own words, so a visitor
+    could dodge the sign-in limit with a new address each try and write any address into a
+    signature's evidence. This keeps the last alone."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] in ("http", "websocket"):
+            named = [value for name, value in scope["headers"] if name == b"x-forwarded-for"]
+            if named:
+                last = b",".join(named).split(b",")[-1].strip()
+                headers = [(n, v) for n, v in scope["headers"] if n != b"x-forwarded-for"]
+                scope = {**scope, "headers": [*headers, (b"x-forwarded-for", last)]}
+        await self.app(scope, receive, send)
 
 
 @dataclass(frozen=True)
@@ -349,6 +370,13 @@ def create_app(settings: Settings) -> FastAPI:
                 payments=app.state.payments,
             )
             runs.start()
+        else:
+            # Nothing posts by itself then (docs/edge-cases.md H-022).
+            log.warning(
+                "the nightly run is off (PMS_NIGHTLY=off): rent, recurring charges, late fees,"
+                " recurring bills and draws post only when `python -m pms.nightly` runs, once a"
+                " day, or an admin presses Run rent now"
+            )
         courier = None
         if settings.webhooks:
             courier = webhooks.Courier(settings.database_url, settings.db_role)
@@ -367,6 +395,10 @@ def create_app(settings: Settings) -> FastAPI:
         # uvicorn's own: from a trusted proxy only, the visitor's address (and the scheme) come
         # from X-Forwarded-For (and -Proto); from anyone else the headers are ignored.
         app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.trusted_proxies)
+        if settings.trusted_proxies == "*":
+            # Before it: uvicorn takes the first address when it trusts everyone, which the
+            # visitor may write themselves (docs/edge-cases.md U-033).
+            app.add_middleware(NearestProxy)
     app.state.settings = settings
     app.state.pool = pool
     app.state.screening = screening.partner_named(settings.screening_partner)
@@ -477,6 +509,12 @@ def create_app(settings: Settings) -> FastAPI:
         if "NUL (0x00)" not in str(error):
             raise error
         return JSONResponse({"detail": "text can't contain a NUL character"}, 422)
+
+    @app.exception_handler(psycopg.errors.DiskFull)
+    async def disk_full(request: Request, error: psycopg.Error) -> JSONResponse:
+        # The transaction is rolled back; whoever runs the server frees space (docs/support.md).
+        log.error("the database's disk is full: %s", error.diag.message_primary)
+        return JSONResponse({"detail": DISK_FULL}, 503, headers={"Retry-After": "60"})
 
     @app.exception_handler(psycopg.errors.InsufficientPrivilege)
     async def not_allowed(request: Request, error: psycopg.Error) -> JSONResponse:

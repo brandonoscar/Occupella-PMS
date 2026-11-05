@@ -48,6 +48,16 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   origin (no scheme, no host, or a path, query or fragment: the portal is served at the root).
   A change refused because it came from another origin is logged once per origin with the one
   `PMS_PUBLIC_URL` gives, so a server reached at `www.` or another domain shows which to fix.
+- **Security: a visitor can't name their own address behind the proxy.** Trusting whoever
+  connects (`PMS_TRUSTED_PROXIES="*"`, as `compose.selfhost.yaml` sets it), the app took the first
+  address of `X-Forwarded-For`, which a visitor may send themselves and nginx keeps: a new made-up
+  address each try got past the sign-in limit, and a signer could write any address into a
+  signature's evidence. It now takes the last, the one the proxy wrote.
+- **Fixed, from the edge-case catalog:** a full database disk answers "the PMS's database is out
+  of disk space, so nothing was saved: tell whoever runs it" (503, and the log says it) instead of
+  "the server answered 500"; New York's renewal notice counts a 12-month lease as a year (60 days,
+  not 30) and two years to the day as two (90, not 60); and a server started with the nightly run
+  off says so in its log, with what to run instead.
 - **Fixed: rent charged twice in a month.** Run rent now with Rent due on set to a day other than
   the first (the 15th, say) charged every lease due on the first a second month's rent and each
   monthly charge a second time, and a rent the old system's unpaid charges carried over on another

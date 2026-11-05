@@ -106,3 +106,24 @@ def test_an_address_asks_for_only_so_many_password_resets(app, pmc):
         refused = here.post("/api/password-reset", json=body)
         assert refused.status_code == 429
         assert refused.json()["detail"].startswith("too many password resets from this address")
+
+
+def test_behind_the_proxy_a_visitor_cant_dodge_the_limit_by_naming_another_address(settings, pmc):
+    """docs/edge-cases.md U-033, H-068: compose.selfhost.yaml trusts whoever connects ("*"),
+    the HTTPS proxy on the server itself, and nginx as docs/install.md sets it appends the
+    visitor's address to any X-Forwarded-For the visitor sent. The address is the one the proxy
+    wrote, the last; the ones before it are the visitor's own words."""
+    from dataclasses import replace
+
+    app = create_app(replace(settings, trusted_proxies="*"))
+    app.state.sign_in_failures = throttle.Limiter(3, 900.0)
+    wrong = {"pmc_id": str(pmc.pmc_id), "email": "someone@example.com", "password": "wrong"}
+    with TestClient(app, client=("127.0.0.1", 50000)) as proxy:
+        for n in range(3):
+            forged = {"X-Forwarded-For": f"192.0.2.{n}, 198.51.100.50"}
+            assert proxy.post("/api/sign-in", json=wrong, headers=forged).status_code == 401
+        forged = {"X-Forwarded-For": "192.0.2.99, 198.51.100.50"}
+        assert proxy.post("/api/sign-in", json=wrong, headers=forged).status_code == 429
+        # Another visitor, through the same proxy, goes on.
+        other = {"X-Forwarded-For": "198.51.100.51"}
+        assert proxy.post("/api/sign-in", json=wrong, headers=other).status_code == 401

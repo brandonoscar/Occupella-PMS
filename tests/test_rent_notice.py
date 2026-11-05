@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 
 from pms import rent_notice
-from pms.rent_notice import Needed, needed, warning
+from pms.rent_notice import Needed, needed, warning, whole_years
 
 
 def d(amount: str) -> Decimal:
@@ -80,3 +80,28 @@ def test_no_warning_once_the_new_rent_starts_late_enough():
     assert warning(rule, sent, date(2027, 1, 22)) is not None
     nevada = Needed("NV", 60, "NRS 118A.300", d("1.0"))
     assert "in 1 day." in warning(nevada, sent, date(2026, 10, 26))
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "years"),
+    [
+        # A 12-month lease, its day after the last: a year whether or not a February 29 is in it.
+        (date(2025, 1, 1), date(2026, 1, 1), 1),
+        (date(2024, 1, 1), date(2025, 1, 1), 1),
+        (date(2025, 5, 1), date(2026, 4, 30), 0),
+        # Two years to the day, with and without a February 29.
+        (date(2024, 12, 1), date(2026, 12, 1), 2),
+        (date(2023, 12, 1), date(2025, 12, 1), 2),
+        (date(2024, 12, 2), date(2026, 12, 1), 1),
+        # From a February 29, its anniversary in a common year is February 28.
+        (date(2024, 2, 29), date(2025, 2, 28), 1),
+        (date(2024, 2, 29), date(2025, 2, 27), 0),
+        (date(2024, 2, 29), date(2028, 2, 29), 4),
+        (date(2026, 6, 1), date(2026, 6, 1), 0),
+        (date(2026, 6, 2), date(2026, 6, 1), 0),
+    ],
+)
+def test_whole_years_count_anniversaries_not_days(start, end, years):
+    """docs/edge-cases.md D-067, D-068: whole years are anniversaries reached by a day, never
+    days over 365.25."""
+    assert whole_years(start, end) == years
