@@ -148,7 +148,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   person; a new password records a new answer, the latest holding). Staff are asked neither. It
   records consent for A2P 10DLC and sends no text; the AI role never reads it. The first staff member, their first admin
   role and their invite come from `python -m pms.admin` (`setup` also gives the company its
-  starting expense accounts, `pms.api.setup.STARTING_CHART`). A self-hosted install's app logs in as
+  starting expense accounts and kinds of fee, `pms.api.setup.STARTING_CHART` and
+  `STARTING_CHARGE_TYPES`; `starting-chart` adds what a company made before lacks). A self-hosted install's app logs in as
   `pms_app` (`python -m pms.app_login`, run after the migrations), which holds nothing of its own
   and may only act as trust_app, never as the database's owner. A demo PMC to show the PMS with
   comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
@@ -337,7 +338,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`src/pms/api/staff.py`; an admin invites a staff member from their row), logins at
   `/settings/logins` (read only, by status; Disable in a row's menu), the company at
   `/settings/setup` (`src/pms/api/company.py`: its name, address, logo and the fees new
-  properties start with), expense accounts at `/settings/accounts` (Chart of accounts). The books'
+  properties start with), the chart of accounts at `/settings/accounts` (below). The books'
   setup (`src/pms/api/setup.py`: plain inserts and the database's own write paths, nothing that
   moves money) opens in side panels where each thing is used (`pages/SetupPanels.tsx`, ADR
   0006): a property from Properties; a unit, another owner, management terms and late and NSF
@@ -587,7 +588,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   checks every write); a lease has one or more of the property's tenants. Charges (rent, fees,
   credits) are append-only, and rent is charged at most once per lease and due date. A payment
   posted to the ledger is matched to charges with `trust_apply_payment`: never past a charge's
-  amount or the transfer's, and safe to retry. A bounced payment is undone with
+  amount or the transfer's, and safe to retry; it pays the owner's account, or the company's fee
+  account for a fee whose type the company keeps (migration 20261106000220). A bounced payment is undone with
   `trust_reverse_payment`, against the ledger transfer that moved the money back; matches are
   never rewritten. Leases, matches and reversals are written at READ COMMITTED.
 - The owner money loop: a management agreement per owner's property account, in force from a
@@ -1344,6 +1346,41 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   collected on each type on a line of its own after the other income (a rent run's charge under
   its recurring charge's type), and the budget beside it counts that line as income. Owners read and download a year's in the portal (`/api/owner/income-statement`);
   staff download any owner's from the owners page.
+- Chart of accounts (migrations 20261106000200 to 20261106000230, the founder's pass of 11/05;
+  `src/pms/api/chart.py`, `pages/ChartOfAccountsPage.tsx`, area setup): every account of a
+  company's chart has a code of our own numbering, four digits, once among its codes today
+  (`trust_account_codes`: append-only, the latest holding, naming who; `trust_account_codes_of`).
+  1000 trust bank cash; 2000 owner funds, 2100 tenant security deposits, 2110 pet and 2120 key
+  deposits, 2200 prepaid rent, 2300 vendor payables, 2400 the company's fees held in trust; no
+  equity (3000s); 4000 rent, 4100 recurring charges, 4200 late fees, 4300 NSF fees, 4400 other
+  charges, charge types from 4501; 5000 bills in no expense account, then a block of a hundred
+  per Schedule E line (5000 + 100 x the line: 5800 leasing fees, 6100 management fees, 6900
+  security deposit interest), each expense account from the block's next code (6401... for
+  repairs). Kept for a later pass: 2150 owner-held deposits (a memo), 2250 unapplied cash, 4010
+  concessions (a contra to rent). Each control account (`trust_chart_lines`) is one code per kind;
+  a charge type or an expense account takes the next free code as it is added (a trigger). A
+  code changes no posting. Staff give any account another code (`POST /api/setup/codes`, in its
+  section's range), and rename or archive an expense account or a charge type
+  (`trust_expense_account_names`, `trust_charge_type_names`, `..._archivals`: append-only, the
+  latest holding, naming who; a name once among the names today, whatever its case): an expense
+  account only while no bill neither paid in full nor declined is in it (its latest row or that
+  row's split lines) and no recurring bill running through today enters in it, a charge type only
+  while no monthly charge of it runs; an archived one takes nothing new, keeps its history and its
+  past lines, and comes back any time. Reports, pickers and pages print names today. A charge
+  type says who keeps its fees (`trust_charge_type_payees`, the owner unless the company says;
+  `trust_charge_payee`: its type's payee as it was when the fee was charged, so a change counts
+  for fees charged from then on): Receive payment, payment files, payments online, autopay and
+  prepaid rent used (`rent.split`) pay a fee the company keeps into its fee account in the trust
+  bank account that holds the owner's money, and a bounce takes it back
+  (`trust_apply_payment`, `trust_charge_nsf_fee` allow it). The owner's cash statement, year-end
+  and management fee count what reached the owner's account, so never the company's part; the
+  accrual statement leaves company-kept fees out. Known gaps: a deposit kept at move-out
+  (`trust_return_deposit`) still pays a company-kept fee to the owner's account, and the owner
+  balance sheet counts such a fee among what tenants owe the owner. Twelve starting kinds of fee
+  (migration 20261106000225: the company keeps the resident benefit package and the lease
+  initiation, renewal, lease change and admin fees; the owner the rest) and 49 starting expense
+  accounts. `trust_report_chart_of_accounts` lists the chart (as the owner, so the AI calls no
+  helper) and is the page's CSV.
 - Accrual basis (migration 0104, the founder's review q115): `trust_report_income_statement_accrual`
   is the income statement's lines counting what was charged in the days (a credit as less, a lease
   end's adjustment or a waiver as what it changes, a credit on its own as rent, a housing
