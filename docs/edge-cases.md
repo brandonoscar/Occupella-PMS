@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1140 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1144 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -28,12 +28,12 @@ answer in the portal for everything that can fail.
 | [Money and the ledger](#money-and-the-ledger) | 151 | 113 | 7 | 31 | 4 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 159 | 81 | 15 | 63 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 63 | 30 | 49 | 2 |
-| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 163 | 64 | 8 | 91 | 26 |
-| [Bad files and imports](#bad-files-and-imports) | 145 | 60 | 16 | 69 | 6 |
+| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 65 | 8 | 92 | 26 |
+| [Bad files and imports](#bad-files-and-imports) | 147 | 61 | 16 | 70 | 5 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 167 | 69 | 14 | 84 | 9 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1140** | **577** | **110** | **453** | **68** |
+| **All** | **1144** | **579** | **110** | **455** | **67** |
 
 ## Open, high risk: the work list
 
@@ -106,7 +106,6 @@ its ten most pressing, each with the test that would close it.
 - F-077: A charge dated after a new lease started at the unit (the old tenant's move-out fee dated after the next move-in)
 - F-122: An audit log report over a day a lease offer or a drawn signature was saved
 - F-126: The everything export (records.zip) of a company with GBs of files
-- F-129: Two tenants of the same name at different properties, in the QuickBooks export
 
 **People doing the unexpected, permissions and security**
 
@@ -721,6 +720,7 @@ its ten most pressing, each with the test that would close it.
 | P-159 | The prepared draws fail to load on Pay owners | Hidden, as if none were prepared | Open | frontend/src/pages/PayOwnersPage.tsx:73 | M |
 | P-160 | The company's fees in trust fail to load on Banking | Hidden, so fees past their day to take out don't show | Open | frontend/src/pages/ReconcilePage.tsx:71 | M |
 | P-161 | A return reported before paid, and paid never lands (its report keeps failing on the fee lookup, 502) | The return answers 409 until the partner gives up (about three days, NOT VERIFIED), then it is lost as before | Open | src/pms/api/online_payments.py refuse_too_soon | M |
+| P-165 | A bank CSV of positive amounts with no Type column at all, holding checks and fees | Read as all money in, as before; a CSV needs no closing balance, so only month-end's missing lines show it | Open | src/pms/statements.py (read_csv) | M |
 | P-119 | The same ACH file downloaded and uploaded twice | The same file each time, logged "Taken N times"; the bank's duplicate check is all that stops a second upload | Guarded | src/pms/api/payouts.py:621-624; tests/api/test_payouts_api.py::test_an_ach_file_taken_again_is_the_one_made_when_the_run_was_paid | M |
 | P-025 | A paid ACH payment comes back (charge.dispute.created) | Undone as a bounce with the NSF fee, the tenant's fee back out of the company's account | Tested | tests/api/test_online_payments_api.py::test_a_return_is_a_bounce_and_the_tenants_fee_goes_back_out; tests/test_payments.py::test_stripe_reports_a_failure_a_return_and_nothing_else | M |
 | P-050 | PMS_DATA_KEY lost or changed, so the company's keys don't open | Never falls back to the server's account; tenants see How to pay; admins see "Your keys can't be read on this server. Enter them again." | Tested | tests/api/test_payment_keys_api.py::test_keys_that_dont_open_here_take_no_payment_and_never_fall_back; frontend/src/pages/PaymentKeysCard.test.tsx > says keys that can't be read here need entering again | M |
@@ -802,6 +802,7 @@ its ten most pressing, each with the test that would close it.
 | P-145 | The database unreachable, asked by /health | 503 "database unavailable" within 2 s | Tested | tests/api/test_sign_in.py::test_health_says_when_the_database_is_unavailable | L |
 | P-146 | Every pool connection busy | 503 in words with Retry-After | Tested | tests/api/test_refusals.py::test_a_request_that_finds_every_connection_busy_is_told_so_in_words | L |
 | P-150 | The connection drops before the commit | Nothing lands and the retry lands once | Tested | tests/test_faults.py::test_a_payment_cut_off_before_it_commits_leaves_nothing_and_its_retry_lands_once | L |
+| P-164 | A bank CSV of positive amounts with a Type column whose words say neither way (ACH, Check, POS) | Refused with its line, "says neither debit nor credit"; the file can't come in until it is edited or the bank exports signed amounts | Tested | tests/test_statement_files.py::test_a_type_that_says_neither_way_is_refused_when_no_amount_carries_a_sign | L |
 
 ### Most pressing open, with the test that would close each
 
@@ -825,7 +826,6 @@ its ten most pressing, each with the test that would close it.
 | F-077 | A charge dated after a new lease started at the unit (the old tenant's move-out fee dated after the next move-in) | Goes to the newest lease started by its due day, so the new tenant owes the old tenant's charge. The file has no tenant or lease column to say otherwise | Open | src/pms/api/switching.py:441-447 | H |
 | F-122 | An audit log report over a day a lease offer or a drawn signature was saved | to_jsonb of the row carries the offer's 5 MB PDF as 10 million hex characters into one detail cell. The PDF export wraps it a character at a time, copying the rest each line, and effectively never finishes; the Excel cell runs far past 32,767. NOT VERIFIED by running | Open | db/schema.sql trust_audit (to_jsonb(NEW)) and trust_report_audit_log (jsonb_each_text detail); src/pms/exports.py:279-286 | H |
 | F-126 | The everything export (records.zip) of a company with GBs of files | Built whole in memory: each table fetched in full, every document's bytes, the zip in a BytesIO, one response. Each table is sorted by row_to_json(r)::text, which turns every 5 MB file into 10 MB of hex to sort. May exhaust memory or never finish; not timed | Open | src/pms/exports.py:433-491 | H |
-| F-129 | Two tenants of the same name at different properties, in the QuickBooks export | Both get the default account "Prepaid rent:Pat Sample" (and "Tenant deposits:Pat Sample"), so QuickBooks posts both people's money to one account | Open | src/pms/quickbooks.py:42-48,109 | H |
 | F-088 | The same payments again under other bytes (renamed, re-exported, a trailing newline) | Another SHA, but each line looks recorded already (same lease, day and amount) and waits for staff | Guarded | src/pms/api/payment_files.py:160-214 (the nearest test is tests/api/test_payment_files_api.py::test_a_payment_that_looks_recorded_already_waits) | H |
 | F-015 | A PNG bomb: a 5 MB PNG declaring 30000 x 30000 pixels, kept as a move-out photo or a receipt | The statement still goes: the photo's page says it could not be added here and is with the lease's files, whatever error the image library raises | Tested | tests/test_deposit_statement.py::test_a_photo_that_says_it_is_huge_leaves_the_letter_whole | H |
 | F-016 | That same statement emailed (deposit_statement) | Any error making an email's file is that attempt's failed delivery, with the error; the emails behind it go out in the same run | Tested | tests/test_email_attachments.py::test_an_attachment_that_fails_in_any_way_is_a_failed_delivery_and_stops_nothing_behind_it | H |
@@ -840,6 +840,7 @@ its ten most pressing, each with the test that would close it.
 | F-109 | A report cell starting =, +, -, @, a tab or a carriage return, or one already starting "'=" | CSV puts one apostrophe before it and reads back as it was | Tested | tests/properties/test_export_properties.py::test_csv_holds_every_cell | H |
 | F-110 | The same cells in an Excel download | Never a formula: stored as text | Tested | tests/properties/test_export_properties.py::test_excel_holds_every_value_and_no_formula | H |
 | F-128 | Logins' secrets, sessions and token hashes in records.zip, in a table or in the audit log's copies | Left out | Tested | tests/test_records_export.py::test_no_credential_comes_out | H |
+| F-129 | Two tenants of the same name at different properties, in the QuickBooks export | No two accounts share a PMS-made name: the oldest keeps the plain name, each after it adds its tenant's property, then a number; a name once given never changes | Tested | tests/properties/test_quickbooks_properties.py::test_no_two_accounts_share_a_pms_made_name_and_none_ever_changes; tests/test_quickbooks.py::test_two_people_of_one_name_never_share_a_quickbooks_account | H |
 | F-138 | An ACH file downloaded again | Byte for byte the file made when the run was paid; each download is logged. The bank pays twice if it is uploaded twice | Tested | tests/api/test_payouts_api.py::test_an_ach_file_taken_again_is_the_one_made_when_the_run_was_paid | H |
 | F-139 | A payee routing number whose check digit fails | Refused when the bank account is saved | Tested | tests/api/test_payouts_api.py::test_a_bank_account_that_cant_be_paid_is_refused | H |
 | F-009 | A POST body of hundreds of MB, to any endpoint including the public apply and sign-in pages | No body size limit. uvicorn and FastAPI read the whole body into memory before the 7,000,000-character field limit refuses it, so a few such requests can exhaust the worker's memory | Open | src/pms/api/__main__.py:11-16; src/pms/api/app.py (no body-size middleware) | M |
@@ -884,6 +885,7 @@ its ten most pressing, each with the test that would close it.
 | F-136 | An ACH account holder named only in Cyrillic, Arabic or Chinese | The receiver name is 22 spaces; the bank may reject the entry or not know who it pays. Nothing warns when the account is saved | Open | src/pms/payouts/nacha.py:55-57,126 | M |
 | F-137 | Two ACH files for one bank on one day (two Pay owners runs) | Every file's File ID Modifier is "A", and banks commonly reject a second file with the same one as a duplicate | Open | src/pms/payouts/nacha.py:73; src/pms/api/payouts.py:686 | M |
 | F-141 | A long payee name or memo on a printed check | fpdf's cell doesn't clip, so the name runs past its 130 mm box into the amount figure | Open | src/pms/payouts/checks.py:124-127,135 | M |
+| F-146 | A PMS-made QuickBooks name longer than QuickBooks Desktop takes (a long tenant and property name, 31 characters a name part in Desktop) | The IIF line carries the whole name; whether Desktop refuses the file, cuts the name (two cut alike would share an account again) or takes it is NOT VERIFIED; nothing shortens it | Open | src/pms/quickbooks.py (accounts, part) | M |
 | F-096 | A line dated in a period month-end has closed | The books refuse it; it waits with their reason | Guarded | src/pms/api/payment_files.py:398-405 | M |
 | F-035 | A CSV Excel on Windows saved as Windows-1252, with "José O’Brien" | Read as Windows-1252; the letters survive | Tested | frontend/src/fileText.test.ts "reads a file Excel on Windows saved as CSV (Windows-1252) without losing its letters" | M |
 | F-036 | A file whose letters arrive as the replacement character | Refused whole with its line: "save the file as CSV UTF-8" | Tested | tests/api/test_switch.py::test_a_file_whose_letters_didnt_read_is_refused_with_its_line | M |
@@ -927,6 +929,7 @@ its ten most pressing, each with the test that would close it.
 | F-140 | A bank that asks for CRLF line ends, or an effective day on a weekend or holiday | LF only, and the day as given. NOT VERIFIED against a bank | Open | src/pms/payouts/nacha.py:105,165 | L |
 | F-142 | One check paying more than 12 bills | Its stubs list only the first 12; the rest go unnamed (the total is right) | Open | src/pms/payouts/checks.py:103 | L |
 | F-145 | A year of general ledger or audit log as a PDF for a 1,000-unit company | Built in memory in the request. tools/speed.py times a month's PDFs only (10 s p95 ceiling), never a year's. NOT VERIFIED | Open | src/pms/exports.py:197-231; ci/thresholds.toml [speed] | L |
+| F-147 | Staff give an account exactly the name the PMS made for another account | Both post to one QuickBooks account; a company that keeps one account for both does this on purpose, so nothing refuses it or warns | Open | src/pms/quickbooks.py (accounts: defaults avoid each other, not staff's names) | L |
 | F-003 | An iPhone HEIC photo renamed .jpg | Its first bytes aren't JPEG's, so it is refused with "the file isn't a JPG", which doesn't say it is HEIC | Guarded | src/pms/api/documents.py:368 | L |
 | F-006 | A file of exactly 5 MiB (5,242,880 bytes) | Accepted: its base64 is 6,990,508 characters, under 7,000,000. Only the over-limit side has a test | Guarded | src/pms/api/documents.py:58,335,366 | L |
 | F-020 | A password-protected receipt PDF | pypdf's FileNotDecryptedError is a PyPdfError, so the statement prints the could-not-be-added page | Guarded | src/pms/deposit_statement.py:184-188 | L |

@@ -79,6 +79,7 @@ nightly_factor = 60
 "tests/properties/test_prepaid_by_itself_properties.py::test_prepaid_rent_used_by_itself_follows_the_setting_holds_and_days" = 28.3
 "tests/properties/test_property_address_properties.py::test_a_property_is_where_its_latest_address_was_last_found" = 12.8
 "tests/properties/test_property_group_properties.py::test_a_group_holds_exactly_the_properties_that_joined_and_did_not_leave" = 5.8
+"tests/properties/test_quickbooks_properties.py::test_no_two_accounts_share_a_pms_made_name_and_none_ever_changes" = 9.3
 "tests/properties/test_quickbooks_properties.py::test_the_journal_moves_quickbooks_balances_as_the_ledger_moves" = 7.6
 "tests/properties/test_receive_payment_properties.py::test_a_lease_goes_month_to_month_once_when_its_term_runs_out_without_an_end_of_staffs" = 20.0
 "tests/properties/test_receive_payment_properties.py::test_a_payment_pays_the_charges_chosen_first_and_the_rest_as_before" = 50.0

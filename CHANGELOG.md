@@ -77,6 +77,10 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   are all positive, with a column saying Debit or Credit (Type, Transaction type, Dr/Cr), went in
   with every check and fee as a deposit. Each line's way now comes from that column; a type saying
   neither is refused with its line, and a bank that signs its amounts keeps its signs.
+- **Fixed: two tenants of one name shared a QuickBooks account.** The QuickBooks export named a
+  tenant's prepaid rent and deposits by their name alone, so two Pat Samples (or two vendors of
+  one name) posted to one account. The oldest keeps the plain name; each after it adds its
+  tenant's property, then a number, and a name once given never changes.
 - **Fixed: deposit interest paid twice for the same days.** A tenant's deposit is one account, and
   each lease's interest counted all of it: a tenant on two leases at once, or a renewal and the
   lease it renewed (the old one paid through a day after its end), were paid each day twice. Each

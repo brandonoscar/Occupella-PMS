@@ -48,14 +48,18 @@ SELECT t.ledger_account_id, t.kind, b.display_name,
        END,
        (SELECT q.name FROM trust_quickbooks_accounts AS q
         WHERE q.pmc_id = t.pmc_id AND q.ledger_account_id = t.ledger_account_id
-        ORDER BY q.id DESC LIMIT 1)
+        ORDER BY q.id DESC LIMIT 1),
+       tp.display_name
 FROM trust_ledger_accounts AS t
+JOIN pgledger_accounts AS a ON a.id = t.ledger_account_id
 JOIN trust_bank_accounts AS b ON b.id = t.bank_account_id
 LEFT JOIN trust_owners AS o ON o.id = t.owner_id
 LEFT JOIN trust_properties AS pr ON pr.id = t.property_id
 LEFT JOIN trust_tenants AS tn ON tn.id = t.tenant_id
 LEFT JOIN trust_vendors AS v ON v.id = t.vendor_id
+LEFT JOIN trust_properties AS tp ON tp.id = tn.property_id
 WHERE t.pmc_id = %(pmc)s
+ORDER BY a.created_at, t.ledger_account_id COLLATE "C"
 """
 
 # A transfer never crosses PMCs (CLAUDE.md), so its from-account places it.
@@ -100,19 +104,22 @@ def part(text: str) -> str:
 
 
 def accounts(conn: psycopg.Connection[Any], pmc_id: Any) -> list[Account]:
-    found = [
-        Account(
-            ledger_account_id=account_id,
-            kind=kind,
-            bank=bank,
-            holder=holder or "",
-            default_name=f"{PARENTS[kind]}:{part(holder or '')}",
-            name=name,
-        )
-        for account_id, kind, bank, holder, name in conn.execute(
-            ACCOUNTS, {"pmc": pmc_id}
-        ).fetchall()
-    ]
+    """Each ledger account of the company with its name in QuickBooks. Two accounts never share
+    a name the PMS makes (two tenants of one name, two vendors...), or QuickBooks would post both
+    to one account: oldest first, each takes its plain name if no older one has it, else adds
+    its tenant's property, then a number, so a name once given never changes."""
+    found, taken = [], set()
+    for account_id, kind, bank, holder, name, place in conn.execute(
+        ACCOUNTS, {"pmc": pmc_id}
+    ).fetchall():
+        plain = f"{PARENTS[kind]}:{part(holder or '')}"
+        default = plain if plain not in taken or not place else f"{plain} ({part(place)})"
+        n, numbered = 1, default
+        while numbered in taken:
+            n += 1
+            numbered = f"{default} {n}"
+        taken.add(numbered)
+        found.append(Account(account_id, kind, bank, holder or "", numbered, name))
     return sorted(found, key=lambda a: (a.default_name, a.ledger_account_id))
 
 

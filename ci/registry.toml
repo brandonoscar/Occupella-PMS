@@ -906,9 +906,11 @@ tests = [
 
 [[invariant]]
 id = "quickbooks-journal-moves-as-the-ledger"
-statement = "The QuickBooks journal of some days is the ledger's transfers of those days (UTC), each debiting the QuickBooks account the money left and crediting the one it reached, so each entry balances and each QuickBooks account's debits less credits are what its ledger accounts lost; the Desktop file's transactions and the Online file's journal numbers each sum to zero. A ledger account's QuickBooks name is the company's latest, or the PMS's, of its own company's accounts only, one QuickBooks can read, and never rewritten."
+statement = "The QuickBooks journal of some days is the ledger's transfers of those days (UTC), each debiting the QuickBooks account the money left and crediting the one it reached, so each entry balances and each QuickBooks account's debits less credits are what its ledger accounts lost; the Desktop file's transactions and the Online file's journal numbers each sum to zero. A ledger account's QuickBooks name is the company's latest, or the PMS's, of its own company's accounts only, one QuickBooks can read, and never rewritten. No two of a company's accounts share a name the PMS makes (the oldest keeps its plain name, each after it adds its tenant's property, then a number), and none changes as others come."
 tests = [
   "tests/properties/test_quickbooks_properties.py::test_the_journal_moves_quickbooks_balances_as_the_ledger_moves",
+  "tests/properties/test_quickbooks_properties.py::test_no_two_accounts_share_a_pms_made_name_and_none_ever_changes",
+  "tests/test_quickbooks.py::test_two_people_of_one_name_never_share_a_quickbooks_account",
   "tests/test_quickbooks.py::test_the_journal_debits_where_money_left_and_credits_where_it_went",
   "tests/test_quickbooks.py::test_desktop_reads_balanced_general_journal_entries",
   "tests/test_quickbooks.py::test_online_reads_two_lines_an_entry_under_its_journal_number",

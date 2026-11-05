@@ -344,7 +344,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   leases and signatures as files, and the ledger; never logins' secrets, sessions or a token's
   hash, in a table or the audit log), and QuickBooks at `/settings/quickbooks`
   (`src/pms/quickbooks.py`, `src/pms/api/quickbooks.py`, migration 0102, q117: each ledger
-  account's name in QuickBooks, the PMS's until staff give it the company's own,
+  account's name in QuickBooks, the PMS's until staff give it the company's own (two never
+  alike: the oldest keeps it, each after it adds its tenant's property, then a number),
   `trust_quickbooks_accounts`, append-only, the latest holding; the trust ledger's transfers over
   days as general journal entries for QuickBooks Desktop (IIF) and Online (CSV), each debiting
   the account the money left and crediting the one it went to; read only). A lease's inspections are on its move-out row
