@@ -6,8 +6,9 @@ over when staff gave its end (a move-out, a notice), when another lease follows 
 when its tenants moved to another unit, when its deposit was returned, or when it was entered
 after its end date had passed."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import psycopg
 import pytest
@@ -138,6 +139,33 @@ def test_a_lease_entered_after_its_end_had_passed_stays_as_it_was(conn, pmc):
     lease_id = lease(conn, pmc, TODAY - 2 * DAY)
     assert roll(conn, pmc, TODAY) == 0
     assert ends(conn, lease_id) == TODAY - 2 * DAY
+
+
+def test_a_lease_entered_on_the_evening_of_its_last_day_rolls_over_by_the_companys_day(conn):
+    """docs/edge-cases.md D-055: a lease entered at 9 pm in New York on its last day was read as
+    entered the next day (UTC's), after its end, so it never went month to month and its rent
+    stopped. Whether it was entered while its term ran is the company's own day."""
+    pmc = make_pmc(conn, time_zone="America/New_York")
+    last_day = TODAY - 2 * DAY
+    lease_id = lease(conn, pmc, last_day)
+    evening = datetime.combine(last_day, time(21), ZoneInfo("America/New_York"))
+    conn.execute("UPDATE trust_leases SET created_at = %s WHERE id = %s", (evening, lease_id))
+
+    assert roll(conn, pmc, TODAY) == 1
+    assert ends(conn, lease_id) is None
+
+
+def test_a_lease_entered_after_its_last_day_by_the_companys_day_stays_ended(conn):
+    pmc = make_pmc(conn, time_zone="America/New_York")
+    last_day = TODAY - 2 * DAY
+    lease_id = lease(conn, pmc, last_day)
+    # Just past midnight in New York, the day after: entered after its end, though UTC's day
+    # had begun hours before.
+    morning = datetime.combine(last_day + DAY, time(0, 30), ZoneInfo("America/New_York"))
+    conn.execute("UPDATE trust_leases SET created_at = %s WHERE id = %s", (morning, lease_id))
+
+    assert roll(conn, pmc, TODAY) == 0
+    assert ends(conn, lease_id) == last_day
 
 
 def test_holdovers_and_end_notices_are_append_only(conn, pmc):

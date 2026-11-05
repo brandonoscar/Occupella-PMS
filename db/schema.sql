@@ -13284,8 +13284,9 @@ BEGIN
         FROM trust_leases AS l
         WHERE l.pmc_id = p_pmc_id
           AND l.ends_on < p_day AND l.ends_on >= p_day - 7
-          -- Entered while its term still ran: a lease from the past stays as it was.
-          AND l.created_at::date <= l.ends_on
+          -- Entered while its term still ran, by the company's day: a lease from the past
+          -- stays as it was (one entered at 9 pm in New York on its last day is no such lease).
+          AND trust_pmc_day(p_pmc_id, l.created_at) <= l.ends_on
           AND NOT EXISTS (SELECT 1 FROM trust_lease_holdovers AS h WHERE h.lease_id = l.id)
           AND NOT EXISTS (SELECT 1 FROM trust_lease_end_notices AS n WHERE n.lease_id = l.id)
           AND NOT EXISTS (SELECT 1 FROM trust_leases AS later
@@ -35702,4 +35703,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261105000600'),
     ('20261105000700'),
     ('20261105000800'),
-    ('20261105000900');
+    ('20261105000900'),
+    ('20261105001000');

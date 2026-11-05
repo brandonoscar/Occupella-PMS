@@ -673,7 +673,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the nightly run and Run rent now, the first night after its end within a week, once;
   `trust_lease_holdovers`), never one whose end staff gave (`trust_lease_end_notices`, written by
   Move-out's end; earlier ends found in the audit log), one another lease follows at its unit, one
-  its tenants moved from, one whose deposit was returned, or one entered after its end. The
+  its tenants moved from, one whose deposit was returned, or one entered after its end (by the
+  company's day, migration 20261105001000). The
   Dashboard notes it for 30 days. All append-only.
 - Shared bills and markups (migration 0083, `docs/law.md`): one vendor invoice shared across
   properties (`trust_shared_bills`, `trust_shared_bill_parts`; `POST /api/payables/shared-bills`)

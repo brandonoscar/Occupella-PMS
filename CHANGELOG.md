@@ -77,6 +77,10 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   are all positive, with a column saying Debit or Credit (Type, Transaction type, Dr/Cr), went in
   with every check and fee as a deposit. Each line's way now comes from that column; a type saying
   neither is refused with its line, and a bank that signs its amounts keeps its signs.
+- **Fixed: a lease entered on the evening of its last day never went month to month.** Whether a
+  lease was entered while its term ran read the day it was entered in UTC, so one entered after
+  8 pm in New York on its last day counted as entered after its end, and its rent stopped. It is
+  now the company's day. Migration `20261105001000`.
 - **Fixed: the audit log report over a day a lease was offered never finished as a PDF.** The log
   keeps each row as written, so a lease offer's PDF read as millions of characters in one cell.
   The report now shows a file's bytes as their size ("(5000000 bytes)"), and a PDF export cuts a

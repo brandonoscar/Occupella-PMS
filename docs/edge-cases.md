@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1146 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1147 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -26,14 +26,14 @@ answer in the portal for everything that can fail.
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
 | [Money and the ledger](#money-and-the-ledger) | 151 | 113 | 7 | 31 | 4 |
-| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 159 | 81 | 15 | 63 | 15 |
+| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 160 | 82 | 15 | 63 | 14 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 63 | 30 | 49 | 2 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 65 | 8 | 92 | 26 |
 | [Bad files and imports](#bad-files-and-imports) | 149 | 63 | 16 | 70 | 4 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 167 | 69 | 14 | 84 | 9 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1146** | **581** | **110** | **455** | **66** |
+| **All** | **1147** | **582** | **110** | **455** | **65** |
 
 ## Open, high risk: the work list
 
@@ -52,7 +52,6 @@ its ten most pressing, each with the test that would close it.
 - D-016: Server down from the 28th to the month's end, lease due on the 28th
 - D-017: Server down for a whole month, back on the 2nd of the next
 - D-026: Run rent now with Rent due on next month or a later year
-- D-055: A lease entered on the evening of its last day (after 8 pm Eastern)
 - D-065: A rent change from 03/01 with notice given 02/01
 - D-066: A rent increase recorded on the rent page in CA, OR, WA, NV or NY
 - D-069: California increase notice served by mail
@@ -303,7 +302,6 @@ its ten most pressing, each with the test that would close it.
 | D-016 | Server down from the 28th to the month's end, lease due on the 28th | The next run charges only the new month (trust_run_rent from the 1st of today's month): the missed month's due-day rent and recurring charges are never charged and nothing says so | Open | src/pms/nightly.py:115 | H |
 | D-017 | Server down for a whole month, back on the 2nd of the next | That month's rent is never charged for any lease; only an admin's Run rent now with that month's date would catch it up | Open | src/pms/nightly.py:115 | H |
 | D-026 | Run rent now with Rent due on next month or a later year | Not checked (only late fees as of is): next month's rent is charged today | Open | src/pms/api/rent.py:1300 | H |
-| D-055 | A lease entered on the evening of its last day (after 8 pm Eastern) | created_at::date reads the next day in a UTC session, so it counts as entered after its end and never rolls over; its rent stops | Open | db/migrations/20261024000154_receive_payment_and_lease_rules.sql:163 | H |
 | D-065 | A rent change from 03/01 with notice given 02/01 | Allowed: one month before is only 28 days in February, short of a 30-day rule (California's least), and no state warning runs | Open | db/migrations/20261015000061_rent_changes.sql:44 | H |
 | D-066 | A rent increase recorded on the rent page in CA, OR, WA, NV or NY | No state notice check runs there (rent_notice is called only by the renewal plan); the database asks a month | Open | src/pms/api/rent.py:1504; src/pms/api/renewals.py:190 | H |
 | D-069 | California increase notice served by mail | The 5 extra days for mail (CCP 1013) are not added; days are counted from today | Open | src/pms/rent_notice.py:83 | H |
@@ -336,6 +334,7 @@ its ten most pressing, each with the test that would close it.
 | D-047 | Late fee grace for a lease due on the 10th | Counted from the 10th | Tested | tests/test_rent_due_days.py::test_late_fees_count_their_grace_from_the_due_date | H |
 | D-052 | A fixed term that ran out with no renewal | Goes month to month the night after its last day, once | Tested | tests/test_lease_holdovers.py::test_a_term_that_ran_out_goes_month_to_month_once | H |
 | D-053 | A term ending mid-month goes month to month | The rest of the month is charged back at the same rent | Tested | tests/test_lease_holdovers.py::test_the_days_of_its_last_month_come_back_at_the_same_rent | H |
+| D-055 | A lease entered on the evening of its last day (after 8 pm Eastern) | Whether a lease was entered while its term ran is the company's day (trust_pmc_day of created_at): one entered at 9 pm in New York on its last day rolls over; one entered after midnight there does not | Tested | tests/test_lease_holdovers.py::test_a_lease_entered_on_the_evening_of_its_last_day_rolls_over_by_the_companys_day; tests/properties/test_receive_payment_properties.py::test_a_lease_goes_month_to_month_once_when_its_term_runs_out_without_an_end_of_staffs | H |
 | D-056 | A signed renewal | Ends the old lease the day before it starts | Tested | tests/test_lease_offers.py::test_a_renewal_ends_the_lease_the_day_before_and_keeps_its_tenants | H |
 | D-057 | A renewal completed mid-month after the month was charged | The month stays whole across both leases | Tested | tests/test_lease_end_credits.py::test_a_renewal_mid_month_after_the_run_keeps_the_month_whole | H |
 | D-058 | An end set mid-month after the run | Credits the days after it | Tested | tests/test_lease_end_credits.py::test_an_end_set_mid_month_after_the_run_credits_the_days_after_it | H |
@@ -446,6 +445,7 @@ its ten most pressing, each with the test that would close it.
 | D-146 | The Dashboard's occupancy the evening a unit is added | Counts units added by the day in UTC, so tonight's unit is left out until the company's tomorrow | Open | src/pms/api/dashboard.py:135 | L |
 | D-154 | Archiving a unit at 9 pm Eastern on its lease's last day | The check counts UTC's today, so the lease reads as ended and the archive goes through while it is in effect | Open | db/migrations/20261024000152_bill_lifecycle.sql:509 | L |
 | D-158 | New York tenant who left and came back to the same unit years later | Their years count from their first lease there, not from when they came back | Open | src/pms/api/renewals.py LIVED_FROM | L |
+| D-160 | A tenant saves autopay's bank account after 8 pm in New York on a rent due day | trust_check_autopay_run and the run read the save's day in UTC (the next day), so that due day is not paid by autopay though the company's day says it was saved by then; it errs toward not debiting, and the tenant pays it another way | Open | db/schema.sql trust_check_autopay_run (saved_at::date); src/pms/autopay.py (saved_at.astimezone(UTC).date()) | L |
 | D-013 | Daylight saving ends (1 to 2 am repeats) | Midnight happens once; the day is the date in the zone; no test | Guarded | db/migrations/20261104000900_company_time_zone.sql:39 | L |
 | D-040 | A lease ending the day before daylight saving starts | Leases, charges and proration are plain dates; no clock time is involved | Guarded | db/migrations/20261013000045_prorated_rent.sql:33 | L |
 | D-041 | A renewal starting 02/29/2028 with the default one-year term | yearFrom gives 02/28/2029; no test names February 29 | Guarded | frontend/src/offers.ts:167 | L |
