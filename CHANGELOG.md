@@ -4,10 +4,62 @@ Each release of the PMS, newest first: what changed for staff, owners and tenant
 database migration, anything a company must do to upgrade, and every security fix. How a release
 is made and taken: docs/release.md. Installing for the first time: docs/install.md.
 
-## Unreleased
+## v2026.11.1
 
-Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-two.md`).
+The PMS ready for a company's first live month: names print as people write them, a company's
+day is its own time zone's, the app never logs in to Postgres as its owner, the portals' second
+version, the owner's bill approvals and the founder's review of 11/03. Its database is at
+migration `20261104000900`.
 
+**Before you upgrade** (docs/release.md, "Upgrading a company"; back up first):
+- **Add `PMS_APP_DB_PASSWORD` to `.env`** (`openssl rand -hex 24`, a different one from
+  `PMS_DB_PASSWORD`). The app now logs in as `pms_app`, which may only act as the app, never as
+  the database's owner; without the key compose refuses to start and says so (#206).
+- **Pick your time zone** in Settings, Company setup, after the upgrade. Until you do, the
+  company's day is America/New_York's: payments, bills, statements and the nightly rent run follow
+  it (#209).
+- **Behind nginx**, pass the visitor on (`proxy_set_header X-Forwarded-For
+  $proxy_add_x_forwarded_for;` and `proxy_set_header X-Forwarded-Proto $scheme;`, docs/install.md
+  step 4) so a lease signed on the PMS's page keeps the signer's address. Caddy does it by itself
+  (#203).
+- The new `backup` service starts with the upgrade. Copying its dumps off the server is still
+  yours to set up (docs/backup.md).
+
+**For staff**
+- **A company's day is the date in its own time zone** (#209). Rent paid at 9 pm Eastern on
+  October 31 is on October's statement; the nightly run runs for each company's own day.
+- **Owner approvals** (#204): an approval staff record for an owner names the owner, how they
+  approved and why, and who recorded it. A bill's shortfall now keeps the owner's reserve in the
+  account.
+- **Bringing a company over** (#205, #202): a CSV that Excel on Windows saved comes in with its
+  names as written ("José O'Brien", not "Jos? O?Brien"), and a file whose letters still don't read
+  is refused with its line, never taken wrong. An import leaves the database's planner knowing
+  what it brought, so the first pages after a switch are fast.
+- **PDFs print names as people wrote them** (#201): receipts, notices, deposit statements, signing
+  certificates, checks and reports embed IBM Plex Sans, so Nguyễn, Łukasz and O'Brien print, not
+  "?".
+- **The company's own terms of use and privacy notice** (#207): links set in Company setup, shown
+  on the portals, the apply page and the signing page. The PMS writes no such text; a company that
+  sets neither shows nothing.
+- **Its own Stripe keys** (#208): an admin enters the company's secret key and webhook secret in
+  Company setup, sealed under `PMS_DATA_KEY`; the server's `PMS_PAYMENTS` account stays the
+  fallback. Payments online remain optional.
+- **"How to pay us"** (#204): the company's own words on how to pay replace the server's when
+  online payments are off.
+- **API keys for software** (#194, ADR 0011): an admin makes a key in Settings, AI; software reads
+  the company's reports with it, as the AI's role, and no key can move money or change a record.
+- **Maintenance requests** (#204) say what and where, can be cancelled while received, take notes,
+  and warn before an emergency is sent.
+- **Shorter words** (#204): a button's label says what it does, and a line under it stays only
+  where it stops a mistake. A home reads "Cedar House", not "Cedar House, House".
+- **Messages and announcements** (#199): tenants and owners write to the company from their portal;
+  staff answer from Messages, each answer emailed too, and the Dashboard lists those waiting. Staff
+  post an announcement for every property's tenants or one property's.
+- **Daily backups by themselves** (#199): the install (`compose.selfhost.yaml`) gains a `backup`
+  service that dumps the database every day at 07:00 UTC into `./backups`, keeping 35 days and
+  each month's first (docs/install.md, "Every day: backups").
+
+**For owners and tenants (the portals' second version, #199 and #204)**
 - **The owner portal in sections:** Overview, Properties, Statements and reports, Bills, Repairs,
   Documents, Messages and Profile. Each property opens to its units, who rents each (names only),
   the rent, what each owes, what is vacant since when and who gave notice; Repairs lists the work
@@ -20,12 +72,37 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
 - **Messages:** tenants and owners write to the company from their portal; staff answer from
   Messages, each answer emailed too, and the Dashboard lists those waiting. **Announcements:**
   staff post one for every property's tenants or one property's.
-- **Daily backups by themselves:** the install (`compose.selfhost.yaml`) gains a `backup`
-  service that dumps the database every day at 07:00 UTC into `./backups`, keeping 35 days and
-  each month's first (docs/install.md, "Every day: backups"). Upgrading as docs/install.md says
-  starts it. Copying the dumps off the server is still yours to set up (docs/backup.md).
-- **Fixed:** the Dashboard asked for a day at the calendar's very ends (year 1 or 9999) answered
-  with a server error; it now says which days it shows (1900 to 9999).
+- **Owners** approve a bill only after confirming it, and over $5,000 sign with their name; their
+  bills are in one table with where each stands; the year-end package and income statement open
+  on this year; a statement line opens where it came from.
+- **Tenants** see their ledger from its opening balance with each payment plainly and its receipt,
+  what is coming up next (a rent change included), the deposit held and the lease to read; they
+  and owners give a phone at sign-up and say whether texts are OK. No text is sent: the PMS only
+  records the answer.
+
+**Migrations** (each upgrades a database that holds money and leaves its money as it was, db.yml):
+- `20261031000201` API keys and their revocations (#194).
+- `20261103000100` the portals' second version: messages, move-out notices, announcements, an
+  owner's own contact details (#199).
+- `20261103000200` a function that analyzes the tables an import fills (#202).
+- `20261103000210` the company's terms and privacy links (#207).
+- `20261104000100` to `20261104000700` the founder's review (#204): owner approval names,
+  staff-recorded approvals, a shortfall that keeps the reserve (changes how a bill's shortfall is
+  worked out from now on, not money already moved), how to pay us, home names, request details,
+  text consent.
+- `20261104000800` a company's own Stripe keys (#208).
+- `20261104000900` a company's time zone (#209).
+
+**Security**
+- The self-hosted app no longer connects to Postgres as its superuser (#206): `pms_app` holds
+  nothing of its own and may only act as the app.
+- The proxy may name the visitor only because the app's port stays on the server's own
+  `127.0.0.1` (#203).
+- No security advisories.
+
+**Fixed**
+- The Dashboard asked for a day at the calendar's very ends (year 1 or 9999) answered with a
+  server error; it now says which days it shows (1900 to 9999) (#199).
 
 ## v2026.11.0 (first release)
 
