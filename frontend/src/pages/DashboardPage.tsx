@@ -6,6 +6,8 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import type { Dashboard } from "../dashboard";
 import { tiles } from "../dashboard";
 import type { Today } from "../today";
+import type { GoLive } from "./GoLiveCard";
+import { GoLiveCard } from "./GoLiveCard";
 import { GoLink, NeedsAttention } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 
@@ -15,6 +17,7 @@ import { STAFF_NAV } from "./staffNav";
 export function DashboardPage({ me }: { me: Me }) {
   const [figures, setFigures] = useState<Dashboard | null>(null);
   const [today, setToday] = useState<Today | null>(null);
+  const [goLive, setGoLive] = useState<GoLive | null>(null);
   const [error, setError] = useState("");
   const [runs, setRuns] = useState(0);
   useEffect(() => {
@@ -22,12 +25,14 @@ export function DashboardPage({ me }: { me: Me }) {
       setError(reason instanceof ApiError ? reason.detail : String(reason));
     api.get<Dashboard>("/api/dashboard").then(setFigures).catch(failed);
     api.get<Today>("/api/today").then(setToday).catch(failed);
+    api.get<GoLive>("/api/go-live").then(setGoLive).catch(failed);
   }, [runs]);
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Dashboard" />
       <Notice tone="error">{error}</Notice>
+      {goLive && <GoLiveCard goLive={goLive} />}
       {figures && (
         <ul aria-label="Figures" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {tiles(figures).map((tile) => (

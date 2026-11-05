@@ -67,6 +67,7 @@ from pms.api import (
     documents,
     emails,
     general_ledger,
+    go_live,
     groups,
     history,
     household,
@@ -661,6 +662,7 @@ def create_app(settings: Settings) -> FastAPI:
     calendar.hide_feed_tokens(logging.getLogger("uvicorn.access"))
     app.include_router(people.router)
     app.include_router(setup.router)
+    app.include_router(go_live.router)
     app.include_router(payment_files.router)
     app.include_router(rent.router)
     # Before online_payments, whose paths it shares a prefix with.

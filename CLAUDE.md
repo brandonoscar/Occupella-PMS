@@ -244,7 +244,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`?group=`, `?property=`) and the browser so it carries from page to page (`scope.ts`); the API
   narrows a list to it with `src/pms/api/scope.py`. Staff make groups at `/settings/groups`
   (`src/pms/api/groups.py`). Staff's menu (`pages/staffNav.ts`, ADR 0005)
-  groups their pages as Buildium does. They open on the Dashboard at `/`: the company's figures
+  groups their pages as Buildium does. They open on the Dashboard at `/`: until the company is ready to go live, Getting started (`src/pms/api/go_live.py`, `GET /api/go-live`: each step worked out from its own records; `pages/GoLiveCard.tsx`), then the company's figures
   (`src/pms/api/dashboard.py`, each counted by its report, each beside the same day a month
   before; ADR 0010) and what needs attention (`src/pms/api/today.py`: read only, each part the work
   page's own answer; one list, the longest overdue first, each row with its action). Rentals
