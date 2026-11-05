@@ -140,6 +140,9 @@ from pms.api.deps import COOKIE, Conn, Current, Staff, download, refusal
 from pms.leasing import screening
 
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
+log = logging.getLogger("pms.api")
+# Each origin a change was refused from is logged once per process, at most this many.
+LOGGED_ORIGINS = 50
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
@@ -307,6 +310,8 @@ class Enroll(BaseModel):
 
 
 def create_app(settings: Settings) -> FastAPI:
+    # An address no browser opens it at refuses every change (pms.deployment).
+    deployment.refuse_public_url(settings.public_url)
     # A server at an https address is one real people use: it refuses the test partners.
     deployment.refuse_fakes(
         settings.public_url,
@@ -379,6 +384,21 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.resets_asked = throttle.Limiter(throttle.RESETS, throttle.RESET_WINDOW)
 
     https = urlsplit(settings.public_url).scheme == "https"
+    refused_from: set[str] = set()
+
+    def log_refused(origin: str) -> None:
+        # A server whose PMS_PUBLIC_URL isn't the address people use refuses every change
+        # (docs/edge-cases.md H-059); its log names both origins, each once, so another site's
+        # requests can't flood it.
+        if origin in refused_from or len(refused_from) >= LOGGED_ORIGINS:
+            return
+        refused_from.add(origin)
+        log.warning(
+            "refused a change from %r: PMS_PUBLIC_URL's origin is %r, so a browser at another"
+            " address can't sign in or change anything",
+            origin,
+            settings.origin,
+        )
 
     @app.middleware("http")
     async def guard(
@@ -391,6 +411,8 @@ def create_app(settings: Settings) -> FastAPI:
             fetched_from = request.headers.get("sec-fetch-site")
             origin = request.headers.get("origin")
             if fetched_from in CROSS_SITE or (origin is not None and origin != settings.origin):
+                if origin is not None and origin != settings.origin:
+                    log_refused(origin)
                 return JSONResponse({"detail": "this request came from another site"}, 403)
             if request.headers.get("content-type", "").split(";")[0].strip() != (
                 "application/json"

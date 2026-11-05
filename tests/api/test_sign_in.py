@@ -1,5 +1,7 @@
 """Health, signing in and out, sessions and the browser guards (src/pms/api, src/pms/accounts)."""
 
+import logging
+
 import pytest
 from fastapi.testclient import TestClient
 from people import PASSWORD, join_as_owner, join_as_staff, next_code
@@ -244,6 +246,41 @@ def test_a_request_from_another_site_is_refused(client):
     assert answer.json() == {"detail": "this request came from another site"}
 
 
+def test_a_refused_origin_is_logged_with_the_one_expected_once(client, caplog):
+    """docs/edge-cases.md H-059: a server whose PMS_PUBLIC_URL isn't the address people use
+    (www or not, another domain) refuses every change, sign-in included. The server's log names
+    both origins, so whoever runs it sees which to fix; each origin once, so requests from
+    another site can't flood it."""
+    caplog.set_level(logging.WARNING, logger="pms.api")
+    for _ in range(3):
+        answer = client.post("/api/sign-in", json={}, headers={"Origin": "https://www.pms.test"})
+        assert answer.status_code == 403
+    client.post("/api/sign-in", json={}, headers={"Origin": "https://other.test\nforged"})
+
+    said = [r.getMessage() for r in caplog.records if r.name == "pms.api"]
+    assert said == [
+        "refused a change from 'https://www.pms.test': PMS_PUBLIC_URL's origin is"
+        " 'http://testserver', so a browser at another address can't sign in or change anything",
+        "refused a change from 'https://other.test\\nforged': PMS_PUBLIC_URL's origin is"
+        " 'http://testserver', so a browser at another address can't sign in or change anything",
+    ]
+
+
+def test_the_log_of_refused_origins_stops_at_its_cap(client, caplog, monkeypatch):
+    monkeypatch.setattr(api_app, "LOGGED_ORIGINS", 2)
+    caplog.set_level(logging.WARNING, logger="pms.api")
+    for n in range(5):
+        assert (
+            client.post(
+                "/api/sign-in", json={}, headers={"Origin": f"https://site{n}.test"}
+            ).status_code
+            == 403
+        )
+
+    said = [r.getMessage() for r in caplog.records if r.name == "pms.api"]
+    assert [m.split("'")[1] for m in said] == ["https://site0.test", "https://site1.test"]
+
+
 def test_a_request_from_our_own_site_goes_through(client):
     answer = client.post("/api/sign-in", json={}, headers={"Origin": "http://testserver"})
 
@@ -308,7 +345,7 @@ def test_api_answers_are_never_cached_or_sniffed(client):
 
 def test_over_https_the_browser_is_told_to_use_nothing_else(database_url):
     settings = Settings(
-        database_url=database_url, public_url="https://pms.example.com", cookie_secure=True
+        database_url=database_url, public_url="https://rentals.example.com", cookie_secure=True
     )
     with TestClient(create_app(settings)) as https_client:
         answer = https_client.get("/api/me")

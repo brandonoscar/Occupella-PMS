@@ -31,9 +31,9 @@ answer in the portal for everything that can fail.
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 160 | 59 | 8 | 93 | 29 |
 | [Bad files and imports](#bad-files-and-imports) | 145 | 60 | 16 | 69 | 6 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 155 | 86 | 10 | 59 | 7 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 160 | 59 | 14 | 87 | 16 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 160 | 61 | 14 | 85 | 14 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1126** | **554** | **110** | **462** | **86** |
+| **All** | **1126** | **556** | **110** | **460** | **84** |
 
 ## Open, high risk: the work list
 
@@ -140,8 +140,6 @@ its ten most pressing, each with the test that would close it.
 - H-031: The daily backup fails (password changed, pg_dump error, disk)
 - H-041: A newer backup restored under an older tag, or the old tag checked out after migrations ran
 - H-055: PMS_DATA_KEY changed while bank payments are on their way
-- H-059: PMS_PUBLIC_URL isn't the address people use (www or not, http or https, another domain)
-- H-060: PMS_PUBLIC_URL left as .env.example's https://pms.example.com
 - H-067: PMS_TRUSTED_PROXIES empty behind a proxy on another host or network
 - H-068: "*" trusted, with nginx's $proxy_add_x_forwarded_for as install.md says
 - H-089: The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st)
@@ -1178,12 +1176,12 @@ its ten most pressing, each with the test that would close it.
 | H-031 | The daily backup fails (password changed, pg_dump error, disk) | "FAIL" goes to the backup container's log only: no admin email, no health status, nothing on the Dashboard | Open | scripts/backup-daily.sh:77,81-84; docs/support.md ("A backup that failed") | H |
 | H-041 | A newer backup restored under an older tag, or the old tag checked out after migrations ran | Nothing compares schema_migrations to the code: the old app starts and posts money on a schema it was never tested on | Open | no schema version check in src/ (only scripts/backup.sh:155 prints the version) | H |
 | H-055 | PMS_DATA_KEY changed while bank payments are on their way | The company's webhook answers 404, Stripe retries then stops; rent the bank paid never reaches the books; one log line | Open | src/pms/api/online_payments.py:680-683; src/pms/payments.py:551-556 | H |
-| H-059 | PMS_PUBLIC_URL isn't the address people use (www or not, http or https, another domain) | Every change, sign-in included, is refused "this request came from another site"; nobody can sign in; start-up doesn't check | Open | src/pms/api/app.py:364-368 | H |
-| H-060 | PMS_PUBLIC_URL left as .env.example's https://pms.example.com | The same refusal, and emailed links point at example.com | Open | .env.example (PMS_PUBLIC_URL prefilled) | H |
 | H-067 | PMS_TRUSTED_PROXIES empty behind a proxy on another host or network | Every visitor has the proxy's address: 20 failed sign-ins by anyone lock the whole company out for 15 minutes, 10 resets an hour for everyone, signatures record the proxy's address | Open | src/pms/api/throttle.py:84-86 | H |
 | H-068 | "*" trusted, with nginx's $proxy_add_x_forwarded_for as install.md says | uvicorn takes the leftmost address, which the visitor writes: the sign-in throttle is bypassed with a new forged address each try, and a signer's address in the evidence can be forged | Open | uvicorn 0.54 ProxyHeadersMiddleware (always_trust takes the first host); docs/install.md step 4 | H |
 | H-089 | The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st) | The next run charges only the new month, so that rent is never charged by itself, and nothing says so | Open | src/pms/nightly.py:116-118; db/schema.sql:1688-1720 (only the run's month) | H |
 | H-097 | The everything export of a large company | Every table and every document's bytes are fetched and zipped in memory in one request; it can exhaust the process and take the PMS down for everyone | Open | src/pms/exports.py:433-491 | H |
+| H-059 | PMS_PUBLIC_URL isn't the address people use (www or not, http or https, another domain) | Start-up refuses an address that is no http(s) origin (no scheme or host, a path, query or fragment); a change refused for its origin is logged once per origin with PMS_PUBLIC_URL's (a valid but wrong origin can't be told at start-up) | Tested | tests/test_deployment.py::test_the_app_refuses_to_start_at_an_address_no_browser_opens_it_at; tests/api/test_sign_in.py::test_a_refused_origin_is_logged_with_the_one_expected_once, ::test_the_log_of_refused_origins_stops_at_its_cap | H |
+| H-060 | PMS_PUBLIC_URL left as .env.example's https://pms.example.com | The server and its commands refuse to start at .env.example's PMS_PUBLIC_URL, naming what to set | Tested | tests/test_deployment.py::test_the_app_refuses_to_start_at_the_example_address, ::test_the_commands_refuse_the_example_address_before_they_connect, ::test_env_example_still_offers_the_placeholder_the_server_refuses | H |
 | H-072 | A very large JSON body (hundreds of MB) to /api/apply or /api/sign-in, no sign-in needed | Refused 413 above 10 MB before it is read: at once when it says its length, counted as it streams otherwise; a 5 MB file as base64 still fits | Tested | tests/api/test_body_limit.py | H |
 | H-115 | A session signed out after an hour idle, page still open | Once signed in, a request answering "sign in first" takes the person to sign in, saying they were signed out after a while away; a wrong password or a key's refusal doesn't | Tested | frontend/src/api.test.ts > api > tells the page a session ended, once someone was signed in, and only for that (H-115); frontend/src/pages/SignInPage.test.tsx | H |
 | H-152 | Any error while drawing a page (an answer of an unexpected shape after an upgrade, a status the page doesn't know) | An error boundary around the portal: a page that fails to draw says it couldn't be shown and that nothing saved is lost, with Reload and the way to the start; never the error's words | Tested | frontend/src/components/ErrorBoundary.test.tsx | H |

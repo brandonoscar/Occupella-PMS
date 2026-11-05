@@ -62,7 +62,8 @@ openssl rand -base64 32    # paste as PMS_DATA_KEY
 
 Open `.env` and fill in `PMS_DB_PASSWORD`, `PMS_APP_DB_PASSWORD`, `PMS_PUBLIC_URL` and
 `PMS_DATA_KEY`, and email and payments if you have them now. Each line in `.env.example` says what
-it is for. Each start makes or updates the app's login (`pms_app`) with `PMS_APP_DB_PASSWORD`: the
+it is for; the server refuses to start while `PMS_PUBLIC_URL` is still the example's, or isn't an
+address with no path (`https://` and the host). Each start makes or updates the app's login (`pms_app`) with `PMS_APP_DB_PASSWORD`: the
 app connects as it and acts as the app's role alone, so the database's owner password stays out
 of the app's container.
 

@@ -43,6 +43,11 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   keeps an admin who can sign in: an admin whose login is disabled no longer counts, so the last
   working admin can't drop admin, and `make-admin` rescues a company whose admins are all
   disabled. Migration `20261105000600`.
+- **A server at the wrong address says so.** The server and its commands refuse to start while
+  `PMS_PUBLIC_URL` is still `.env.example`'s `https://pms.example.com`, or is no http or https
+  origin (no scheme, no host, or a path, query or fragment: the portal is served at the root).
+  A change refused because it came from another origin is logged once per origin with the one
+  `PMS_PUBLIC_URL` gives, so a server reached at `www.` or another domain shows which to fix.
 - **Fixed: rent charged twice in a month.** Run rent now with Rent due on set to a day other than
   the first (the 15th, say) charged every lease due on the first a second month's rent and each
   monthly charge a second time, and a rent the old system's unpaid charges carried over on another

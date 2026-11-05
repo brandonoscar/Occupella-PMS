@@ -2,6 +2,8 @@
 is https names no fake partner, unless PMS_FAKE_PARTNERS=allow says it is a public demo of a
 synthetic company. Development, CI, the browser tests and the demo all run over http."""
 
+import pathlib
+
 import pytest
 
 from pms import deployment, email, nightly
@@ -63,7 +65,7 @@ def test_the_app_refuses_to_start_with_a_fake_partner_over_https():
         create_app(
             Settings(
                 database_url="postgresql://unused",
-                public_url="https://pms.example.com",
+                public_url="https://rentals.example.com",
                 payments="fake",
             )
         )
@@ -94,7 +96,7 @@ def test_settings_read_the_allowance_from_the_environment(monkeypatch):
 
 def https_with_fake_payments(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql://unused")
-    monkeypatch.setenv("PMS_PUBLIC_URL", "https://pms.example.com")
+    monkeypatch.setenv("PMS_PUBLIC_URL", "https://rentals.example.com")
     monkeypatch.setenv("PMS_PAYMENTS", "fake")
     monkeypatch.delenv("PMS_FAKE_PARTNERS", raising=False)
 
@@ -110,3 +112,88 @@ def test_the_email_command_refuses_before_it_sends(monkeypatch):
     monkeypatch.setenv("PMS_EMAIL_SENDER", "fake")
     with pytest.raises(deployment.FakePartnerRefused, match="PMS_EMAIL_SENDER, PMS_PAYMENTS"):
         email.main(["deliver"])
+
+
+# --- PMS_PUBLIC_URL (docs/edge-cases.md H-059, H-060) ----------------------------------------
+# The address people open the PMS at. Every change a browser sends is refused unless it comes
+# from this origin, and every emailed link starts with it, so a server at the wrong one lets
+# nobody sign in and emails links that go nowhere. It refuses to start instead.
+
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def env_example_public_url():
+    for line in (ROOT / ".env.example").read_text().splitlines():
+        if line.startswith("PMS_PUBLIC_URL="):
+            return line.removeprefix("PMS_PUBLIC_URL=")
+    raise AssertionError(".env.example sets no PMS_PUBLIC_URL")
+
+
+def test_env_example_still_offers_the_placeholder_the_server_refuses():
+    assert env_example_public_url() == deployment.PLACEHOLDER
+
+
+@pytest.mark.parametrize(
+    "url", [deployment.PLACEHOLDER, deployment.PLACEHOLDER + "/", " HTTPS://PMS.Example.com "]
+)
+def test_the_app_refuses_to_start_at_the_example_address(url):
+    with pytest.raises(deployment.PublicUrlRefused) as refused:
+        create_app(Settings(database_url="postgresql://unused", public_url=url))
+    assert str(refused.value).startswith(
+        "PMS_PUBLIC_URL is still .env.example's https://pms.example.com"
+    )
+
+
+@pytest.mark.parametrize(
+    ("url", "says"),
+    [
+        ("pms.rentals.example.com", "starts with https:// or http://"),
+        ("ftp://rentals.example.com", "starts with https:// or http://"),
+        ("https://", "names no host"),
+        ("https:///invite", "names no host"),
+        ("https://rentals.example.com/pms", "is served at the root"),
+        ("https://rentals.example.com/?from=email", "is served at the root"),
+        ("https://rentals.example.com/#top", "is served at the root"),
+    ],
+)
+def test_the_app_refuses_to_start_at_an_address_no_browser_opens_it_at(url, says):
+    with pytest.raises(deployment.PublicUrlRefused) as refused:
+        create_app(Settings(database_url="postgresql://unused", public_url=url))
+    assert says in str(refused.value)
+    assert str(refused.value).startswith(f"PMS_PUBLIC_URL {url!r}")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://testserver",
+        "http://127.0.0.1:8123",
+        "http://localhost:8100",
+        "https://rentals.example.com",
+        "https://rentals.example.com/",
+        "https://pms.example.net:8443",
+    ],
+)
+def test_an_origin_starts(url):
+    deployment.refuse_public_url(url)
+
+
+@pytest.mark.parametrize("command", ["nightly", "email"])
+def test_the_commands_refuse_the_example_address_before_they_connect(monkeypatch, command):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unused")
+    monkeypatch.setenv("PMS_PUBLIC_URL", deployment.PLACEHOLDER)
+    monkeypatch.setenv("PMS_EMAIL_SENDER", "smtp")
+    for name in ("PMS_PAYMENTS", "PMS_SCREENING_PARTNER", "PMS_GEOCODER"):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(deployment.PublicUrlRefused):
+        if command == "nightly":
+            nightly.main([])
+        else:
+            email.main(["deliver"])
+
+
+def test_the_commands_run_with_no_address_set(monkeypatch):
+    # Unset, each command keeps its own default (http://localhost:8000), as before.
+    monkeypatch.delenv("PMS_PUBLIC_URL", raising=False)
+    deployment.refuse_fakes_in({})
