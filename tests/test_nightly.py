@@ -329,19 +329,21 @@ def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
 
     monkeypatch.setattr(nightly, "run_all", run_all)
     monkeypatch.setenv("DATABASE_URL", database_url)
-    monkeypatch.setenv("PMS_PUBLIC_URL", "https://pms.example.com")
+    monkeypatch.setenv("PMS_PUBLIC_URL", "https://rentals.example.com")
     monkeypatch.delenv("PMS_EMAIL_SENDER", raising=False)
     monkeypatch.delenv("PMS_PAYMENTS", raising=False)
 
     assert nightly.main([]) == 0
     # No day: each company runs for its own (src/pms/days.py).
-    assert seen == [(None, "https://pms.example.com", False, None)]
+    assert seen == [(None, "https://rentals.example.com", False, None)]
     assert capsys.readouterr().out == (
         "1 companies: 2 rents, 1 late fees, 3 bills, 4 emails, 5 management fees, 6 work orders,"
         " 0 autopay payments\n"
     )
     assert nightly.main(["now"]) == 2
     # A server that sends email writes the automatic emails too; `pms.email deliver` sends them.
+    # The fake partners run at an https address only on a public demo (pms.deployment).
+    monkeypatch.setenv("PMS_FAKE_PARTNERS", "allow")
     monkeypatch.setenv("PMS_EMAIL_SENDER", "fake")
     assert nightly.main([]) == 0
     assert seen[-1][2] is True

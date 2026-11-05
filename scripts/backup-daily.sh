@@ -9,6 +9,9 @@
 #   scripts/backup-daily.sh once     one dump now (today's, replacing one made earlier today),
 #                                    then the dumps past keeping removed
 #   scripts/backup-daily.sh next     the seconds until the next daily dump
+#   scripts/backup-daily.sh healthy  fails unless a good dump is less than 26 hours old: the
+#                                    backup service's health check, so a backup that keeps
+#                                    failing shows as unhealthy in `docker compose ps`
 #
 # PMS_BACKUP_DIR   where the dumps go (default /backups)
 # PMS_BACKUP_AT    the time of day, HH:MM in UTC (default 07:00: after the nightly run has posted
@@ -49,11 +52,26 @@ prune() {
 }
 
 # Bash ignores `set -e` in a function called as a condition (until, ||), so each step says so.
+# A dump that failed still frees what it can (docs/edge-cases.md H-028): its .partial, and the
+# dumps past keeping, so a disk the backups filled frees itself for the next try.
 once() {
   local today
   today=$(date -u +%F)
-  "$here/backup.sh" dump "$dir/pms-$today.dump" || return 1
+  if ! "$here/backup.sh" dump "$dir/pms-$today.dump"; then
+    prune "$today" || true
+    return 1
+  fi
   prune "$today" || return 1
+}
+
+# A good dump in the last 26 hours: a day between dumps, and two of the hourly tries after one
+# that failed (docs/edge-cases.md H-031).
+healthy() {
+  if find "$dir" -maxdepth 1 -name 'pms-????-??-??.dump' -mmin -1560 | grep -q .; then
+    return 0
+  fi
+  echo "unhealthy: no good dump in the last 26 hours" >&2
+  return 1
 }
 
 seconds_until_next() {
@@ -71,6 +89,7 @@ mkdir -p "$dir"
 case "${1:-daily}" in
   once) once ;;
   next) seconds_until_next ;;
+  healthy) healthy ;;
   daily)
     echo "backing up to $dir each day at $at UTC" >&2
     if [ ! -e "$dir/pms-$(date -u +%F).dump" ]; then
@@ -85,7 +104,7 @@ case "${1:-daily}" in
     done
     ;;
   *)
-    echo "usage: $0 [once|next]" >&2
+    echo "usage: $0 [once|next|healthy]" >&2
     exit 2
     ;;
 esac

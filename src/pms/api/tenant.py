@@ -41,6 +41,9 @@ router = APIRouter(prefix="/api/tenant")
 # A tenant files at most this many requests under one lease in a day: enough for a bad day,
 # and a ceiling on what a stolen session can pile on staff.
 REQUESTS_PER_DAY = 10
+# An emergency has a limit of its own, so the day's ordinary requests never stop one (each
+# emails the staff on call, so it has one; docs/edge-cases.md U-109).
+EMERGENCIES_PER_DAY = 5
 PHOTOS_PER_REQUEST = 3
 # A tenant's own lease documents and notices, at most so many a day per lease (UTC).
 UPLOADS_PER_DAY = 10
@@ -689,11 +692,18 @@ def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Re
     if row is None or not row[0]:
         raise HTTPException(409, "You can send requests only for your current lease.")
     recent = conn.execute(
-        "SELECT count(*) FROM trust_maintenance_requests"
+        "SELECT count(*), count(*) FILTER (WHERE emergency) FROM trust_maintenance_requests"
         " WHERE pmc_id = %s AND lease_id = %s AND submitted_at > %s",
         (session.pmc_id, new.lease_id, datetime.now(UTC) - timedelta(days=1)),
     ).fetchone()
-    if recent is not None and recent[0] >= REQUESTS_PER_DAY:
+    assert recent is not None
+    if new.emergency and recent[1] >= EMERGENCIES_PER_DAY:
+        raise HTTPException(
+            429,
+            f"You sent {EMERGENCIES_PER_DAY} emergencies today. If it can't wait, call your"
+            " manager; for gas, fire or flooding, get out and call 911 first.",
+        )
+    if not new.emergency and recent[0] >= REQUESTS_PER_DAY:
         raise HTTPException(
             429,
             f"You can send {REQUESTS_PER_DAY} requests a day. If it can't wait, call your manager.",

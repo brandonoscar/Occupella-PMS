@@ -1,0 +1,118 @@
+"""What a real server refuses: the test partners, and an address nobody opens it at.
+
+The fake partners exist for development, CI, the browser tests and the demo, and each would do
+harm on a server real people use:
+
+- the fake payments partner (PMS_PAYMENTS=fake) records a payment as paid when its page's button
+  is pressed, and its queue (`GET /api/payments/fake`) lists every company's payments started
+  through it, with no sign-in;
+- the fake screening partner (PMS_SCREENING_PARTNER=fake) makes up an applicant's
+  recommendation;
+- the fake geocoder (PMS_GEOCODER=fake) makes up where a property is;
+- the fake email sender (PMS_EMAIL_SENDER=fake) sends nothing, so invites and notices never
+  arrive.
+
+Every place that runs them does so over http (the browser tests at http://127.0.0.1:8123, the
+demo at http://localhost:8100, the tests at http://testserver), while a server real people use is
+reached over https (docs/install.md, step 4: the session cookie is Secure). So a server whose
+PMS_PUBLIC_URL is https refuses to start with any of them, unless PMS_FAKE_PARTNERS is "allow":
+for a public demo of a synthetic company, and nothing else.
+
+PMS_PUBLIC_URL is the address people open the PMS at (docs/install.md, step 2). Every change a
+browser sends is refused unless it comes from that origin, and every emailed link starts with it,
+so a server at the wrong one lets nobody sign in and emails links that go nowhere
+(docs/edge-cases.md H-059, H-060). A server refuses to start at .env.example's placeholder, or at
+anything but an http or https origin: the portal is served at the root, so a path, a query or a
+fragment never works either.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from urllib.parse import urlsplit
+
+FAKE = "fake"
+ALLOW = "allow"
+
+# Each setting that may name a fake partner.
+PARTNERS = ("PMS_PAYMENTS", "PMS_SCREENING_PARTNER", "PMS_GEOCODER", "PMS_EMAIL_SENDER")
+
+
+# .env.example's PMS_PUBLIC_URL, which an install must replace (tests/test_deployment.py reads
+# both).
+PLACEHOLDER = "https://pms.example.com"
+
+
+class PublicUrlRefused(ValueError):
+    """PMS_PUBLIC_URL is no address a browser opens the PMS at."""
+
+
+def refuse_public_url(public_url: str) -> None:
+    """Raise unless `public_url` is an http or https origin other than the example's."""
+    url = public_url.strip()
+    if url.rstrip("/").lower() == PLACEHOLDER:
+        raise PublicUrlRefused(
+            f"PMS_PUBLIC_URL is still .env.example's {PLACEHOLDER}: set it to the address people"
+            " open the PMS at (docs/install.md, step 2). Until then every sign-in is refused as"
+            " coming from another site, and emailed links go to example.com."
+        )
+    parts = urlsplit(url)
+    if parts.username is not None or parts.password is not None:
+        # Every emailed link would carry them (docs/edge-cases.md H-167); never repeated here.
+        raise PublicUrlRefused(
+            "PMS_PUBLIC_URL names a user or password: every emailed link would carry them. Set"
+            " it to the origin people open the PMS at, like https://rentals.example.com"
+            " (docs/install.md, step 2)."
+        )
+    if parts.scheme.lower() not in ("https", "http"):
+        why = "starts with https:// or http://"
+    elif not parts.hostname:
+        why = "names no host"
+    elif parts.path not in ("", "/") or parts.query or parts.fragment:
+        why = "is served at the root"
+    else:
+        return
+    raise PublicUrlRefused(
+        f"PMS_PUBLIC_URL {public_url!r} is not an address a browser opens the PMS at: it"
+        f" {why}. Set it to the origin people open it at, like https://rentals.example.com"
+        " (docs/install.md, step 2)."
+    )
+
+
+class FakePartnerRefused(ValueError):
+    """A fake partner named on a server reached over https, which real people use."""
+
+
+def fakes_named(partners: Mapping[str, str]) -> list[str]:
+    """The settings among `partners` that name a fake partner, in a fixed order."""
+    return sorted(name for name, value in partners.items() if value.strip() == FAKE)
+
+
+def refuse_fakes(public_url: str, partners: Mapping[str, str], allow: str = "") -> None:
+    """Raise if a server at an https address names a fake partner, unless allowed for a demo.
+
+    `partners` maps each setting's name (PARTNERS) to its value."""
+    if urlsplit(public_url.strip()).scheme.lower() != "https":
+        return
+    if allow.strip().lower() == ALLOW:
+        return
+    fakes = fakes_named(partners)
+    if fakes:
+        raise FakePartnerRefused(
+            f"{', '.join(fakes)} {'names' if len(fakes) == 1 else 'name'} the fake partner on a"
+            " server at an https address, which real people use. The fake partners are for"
+            " development, CI and the demo: unset them, or set PMS_FAKE_PARTNERS=allow only for"
+            " a public demo of a synthetic company."
+        )
+
+
+def refuse_fakes_in(environ: Mapping[str, str]) -> None:
+    """refuse_public_url and refuse_fakes, read from a server's environment (the command-line
+    tools). Unset, PMS_PUBLIC_URL is each command's own default."""
+    if environ.get("PMS_PUBLIC_URL", "").strip():
+        refuse_public_url(environ["PMS_PUBLIC_URL"])
+    refuse_fakes(
+        environ.get("PMS_PUBLIC_URL", ""),
+        {name: environ.get(name, "") for name in PARTNERS},
+        environ.get("PMS_FAKE_PARTNERS", ""),
+    )

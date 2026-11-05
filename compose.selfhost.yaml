@@ -73,6 +73,12 @@ services:
   backup:
     image: mirror.gcr.io/library/postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
     entrypoint: ["bash", "/scripts/backup-daily.sh"]
+    # Unhealthy in `docker compose ps` once no good dump is less than 26 hours old (H-031).
+    healthcheck:
+      test: ["CMD", "bash", "/scripts/backup-daily.sh", "healthy"]
+      interval: 10m
+      timeout: 30s
+      start_period: 1h
     environment:
       PGHOST: db
       PGUSER: postgres

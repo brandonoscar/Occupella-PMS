@@ -50,7 +50,7 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
-from pms import days, email_html
+from pms import days, deployment, email_html
 
 log = logging.getLogger("pms.email")
 
@@ -670,6 +670,15 @@ def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 
                     error = f"its attachment could not be made: {broken}"[:1000]
                 except (OSError, smtplib.SMTPException) as refused:
                     error = f"{type(refused).__name__}: {refused}"[:1000]
+                except Exception as strange:  # noqa: BLE001 - recorded, never left in the way
+                    # Whatever else an attempt raises (an image the library refuses in its own
+                    # way, docs/edge-cases.md F-016) is this email's failed attempt: left
+                    # unrecorded, it would stay first in the queue and stop every email behind
+                    # it, and the nightly run with them.
+                    log.exception(
+                        "email %s (%s) of PMC %s could not be sent", email_id, kind, pmc_id
+                    )
+                    error = f"{type(strange).__name__}: {strange}"[:1000]
             conn.execute(
                 "INSERT INTO trust_email_deliveries (email_id, pmc_id, sender, error)"
                 " VALUES (%s, %s, %s, %s)",
@@ -699,6 +708,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args != ["deliver"]:
         print("usage: python -m pms.email deliver", file=sys.stderr)
         return 2
+    deployment.refuse_fakes_in(os.environ)
     sender = sender_named(os.environ.get("PMS_EMAIL_SENDER", ""), os.environ)
     if sender is None:
         print("PMS_EMAIL_SENDER is unset: nothing is sent", file=sys.stderr)

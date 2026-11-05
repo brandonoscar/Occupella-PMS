@@ -18,8 +18,9 @@
 
 [[feature]]
 id = "logins"
-statement = "Staff invite a staff member (from the staff page), owner or tenant (from their own page) by email; the invite sets a password (and for staff an authenticator); people sign in and out; a wrong email or password is refused without saying which; Logins lists everyone's login by status, and an admin disables one for good from its row's menu, which signs it out. A tenant or an owner gives a phone as they set their password (kept as E.164, and as their contact phone) and says whether the company may text them, the box unchecked unless they check it; each answer is kept with the words shown and when. Staff are asked neither."
+statement = "Staff invite a staff member (from the staff page), owner or tenant (from their own page) by email; the invite sets a password (and for staff an authenticator); people sign in and out; a wrong email or password is refused without saying which; Logins lists everyone's login by status, and an admin disables one for good from its row's menu, which signs it out. A tenant or an owner gives a phone as they set their password (kept as E.164, and as their contact phone) and says whether the company may text them, the box unchecked unless they check it; each answer is kept with the words shown and when. Staff are asked neither. On a server that holds one company, the sign-in page needs no link: it signs in to that company and names it; on a server with more, it names none and asks for the company's link."
 operations = [
+  "GET /api/sign-in",
   "POST /api/invites",
   "POST /api/invites/view",
   "POST /api/invites/accept",
@@ -49,8 +50,8 @@ browser = [
 [[feature]]
 # The Dashboard (ADR 0005); its id is the one it had as the Today page, which it grew from.
 id = "today"
-statement = "Staff open the Dashboard: occupancy, rent collected against rent due this month, what is past due and how many tenants owe it, leases ending in 60 days, vacant units and how long, the next draw day and its total, and accounts not reconciled, each beside a month before and opening its page; and what needs attention as one list, most overdue first, each row with its action: Send reminder (who gets it shown first), Pay bill, Approve draws, Approve reconciliation, Review application, or the way to its page."
-operations = ["GET /api/today", "GET /api/dashboard", "GET /api/emails/rent-reminders/{lease_id}", "POST /api/emails/rent-reminders/{lease_id}"]
+statement = "Staff open the Dashboard: occupancy, rent collected against rent due this month, what is past due and how many tenants owe it, leases ending in 60 days, vacant units and how long, the next draw day and its total, and accounts not reconciled, each beside a month before and opening its page; and what needs attention as one list, most overdue first, each row with its action: Send reminder (who gets it shown first), Pay bill, Approve draws, Approve reconciliation, Review application, or the way to its page. Until the company is ready to go live, a Getting started list on top: company details, trust bank accounts, a broker for each, properties, leases, a second person for month-end and email sending, then the optional portals and rent paid online, each done or not by the company's own records and linking to its page."
+operations = ["GET /api/today", "GET /api/dashboard", "GET /api/go-live", "GET /api/emails/rent-reminders/{lease_id}", "POST /api/emails/rent-reminders/{lease_id}"]
 browser = [
   "features.spec.ts › staff charge this month's rent and its late fees, and the Dashboard shows the rent that is late",
   "features.spec.ts › staff add a recurring bill and stop it, and record the decline of an owner with no login",
@@ -1221,6 +1222,42 @@ operations = [
 ]
 browser = [
   "features.spec.ts › an admin makes an API key, software reads the company's books with it and no session, and once taken back it opens nothing",
+]
+
+[[feature]]
+id = "drafts"
+statement = "Software with an API key (ADR 0011) proposes drafts as the AI's role, naming the company's records by id and never a contact detail: an email to tenants, owners or vendors, a notice from a notice template for leases, a work order opened, assigned or scheduled, or a note; none moves money. Staff see the drafts waiting on the Dashboard and in Drafts, each in words with why it was proposed and by which key, an email with who gets it at which address today and who has none. A staff member approves one (asked first), changes it first, or declines it saying why; an approved one is done then through the write path staff use by hand, as them and with the area of what it does, and decided once. The software reads what became of each of its drafts, never what staff made of one."
+operations = [
+  "POST /api/ai/drafts",
+  "GET /api/ai/drafts",
+  "GET /api/drafts",
+  "GET /api/drafts/{draft_id}",
+  "POST /api/drafts/{draft_id}/approve",
+  "POST /api/drafts/{draft_id}/decline",
+]
+browser = [
+  "features.spec.ts › software proposes drafts with an API key; staff see who an email goes to and approve it, change a work order before approving it and decline a note, and the software reads what became of each",
+]
+
+[[feature]]
+id = "events"
+statement = "Software with an API key (ADR 0011) reads its company's events a page at a time after the last it read: a payment recorded or returned, a late fee, a lease opened or its end changed, a bill entered or waiting for its owner, a work order opened, assigned, scheduled, completed or cancelled, a repair requested and a draft approved or declined, each its kind and ids only, written by the database in the same transaction, in the order their transactions began writing, never one skipped. An admin adds a webhook in Settings, AI (an https address on the public internet), sees its signing secret once, each event signed and sent to it, retried, and takes it back from its row's menu."
+operations = [
+  "GET /api/events",
+  "GET /api/ai/webhooks",
+  "POST /api/ai/webhooks",
+  "POST /api/ai/webhooks/{subscription_id}/revoke",
+]
+browser = [
+  "features.spec.ts › an admin adds a webhook and sees its secret once; software reads the company's events with its key, proposes from one and sees its draft decided; the webhook is taken back",
+]
+
+[[feature]]
+id = "mcp"
+statement = "Any MCP client, an AI assistant such as Claude, plugs in at /mcp with an API key as its bearer (ADR 0011): it initializes, lists the tools and calls them, as the AI's role, for the key's company alone. Read tools find the company's tenants, owners, vendors, properties, units, leases and work orders with their ids, and read its reports, rent roll, delinquency, work orders, a lease's ledger, its events and its own drafts; propose tools write drafts that wait for staff in Drafts. No tool moves money."
+operations = ["POST /mcp"]
+browser = [
+  "features.spec.ts › an MCP client plugs in with an API key: it lists the tools, finds a tenant with their id and proposes a note, which waits for staff in Drafts",
 ]
 
 [[feature]]

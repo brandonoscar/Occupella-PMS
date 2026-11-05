@@ -562,6 +562,13 @@ nothing. Grype ran only in CI: the image doesn't build in that sandbox (NOT VERI
 Run the parts locally with the commands above, `cd frontend && npm audit --omit=dev`, and
 `docker compose build`, then syft and grype as in the workflow.
 
+**release-image.yml** (on a pushed release tag only): publishes the self-host image built from the
+tag to `ghcr.io/<owner>/occupella-pms:<tag>`, after the same Syft and Grype checks as
+selfhost.yml, then signs it with Sigstore's keyless signing (cosign, Apache-2.0) and attaches its
+SBOM. It holds no secret: the run's own `GITHUB_TOKEN` and OIDC identity (docs/release.md, "The
+self-host image"). `tests/tools/test_release_image.py` keeps it on tags alone, without a secret
+or an unpinned action, scanning before it pushes and signing what it pushed.
+
 **zap.yml** (daily at 07:47 UTC, by hand, and on a PR that changes it or its tools): OWASP ZAP
 (Apache-2.0, `ghcr.io/zaproxy/zaproxy` pinned by digest) on the running PMS, synthetic data only,
 in two jobs:

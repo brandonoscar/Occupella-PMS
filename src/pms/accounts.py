@@ -12,7 +12,9 @@ password, disabled, locked) gets the same answer, after the same work, so it doe
 attacker which emails have logins. Ten failures in a row lock the login for LOCK_MINUTES.
 
 A session is a random token in an HttpOnly cookie; only its SHA-256 is stored. It lasts
-SESSION_HOURS, and signing out, a new password or disabling the login ends it.
+SESSION_HOURS, or until it is left alone for IDLE_MINUTES (trust_session_activity, moved forward at
+most every TOUCH_MINUTES while it is used), and signing out, a new password or disabling the login
+ends it.
 
 Everything runs on a connection acting as trust_app, inside the caller's transaction.
 """
@@ -38,6 +40,8 @@ from pms import phones
 
 INVITE_DAYS = 7
 SESSION_HOURS = 12
+IDLE_MINUTES = 60
+TOUCH_MINUTES = 5
 MAX_FAILURES = 10
 LOCK_MINUTES = 15
 MIN_PASSWORD = 12
@@ -92,6 +96,23 @@ class SignInRefused(Refused):
 
 class CodeNeeded(Refused):
     """Staff: the password was right, and the authenticator code is missing or wrong."""
+
+
+class CompanyNotActive(Refused):
+    """The company is suspended or closed (`python -m pms.admin status`, migration
+    20261105000100): nobody signs in to it, whoever they are."""
+
+
+# What a person signing in to a company that isn't active is told.
+NOT_ACTIVE = {
+    "suspended": "this company's account is suspended: ask whoever runs this server",
+    "closed": "this company's account is closed",
+}
+
+
+def company_status(conn: psycopg.Connection[Any], pmc_id: UUID) -> str:
+    """The company's status: active, suspended or closed (trust_pmc_status)."""
+    return str(_one(conn, "SELECT trust_pmc_status(%s)", (pmc_id,))[0])
 
 
 @dataclass(frozen=True)
@@ -217,7 +238,10 @@ def request_reset(conn: psycopg.Connection[Any], pmc_id: UUID, email: str) -> Re
     that can sign in and asked fewer than RESETS_PER_HOUR times in the last hour; None
     otherwise. The caller answers the same either way, so it doesn't tell who has a login. A
     staff member resets through an admin's new invite instead: an emailed link must not get past
-    their authenticator. Accepting it sets the new password, so until then the old one works."""
+    their authenticator. Accepting it sets the new password, so until then the old one works.
+    A company that isn't active sends none."""
+    if company_status(conn, pmc_id) != "active":
+        return None
     found = _one(
         conn,
         "SELECT kind, coalesce(owner_id, tenant_id) FROM trust_logins"
@@ -241,13 +265,16 @@ def request_reset(conn: psycopg.Connection[Any], pmc_id: UUID, email: str) -> Re
 
 
 def _open_invite(conn: psycopg.Connection[Any], token: str, lock: bool) -> Any:
-    """The invite's row if it can still be used: not accepted, not expired, login enabled."""
+    """The invite's row if it can still be used: not accepted, not expired, login enabled, and
+    the login's newest (a newer invite or password reset retires it: docs/edge-cases.md U-013)."""
     row = _one(
         conn,
         "SELECT i.id, i.pmc_id, l.id, l.kind, l.email, i.expires_at"  # noqa: S608
         " FROM trust_invites AS i JOIN trust_logins AS l ON l.id = i.login_id"
         " WHERE i.token_hash = %s AND i.accepted_at IS NULL AND i.expires_at > now()"
-        " AND l.disabled_at IS NULL" + (" FOR UPDATE OF i" if lock else ""),
+        " AND l.disabled_at IS NULL"
+        " AND NOT EXISTS (SELECT 1 FROM trust_invites AS n WHERE n.login_id = i.login_id"
+        "   AND n.created_at > i.created_at)" + (" FOR UPDATE OF i" if lock else ""),
         (digest(token),),
     )
     if row is None:
@@ -337,7 +364,11 @@ def sign_in(
     conn: psycopg.Connection[Any], pmc_id: UUID, email: str, password: str, code: str | None
 ) -> Signed:
     """A new session, or SignInRefused (the same for every reason) or CodeNeeded (staff whose
-    password was right). A failure is committed before it is raised, so it counts."""
+    password was right). A failure is committed before it is raised, so it counts. A company
+    that isn't active refuses everyone the same way, before any login is looked at."""
+    status = company_status(conn, pmc_id)
+    if status != "active":
+        raise CompanyNotActive(NOT_ACTIVE[status])
     row = _one(
         conn,
         "SELECT l.id, l.kind, s.password_hash, s.totp_secret, s.totp_confirmed_at,"
@@ -424,16 +455,29 @@ def _new_session(conn: psycopg.Connection[Any], login_id: UUID) -> Signed:
 
 
 def session_for(conn: psycopg.Connection[Any], token: str) -> Session | None:
-    """The live session behind a cookie's token, if there is one."""
+    """The live session behind a cookie's token, if there is one: not ended, not past its hours,
+    used within IDLE_MINUTES, its login enabled and its company active. Using it moves its last
+    use forward, at most every TOUCH_MINUTES."""
     row = _one(
         conn,
-        "SELECT l.id, l.pmc_id, l.kind, coalesce(l.staff_id, l.owner_id, l.tenant_id), l.email"
+        "SELECT l.id, l.pmc_id, l.kind, coalesce(l.staff_id, l.owner_id, l.tenant_id), l.email,"
+        " s.id"
         " FROM trust_sessions AS s JOIN trust_logins AS l ON l.id = s.login_id"
+        " LEFT JOIN trust_session_activity AS a ON a.session_id = s.id"
         " WHERE s.token_hash = %s AND s.ended_at IS NULL AND s.expires_at > now()"
-        " AND l.disabled_at IS NULL",
-        (digest(token),),
+        " AND coalesce(a.last_seen_at, s.created_at) > now() - make_interval(mins => %s)"
+        " AND l.disabled_at IS NULL AND trust_pmc_status(l.pmc_id) = 'active'",
+        (digest(token), IDLE_MINUTES),
     )
-    return None if row is None else Session(*row)
+    if row is None:
+        return None
+    conn.execute(
+        "INSERT INTO trust_session_activity (session_id, pmc_id) VALUES (%s, %s)"
+        " ON CONFLICT (session_id) DO UPDATE SET last_seen_at = now()"
+        " WHERE trust_session_activity.last_seen_at < now() - make_interval(mins => %s)",
+        (row[5], row[1], TOUCH_MINUTES),
+    )
+    return Session(*row[:5])
 
 
 def sign_out(conn: psycopg.Connection[Any], token: str) -> None:

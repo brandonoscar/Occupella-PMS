@@ -34,13 +34,15 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import IO, Any
 
 import psycopg
 from fpdf import FPDF
@@ -178,8 +180,10 @@ def to_xlsx(table: Table, generated: datetime) -> bytes:
 
 def _sheet_text(value: str) -> str:
     """Text as a spreadsheet can hold it: control characters XML can't carry become "?", and
-    line breaks are "\n" (XML would turn a carriage return into one when the file is read)."""
-    return ILLEGAL_CHARACTERS_RE.sub("?", value).replace("\r\n", "\n").replace("\r", "\n")
+    line breaks are "\n" (XML would turn a carriage return into one when the file is read), and
+    no more than a cell holds."""
+    value = ILLEGAL_CHARACTERS_RE.sub("?", value).replace("\r\n", "\n").replace("\r", "\n")
+    return value if len(value) <= SHEET_MOST else value[: SHEET_MOST - len(CUT)] + CUT
 
 
 def _naive_utc(moment: datetime) -> datetime:
@@ -219,7 +223,7 @@ def to_pdf(table: Table, generated: datetime) -> bytes:
     pdf.set_font(pdf_fonts.FAMILY, size=PDF_SIZE)
     for row in table.rows:
         cells = [
-            _wrap(pdf, pdf_fonts.printable(text(value)), width - 2 * PDF_PAD)
+            _cell_lines(pdf, text(value), width - 2 * PDF_PAD)
             for value, width in zip(row, widths, strict=True)
         ]
         if pdf.get_y() + _pdf_height(cells) > pdf.page_break_trigger:
@@ -235,6 +239,12 @@ def to_pdf(table: Table, generated: datetime) -> bytes:
 PDF_SIZE = 7
 PDF_LINE = 9
 PDF_PAD = 2
+# A row stays on one page: a cell is cut after this many lines, its last line "…" (an audit row
+# can carry a file's bytes as millions of characters: docs/edge-cases.md F-122).
+PDF_MOST_LINES = 48
+# An Excel cell holds 32,767 characters; a longer one is cut, its last "…". The CSV keeps all.
+SHEET_MOST = 32_767
+CUT = "…"
 
 
 def _pdf_height(cells: list[list[str]]) -> float:
@@ -255,9 +265,20 @@ def _pdf_row(pdf: FPDF, cells: list[list[str]], widths: list[float]) -> None:
     pdf.set_y(y + height)
 
 
-def _wrap(pdf: FPDF, value: str, width: float) -> list[str]:
+def _cell_lines(pdf: FPDF, value: str, width: float) -> list[str]:
+    """A cell's lines, cut after PDF_MOST_LINES. Only as much text is wrapped as could fill them
+    (a character is wider than half a point), so a cell of millions takes no longer than one."""
+    most = PDF_MOST_LINES * (int(width) + 1) * 2
+    lines = _wrap(pdf, pdf_fonts.printable(value[:most]), width, PDF_MOST_LINES)
+    if len(lines) > PDF_MOST_LINES or len(value) > most:
+        return lines[: PDF_MOST_LINES - 1] + [CUT]
+    return lines
+
+
+def _wrap(pdf: FPDF, value: str, width: float, most: int | None = None) -> list[str]:
     """A cell's text in lines no wider than `width` points in the current font: broken at
-    spaces where it can and inside a word where it must, its own line breaks kept."""
+    spaces where it can and inside a word where it must, its own line breaks kept; past `most`
+    lines, if given, the rest is left unwrapped."""
     font, size = pdf.current_font, pdf.font_size_pt
     assert font is not None  # to_pdf sets the font before any text
 
@@ -277,13 +298,19 @@ def _wrap(pdf: FPDF, value: str, width: float) -> list[str]:
             if line:
                 lines.append(line)
             while needs > width:
-                fits = 1
-                while fits < len(word) and wide(word[: fits + 1]) <= width:
-                    fits += 1
+                if most is not None and len(lines) > most:
+                    return lines
+                # The longest start of the word that fits (at least a character), by halves.
+                fits, over = 1, len(word)
+                while over - fits > 1:
+                    middle = (fits + over) // 2
+                    fits, over = (middle, over) if wide(word[:middle]) <= width else (fits, middle)
                 lines.append(word[:fits])
                 word = word[fits:]
                 needs = wide(word)
             line, room = word, needs
+            if most is not None and len(lines) > most:
+                return lines
         lines.append(line)
     return lines
 
@@ -412,6 +439,20 @@ FROM pg_attribute AS a
 WHERE a.attrelid = %s::regclass AND a.attnum > 0 AND NOT a.attisdropped
 ORDER BY a.attnum
 """
+# A table's primary key, in its order: the rows' order in its CSV.
+RECORD_KEY = """
+SELECT a.attname, a.atttypid IN ('text'::regtype, 'varchar'::regtype)
+FROM pg_index AS i
+CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, place)
+JOIN pg_attribute AS a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+WHERE i.indrelid = %s::regclass AND i.indisprimary
+ORDER BY k.place
+"""
+# Rows fetched at a time (docs/edge-cases.md H-097, F-126): at most this many files of 5 MB in
+# the process at once, whatever the company holds.
+RECORD_BATCH = 2
+# A table's CSV waits in memory up to this size, then on disk, until its files are written.
+CSV_SPOOL = 8 * 1024 * 1024
 
 
 def _extension(data: bytes) -> str:
@@ -424,21 +465,68 @@ def _extension(data: bytes) -> str:
     return "bin"
 
 
-def _add(archive: zipfile.ZipFile, name: str, data: bytes) -> None:
+def _entry(name: str) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(name, ZIP_TIME)
     info.compress_type = zipfile.ZIP_DEFLATED
-    archive.writestr(info, data)
+    return info
+
+
+def _add(archive: zipfile.ZipFile, name: str, data: bytes) -> None:
+    archive.writestr(_entry(name), data)
+
+
+def _add_csv(
+    archive: zipfile.ZipFile,
+    name: str,
+    columns: Sequence[str],
+    rows: Iterable[Sequence[Any]],
+    files: Any = None,
+) -> None:
+    """A CSV entry written as `rows` come, read as to_csv writes them. `files(n, row)` may add
+    entries of its own and give the row's cells: the CSV waits in a spool (memory, then disk)
+    meanwhile, as a zip takes one entry at a time."""
+    with tempfile.SpooledTemporaryFile(
+        max_size=CSV_SPOOL, mode="w+", encoding="utf-8", newline=""
+    ) as spool:
+        writer = csv.writer(spool, lineterminator="\r\n")
+        writer.writerow(columns)
+        for n, row in enumerate(rows, start=1):
+            cells = files(n, row) if files else row
+            writer.writerow(_csv_cell(value) for value in cells)
+        spool.seek(0)
+        with (
+            archive.open(_entry(name), "w", force_zip64=True) as entry,
+            io.TextIOWrapper(entry, encoding="utf-8", newline="") as text_out,
+        ):
+            shutil.copyfileobj(spool, text_out)
+
+
+def _streamed(conn: psycopg.Connection[Any], query: Any, params: Any) -> Iterable[Any]:
+    """A query's rows a few at a time, from a cursor on the server."""
+    with conn.cursor(name="pms_records") as cursor:
+        cursor.itersize = RECORD_BATCH
+        cursor.execute(query, params)
+        yield from cursor
 
 
 def records_zip(conn: psycopg.Connection[Any], pmc_id: Any) -> bytes:
-    """Every record of one PMC: records/<table>.csv for each of its tables the caller may read
-    (rows in a fixed order, so the same books give the same file), files/<table>/... for its
-    documents, leases offered and signatures drawn, and ledger/ as ledger_zip has it."""
+    """write_records_zip's file, whole (the command line and the tests)."""
+    out = io.BytesIO()
+    write_records_zip(conn, pmc_id, out)
+    return out.getvalue()
+
+
+def write_records_zip(conn: psycopg.Connection[Any], pmc_id: Any, out: IO[bytes]) -> None:
+    """Every record of one PMC, as a zip written to `out`: records/<table>.csv for each of its
+    tables the caller may read (rows in their key's order, so the same books give the same
+    file), files/<table>/... for its documents, leases offered and signatures drawn, and
+    ledger/ as ledger_zip has it. Rows come a few at a time and each entry is written as they
+    come, so a company with gigabytes of files takes no more memory than one with a few."""
     known = conn.execute("SELECT 1 FROM trust_pmcs WHERE pmc_id = %s::uuid", (pmc_id,))
     if known.fetchone() is None:
         raise ExportError(f"no PMC {pmc_id}")
-    out = io.BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+    # A cursor on the server lives in a transaction: the request's, or one of its own.
+    with conn.transaction(), zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
         tables = [t for (t,) in conn.execute(RECORD_TABLES).fetchall() if t not in NEVER_EXPORTED]
         for table in tables:
             columns = [
@@ -457,13 +545,23 @@ def records_zip(conn: psycopg.Connection[Any], pmc_id: Any) -> bytes:
             where: sql.Composable = sql.SQL("pmc_id = %(pmc)s::uuid")
             if table == "trust_audit_log":
                 where = sql.SQL("{} AND table_name <> ALL(%(never)s)").format(where)
-            query = sql.SQL(
-                'SELECT {} FROM {} AS r WHERE {} ORDER BY row_to_json(r)::text COLLATE "C"'
-            ).format(sql.SQL(", ").join(picked), sql.Identifier(table), where)
-            rows = conn.execute(query, {"pmc": pmc_id, "never": list(NEVER_EXPORTED)}).fetchall()
-            written: list[tuple[Any, ...]] = []
-            for n, row in enumerate(rows, start=1):
-                cells: list[Any] = []
+            key = conn.execute(RECORD_KEY, (table,)).fetchall()
+            order = (
+                sql.SQL(", ").join(
+                    sql.SQL('{} COLLATE "C"' if text else "{}").format(sql.Identifier(name))
+                    for name, text in key
+                )
+                if key
+                else sql.SQL('row_to_json(r)::text COLLATE "C"')
+            )
+            query = sql.SQL("SELECT {} FROM {} AS r WHERE {} ORDER BY {}").format(
+                sql.SQL(", ").join(picked), sql.Identifier(table), where, order
+            )
+
+            def cells(
+                n: int, row: Sequence[Any], table: str = table, columns: list[Any] = columns
+            ) -> list[Any]:
+                written: list[Any] = []
                 for (name, _), value in zip(columns, row, strict=True):
                     if isinstance(value, bytes | memoryview):
                         data = bytes(value)
@@ -473,21 +571,30 @@ def records_zip(conn: psycopg.Connection[Any], pmc_id: Any) -> bytes:
                             value = path
                         else:
                             value = data.hex()
-                    cells.append(value)
-                written.append(tuple(cells))
-            names = tuple(name for name, _ in columns)
-            _add(archive, f"records/{table}.csv", to_csv(Table(table, names, tuple(written))))
+                    written.append(value)
+                return written
+
+            _add_csv(
+                archive,
+                f"records/{table}.csv",
+                tuple(name for name, _ in columns),
+                _streamed(conn, query, {"pmc": pmc_id, "never": list(NEVER_EXPORTED)}),
+                cells,
+            )
         for name, of_ledger in (
             ("accounts", LEDGER_ACCOUNTS),
             ("transfers", LEDGER_TRANSFERS),
             ("entries", LEDGER_ENTRIES),
         ):
             with conn.cursor() as cursor:
-                cursor.execute(of_ledger, {"pmc": pmc_id})
+                cursor.execute(of_ledger + " LIMIT 0", {"pmc": pmc_id})
                 columns_of = tuple(column.name for column in cursor.description or [])
-                ledger = Table(name, columns_of, tuple(cursor.fetchall()))
-            _add(archive, f"ledger/{name}.csv", to_csv(ledger))
-    return out.getvalue()
+            _add_csv(
+                archive,
+                f"ledger/{name}.csv",
+                columns_of,
+                _streamed(conn, of_ledger, {"pmc": pmc_id}),
+            )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

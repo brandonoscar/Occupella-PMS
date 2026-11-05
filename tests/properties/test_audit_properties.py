@@ -242,6 +242,8 @@ class AuditMachine(RuleBasedStateMachine):
         made = self.write("app", whom, do, rows)
         if made is not None:
             self.logins[n] = made.login_id
+            # Only a login's newest invite works: a newer one retires the older (U-013).
+            self.pending = [(token, m) for token, m in self.pending if m != n]
             self.pending.append((made.token, n))
 
     @precondition(lambda self: self.pending)

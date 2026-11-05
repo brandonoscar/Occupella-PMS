@@ -18,6 +18,8 @@ type People = {
   taylor: string;
   drew: string;
   emails: Record<string, string>;
+  // Records' ids a feature's software names (the drafts feature's).
+  ids?: Record<string, string>;
 };
 const seed: { features: Record<string, People> } = JSON.parse(
   readFileSync(new URL("./.seed.json", import.meta.url), "utf8"),
@@ -5648,6 +5650,206 @@ test("an admin makes an API key, software reads the company's books with it and 
   const after = await request.get("/api/ai/me", { headers: key });
   expect(after.status()).toBe(401);
   expect(((await after.json()) as { detail: string }).detail).toBe("this key was taken back or doesn't exist");
+});
+
+test("software proposes drafts with an API key; staff see who an email goes to and approve it, change a work order before approving it and decline a note, and the software reads what became of each", async ({
+  page,
+  request,
+}) => {
+  const people = seed.features.drafts!;
+  const ids = people.ids!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "AI");
+  await page.getByRole("button", { name: "Make a key" }).click();
+  const made = page.getByRole("dialog", { name: "Make a key" });
+  await made.getByLabel("Name").fill("Assistant");
+  await made.getByRole("button", { name: "Make key" }).click();
+  const key = { Authorization: `Bearer ${await made.getByLabel("Secret key").inputValue()}` };
+  await made.getByRole("button", { name: "Done" }).click();
+
+  // The software proposes, naming records by id and never an address; nothing is done yet.
+  const propose = async (proposal: object, why: string) => {
+    const answer = await request.post("/api/ai/drafts", { headers: key, data: { proposal, why } });
+    expect(answer.status()).toBe(201);
+    return ((await answer.json()) as { id: string }).id;
+  };
+  const email = await propose({
+    kind: "email", to: [{ about: "tenant", id: ids.drew }],
+    subject: "Water shutoff Tuesday", body: "The water is off on Tuesday from 9 to noon.",
+  }, "The water company posted a shutoff.");
+  const repair = await propose(
+    { kind: "work_order_open", property_id: ids.aspen_row, summary: "Gate sticks" },
+    "A tenant wrote that the gate sticks.",
+  );
+  const note = await propose(
+    { kind: "note", about: "tenant", about_id: ids.drew, body: "Prefers email." },
+    "From the tenant's last message.",
+  );
+
+  // Waiting on the Dashboard and in Drafts.
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Dashboard", exact: true }).click();
+  await expect(attention(page, "Draft").filter({ hasText: "Email to Drew Sample: Water shutoff Tuesday (from Assistant)" }))
+    .toBeVisible();
+  await section(page, "Drafts");
+  const list = page.getByRole("table", { name: "Drafts" });
+  await expect(list.getByRole("row", { name: "Open a work order at Aspen Row: Gate sticks" }))
+    .toContainText("A tenant wrote that the gate sticks.");
+  await expect(list.getByRole("row", { name: "Note about tenant Drew Sample" })).toContainText("Waiting");
+
+  // The email: to whom and at which address, before it goes; asked first, then done as the manager.
+  await list.getByRole("link", { name: "Email to Drew Sample: Water shutoff Tuesday" }).click();
+  await expect(page.getByRole("list", { name: "Recipients" })).toContainText("drew.sample.drafts@example.com");
+  await expectAccessible(page, "A draft email, who gets it shown first");
+  await page.getByRole("button", { name: "Approve", exact: true }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByRole("main")).toContainText("Approved by");
+
+  // The repair: its summary changed first, then the work order opened as changed.
+  await page.getByRole("link", { name: "All drafts" }).click();
+  await list.getByRole("link", { name: "Open a work order at Aspen Row: Gate sticks" }).click();
+  await page.getByRole("button", { name: "Change and approve" }).click();
+  const change = page.getByRole("dialog", { name: "Change and approve" });
+  await change.getByLabel("Summary").fill("Front gate sticks");
+  await change.getByRole("button", { name: "Approve with changes" }).click();
+  await expect(page.getByRole("main")).toContainText("after changes");
+  await expect(page.getByLabel("As done")).toContainText("Front gate sticks");
+
+  // The note: declined, saying why; nothing is written.
+  await page.getByRole("link", { name: "All drafts" }).click();
+  await list.getByRole("link", { name: "Note about tenant Drew Sample" }).click();
+  await page.getByRole("button", { name: "Decline" }).click();
+  const decline = page.getByRole("dialog", { name: "Decline draft" });
+  await decline.getByLabel("Why").fill("Already on file.");
+  await decline.getByRole("button", { name: "Decline" }).click();
+  await expect(page.getByRole("main")).toContainText("Declined by");
+  await page.getByRole("link", { name: "All drafts" }).click();
+  await expect(page.getByTestId("empty-state")).toContainText("No drafts waiting.");
+
+  // The software reads what became of each: approved, changed or not, or declined and why.
+  const mine = await request.get("/api/ai/drafts", { headers: key });
+  expect(mine.status()).toBe(200);
+  const items = ((await mine.json()) as { items: { id: string; status: string; edited: boolean | null; reason: string | null }[] }).items;
+  expect(Object.fromEntries(items.map((d) => [d.id, [d.status, d.edited, d.reason]]))).toEqual({
+    [email]: ["approved", false, null],
+    [repair]: ["approved", true, null],
+    [note]: ["declined", null, "Already on file."],
+  });
+  // The work order is opened, as the manager changed it.
+  await page.goto("/work-orders");
+  await expect(page.getByRole("main")).toContainText("Front gate sticks");
+});
+
+test("an admin adds a webhook and sees its secret once; software reads the company's events with its key, proposes from one and sees its draft decided; the webhook is taken back", async ({
+  page,
+  request,
+}) => {
+  const people = seed.features.events!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "AI");
+  await page.getByRole("button", { name: "Make a key" }).click();
+  const made = page.getByRole("dialog", { name: "Make a key" });
+  await made.getByLabel("Name").fill("Events reader");
+  await made.getByRole("button", { name: "Make key" }).click();
+  const key = { Authorization: `Bearer ${await made.getByLabel("Secret key").inputValue()}` };
+  await made.getByRole("button", { name: "Done" }).click();
+
+  // A webhook: an https address on the public internet; its signing secret shown this once.
+  const hook = "https://hooks.example.com/occupella";
+  await page.getByRole("button", { name: "Add webhook" }).click();
+  const adding = page.getByRole("dialog", { name: "Add webhook" });
+  await adding.getByLabel("Address").fill(hook);
+  await adding.getByRole("button", { name: "Add webhook" }).click();
+  const secret = await adding.getByLabel("Signing secret").inputValue();
+  expect(secret).toMatch(/^whsec_[A-Za-z0-9_-]{43}$/);
+  await expectAccessible(page, "Settings, AI, a webhook's secret shown once");
+  await adding.getByRole("button", { name: "Done" }).click();
+  const row = page.getByRole("row", { name: hook });
+  await expect(row).toContainText(`…${secret.slice(-4)}`);
+  await expect(row).toContainText("Active");
+  expect(await page.content()).not.toContain(secret);
+
+  // Software reads the company's events a page at a time: kinds and ids, never a word more.
+  type Event = { id: number; kind: string; subject: Record<string, string> };
+  const all: Event[] = [];
+  let after: number | null = null;
+  for (;;) {
+    const answer = await request.get(`/api/events?limit=500${after ? `&after=${after}` : ""}`, { headers: key });
+    expect(answer.status()).toBe(200);
+    const page_ = (await answer.json()) as { events: Event[]; next: number | null };
+    if (page_.events.length === 0) break;
+    all.push(...page_.events);
+    after = page_.next;
+  }
+  expect(all.map((e) => e.kind)).toEqual(
+    expect.arrayContaining(["lease.opened", "payment.recorded", "bill.waiting_for_owner"]));
+  expect(JSON.stringify(all)).not.toContain("Cedar House");
+  const leased = all.find((e) => e.kind === "lease.opened")!;
+
+  // It proposes a note about that lease's unit; staff decline it, and that is an event too.
+  const proposed = await request.post("/api/ai/drafts", {
+    headers: key,
+    data: { proposal: { kind: "note", about: "unit", about_id: leased.subject.unit_id, body: "Gutters due." } },
+  });
+  expect(proposed.status()).toBe(201);
+  const draft = ((await proposed.json()) as { id: string }).id;
+  await section(page, "Drafts");
+  await page.getByRole("table", { name: "Drafts" }).getByRole("link", { name: /^Note about unit / }).click();
+  await page.getByRole("button", { name: "Decline" }).click();
+  const decline = page.getByRole("dialog", { name: "Decline draft" });
+  await decline.getByLabel("Why").fill("Done already.");
+  await decline.getByRole("button", { name: "Decline" }).click();
+  await expect(page.getByRole("main")).toContainText("Declined by");
+  const later = await request.get(`/api/events?after=${after}`, { headers: key });
+  expect(((await later.json()) as { events: Event[] }).events.map((e) => [e.kind, e.subject])).toEqual([
+    ["draft.declined", { draft_id: draft }],
+  ]);
+
+  // Taken back from its row's menu: no event goes to it from then on.
+  await settings(page, "AI");
+  await chooseAction(page, hook, "Take back");
+  await expect(page.getByText(`Took back the webhook to ${hook}.`)).toBeVisible();
+  await expect(page.getByRole("row", { name: hook })).toContainText("Taken back");
+});
+
+test("an MCP client plugs in with an API key: it lists the tools, finds a tenant with their id and proposes a note, which waits for staff in Drafts", async ({
+  page,
+  request,
+}) => {
+  const people = seed.features.mcp!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "AI");
+  await page.getByRole("button", { name: "Make a key" }).click();
+  const made = page.getByRole("dialog", { name: "Make a key" });
+  await made.getByLabel("Name").fill("Claude");
+  await made.getByRole("button", { name: "Make key" }).click();
+  const key = { Authorization: `Bearer ${await made.getByLabel("Secret key").inputValue()}` };
+  await made.getByRole("button", { name: "Done" }).click();
+
+  // The Model Context Protocol over HTTP, as any MCP client speaks it: one JSON-RPC message each.
+  let id = 0;
+  const mcp = async (method: string, params: object = {}) => {
+    const answer = await request.post("/mcp", { headers: key, data: { jsonrpc: "2.0", id: ++id, method, params } });
+    expect(answer.status()).toBe(200);
+    return ((await answer.json()) as { result: Record<string, unknown> }).result;
+  };
+  const started = await mcp("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "e2e" } });
+  expect(started.protocolVersion).toBe("2025-06-18");
+  const tools = (await mcp("tools/list")).tools as { name: string }[];
+  expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(["find", "rent_roll", "propose_note"]));
+
+  type Found = { structuredContent: { found: { id: string; name: string }[] } };
+  const found = (await mcp("tools/call", { name: "find", arguments: { kind: "tenant", name: "Drew" } })) as unknown as Found;
+  const drew = found.structuredContent.found.find((t) => t.name === "Drew Sample")!;
+  const proposed = await mcp("tools/call", {
+    name: "propose_note",
+    arguments: { about: "tenant", about_id: drew.id, body: "Prefers a call after 5.", why: "From their message." },
+  });
+  expect(proposed.isError).toBe(false);
+
+  // Nothing is done yet: staff find it waiting in Drafts.
+  await section(page, "Drafts");
+  await expect(page.getByRole("table", { name: "Drafts" }).getByRole("row", { name: "Note about tenant Drew Sample" }))
+    .toContainText("From their message.");
 });
 
 test("staff send a reminder of rent past due from the Dashboard, seeing who gets it first, once a day", async ({

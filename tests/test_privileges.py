@@ -5,8 +5,9 @@ pins them down completely: any grant added, dropped or widened by a migration fa
 `pms_nobody` stands in for any other role on the server (PUBLIC), such as a Supabase `anon`.
 
 trust_ai_agent, the role behind the API key Occupella will hold, reads what trust_app reads and
-runs the reports: it can't write a row or call a function that writes (the AI never moves money).
-The one exception is AI_NEVER_READS: who can sign in, sessions and credentials, rental
+runs the reports: it can't call a function that writes (the AI never moves money), and its one
+write is AI_WRITES, a draft proposed for staff to decide (ADR 0011). The one exception to what it
+reads is AI_NEVER_READS: who can sign in, sessions and credentials, rental
 applicants with their screenings, and the files of documents. Their copies in the audit log are
 hidden from it too, by the log's row-level security.
 
@@ -56,6 +57,8 @@ TABLES = {
     "trust_email_settings": {"SELECT", "INSERT"},
     "trust_owner_approval_settings": {"SELECT", "INSERT"},
     "trust_payment_instructions": {"SELECT", "INSERT"},
+    # A company's status, set by the server's operator with pms.admin (migration 20261105000100).
+    "trust_company_statuses": {"SELECT", "INSERT"},
     "trust_bill_payments": {"SELECT"},  # written only by trust_set_aside_bill, trust_pay_bill
     "trust_work_orders": {"SELECT", "INSERT"},
     "trust_work_order_steps": {"SELECT", "INSERT"},
@@ -81,6 +84,8 @@ TABLES = {
     "trust_logins": {"SELECT", "INSERT"},
     "trust_invites": {"SELECT", "INSERT"},
     "trust_sessions": {"SELECT", "INSERT"},
+    # When each session was last used, for the idle timeout (migration 20261105000200).
+    "trust_session_activity": {"SELECT", "INSERT"},
     "trust_login_secrets": {"SELECT", "INSERT"},
     # Maintenance requests: tenants file them through the API, staff link a work order.
     "trust_maintenance_requests": {"SELECT", "INSERT"},
@@ -349,6 +354,19 @@ TABLES = {
     # kept as its SHA-256.
     "trust_api_keys": {"SELECT", "INSERT"},
     "trust_api_key_revocations": {"SELECT", "INSERT"},
+    # Drafts (ADR 0011, migration 20261105000300): the AI's role proposes them, the app reads
+    # them; a staff member's decision and what the PMS did for an approved one are the app's.
+    "trust_drafts": {"SELECT"},
+    "trust_draft_decisions": {"SELECT", "INSERT"},
+    "trust_draft_actions": {"SELECT", "INSERT"},
+    # Events (ADR 0011, migration 20261105000500): written by trust_record_event alone, as the
+    # owner; the webhooks an admin adds and takes back, and each attempt to deliver to one.
+    "trust_events": {"SELECT"},
+    "trust_events_id_seq": set(),
+    "trust_event_subscriptions": {"SELECT", "INSERT"},
+    "trust_event_subscription_revocations": {"SELECT", "INSERT"},
+    "trust_event_deliveries": {"SELECT", "INSERT"},
+    "trust_event_deliveries_id_seq": set(),
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -356,6 +374,7 @@ COLUMN_UPDATES = {
     "trust_logins": {"disabled_at"},
     "trust_invites": {"accepted_at"},
     "trust_sessions": {"ended_at"},
+    "trust_session_activity": {"last_seen_at"},
     "trust_login_secrets": {
         "password_hash",
         "totp_secret",
@@ -402,6 +421,7 @@ AI_NEVER_READS = {
     "trust_logins",
     "trust_invites",
     "trust_sessions",
+    "trust_session_activity",
     "trust_login_secrets",
     "trust_application_links",
     "trust_application_link_closings",
@@ -464,7 +484,18 @@ AI_NEVER_READS = {
     # API keys (ADR 0011): credentials, as logins are. A key's request reads as this role.
     "trust_api_keys",
     "trust_api_key_revocations",
+    # What the PMS did for an approved draft: staff's words in it, as the emails and notes they
+    # write, which the AI never reads either. It reads each draft's decision, never this.
+    "trust_draft_actions",
+    # Webhooks: an address and a sealed secret, as an API key is a credential; and what each
+    # receiver answered.
+    "trust_event_subscriptions",
+    "trust_event_subscription_revocations",
+    "trust_event_deliveries",
 }
+# The AI role's one write (ADR 0011): proposing a draft, a plain INSERT, which moves nothing until
+# a staff member approves it and the app does it through its own write paths as them.
+AI_WRITES = {"trust_drafts": {"INSERT"}}
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [
     "trust_pmcs",
@@ -515,7 +546,11 @@ FUNCTIONS = {
     # A company's time zone and its day (migration 20261104000900): read from its profile, which
     # the AI role never reads.
     "trust_pmc_time_zone(uuid)": {"trust_app"},
+    "trust_pmc_status(uuid)": {"trust_app"},
     "trust_pmc_day(uuid,timestamptz)": {"trust_app"},
+    # The migrations applied, for the app to compare with its own (H-041); dbmate's table is
+    # read by no role.
+    "trust_schema_versions()": {"trust_app"},
     # A property's ownership shares in force on a day, and an amount split by them (0094).
     "trust_ownership_on(uuid,date)": {"trust_app"},
     "trust_split_by_ownership(uuid,date,numeric)": {"trust_app"},
@@ -643,6 +678,12 @@ FUNCTIONS = {
     "trust_check_tax_id_reveal()": set(),
     # Only an admin makes an API key or takes one back (migration 0201).
     "trust_check_api_key_admin()": set(),
+    # A draft's key stands and its company is active; its decision and what was done agree.
+    "trust_check_draft()": set(),
+    "trust_check_draft_action()": set(),
+    # Events are written by the database alone; only an admin adds or takes back a webhook.
+    "trust_record_event()": set(),
+    "trust_check_webhook_admin()": set(),
     "trust_check_tenant_applicant()": set(),
     "trust_check_decision_override()": set(),
     "trust_fill_bill_markup()": set(),
@@ -822,6 +863,7 @@ SECURITY_DEFINER = {
     "trust_charge_nsf_fee(uuid,text)",
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",
     "trust_analyze_after_import()",  # ANALYZE needs the tables' owner; it writes no record
+    "trust_schema_versions()",  # reads dbmate's schema_migrations, which no role is granted
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)",
     "trust_complete_lease_offer(uuid,uuid,uuid)",
     "trust_match_bank_lines(uuid,uuid,uuid[],text[],uuid[],uuid)",
@@ -838,6 +880,8 @@ SECURITY_DEFINER = {
     "trust_post_journal_entry(uuid,uuid)",
     "trust_decline_journal_entry(uuid,uuid,text)",
     "trust_audit()",  # writes the audit log, which no other role may write
+    "trust_check_draft()",  # reads the draft's API key, which the AI's role never reads
+    "trust_record_event()",  # writes events, which neither the app nor the AI's role may write
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
     "trust_check_bill_decision()",  # locks the bill's owner account, which the app can't
     "trust_check_charge_waiver()",  # locks the waived charge, which the app can't
@@ -1011,7 +1055,19 @@ def test_no_role_but_the_owner_may_delete_or_truncate(conn):
 @pytest.mark.parametrize("table", TABLES)
 def test_ai_role_reads_only_what_the_app_reads(conn, table):
     expected = set() if table in AI_NEVER_READS else TABLES[table] & {"SELECT"}
-    assert granted(conn, "trust_ai_agent", table) == expected
+    assert granted(conn, "trust_ai_agent", table) == expected | AI_WRITES.get(table, set())
+
+
+def test_the_ai_roles_one_write_is_proposing_a_draft(conn):
+    # Every table the AI role may change, by any grant: exactly the drafts, by INSERT, and the app
+    # may not write them (only the AI proposes; staff decide).
+    writes = {
+        table: privileges
+        for table in TABLES
+        if (privileges := granted(conn, "trust_ai_agent", table) - {"SELECT"})
+    }
+    assert writes == AI_WRITES == {"trust_drafts": {"INSERT"}}
+    assert "INSERT" not in TABLES["trust_drafts"]
 
 
 def test_ai_role_holds_no_column_grant(conn):

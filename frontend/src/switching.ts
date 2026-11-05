@@ -39,7 +39,7 @@ export const ROSTER: { kind: RosterKind; label: string; columns: string }[] = [
   },
   { kind: "tenants", label: "Tenants", columns: `Property, Tenant, ${CONTACT_COLUMNS}` },
   { kind: "leases", label: "Leases in place", columns: "Property, Unit, Tenants (separated by ;), Starts on, Ends on, Monthly rent" },
-  { kind: "charges", label: "Unpaid charges", columns: "Property, Unit, Due on, Amount, Kind (rent or fee), Memo" },
+  { kind: "charges", label: "Unpaid charges", columns: "Property, Unit, Due on, Amount, Kind (rent or fee), Memo, Tenant (whose fee it is, when the unit had more than one lease)" },
   {
     kind: "bills",
     label: "Unpaid bills",

@@ -38,7 +38,11 @@ What does **not** reach anyone by itself:
   `GET /health` answers 503 `database unavailable` (200 `ok` otherwise); a monitoring service of
   the company's own can watch it. Nothing in the PMS does.
 - **An error answering a request** (a 500). It is in the log, with its traceback.
-- **A backup that failed.** That shows in the backup job's own output (docs/backup.md).
+- **A backup that failed.** That shows in the backup job's own output (docs/backup.md), and once
+  no good dump is less than 26 hours old the backup service reads unhealthy in
+  `docker compose ps` (a monitoring service of the company's own can watch it). No admin is
+  emailed and the Dashboard says nothing: a server may hold several companies, and whom to tell
+  about the server's backup is not decided (NOT VERIFIED that anyone looks at `ps`).
 
 ## Where the logs are
 
@@ -90,6 +94,15 @@ Nothing is lost while it is down: nothing is posted either.
   the books back". Stop the app first, restore into a new database, check the line the restore
   ends with, then enter again from the bank's records what happened after the backup was taken,
   and reconcile.
+
+**The app answers busy, and its log says the database "was migrated by a newer PMS" or "lacks
+this PMS's migration".** The app, the nightly run and the webhooks check the database's migrations
+against their own and touch nothing on a schema they were never tested on.
+- "Migrated by a newer PMS": an older tag runs on a database a newer one upgraded, or a newer
+  backup was restored under an older tag. Run the tag that migrated it, or restore a backup made
+  by the tag that runs.
+- "Lacks this PMS's migration": the migrations weren't applied. Run them
+  (`docker compose run --rm migrate`, or `dbmate up`), then restart the app.
 
 **An upgrade went wrong.** docs/release.md, "No rollback: a bad release is fixed forward".
 - The only way back is before anything was posted on the new release: restore the backup taken

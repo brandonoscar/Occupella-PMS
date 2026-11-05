@@ -380,7 +380,8 @@ def start_due(
             continue
         skipped = None
         amount = ZERO
-        if not chosen.online:
+        if not chosen.online or not op.placed(conn, pmc_id, autopay.lease_id, due):
+            # Off for this lease too where staff must place its payment (P-162).
             skipped = "online payments off"
         elif conn.execute(
             rent.IN_FORCE, {"pmc": pmc_id, "lease": autopay.lease_id, "day": due}

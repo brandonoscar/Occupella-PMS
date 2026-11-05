@@ -6,7 +6,10 @@ on random days. A model of how far month-end is approved and the years closed sa
 stand: a year closes once the account is approved through its December 31 and no later year is
 closed (a year closed already stands again, even after a later one); a charge or bill stands when
 dated after the last closed year. The database must take exactly those and refuse the rest, and
-trust_closed_until must say what the model says after each.
+trust_closed_until must say what the model says after each. A late fee run (as of today, under
+terms in force since the first day) charges each open rent past its grace one fee, except one
+whose fee would fall in a closed year, which is never charged, and it never fails for it
+(docs/edge-cases.md M-050).
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
 
@@ -47,10 +50,15 @@ REQUESTS = st.lists(
         st.tuples(st.just("close"), st.sampled_from([THIS_YEAR - 2, THIS_YEAR - 1])),
         st.tuples(st.just("charge"), DAY),
         st.tuples(st.just("bill"), DAY),
+        st.tuples(st.just("rent"), DAY),
+        st.tuples(st.just("late fees"), st.just(0)),
     ),
     min_size=1,
     max_size=14,
 )
+
+
+GRACE = 5  # the late fee terms' grace days
 
 
 def month_end(n: int) -> date:
@@ -73,6 +81,16 @@ def month_end(n: int) -> date:
     requests=[("approve", 12), ("close", THIS_YEAR - 2)]
     + [(kind, day) for kind in ("charge", "bill") for day in EDGES[1:3]]
 )
+# A rent of a year closed since, still open, reached by a late fee run (M-050).
+@example(
+    requests=[
+        ("rent", (date(THIS_YEAR - 2, 12, 1) - FIRST).days),
+        ("approve", 12),
+        ("close", THIS_YEAR - 2),
+        ("rent", (date(THIS_YEAR - 1, 12, 30) - FIRST).days),
+        ("late fees", 0),
+    ]
+)
 @given(requests=REQUESTS)
 def check(conn, requests):
     pmc = make_pmc(conn)
@@ -86,6 +104,13 @@ def check(conn, requests):
         [(pmc.operating_cash, pmc.owners[0].account, "100.00")],
         datetime(FIRST.year, 1, 5, 12, tzinfo=UTC),
     )
+    conn.execute(
+        "INSERT INTO trust_late_fee_policies (pmc_id, property_id, starts_on, grace_days,"
+        " flat_fee) VALUES (%s, %s, %s, %s, 50.00)",
+        (pmc.pmc_id, prop, FIRST, GRACE),
+    )
+    rents: set[date] = set()
+    fees_for: set[date] = set()
     importer = staff_named(conn, pmc.pmc_id, "Importer 1")
     closer = staff_named(conn, pmc.pmc_id, "Closer 1", ["approve"])
     approved: date | None = None
@@ -94,6 +119,29 @@ def check(conn, requests):
     charges = bills = 0
 
     for kind, value in requests:
+        if kind == "late fees":
+            today = datetime.now(UTC).date()
+            closed_end = date(closed, 12, 31) if closed is not None else None
+            due = {
+                day
+                for day in rents - fees_for
+                if day + timedelta(days=GRACE + 1) <= today
+                and (closed_end is None or day + timedelta(days=GRACE + 1) > closed_end)
+            }
+            with conn.transaction():
+                charged = conn.execute(
+                    "SELECT trust_assess_late_fees(%s, %s)", (pmc.pmc_id, today)
+                ).fetchone()[0]
+            assert charged == len(due), (sorted(rents), sorted(fees_for), closed)
+            if closed_end is not None and any(
+                day + timedelta(days=GRACE + 1) <= closed_end for day in rents - fees_for
+            ):
+                event("a late fee passed over in a closed year")
+            fees_for |= due
+            continue
+        if kind == "rent" and FIRST + timedelta(days=value) in rents:
+            event("rent again skipped")
+            continue
         if kind == "approve":
             through = month_end(value)
             stands = approved is None or through > approved
@@ -124,6 +172,8 @@ def check(conn, requests):
                     conn.execute(*write)
                 elif kind == "charge":
                     charge(conn, pmc.pmc_id, lease, day, "10.00", "fee", "Fee")
+                elif kind == "rent":
+                    charge(conn, pmc.pmc_id, lease, day, "900.00")
                 else:
                     reference = f"B-{bills}-{value}"
                     due = day + timedelta(days=10)
@@ -141,6 +191,8 @@ def check(conn, requests):
             closed = max(closed_years)
         elif took and kind == "charge":
             charges += 1
+        elif took and kind == "rent":
+            rents.add(day)
         elif took:
             bills += 1
 
@@ -148,7 +200,7 @@ def check(conn, requests):
         assert until == (None if closed is None else date(closed, 12, 31))
         assert conn.execute(
             "SELECT count(*) FROM trust_charges WHERE lease_id = %s", (lease,)
-        ).fetchone() == (charges,)
+        ).fetchone() == (charges + len(rents) + len(fees_for),)
         assert conn.execute(
             "SELECT count(*) FROM trust_bills WHERE pmc_id = %s", (pmc.pmc_id,)
         ).fetchone() == (bills,)

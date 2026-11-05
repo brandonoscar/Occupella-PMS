@@ -97,7 +97,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   except through the `trust_*` write paths.
 - Exports: `src/pms/exports.py` turns any `trust_report_*` (named through the catalog, run
   under the caller's role) into CSV, Excel or PDF, and a PMC's ledger into a zip of CSV.
-  Text a spreadsheet would run as a formula is never a formula. A download, Reports on screen
+  Text a spreadsheet would run as a formula is never a formula, and a cell a file can't hold is
+  cut, ending in "…" (a PDF's at 48 lines, an Excel cell's at 32,767 characters; the CSV keeps
+  it whole); the audit report reads a file's bytes as their size (migration 20261105000900). A download, Reports on screen
   and the general ledger page read in plain words from one word list (`src/pms/wording.py`,
   founder 2026-10-26): "Owner: ..." for `owner_property: ...`, "Company" for "PMC", days as
   MM/DD/YYYY, columns as headings. The report functions, their golden cases, what the portals
@@ -108,7 +110,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   as `trust_app` (the planner's JIT off: it cost more than it saved), committed before the answer
   is sent; a staff member's request names them to the audit log. Behind a proxy it trusts
   (`PMS_TRUSTED_PROXIES`, as `compose.selfhost.yaml` sets it) a visitor's address is the one the
-  proxy names, as a signature's evidence keeps it. How fast it answers ten staff
+  proxy names, as a signature's evidence keeps it (trusting "*", the last X-Forwarded-For
+  address, the one the proxy wrote: `app.NearestProxy`). It refuses to start at `.env.example`'s
+  `PMS_PUBLIC_URL` or one that isn't an http(s) origin (`pms.deployment`), and logs each origin a
+  change was refused from once. How fast it answers ten staff
   at once on a 1,000-unit company is timed nightly (`tools/speed.py`, `[speed]` ceilings). Every endpoint gets tests in `tests/api/` for success, a caller who isn't
   allowed and bad input. A report's PMC always comes from the session (every report takes
   `p_pmc_id` first; a test pins it). Changes must be JSON from the app's own origin (a browser's
@@ -117,9 +122,22 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   or loaded into one's page (CORP), the camera and the like, and over https anything but https (HSTS). A refusal from the database
   reaches people in words, without internal ids (`deps.refusal`: an account short of money, a
   draw over what is available, the last admin), and a request that finds every database connection
-  busy for 30 s is told so (503, `deps.BUSY`), never a server error.
+  busy for 30 s is told so (503, `deps.BUSY`), never a server error, as is a full disk
+  (`deps.DISK_FULL`, logged). An address that failed 20
+  sign-ins in 15 minutes is refused (429, Retry-After) whatever email it tries, and an address asks
+  for at most 10 password resets an hour (`src/pms/api/throttle.py`, counted per process). No
+  request sends more than 10 MB (`app.MAX_BODY`, 413, counted as it streams too): a 5 MB file as
+  base64 fits. A comma in an amount from a file only separates thousands (`statements.read_amount`:
+  "1234,56" is refused, never 123,456.00; a bank CSV whose amounts are all positive reads each
+  line's way from its Type column, Debit or Credit), a file's dates read in the order the file
+  proves (13/01/2026 is day first) else the company's (`days.date_order`, Company setup, migration
+  20261105001200: month first until it picks day first; a file mixing both is refused), and a switching file's lines are matched to what came
+  over already one to one (two alike in one file are two; the file again adds nothing).
 - Logins (`src/pms/accounts.py`, migration 0028): staff invite a staff member, owner or tenant
-  by email; the link carries a token kept only as its SHA-256, in the URL fragment. Accepting
+  by email; the link carries a token kept only as its SHA-256, in the URL fragment. A session
+  lasts 12 hours, and ends sooner when left alone for an hour (`accounts.IDLE_MINUTES`;
+  `trust_session_activity`, migration 20261105000200: its last use, moved at most every five
+  minutes, updated in place and never audited, like `trust_login_secrets`). Accepting
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
   password. Staff invite from the person's own page (staff from the staff page) and disable a
   login from Settings, Logins, for good: its sessions end and it takes no new invite. `trust_login_secrets` is never audited.
@@ -129,7 +147,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`trust_text_consents`: append-only, the exact words shown and when, of the login's own
   person; a new password records a new answer, the latest holding). Staff are asked neither. It
   records consent for A2P 10DLC and sends no text; the AI role never reads it. The first staff member, their first admin
-  role and their invite come from `python -m pms.admin`. A self-hosted install's app logs in as
+  role and their invite come from `python -m pms.admin` (`setup` also gives the company its
+  starting expense accounts, `pms.api.setup.STARTING_CHART`). A self-hosted install's app logs in as
   `pms_app` (`python -m pms.app_login`, run after the migrations), which holds nothing of its own
   and may only act as trust_app, never as the database's owner. A demo PMC to show the PMS with
   comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
@@ -147,7 +166,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the server's `PMS_EMAIL_SENDER` ("fake" keeps it in the outbox and sends it nowhere, for
   development and CI; "smtp" with `PMS_SMTP_*` and `PMS_EMAIL_FROM` from the environment, over
   STARTTLS; none by default) and records each attempt (`trust_email_deliveries`, delivered at
-  most once, given up after five failures). `python -m pms.email deliver` delivers what waits.
+  most once, given up after five failures), one delivery at a time in a process (a write while
+  one runs makes it run once more; autopay's submissions the same, `outbox.OneAtATime`), so a
+  hung mail server holds one pooled connection, never the pool. `python -m pms.email deliver` delivers what waits.
   Staff see each bill's email, and whether it went, on the bill's page (`/bills/<id>`). Since
   migration 0152 (`docs/adr/0010-design-pass.md`) a Short bill's page also asks its owner for the
   money (`bill_funds_needed`: to their contact email, else their login's, once a day per bill,
@@ -238,10 +259,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`?group=`, `?property=`) and the browser so it carries from page to page (`scope.ts`); the API
   narrows a list to it with `src/pms/api/scope.py`. Staff make groups at `/settings/groups`
   (`src/pms/api/groups.py`). Staff's menu (`pages/staffNav.ts`, ADR 0005)
-  groups their pages as Buildium does. They open on the Dashboard at `/`: the company's figures
+  groups their pages as Buildium does. They open on the Dashboard at `/`: until the company is ready to go live, Getting started (`src/pms/api/go_live.py`, `GET /api/go-live`: each step worked out from its own records; `pages/GoLiveCard.tsx`), then the company's figures
   (`src/pms/api/dashboard.py`, each counted by its report, each beside the same day a month
   before; ADR 0010) and what needs attention (`src/pms/api/today.py`: read only, each part the work
-  page's own answer; one list, the longest overdue first, each row with its action). Rentals
+  page's own answer; one list, the longest overdue first, each row with its action; first of all,
+  rent not posting: no rent run in two days while the company has leases). Rentals
   (`src/pms/api/rentals.py`): properties a page at a time at `/properties`, each at
   `/properties/<id>` (its owners' money, its units and their leases), a unit at `/units/<id>`
   (its details, `src/pms/api/unit_details.py`, and every lease it had), the rent roll at
@@ -324,11 +346,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   invited from their own page (`pages/PortalCard.tsx`). Bringing a PMC over from another system at `/settings/import`
   (`src/pms/api/switching.py`; an import that adds rows, and opening balances, end by analyzing the tables a switch
   fills, `trust_analyze_after_import`, migration 20261103000200, so the next page isn't planned blind), and the whole ledger at `/settings/data-export`, with, for an admin, everything
-  (`/api/records.zip`, `exports.records_zip`, q132: each record table as CSV, its documents,
-  leases and signatures as files, and the ledger; never logins' secrets, sessions or a token's
+  (`/api/records.zip`, `exports.write_records_zip`, q132: each record table as CSV, its
+  documents, leases and signatures as files, and the ledger, its rows a few at a time in their
+  key's order into a temporary file the answer is sent from, never whole in memory; never logins' secrets, sessions or a token's
   hash, in a table or the audit log), and QuickBooks at `/settings/quickbooks`
   (`src/pms/quickbooks.py`, `src/pms/api/quickbooks.py`, migration 0102, q117: each ledger
-  account's name in QuickBooks, the PMS's until staff give it the company's own,
+  account's name in QuickBooks, the PMS's until staff give it the company's own (two never
+  alike: the oldest keeps it, each after it adds its tenant's property, then a number),
   `trust_quickbooks_accounts`, append-only, the latest holding; the trust ledger's transfers over
   days as general journal entries for QuickBooks Desktop (IIF) and Online (CSV), each debiting
   the account the money left and crediting the one it went to; read only). A lease's inspections are on its move-out row
@@ -445,8 +469,53 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   never inherits it), naming no staff member. A key unknown, taken back or malformed is one 401;
   a key opens no cookie endpoint and a session no key endpoint; a key makes at most
   `ai_keys.PER_MINUTE` (120) requests a minute in a process (429, Retry-After). The everything
-  export leaves its hash out, and the AI role reads neither table. Drafts, events, the MCP
-  server and Enable AI come later, each its own PR.
+  export leaves its hash out, and the AI role reads neither table. Enable AI comes later.
+- Drafts (ADR 0011's second piece, migration 20261105000300, `src/pms/api/drafts.py`): software
+  with a key proposes (`POST /api/ai/drafts`, as `trust_ai_agent`, whose one write is that INSERT
+  into `trust_drafts`) an email to tenants, owners or vendors, a notice from a notice template for
+  leases, a work order opened, assigned or scheduled, or a note, naming records by id (a strict
+  shape: no other field, never a contact detail) with why; never anything that moves money. The
+  key must stand and its company be active (a trigger); 500 waiting at most. Staff see them at
+  `/drafts` (`pages/DraftsPage.tsx`: Waiting, Decided, All) and on the Dashboard, each in words,
+  an email with who gets it at which address today and who has none, and approve one (asked
+  first), change it first, or decline it saying why (`trust_draft_decisions`, once, naming who).
+  Approving does it now through the route staff use by hand (`emails`, `notice_templates`,
+  `work_orders`, `maintenance`, `notes`), as that staff member, with the area of its kind (email,
+  documents or maintenance; declining takes none), all or none, and keeps what was done and made
+  (`trust_draft_actions`, checked against the decision at commit; the AI never reads it). The
+  software reads what became of its own drafts (`GET /api/ai/drafts`: waiting, approved, edited
+  or not, declined and why). All append-only, audited.
+- Events (ADR 0011's third piece, migration 20261105000500, `src/pms/api/events.py`,
+  `src/pms/webhooks.py`): what happened, written by the database alone (`trust_record_event`, as
+  the owner, on the tables that tell of it) in the same transaction, a kind and ids only
+  (`trust_events`: payment recorded or returned, late fee, lease opened or end changed, bill
+  entered or waiting for its owner, work order opened, assigned, scheduled, completed or
+  cancelled, repair requested, draft approved or declined; none for a write undone). Software
+  reads them with a key (`GET /api/events?after=&limit=`, as the AI's role): its company's, in
+  the order their transactions began writing, each only once every transaction that began
+  writing before it has finished (`xact`, `pg_snapshot_xmin`), so asking after the last it got
+  never skips one; an event waits for the longest writing transaction on the server. An admin
+  adds a webhook at Settings, AI (`pages/WebhooksCard.tsx`; `trust_event_subscriptions`, an https
+  address and a secret sealed under `PMS_DATA_KEY`, shown once, its last four kept; taken back
+  once, `trust_event_subscription_revocations`); each event from then on goes to it signed
+  (`Occupella-Signature: t=,v1=` HMAC-SHA256, `Occupella-Event-Id`), its address checked each
+  time (https, no credentials, every resolved address public, the request sent to the address
+  checked, no redirect), retried after 1 and 5 minutes, half an hour, 2 and 12 hours, six attempts
+  in all and seven days at most (`trust_event_deliveries`), by the API's own thread every 30
+  seconds (`PMS_WEBHOOKS`, on unless "off") or `python -m pms.webhooks deliver`. Events and
+  deliveries are not audited (each repeats an audited write); the AI role reads the events, never
+  a webhook or a delivery.
+- The MCP server (ADR 0011's fourth piece, `src/pms/api/mcp.py`): any MCP client plugs in at
+  `POST /mcp` with a key as its bearer, the request run as the key's (`ai_keys.with_key`: the
+  key's company, as `trust_ai_agent`, rate-limited). Model Context Protocol over Streamable HTTP,
+  stateless: one JSON-RPC message a POST (`initialize`, protocol 2025-06-18 or 2025-03-26;
+  `ping`; `tools/list`; `tools/call`), answered as JSON, a notification with 202; no session or
+  event stream. Read tools: `find` (tenants, owners, vendors, properties, units, leases in effect
+  or to come, work orders, with their ids, by a part of the name), `list_reports`, `run_report`,
+  `rent_roll`, `delinquency`, `work_orders`, `lease_ledger`, `recent_events`, `my_drafts`;
+  propose tools write drafts (`propose_email`, `_notice`, `_work_order`, `_vendor`, `_visit`,
+  `_note`). A tool refused says why as its result (`isError`), in a savepoint; none moves money.
+  The key carries its company's day (`Key.today`, read before the role changes), the default day.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`
@@ -455,7 +524,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (servers sort by language rules or by bytes; `helpers.language_sorted_database` tests both).
   Days are the company's (its time zone, below), never the server's.
 - Migrations use dbmate: plain SQL files in `db/migrations/`, applied ones recorded in
-  `schema_migrations`. A committed migration is never edited (`tools/check_upgrade.py` fails the
+  `schema_migrations`. The app's pooled connections, the nightly run and the webhook courier
+  refuse a database migrated by a newer PMS or missing one of the code's migrations
+  (`src/pms/schema.py`, `trust_schema_versions()`, migration 20261105001100). A committed migration is never edited (`tools/check_upgrade.py` fails the
   PR). Commit a new one together with `db/schema.sql` regenerated by `scripts/dump_schema.sh`;
   CI fails if it drifts.
 - Work on a branch and open a PR. Every required check (docs/CI.md) must be green before merge.
@@ -482,8 +553,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   retry: the same key returns the original transfers, and a different posting under it is
   refused.
 - `trust_ai_agent`, the role behind Occupella's API key, reads what `trust_app` reads and runs
-  the reports. It holds no other grant: no write on any table, no function that writes. Grant
-  it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
+  the reports. It holds no other grant: no function that writes, and no write on any table but
+  INSERT on `trust_drafts` (ADR 0011: a proposal that moves nothing until a staff member
+  approves it, `AI_WRITES` in `tests/test_privileges.py`). Grant it a new table's SELECT only if
+  `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
   screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes,
   nor notices made for a lease, nor vendors' links, nor leads and showings, nor screening criteria,
@@ -593,7 +666,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   Pay owners and Pay bills may write their payouts' files (`trust_payout_runs`, per trust bank
   account and way paid): a NACHA file (PPD to owners, CCD to vendors) and checks to print on
   pre-printed stock, numbered on; a download takes disburse and is logged
-  (`trust_payout_file_downloads`). The PMS moves no money: the company's bank does. All
+  (`trust_payout_file_downloads`), and an ACH file taken already comes again only when asked
+  again (`?again=true`; the page's Download again asks first: a bank pays a file uploaded twice). The PMS moves no money: the company's bank does. All
   append-only; the AI role reads no bank account, ACH detail or download.
 - Receive payment and the lease money rules (migration 0154, `docs/adr/0010-design-pass.md` phase
   1c): one panel (`pages/ReceivePayment.tsx`) from the rent roll, a lease's page and a housing
@@ -607,7 +681,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the nightly run and Run rent now, the first night after its end within a week, once;
   `trust_lease_holdovers`), never one whose end staff gave (`trust_lease_end_notices`, written by
   Move-out's end; earlier ends found in the audit log), one another lease follows at its unit, one
-  its tenants moved from, one whose deposit was returned, or one entered after its end. The
+  its tenants moved from, one whose deposit was returned, or one entered after its end (by the
+  company's day, migration 20261105001000). The
   Dashboard notes it for 30 days. All append-only.
 - Shared bills and markups (migration 0083, `docs/law.md`): one vendor invoice shared across
   properties (`trust_shared_bills`, `trust_shared_bill_parts`; `POST /api/payables/shared-bills`)
@@ -713,7 +788,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   themselves in) are append-only rows of `trust_work_order_details`, the latest holding, naming
   who recorded them; its photos are documents (`work_order_photo`).
 - Rent automation: `trust_charge_rent_due` charges every lease in effect on a due date its rent,
-  once per lease and date: for the days of the month it is in effect (migration 0045: monthly
+  once per lease and date, and once a month whatever day it is run for (a month with any of its
+  rent due already is not charged again, nor a monthly charge; migration 20261105000400): for the
+  days of the month it is in effect (migration 0045: monthly
   rent x days / days in the month, to the cent), and a lease starting later in the month its
   first part month, due on its first day, unless rent was charged in that month already. It
   never reaches back into an earlier month. A lease's end set, moved or cleared after its month
@@ -725,7 +802,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   cap) are in force from a date; `trust_assess_late_fees` charges a rent still open at the
   end of its last grace day (UTC) one late fee under the terms in force on its due date, reaching
   its rents in the order their grace ends so one run charges what a run every day would (a late
-  fee is an open charge too; migration 0056). READ COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
+  fee is an open charge too; migration 0056), never one whose fee would fall in a closed year
+  (migration 20261105000700). READ COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
   payments matched, plus what bounced, less its share of the lease's credits, which come off
   its rent first, as the delinquency report counts them (Rent first, below).
   A waiver (migration 0079, `trust_charge_waivers`; staff waive from an open charge's ⋯ menu on
@@ -816,7 +894,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   a key to `trust_lease_tenants` refuses anyone else). Staff open at most one work order for it,
   at the lease's unit (`trust_maintenance_request_work_orders`, one each way), and its status is
   that work order's latest step. The portal files them only under a lease in effect, at most
-  10 a day per lease. Since migration 20261104000600 a request says what kind of repair it is
+  10 a day per lease, an emergency besides those up to 5 a day (`tenant.EMERGENCIES_PER_DAY`). Since migration 20261104000600 a request says what kind of repair it is
   (plumbing, electrical, appliance, heating/cooling, pests, other) and where in the unit; a tenant
   on the lease cancels it while it is still received (`trust_maintenance_request_cancellations`,
   once; staff open no work order for it after, the two waiting for each other) and adds notes
@@ -903,25 +981,30 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   Company setup (migration 20261104000800, `src/pms/api/payment_keys.py`, the founder's review of
   11/03, item 4: `trust_payment_keys`, append-only, the latest holding, naming the admin; the
   secret key and the webhook's signing secret each sealed under `PMS_DATA_KEY`, only the last four
-  and test or live ever shown; its webhook `POST /api/payments/webhook/stripe/<company>` records
-  only its payments and takes every secret it used, so a payment started before a change still
+  and test or live ever shown; its webhook `POST /api/payments/webhook/stripe/<company>`, which
+  Company setup lists the events of (`payments.STRIPE_EVENTS`), records only its payments and
+  takes every secret it used, so a payment started before a change still
   lands; keys that don't open on this server take no payment and never fall back), else the
   server's (`PMS_PAYMENTS`: "stripe" with keys from the environment, `PMS_STRIPE_SECRET_KEY` and
-  `PMS_STRIPE_WEBHOOK_SECRET`; "fake" for development and CI, whose own page `/pay/fake#<id>`
-  says what the bank did; none by default; `pms.payments.Resolver` picks per company),
+  `PMS_STRIPE_WEBHOOK_SECRET`, serving only a server that holds one company, as they are one
+  account paying out to one trust account; "fake" for development and CI, whose own page
+  `/pay/fake#<id>` says what the bank did; none by default; `pms.payments.Resolver` picks per
+  company),
   by bank (ACH) only for now; the PMS never sees an account number. A company turns it on in
   Company setup and chooses who pays the partner's fee on a bank payment
   (`trust_payment_settings`: append-only, the latest holding, naming who; the company, from its
   fees in trust, or the tenant, shown before they pay; the founder, 2026-10-23), and a lease on a
   payment hold takes none. Nothing reaches the books until the partner reports the bank paid
   (`trust_online_payment_events`: paid with the partner's fee, failed, returned once paid, or
-  expired when the tenant left the partner's page without paying, each kind once a payment; `POST /api/payments/webhook/stripe`, signed): then the payment is
+  expired when the tenant left the partner's page without paying, each kind once a payment; a
+  return reported before paid is refused for now, 409, so the partner sends it again; `POST /api/payments/webhook/stripe`, signed): then the payment is
   recorded as Receive payment records one (request id the payment's, method "online"), the
   tenant's fee goes to the company's fee account, the partner's fee leaves trust from that
   account once it holds it (never from an owner's), a return is a bounce and the tenant's fee
   goes back out; one the books take only after month-end closed its day goes in on the first
   day left open. What the books can't take yet waits on Banking (Online payments waiting): a
-  payment paid during a hold (Accept past the hold), a return an owner can't cover (Try again),
+  payment paid during a hold (Accept past the hold), one whose property has several owner accounts
+  and no shares (Record it, naming whose; such a lease takes none online), a return an owner can't cover (Try again),
   and what the company's fee account can't (Record the company's deposit, never more than what
   waits needs, area rent). Each posting has a key of its own (`metadata ->> 'key'`, indexed), so
   a partner reporting twice moves nothing twice. The AI role reads these tables; it moves no money.
@@ -1046,7 +1129,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   The vendors' bills the old system had not paid come over from a CSV file as ordinary bills
   with their old references and dates, once, so draws hold them back from the first day; one
   over the owner's limit keeps the old system's approval or waits for the owner
-  (`src/pms/api/switching.py`, `docs/law.md`). The portal reads a file as UTF-8, else as
+  (`src/pms/api/switching.py`, `docs/law.md`). A charge carried over goes on the lease the file's
+  Tenant column names, else rent on the lease in effect on its due day, and a fee only when one
+  lease's people could owe it (`switching.lease_owing`): never a guess. The portal reads a file as UTF-8, else as
   Windows-1252, which Excel on Windows saves "CSV" in (`frontend/src/fileText.ts`, also for bank
   statements and payment files), and a file with a letter that didn't read is refused with its line.
 - Staff roles (migration 0034): admin (changes roles; invites and disables staff logins),
@@ -1054,7 +1139,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (pays a bill, an owner draw). The database refuses those writes to a named staff member
   without the role; one that names nobody is not held to them. Roles are append-only grants and
   revocations (`trust_staff_roles`): only an admin changes one, a change changes something, and
-  a PMC keeps an admin. One staff member prepares month-end and another who holds approve approves it
+  a PMC keeps an admin, one whose login isn't disabled (migration 20261105000600; with none left,
+  `make-admin` names a new one). One staff member prepares month-end and another who holds approve approves it
   (`trust_approve_bank_reconciliation` takes the preparation), on the figures prepared; the app
   can't call `trust_approve_reconciliation` itself. On upgrade every staff member holds every
   role.
@@ -1093,7 +1179,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Deposit interest (migration 0122, q041, `docs/law.md`): a property's yearly rate on its deposits
   from a day (`trust_deposit_interest_terms`, as late fee terms; 0 earns none; set on its page,
   `POST /api/setup/deposit-interest`). Each day's deposit earns the day's rate over the days in its
-  year, to the cent per deposit (`trust_deposit_interest_due`). `trust_pay_deposit_interest` pays a
+  year, to the cent per deposit (`trust_deposit_interest_due`), each day of a deposit account paid once
+  whichever lease pays it (migration 20261105000800: a tenant on two leases, a renewal). `trust_pay_deposit_interest` pays a
   lease's interest from the day after its last payment through a day gone by, once per request key:
   as a credit against the rent (a lease in effect; no money moves) or added to the deposits from
   the owner's account (its owners' by their shares) with its cash, taking the disburse role; none
@@ -1186,6 +1273,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   accounts' bills (`OWNER_SEES` in `src/pms/api/documents.py`), each named with what it is about. The company's logo is a document too
   (`company_logo`, migration 0075: a PNG or JPEG about no one record, the latest not removed
   holding), kept by `src/pms/api/company.py` and in no list of files.
+- A company's status (migration 20261105000100, `python -m pms.admin status <pmc> <status> <reason>`):
+  the server's operator, never its staff, sets it (`trust_company_statuses`: append-only, the
+  latest holding, with a reason, naming nobody; `trust_pmc_status`, active by default). Suspended:
+  nobody signs in (`accounts.CompanyNotActive`, 403, the same answer whatever the password),
+  open sessions and API keys stop answering and no password reset is sent, while the nightly run
+  goes on so the books stay whole; closed: the same, and the nightly run stops. Active again
+  undoes either; nothing is deleted. The AI role reads it.
 - The company (migration 0075, ADR 0006): its name is `trust_pmcs.display_name`, which staff
   rename; its mailing address (whole or none) and the late fee and NSF fee terms a property added
   from then on starts with, from its first day, are `trust_company_profiles`

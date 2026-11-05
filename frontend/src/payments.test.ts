@@ -14,6 +14,7 @@ const WAITING: Waiting = {
   bank_account_id: "b1",
   company_holds: "1.25",
   cover_needed: "3.75",
+  choose_account: [],
 };
 
 describe("online payments", () => {

@@ -3,7 +3,9 @@ waiting for a decision, lease offers waiting for signatures, journal entries wai
 posted, vendor insurance expired or running out, the company's earned fees still in trust,
 trust bank accounts with no broker on file or a signer's bond running out, security deposits a
 signed lease asked that are not all held yet, the owner draws prepared on the draw day, and the
-fixed-term leases gone month to month with no renewal signed.
+fixed-term leases gone month to month with no renewal signed, the drafts software proposed
+with an API key waiting for a decision (ADR 0011), and rent that stopped posting: no rent run in
+two days (docs/edge-cases.md H-021).
 
 Read only. Each part comes from the route of the page that does that work (rent, bills,
 month-end, leasing, the journal, vendors), so the two never disagree; this only picks out what needs
@@ -22,6 +24,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from pms.api import (
+    drafts,
     journal,
     leasing,
     messages,
@@ -179,6 +182,34 @@ def notices_given(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> lis
     ]
 
 
+class RentNotPosted(BaseModel):
+    # The last day a rent run ran for (the nightly run's or an admin's Run rent now), or None.
+    last_posted_on: date | None
+    # That day, or with none the day the company's first lease was entered: since when rent waits.
+    waiting_since: date
+
+
+# Rent posts every night (pms.nightly); two days without a run is a run that stopped: its thread
+# died, it fails every night or it is off (docs/edge-cases.md H-021).
+RENT_RUN_LATE = timedelta(days=2)
+
+RENT_RUNS = """
+SELECT (SELECT max(r.late_fees_as_of) FROM trust_rent_runs AS r WHERE r.pmc_id = %(pmc)s),
+       (SELECT min((l.created_at AT TIME ZONE 'UTC')::date) FROM trust_leases AS l
+        WHERE l.pmc_id = %(pmc)s)
+"""
+
+
+def rent_not_posted(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> RentNotPosted | None:
+    """When the company has leases and no rent run ran in the two days before `day`."""
+    found = conn.execute(RENT_RUNS, {"pmc": pmc_id}).fetchone()
+    last, first_lease = found if found is not None else (None, None)
+    since = last or first_lease
+    if since is None or day - since < RENT_RUN_LATE:
+        return None
+    return RentNotPosted(last_posted_on=last, waiting_since=since)
+
+
 class Today(BaseModel):
     on: date
     late_rent: list[LateLease]
@@ -210,6 +241,10 @@ class Today(BaseModel):
     move_out_notices: list[NoticeGiven] = []
     # Conversations whose latest message is a tenant's or an owner's: waiting for an answer.
     messages_waiting: list[messages.Thread] = []
+    # What software proposed with an API key, waiting for a staff member to decide (ADR 0011).
+    drafts_waiting: list[drafts.DraftRow] = []
+    # Rent that stopped posting: no rent run in two days while the company has leases (H-021).
+    rent_not_posted: RentNotPosted | None = None
 
 
 # The leases named as the rent page names them: property, unit and every tenant on it.
@@ -384,6 +419,10 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
         month_to_month=holdovers(conn, session.pmc_id, day),
         move_out_notices=notices_given(conn, session.pmc_id, day),
         messages_waiting=[t for t in messages.threads(conn, session.pmc_id) if t.waiting],
+        drafts_waiting=[
+            drafts.row_of(d) for d in drafts.drafts_of(conn, session.pmc_id, show="waiting")[0]
+        ],
+        rent_not_posted=rent_not_posted(conn, session.pmc_id, day),
         renters_insurance=[
             Uninsured(
                 lease_id=lease,

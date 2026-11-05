@@ -183,10 +183,18 @@ class OnlinePaymentsMachine(RuleBasedStateMachine):
             fee if kind == "paid" else None,
         )
         done, refused = self.call(op.apply, self.conn, event_, "fake")
+        if kind == "returned" and not {"paid", "failed"} & p.reported.keys():
+            # Before paid (docs/edge-cases.md C-087, C-088): refused for now, so the partner
+            # sends it again, never acknowledged and lost; it changes nothing yet.
+            assert refused is not None and refused.status_code == 409
+            assert refused.detail == op.SEND_AGAIN
+            event("a return before paid, sent again later")
+            return
         assert refused is None and done is True
         # The database takes a report in order (paid or failed, never both; returned only once
         # paid; expired only before either), the first of each kind; one out of order changes
-        # nothing, and nothing is settled.
+        # nothing, and nothing is settled (a return after a failure: acknowledged, as no paid
+        # will come).
         allowed = (
             (kind == "paid" and "failed" not in p.reported)
             or (kind == "failed" and "paid" not in p.reported)

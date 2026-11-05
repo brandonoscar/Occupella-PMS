@@ -10,7 +10,8 @@ import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import type { Company } from "../company";
-import { addressLines, logoHref, zoneLine } from "../company";
+import type { DateOrder } from "../company";
+import { addressLines, dateOrderLine, logoHref, zoneLine } from "../company";
 import { MAX_BYTES, toBase64, typeOf } from "../documents";
 import { money, setTimeZone } from "../money";
 import { lateFeeSummary, nsfFeeSummary } from "../setup";
@@ -71,6 +72,9 @@ export function SetupPage({ me }: { me: Me }) {
             <p className="mt-1 text-sm text-ink-muted" data-testid="time-zone">
               {`Time zone: ${zoneLine(company)}. Payments, bills and statements are dated by its day.`}
             </p>
+            <p className="mt-1 text-sm text-ink-muted" data-testid="date-order">
+              {`Dates in files you import: ${dateOrderLine(company.date_order)}, unless a file shows otherwise.`}
+            </p>
             <div className="mt-3"><Button variant="secondary" onClick={() => setOpen("company")}>Edit company</Button></div>
           </Card>
           <LogoCard company={company} refresh={refresh} />
@@ -126,7 +130,7 @@ function standing(company: Company) {
   return {
     name: company.name, address: company.address, late_fees: company.late_fees, nsf_fee: company.nsf_fee,
     reply_to: company.reply_to, terms_url: company.terms_url, privacy_url: company.privacy_url,
-    time_zone: company.time_zone,
+    time_zone: company.time_zone, date_order: company.date_order,
   };
 }
 
@@ -136,6 +140,7 @@ function CompanyForm({ company, save }: { company: Company; save: Save }) {
   const [termsUrl, setTermsUrl] = useState(company.terms_url ?? "");
   const [privacyUrl, setPrivacyUrl] = useState(company.privacy_url ?? "");
   const [zone, setZone] = useState(company.time_zone);
+  const [order, setOrder] = useState<DateOrder>(company.date_order);
   const [address, setAddress] = useState({
     address_line_1: company.address?.address_line_1 ?? "",
     address_line_2: company.address?.address_line_2 ?? "",
@@ -155,6 +160,7 @@ function CompanyForm({ company, save }: { company: Company; save: Save }) {
         terms_url: blank(termsUrl),
         privacy_url: blank(privacyUrl),
         time_zone: zone,
+        date_order: order,
         address: given
           ? { ...address, address_line_2: blank(address.address_line_2) }
           : null,
@@ -182,6 +188,15 @@ function CompanyForm({ company, save }: { company: Company; save: Save }) {
         ))}
       </Select>
       <p className="text-sm text-ink-muted">Payments, bills, statements and the nightly rent run follow the company&apos;s day here.</p>
+      <Select label="Dates in files you import" id="company-date-order" value={order}
+        onChange={(e) => setOrder(e.target.value as DateOrder)}>
+        <option value="month_first">{dateOrderLine("month_first")}</option>
+        <option value="day_first">{dateOrderLine("day_first")}</option>
+      </Select>
+      <p className="text-sm text-ink-muted">
+        Bank statements, payment files and files from your old system read their dates this way. A file whose dates
+        can only be read the other way (13/01/2026) is read that way.
+      </p>
       <div><Button type="submit">Save</Button></div>
     </Form>
   );

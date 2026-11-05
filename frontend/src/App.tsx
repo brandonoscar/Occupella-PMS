@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import type { Me } from "./api";
-import { ApiError, api } from "./api";
+import { ApiError, api, whenSignedOut } from "./api";
 import { Notice } from "./components/Notice";
 import { AiKeysPage } from "./pages/AiKeysPage";
 import { ApplicationStatusPage } from "./pages/ApplicationStatusPage";
 import { ApplyPage } from "./pages/ApplyPage";
 import { BillsPage } from "./pages/BillsPage";
 import { BillPage } from "./pages/BillPage";
+import { DraftPage, DraftsPage } from "./pages/DraftsPage";
 import { PayBillsPage } from "./pages/PayBillsPage";
 import { BudgetsPage } from "./pages/BudgetsPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -105,6 +106,15 @@ function Home({ path }: { path: string }) {
         }
       });
   }, []);
+  // Once signed in, a session that ends (an hour idle, or twelve hours up) takes the person to
+  // sign in again, saying so (H-115).
+  useEffect(() => {
+    if (!me) return undefined;
+    return whenSignedOut(() => {
+      const pmc = localStorage.getItem(PMC_KEY) ?? me.pmc_id;
+      navigate(`/sign-in?pmc=${pmc}&ended=1`);
+    });
+  }, [me]);
   if (error) return <Notice tone="error">{error}</Notice>;
   if (!me) return null;
   if (me.kind === "owner") {
@@ -150,6 +160,7 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/budgets": (me) => <BudgetsPage me={me} />,
   "/work-orders": (me) => <WorkOrdersPage me={me} />,
   "/messages": (me) => <MessagesPage me={me} />,
+  "/drafts": (me) => <DraftsPage me={me} />,
   "/announcements": (me) => <AnnouncementsPage me={me} />,
   "/vendors": (me) => <VendorsPage me={me} />,
   "/files": (me) => <DocumentsPage me={me} />,
@@ -184,6 +195,7 @@ const RECORDS: [RegExp, (me: Me, id: string) => React.ReactNode][] = [
   [/^\/leads\/([0-9a-f-]{36})$/, (me, id) => <LeadPage me={me} id={id} />],
   [/^\/draft-leases\/([0-9a-f-]{36})$/, (me, id) => <DraftLeasePage me={me} id={id} />],
   [/^\/work-orders\/([0-9a-f-]{36})$/, (me, id) => <WorkOrderPage me={me} id={id} />],
+  [/^\/drafts\/([0-9a-f-]{36})$/, (me, id) => <DraftPage me={me} id={id} />],
   [/^\/vendors\/([0-9a-f-]{36})$/, (me, id) => <VendorPage me={me} id={id} />],
   [/^\/reports\/([a-z_]+)$/, (me, name) => <ReportPage me={me} name={name} />],
 ];

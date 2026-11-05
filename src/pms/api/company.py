@@ -98,6 +98,9 @@ class Company(BaseModel):
     time_zone: str
     # The time zones it may pick, each with the name Company setup shows.
     time_zones: list[Zone]
+    # How it writes a day like 05/01/2026 (migration 20261105001200): the order its files' dates
+    # read in when a file doesn't prove its own. Month first until it picks.
+    date_order: days.DateOrder
 
 
 class Card(BaseModel):
@@ -112,7 +115,7 @@ class Card(BaseModel):
 
 def profile(conn: psycopg.Connection[Any], pmc_id: UUID) -> dict[str, Any]:
     """The latest profile row's fields (all None when there is none)."""
-    fields = (*ADDRESS, *LATE, "nsf_fee", "reply_to", *LEGAL, "time_zone")
+    fields = (*ADDRESS, *LATE, "nsf_fee", "reply_to", *LEGAL, "time_zone", "date_order")
     row = conn.execute(
         f"SELECT {', '.join(fields)} FROM trust_company_profiles WHERE pmc_id = %s"  # noqa: S608
         " ORDER BY created_at DESC, id DESC LIMIT 1",
@@ -183,6 +186,7 @@ def company_of(conn: psycopg.Connection[Any], pmc_id: UUID) -> Company:
         logo=logo_of(conn, pmc_id),
         time_zone=found["time_zone"] or days.DEFAULT,
         time_zones=[Zone(id=zone, name=name) for zone, name in days.ZONES.items()],
+        date_order=found["date_order"] or "month_first",
     )
 
 
@@ -200,8 +204,9 @@ class NewCompany(BaseModel):
     reply_to: ReplyTo | None = None
     terms_url: Link | None = None
     privacy_url: Link | None = None
-    # Left out, the time zone stays as it is.
+    # Left out, the time zone stays as it is; so does the date order.
     time_zone: days.TimeZone | None = None
+    date_order: days.DateOrder | None = None
 
 
 @router.post("")
@@ -219,6 +224,10 @@ def save_company(session: Staff, conn: Conn, new: NewCompany) -> Company:
     zone = new.time_zone or current["time_zone"]
     if current["time_zone"] is None and zone == days.DEFAULT:
         zone = None
+    # Month first picked by a company that never picked an order is no change either.
+    order = new.date_order or current["date_order"]
+    if current["date_order"] is None and order == "month_first":
+        order = None
     wanted: dict[str, Any] = {
         **address,
         "late_grace_days": late.grace_days if late else None,
@@ -230,6 +239,7 @@ def save_company(session: Staff, conn: Conn, new: NewCompany) -> Company:
         "terms_url": new.terms_url,
         "privacy_url": new.privacy_url,
         "time_zone": zone,
+        "date_order": order,
     }
     if wanted != current:
         columns = list(wanted)

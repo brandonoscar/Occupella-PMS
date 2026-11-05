@@ -41,7 +41,7 @@ describe("Shell", () => {
     expect(links.map((link) => link.textContent)).toEqual([
       "Dashboard", "Properties", "Rent roll", "Payment files", "Tenants", "Owners", "Move-outs", "Listings", "Leads", "Applicants", "Draft leases", "Renewals", "Banking", "Bills",
       "General ledger", "Pay owners", "Management fees", "Budgets", "Work orders", "Vendors", "Messages", "Announcements",
-      "Files", "Reports", "Settings",
+      "Drafts", "Files", "Reports", "Settings",
     ]);
     const groups = within(sections()).getAllByRole("group");
     expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
@@ -53,7 +53,7 @@ describe("Shell", () => {
     ]);
     // Each group and each page outside one has its icon.
     expect(groups.every((group) => group.querySelector("svg"))).toBe(true);
-    for (const name of ["Dashboard", "Files", "Reports", "Settings"]) {
+    for (const name of ["Dashboard", "Drafts", "Files", "Reports", "Settings"]) {
       expect(within(sections()).getByRole("link", { name }).querySelector("svg")).toBeTruthy();
     }
     // A page of Settings is Settings shown.

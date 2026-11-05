@@ -241,4 +241,40 @@ describe("staff's side of the portals", () => {
         { kind: "go", label: "Open lease", href: "/leases/l1" }],
     ]);
   });
+
+  it("puts the drafts software proposed in Needs attention, each opening its page (ADR 0011)", () => {
+    const today = {
+      on: "2026-11-05", late_rent: [], bills_due: [], unreconciled: [], applications: [], unsigned_offers: [],
+      journal_waiting: [], vendor_insurance: [], company_fees: [], signers: [], renters_insurance: [],
+      deposits_to_receive: [], deposits_to_return: [],
+      drafts_waiting: [{ id: "d1", what: "Email to Tenant 1: Water shutoff", key: "Assistant",
+        made_at: "2026-11-05T15:00:00Z" }],
+    } as unknown as Today;
+    expect(attentionRows(today).map((r) => [r.what, r.line, r.action])).toEqual([
+      ["Draft", "Email to Tenant 1: Water shutoff (from Assistant)",
+        { kind: "go", label: "Review draft", href: "/drafts/d1" }],
+    ]);
+  });
+
+  it("says in Needs attention when rent stopped posting, first of all (docs/edge-cases.md H-021)", () => {
+    const base = {
+      on: "2026-11-07", late_rent: [], bills_due: [], unreconciled: [], applications: [], unsigned_offers: [],
+      journal_waiting: [], vendor_insurance: [], company_fees: [], signers: [], renters_insurance: [],
+      deposits_to_receive: [], deposits_to_return: [],
+      drafts_waiting: [{ id: "d1", what: "Email to Tenant 1: Water shutoff", key: "Assistant",
+        made_at: "2026-11-01T15:00:00Z" }],
+    };
+    const stale = { ...base, rent_not_posted: { last_posted_on: "2026-11-04", waiting_since: "2026-11-04" } } as unknown as Today;
+    expect(attentionRows(stale).map((r) => [r.what, r.line, r.action])[0]).toEqual([
+      "Rent not posting",
+      "No rent run since 11/04/2026: rent, late fees and recurring bills aren't posting by themselves."
+        + " Tell whoever runs the PMS; an admin can Run rent now.",
+      { kind: "go", label: "Open rent roll", href: "/rent-roll" },
+    ]);
+    const never = { ...base, rent_not_posted: { last_posted_on: null, waiting_since: "2026-11-04" } } as unknown as Today;
+    expect(attentionRows(never)[0]?.line).toBe(
+      "Rent has never posted by itself: rent, late fees and recurring bills aren't posting by themselves."
+        + " Tell whoever runs the PMS; an admin can Run rent now.",
+    );
+  });
 });

@@ -31,6 +31,9 @@ four are needed to start; add the others when you turn those parts on.
 | `PMS_PAYMENTS=stripe`, `PMS_STRIPE_SECRET_KEY`, `PMS_STRIPE_WEBHOOK_SECRET` | Tenants pay rent online by bank, with autopay; owners pay into their accounts | Easier: leave these out and enter your Stripe keys in Company setup (below). These are the fallback for a company that enters none | Optional |
 | `PMS_GEOCODER=census` | Puts each property on a map from its address | Nothing: the U.S. Census Bureau's geocoder is free and needs no key | Optional |
 
+Never set any of these to `fake`. The fake partners are for development and the demo, and a
+server whose `PMS_PUBLIC_URL` starts with `https://` refuses to start with one.
+
 Your bank's ACH details (its routing number and the IDs it gives your company, for payout files)
 are not keys: you enter them in the PMS, on each trust bank account's Payouts tab.
 
@@ -59,7 +62,8 @@ openssl rand -base64 32    # paste as PMS_DATA_KEY
 
 Open `.env` and fill in `PMS_DB_PASSWORD`, `PMS_APP_DB_PASSWORD`, `PMS_PUBLIC_URL` and
 `PMS_DATA_KEY`, and email and payments if you have them now. Each line in `.env.example` says what
-it is for. Each start makes or updates the app's login (`pms_app`) with `PMS_APP_DB_PASSWORD`: the
+it is for; the server refuses to start while `PMS_PUBLIC_URL` is still the example's, or isn't an
+address with no path (`https://` and the host). Each start makes or updates the app's login (`pms_app`) with `PMS_APP_DB_PASSWORD`: the
 app connects as it and acts as the app's role alone, so the database's owner password stays out
 of the app's container.
 
@@ -90,8 +94,8 @@ pms.example.com {
 Any proxy works (nginx, your host's load balancer) as long as it serves HTTPS, passes requests
 to `127.0.0.1:8000` and names each visitor in `X-Forwarded-For` (Caddy does by itself; with
 nginx, `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` and
-`proxy_set_header X-Forwarded-Proto $scheme;`). The app takes the visitor's address from it
-(`PMS_TRUSTED_PROXIES` in `compose.selfhost.yaml`), so the evidence of a lease signed on the PMS's
+`proxy_set_header X-Forwarded-Proto $scheme;`). The app takes the visitor's address from it, the
+last one, which the proxy wrote (`PMS_TRUSTED_PROXIES` in `compose.selfhost.yaml`), so the evidence of a lease signed on the PMS's
 page keeps the signer's address, not the proxy's. Keep the app's port on `127.0.0.1`: only a
 proxy on the server itself may name visitors. Sign-in needs HTTPS: the session cookie is never
 sent over plain HTTP.
@@ -106,6 +110,11 @@ docker compose -f compose.selfhost.yaml exec app \
 It prints your company's id, your staff id and an invite link. Open the link: you set a password
 and add an authenticator app (any app that shows six-digit codes), which every staff sign-in
 asks for. The link lasts 7 days; `python -m pms.admin invite` makes another.
+
+Your company starts with a chart of expense accounts, each on its Schedule E line (advertising,
+repairs, utilities and the like); rename, add or ignore them under Settings, Chart of accounts. A
+company made before this release gets them with `python -m pms.admin starting-chart <company
+id>`, which skips any it already has.
 
 ## 6. Set up the books
 
@@ -140,7 +149,9 @@ events for the webhook:
 Or, for a server that runs one company, put the keys in `.env` instead (`PMS_PAYMENTS=stripe`,
 `PMS_STRIPE_SECRET_KEY`, `PMS_STRIPE_WEBHOOK_SECRET`) with the webhook at
 `https://pms.example.com/api/payments/webhook/stripe`; keys entered in Company setup take over
-from them. A tenant's autopay bank account stays with the Stripe account it was saved at: after
+from them. The PMS uses keys in `.env` only while the server holds one company: they are one
+Stripe account paying out to one trust account, so on a server with more, each company enters
+its own. A tenant's autopay bank account stays with the Stripe account it was saved at: after
 changing accounts, tenants set autopay up again.
 
 Then turn it on in Company setup, Online payments. Payments are by bank (ACH) for now. They were
@@ -158,10 +169,12 @@ just after its own midnight; for Pacific, Alaska or Hawaii set `PMS_BACKUP_AT=11
 ```sh
 sudo ls -l backups/                                      # pms-2026-11-03.dump, one a day
 docker compose -f compose.selfhost.yaml logs backup      # each dump, and any that failed
+docker compose -f compose.selfhost.yaml ps backup        # unhealthy: no good dump in 26 hours
 ```
 
 It keeps every daily dump for 35 days and each month's first for good, and a dump that fails is
-tried again an hour later. The files are readable by root only: each holds everything the PMS
+tried again an hour later, its half-written file and the dumps past keeping removed first, so a
+full disk frees what it can. The files are readable by root only: each holds everything the PMS
 keeps. `PMS_BACKUP_AT` and `PMS_BACKUP_DIR` in `.env` change the time (UTC) and the folder.
 
 These protect against a broken database or a mistake, not against losing the server. **Copy

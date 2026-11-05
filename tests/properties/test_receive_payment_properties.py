@@ -12,17 +12,19 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
     the payment) records nothing;
   - what the lease owes is the model's, and every trust bank account ties out.
 
-Month to month: Hypothesis opens fixed-term leases ending on random days, gives some an end of
-staff's (a notice), and runs nights forward in random steps. A lease goes month to month on the
-first night after its term ran out within the week, once, unless staff gave its end; its days and
-rent are otherwise unchanged.
+Month to month: Hypothesis opens fixed-term leases ending on random days for a company in a
+random time zone, each entered some hours before or after its last day ended there, gives some an
+end of staff's (a notice), and runs nights forward in random steps. A lease goes month to month on
+the first night after its term ran out within the week, once, unless staff gave its end or it was
+entered after its last day by the company's day; its days and rent are otherwise unchanged.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import psycopg
 from fastapi import HTTPException
@@ -167,18 +169,22 @@ class MonthToMonthMachine(RuleBasedStateMachine):
     def __init__(self, conn):
         super().__init__()
         self.conn = conn
-        pmc = make_pmc(conn)
-        self.pmc_id = pmc.pmc_id
-        self.prop = pmc.owners[0].property_id
         self.night = TODAY
         self.leases: list[uuid.UUID] = []
         self.ends: list = []  # each lease's end as the model has it (None: month to month)
         self.term: list = []  # the term that ran out, once it went month to month
-        self.notice: list[bool] = []
+        self.notice: list[bool] = []  # staff gave its end, or it was entered after it
 
-    @initialize(ends=st.lists(st.integers(0, 12), min_size=1, max_size=4))
-    def open_leases(self, ends):
-        for i, after in enumerate(ends):
+    @initialize(
+        zone=st.sampled_from(["UTC", "America/New_York", "Pacific/Honolulu"]),
+        # Each lease's last day, and when it was entered: hours before (or after) the end of
+        # that day in the company's own time zone (docs/edge-cases.md D-055).
+        ends=st.lists(st.tuples(st.integers(0, 12), st.integers(-30, 6)), min_size=1, max_size=4),
+    )
+    def open_leases(self, zone, ends):
+        pmc = make_pmc(self.conn, time_zone=zone)
+        self.pmc_id, self.prop = pmc.pmc_id, pmc.owners[0].property_id
+        for i, (after, entered) in enumerate(ends):
             unit = add_unit(self.conn, self.pmc_id, self.prop, f"Unit {i + 1}")
             tenant = add_tenant(self.conn, self.pmc_id, self.prop, f"Tenant {i + 1}")
             end = TODAY + after * DAY
@@ -187,9 +193,16 @@ class MonthToMonthMachine(RuleBasedStateMachine):
                     self.conn, self.pmc_id, unit, TODAY - 200 * DAY, end, "1200.00", [tenant]
                 )
             )
+            midnight = datetime.combine(end + DAY, time(), ZoneInfo(zone))
+            self.conn.execute(
+                "UPDATE trust_leases SET created_at = %s WHERE id = %s",
+                (midnight + timedelta(hours=entered), self.leases[-1]),
+            )
+            if entered >= 0:
+                event("a lease entered after its last day, in the company's day")
             self.ends.append(end)
             self.term.append(None)
-            self.notice.append(False)
+            self.notice.append(entered >= 0)  # a lease from the past stays as it was
 
     @rule(steps=st.integers(1, 9))
     def a_night(self, steps):

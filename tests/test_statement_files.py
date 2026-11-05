@@ -96,6 +96,91 @@ def test_a_csv_with_columns_for_money_out_and_in_is_read():
     ]
 
 
+@pytest.mark.parametrize("header", ["Type", "Transaction Type", "Debit/Credit", "Dr/Cr"])
+def test_a_csv_of_positive_amounts_reads_each_ones_way_from_its_type(header):
+    """docs/edge-cases.md P-129: every amount positive and a column saying debit or credit read
+    as all money in, and a CSV needs no closing balance, so it went in silently."""
+    read = statements.read(
+        f"Date,Description,Amount,{header}\n"
+        "2026-01-05,Deposit,1500.00,Credit\n"
+        "2026-01-23,Check 101,240.00,DEBIT\n"
+        "2026-01-24,Service fee,15.00,dr\n"
+        "2026-01-25,Interest,0.42,CR\n",
+        "csv",
+    )
+    assert [line.amount for line in read.lines] == [
+        Decimal("1500.00"),
+        Decimal("-240.00"),
+        Decimal("-15.00"),
+        Decimal("0.42"),
+    ]
+
+
+def test_a_type_naming_its_kind_and_its_way_is_read_by_its_way():
+    read = statements.read(
+        "Date,Amount,Type\n2026-01-05,1500.00,ACH_CREDIT\n2026-01-23,240.00,ACH_DEBIT\n", "csv"
+    )
+    assert [line.amount for line in read.lines] == [Decimal("1500.00"), Decimal("-240.00")]
+
+
+def test_a_type_that_says_neither_way_is_refused_when_no_amount_carries_a_sign():
+    with pytest.raises(
+        StatementError, match="line 3: the type 'ACH' says neither debit nor credit"
+    ):
+        statements.read(
+            "Date,Description,Amount,Type\n"
+            "2026-01-05,Deposit,1500.00,Credit\n"
+            "2026-01-23,Vendor 1,240.00,ACH\n",
+            "csv",
+        )
+
+
+def test_signed_amounts_keep_their_sign_whatever_the_type_column_says():
+    # A bank that signs its amounts and names each line's kind: the sign holds.
+    read = statements.read(
+        "Date,Description,Amount,Type\n"
+        "2026-01-05,Deposit,1500.00,ACH\n"
+        "2026-01-23,Check 101,-240.00,Check\n",
+        "csv",
+    )
+    assert [line.amount for line in read.lines] == [Decimal("1500.00"), Decimal("-240.00")]
+
+
+def test_a_files_dates_read_in_the_order_they_prove_else_the_companys():
+    """docs/edge-cases.md F-061: 05/01/2026 from a day-first file read as May 1 with no word.
+    A file's dates are read in the order the file itself proves (a 13/01/2026 can only be day
+    first), else the company's own (month first unless it picked day first); ISO always reads."""
+    day_first = "Date,Amount\n05/01/2026,5.00\n13/01/2026,6.00\n2026-01-20,7.00\n"
+    assert [line.posted_on for line in statements.read(day_first, "csv").lines] == [
+        date(2026, 1, 5),
+        date(2026, 1, 13),
+        date(2026, 1, 20),
+    ]
+    month_first = "Date,Amount\n05/01/2026,5.00\n01/13/2026,6.00\n"
+    for order in ("month_first", "day_first"):
+        assert [line.posted_on for line in statements.read(month_first, "csv", order).lines] == [
+            date(2026, 5, 1),
+            date(2026, 1, 13),
+        ]
+    # Nothing proves either way: the company's order decides. Dots and dashes read too.
+    either = "Date,Amount\n05/01/2026,5.00\n06.01.2026,6.00\n07-01-2026,7.00\n"
+    assert [line.posted_on for line in statements.read(either, "csv", "day_first").lines] == [
+        date(2026, 1, 5),
+        date(2026, 1, 6),
+        date(2026, 1, 7),
+    ]
+    assert statements.read(either, "csv").lines[0].posted_on == date(2026, 5, 1)
+
+
+def test_a_file_mixing_day_first_and_month_first_dates_is_refused():
+    with pytest.raises(StatementError) as refused:
+        statements.read("Date,Amount\n13/01/2026,5.00\n01/13/2026,6.00\n", "csv")
+    assert str(refused.value) == (
+        "line 2 writes 13/01/2026 day first and line 3 writes 01/13/2026 month first: a file's"
+        " dates go one way, so fix the file and import it again"
+    )
+
+
 def test_a_csv_keeps_descriptions_and_references_short():
     read = statements.read(
         f"Date,Amount,Memo,Ref\n2026-01-05,1.00,{'x' * 600},{'r' * 300}\n", "csv"

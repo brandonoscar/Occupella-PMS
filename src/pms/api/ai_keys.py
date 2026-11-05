@@ -8,7 +8,8 @@ opens nothing.
 
 Software sends the key as `Authorization: Bearer occ_...`. The app looks it up as trust_app, then
 runs the rest of the request's transaction as trust_ai_agent (SET LOCAL ROLE): what that role
-reads, the reports, and no grant that writes. The database holds that line, not this module. A
+reads, the reports, and no grant that writes but proposing a draft (src/pms/api/drafts.py), which
+moves nothing until a staff member approves it. The database holds that line, not this module. A
 key names no staff member, and its company is always the key's: no request names one. A key is
 not a session and a session is not a key: the cookie endpoints read only the cookie, these only
 the header. Each key may make PER_MINUTE requests a minute in this process (429 past it, with
@@ -25,7 +26,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -149,6 +150,9 @@ class Key:
     pmc_id: UUID
     name: str
     company: str
+    # The company's day when the request began (src/pms/days.py), read as trust_app: the AI's
+    # role reads no time zone.
+    today: date | None = None
 
 
 def too_soon(key_id: UUID, now: float | None = None) -> float | None:
@@ -179,14 +183,17 @@ def with_key(request: Request, conn: Conn) -> Key:
     if scheme.lower() != "bearer" or not SECRET.fullmatch(secret):
         raise refused()
     row = conn.execute(
-        "SELECT k.id, k.pmc_id, k.name, p.display_name FROM trust_api_keys AS k"
+        "SELECT k.id, k.pmc_id, k.name, p.display_name, trust_pmc_day(k.pmc_id)"
+        " FROM trust_api_keys AS k"
         " JOIN trust_pmcs AS p ON p.pmc_id = k.pmc_id WHERE k.secret_sha256 = %s"
-        " AND NOT EXISTS (SELECT 1 FROM trust_api_key_revocations AS r WHERE r.key_id = k.id)",
+        " AND NOT EXISTS (SELECT 1 FROM trust_api_key_revocations AS r WHERE r.key_id = k.id)"
+        # A suspended or closed company's keys stop with its sign-ins.
+        " AND trust_pmc_status(k.pmc_id) = 'active'",
         (accounts.digest(secret),),
     ).fetchone()
     if row is None:
         raise refused()
-    key = Key(id=row[0], pmc_id=row[1], name=row[2], company=row[3])
+    key = Key(id=row[0], pmc_id=row[1], name=row[2], company=row[3], today=row[4])
     wait = too_soon(key.id)
     if wait is not None:
         seconds = max(1, math.ceil(wait))
@@ -197,7 +204,7 @@ def with_key(request: Request, conn: Conn) -> Key:
             headers={"Retry-After": str(seconds)},
         )
     # Until the transaction ends: whatever the request reads, it reads as the AI's role, which
-    # holds no grant that writes (tests/test_privileges.py).
+    # holds no grant that writes but proposing a draft (tests/test_privileges.py).
     conn.execute("SET LOCAL ROLE trust_ai_agent")
     return key
 

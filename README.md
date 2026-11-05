@@ -1,10 +1,57 @@
-# occupella-pms
+# Occupella PMS
 
-Free trust accounting for property management companies (100–5,000 doors) that hold owners'
-money in trust. Occupella's AI is sold on top and will connect later through an API key that
-cannot move money.
+**Free, open-source property management software with real trust accounting**, for residential
+property management companies that hold owners' money and tenants' deposits in trust. A
+double-entry ledger that ties out at every save, owner and tenant portals, rent and autopay
+online, leasing with e-signatures, maintenance, month-end bank reconciliation and reports. Run it
+on your own server for free.
 
+[![License: Apache-2.0](https://img.shields.io/github/license/brandonoscar/Occupella-PMS)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/brandonoscar/Occupella-PMS)](https://github.com/brandonoscar/Occupella-PMS/releases)
+[![CI](https://github.com/brandonoscar/Occupella-PMS/actions/workflows/ci.yml/badge.svg)](https://github.com/brandonoscar/Occupella-PMS/actions/workflows/ci.yml)
+
+An open-source alternative to hosted property management systems such as Buildium, AppFolio,
+Rentvine and DoorLoop. [Try the demo](#try-the-demo) · [Install it](docs/install.md) ·
+[What changed](CHANGELOG.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+
+## What it does
+
+- **Trust accounting:** an append-only double-entry ledger (pgledger), owners' money and security
+  deposits in their own trust bank accounts, every account tying out at every commit, a
+  three-way bank reconciliation prepared by one person and approved by another, journal entries
+  with two-person approval, closing a year, and an audit log of every change.
+- **Rent and payments:** rent, recurring charges, prorated months, late fees and NSF fees posted
+  every night; Receive payment, bank and lockbox payment files, receipts; rent paid online by
+  bank (ACH) with autopay, through the company's own Stripe account (not yet tried with a live
+  account).
+- **Owners:** management agreements with reserves and approval limits, management and leasing
+  fees, owner draws paid by NACHA ACH file or printed check, statements and year-end packages,
+  and an owner portal where owners approve bills and pay money in.
+- **Bills and vendors:** bills split across expense accounts or shared across properties,
+  markups, recurring bills, W-9s, vendor insurance, the 1099 summary, and paying bills by check
+  or ACH.
+- **Leasing:** a public vacancy page, leads and showings, online applications, lease templates,
+  and e-signatures on the PMS's own signing page with a signing certificate. Screening plugs in
+  through a partner (only a test partner ships today).
+- **Tenants:** a tenant portal with the balance, payments, autopay, lease documents, repair
+  requests with photos, messages and notice to move out; deposit returns with itemized
+  statements, and deposit interest.
+- **Affordable housing:** housing assistance split from the tenant's rent (Section 8 vouchers),
+  income certifications and inspections, tax credit (LIHTC) limits and compliance reports.
+- **Maintenance:** work orders with priority, photos, visit windows and a link for the vendor,
+  emergencies emailed to whoever is on call, and recurring jobs.
+- **Reports and exports:** income statement (cash and accrual), balance sheet, rent roll,
+  delinquency, general ledger, trial balance, budgets and more, as CSV, Excel or PDF; QuickBooks
+  Desktop and Online exports; and an export of everything.
+- **For AI and other software:** API keys that read the books and can never move money; an MCP
+  server at `/mcp` any MCP client (Claude, say) plugs into; drafts the AI proposes and staff
+  approve; events, read in order or sent to signed webhooks.
+
+Built with Python 3.11, FastAPI, PostgreSQL 16 (plain SQL), React 19, Vite and Tailwind CSS.
 Apache License 2.0 (see `LICENSE`). Third-party code and its licenses: `THIRD_PARTY_NOTICES.md`.
+
+Occupella's AI is sold separately and connects through the PMS's own API with a key that cannot
+move money (`docs/adr/0011-ai-link.md`).
 
 ## Status
 
@@ -17,8 +64,8 @@ report as CSV, Excel or PDF plus the whole ledger as CSV
   CSV too, and approves or declines each bill over their approval limit, which the PMS emails
   them about (through the PMC's own mail server; `docs/adr/0004-email.md`);
 - a tenant sees their lease, what is due and its ledger, and sends maintenance requests, which
-  staff turn into work orders and follow to done. Rent is still paid the usual way: the portal
-  takes no payments.
+  staff turn into work orders and follow to done, and pays rent online by bank, with autopay
+  (`docs/install.md`, "Payments online").
 
 Leasing basics, part one: staff open an application link for a unit, applicants apply
 through it and follow their application, and staff screen (through a partner; a fake one for
@@ -30,7 +77,7 @@ lease, with the PMC's own lease document (a PDF); the signers sign on the PMS's 
 signature, and a signing certificate), a tenant from their portal; and once everyone has signed,
 staff make it the lease. That completes the founder's list in `docs/adr/0002-portals-and-exports.md`.
 
-The staff back office (`docs/adr/0003-staff-back-office.md`) is being built: staff set up
+The staff back office (`docs/adr/0003-staff-back-office.md`) is built: staff set up
 their books in the portal (trust bank accounts, owners, properties, units, tenants, vendors,
 management and late fee terms, leases in place) and do the rent work there (the rent run, late
 fees, fees and credits, tenants' payments and deposits as they reached the bank, prepaid rent,

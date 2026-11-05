@@ -3,7 +3,7 @@ it, keep its address and the fee terms a new property starts with, and its logo;
 tenants see its name, address and logo. Always the session's PMC. Every address is synthetic."""
 
 import base64
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import psycopg
 import pytest
@@ -82,7 +82,49 @@ def test_a_company_starts_with_its_name_alone(client, staff, pmc, conn):
         "logo": None,
         "time_zone": "UTC",
         "time_zones": ZONES,
+        "date_order": "month_first",
     }
+
+
+def test_a_company_reads_its_files_dates_in_its_own_order(client, staff, pmc, conn):
+    """docs/edge-cases.md F-061: a company outside the US writes 05/01/2026 for 5 January. It
+    picks day first in Company setup, and its files' dates read that way when they don't prove
+    the order themselves. Month first, as the US writes them, until it picks."""
+    assert ok(save(client, date_order="month_first"))["date_order"] == "month_first"
+    assert rows(conn, pmc) == 0  # the order it has already: nothing written
+    assert ok(save(client, date_order="day_first"))["date_order"] == "day_first"
+    assert ok(save(client))["date_order"] == "day_first"  # left out, it stays
+    assert rows(conn, pmc) == 1
+    answer = save(client, date_order="sideways")
+    assert answer.status_code == 422
+    ok(client.post("/api/switching/import", json={"kind": "owners", "content": "Name\nOwner A\n"}))
+    ok(
+        client.post(
+            "/api/switching/import",
+            json={"kind": "properties", "content": "Property,Owner\nProperty A,Owner A\n"},
+        )
+    )
+    ok(
+        client.post(
+            "/api/switching/import",
+            json={"kind": "units", "content": "Property,Unit\nProperty A,Unit 1\n"},
+        )
+    )
+    ok(
+        client.post(
+            "/api/switching/import",
+            json={
+                "kind": "leases",
+                "content": "Property,Unit,Tenants,Starts On,Monthly Rent\n"
+                "Property A,Unit 1,Tenant A,05/01/2026,1500.00\n",
+            },
+        )
+    )
+    assert conn.execute(
+        "SELECT l.starts_on FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id"
+        " WHERE u.pmc_id = %s",
+        (pmc.pmc_id,),
+    ).fetchone()[0] == date(2026, 1, 5)
 
 
 def test_a_company_that_picked_no_time_zone_is_in_new_york(client, conn, app_conn):

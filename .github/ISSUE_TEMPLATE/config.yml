@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/brandonoscar/Occupella-PMS/security/advisories/new
+    about: Never in a public issue. See SECURITY.md.
+  - name: Install it for your company
+    url: https://github.com/brandonoscar/Occupella-PMS/blob/main/docs/install.md
+    about: The install guide, from a Linux server to your first admin.

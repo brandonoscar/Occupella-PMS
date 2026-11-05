@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -30,7 +31,7 @@ from fastapi import APIRouter, HTTPException
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, StringConstraints, ValidationError
 
-from pms import email, exports, statements
+from pms import days, email, exports, statements
 from pms.api import directory, outbox, unit_details
 from pms.api.deps import Conn, Staff, refusal
 
@@ -58,6 +59,8 @@ class Bad(Exception):
 class Row:
     line: int
     cells: dict[str, str]
+    # The order the file's dates are written in: the one they prove, else the company's.
+    order: statements.DateOrder = "month_first"
 
     def get(self, column: str, required: bool = True) -> str:
         value = self.cells.get(column, "").strip()
@@ -72,7 +75,7 @@ class Row:
         if not text:
             return None
         try:
-            return statements.read_date(text, f"line {self.line}")
+            return statements.read_date(text, f"line {self.line}", self.order)
         except statements.StatementError as bad:
             raise Bad(str(bad)) from None
 
@@ -83,8 +86,11 @@ class Row:
             raise Bad(str(bad)) from None
 
 
-def rows(content: str, needs: tuple[str, ...]) -> list[Row]:
-    """A CSV file's rows, by lower-case column name (spaces and underscores alike)."""
+def rows(
+    content: str, needs: tuple[str, ...], preferred: statements.DateOrder = "month_first"
+) -> list[Row]:
+    """A CSV file's rows, by lower-case column name (spaces and underscores alike), with the
+    order its dates are written in: the one they prove, else `preferred`, the company's."""
     # A letter that didn't read as text arrives as the replacement character: refused, rather
     # than a tenant's name coming into the books as "Jos�". The portal reads a file saved as
     # Windows-1252 as such (frontend/src/fileText.ts); what reaches here otherwise is broken.
@@ -108,10 +114,17 @@ def rows(content: str, needs: tuple[str, ...]) -> list[Row]:
         raise Bad(f"line 1: no {', '.join(missing)} column")
     if len(found) - 1 > MAX_ROWS:
         raise Bad(f"a file has at most {MAX_ROWS} rows")
-    return [
-        Row(n, {h: (r[i] if i < len(r) else "") for i, h in enumerate(headers)})
+    cells = [
+        (n, {h: (r[i] if i < len(r) else "") for i, h in enumerate(headers)})
         for n, r in enumerate(found[1:], start=2)
     ]
+    try:
+        order = statements.date_order(
+            ((f"line {n}", value) for n, row in cells for value in row.values()), preferred
+        )
+    except statements.StatementError as bad:
+        raise Bad(str(bad)) from None
+    return [Row(n, row, order) for n, row in cells]
 
 
 # --- finding and adding by name ----------------------------------------------------------------
@@ -123,6 +136,9 @@ class Names:
     def __init__(self, conn: psycopg.Connection[Any], pmc_id: UUID) -> None:
         self.conn, self.pmc = conn, pmc_id
         self.added = self.kept = 0
+        # How many of the file's lines so far were matched to each charge alike that is there
+        # already: each line to one, so two alike in one file are two charges (F-076).
+        self.matched: Counter[tuple[Any, ...]] = Counter()
 
     def counted(self, found: Any, add: Callable[[], Any]) -> Any:
         if found is not None:
@@ -328,11 +344,20 @@ DETAIL_COLUMNS = {
 }
 
 
+def plain_number(row: Row, column: str) -> str | None:
+    """A column's number with its $ and US thousands separators taken out; a decimal comma
+    ("1450,50") refused rather than read as 100 times it (docs/edge-cases.md F-064)."""
+    text = row.get(column, required=False).replace("$", "").strip()
+    if "," in text and not statements.GROUPED.fullmatch(text):
+        raise Bad(
+            f"line {row.line}: the {column} {text!r} has a comma that separates no thousands;"
+            " write a decimal comma as a point (1234.56)"
+        )
+    return text.replace(",", "") or None
+
+
 def import_unit_details(names: Names, unit_id: UUID, row: Row) -> None:
-    given = {
-        field: row.get(column, required=False).replace(",", "").replace("$", "") or None
-        for column, field in DETAIL_COLUMNS.items()
-    }
+    given = {field: plain_number(row, column) for column, field in DETAIL_COLUMNS.items()}
     if not any(given.values()):
         return
     try:
@@ -429,6 +454,53 @@ def import_lease(names: Names, row: Row) -> None:
     names.added += 1
 
 
+# The leases of a unit started by a day, newest first, each with its tenants' names.
+STARTED = """
+SELECT l.id, l.starts_on,
+       array(SELECT t.display_name FROM trust_lease_tenants AS lt
+             JOIN trust_tenants AS t ON t.id = lt.tenant_id
+             WHERE lt.lease_id = l.id ORDER BY t.display_name COLLATE "C"),
+       array(SELECT lt.tenant_id FROM trust_lease_tenants AS lt WHERE lt.lease_id = l.id)
+FROM trust_leases AS l
+WHERE l.unit_id = %s AND l.starts_on <= %s
+ORDER BY l.starts_on DESC, l.id
+"""
+
+
+def lease_owing(
+    names: Names, prop: UUID, unit: UUID, row: Row, due: date | None, kind: str
+) -> UUID:
+    """The lease a charge carried over is owed on, never a guess (docs/edge-cases.md F-077): the
+    newest lease started by its due day holding the file's Tenant, when it names one; else rent
+    is the lease's in effect then (the newest started), and a fee the newest's only when no
+    earlier lease of the unit holds someone else, who could owe it (a move-out fee dated after
+    the next tenant moved in). Otherwise the line says to name whose it is."""
+    started = names.conn.execute(STARTED, (unit, due)).fetchall()
+    unit_name = row.get("unit")
+    if not started:
+        raise Bad(f"line {row.line}: no lease of that unit had started by {due}")
+    who = row.get("tenant", required=False)
+    if who:
+        tenant = names.tenant(prop, who, line=row.line)
+        theirs = [lease for lease, _, _, ids in started if tenant in ids]
+        if not theirs:
+            raise Bad(f"line {row.line}: {who} is on no lease of {unit_name} started by {due}")
+        return UUID(str(theirs[0]))
+    newest = set(started[0][2])
+    others = [lease for lease in started[1:] if not set(lease[2]) <= newest]
+    if kind == "fee" and others:
+        could = [started[0], *others]
+        said = " or ".join(
+            f"{' and '.join(people)}'s" + (" lease" if n == 0 else "") + f" (from {starts})"
+            for n, (_, starts, people, _) in enumerate(could)
+        )
+        raise Bad(
+            f"line {row.line}: a fee due {due} at {unit_name} could be owed on {said}: add a"
+            " Tenant column naming whose it is"
+        )
+    return UUID(str(started[0][0]))
+
+
 def import_charge(names: Names, row: Row) -> None:
     conn, pmc = names.conn, names.pmc
     prop = names.property(row.get("property"), row.line)
@@ -438,24 +510,19 @@ def import_charge(names: Names, row: Row) -> None:
     kind = (row.get("kind", required=False) or "rent").lower()
     if kind not in ("rent", "fee") or amount <= 0:
         raise Bad(f"line {row.line}: a charge carried over is rent or a fee, of more than 0")
-    lease = one(
-        conn,
-        "SELECT id FROM trust_leases WHERE unit_id = %s AND starts_on <= %s"
-        " ORDER BY starts_on DESC LIMIT 1",
-        (unit, due),
-    )
-    if lease is None:
-        raise Bad(f"line {row.line}: no lease of that unit had started by {due}")
+    lease = lease_owing(names, prop, unit, row, due, kind)
     memo = row.get("memo", required=False) or None
-    if (
-        one(
-            conn,
-            "SELECT 1 FROM trust_charges WHERE lease_id = %s AND due_on = %s AND kind = %s"
-            " AND amount = %s AND memo IS NOT DISTINCT FROM %s",
-            (lease, due, kind, amount, memo),
-        )
-        is not None
-    ):
+    alike = (lease, due, kind, amount, memo)
+    there = one(
+        conn,
+        "SELECT count(*) FROM trust_charges WHERE lease_id = %s AND due_on = %s AND kind = %s"
+        " AND amount = %s AND memo IS NOT DISTINCT FROM %s",
+        alike,
+    )
+    # This line is one of the charges alike that came over already, unless the file's earlier
+    # lines matched them all: then it is one more (F-076).
+    if names.matched[alike] < there:
+        names.matched[alike] += 1
         names.kept += 1
         return
     try:
@@ -467,6 +534,7 @@ def import_charge(names: Names, row: Row) -> None:
             )
     except (psycopg.errors.UniqueViolation, psycopg.errors.CheckViolation) as refused:
         raise Bad(f"line {row.line}: {refusal(refused)}") from None
+    names.matched[alike] += 1
     names.added += 1
 
 
@@ -559,10 +627,13 @@ def import_file(session: Staff, conn: Conn, new: Import) -> Counted:
     try:
         if new.kind in HISTORY:
             counted = import_history(
-                names, HISTORY[new.kind], new.content, rows(new.content, NEEDS[new.kind])
+                names,
+                HISTORY[new.kind],
+                new.content,
+                rows(new.content, NEEDS[new.kind], days.date_order(conn, session.pmc_id)),
             )
         else:
-            for row in rows(new.content, NEEDS[new.kind]):
+            for row in rows(new.content, NEEDS[new.kind], days.date_order(conn, session.pmc_id)):
                 import_row(names, new.kind, row)
             counted = Counted(added=names.added, kept=names.kept)
     except Bad as bad:
@@ -757,7 +828,7 @@ def open_balances(session: Staff, conn: Conn, new: Opening) -> Opened:
     names = Names(conn, session.pmc_id)
     balances: dict[str, Decimal] = {}
     try:
-        for row in rows(new.content, ("kind", "amount")):
+        for row in rows(new.content, ("kind", "amount"), days.date_order(conn, session.pmc_id)):
             account = ledger_account(names, new.bank_account_id, row)
             if account in balances:
                 raise Bad(f"line {row.line}: that account has a balance on another line already")
@@ -806,7 +877,7 @@ def carry_vendor_payments(session: Staff, conn: Conn, new: VendorPayments) -> Co
     names = Names(conn, session.pmc_id)
     added = kept = 0
     try:
-        for row in rows(new.content, ("vendor", "paid")):
+        for row in rows(new.content, ("vendor", "paid"), days.date_order(conn, session.pmc_id)):
             name = row.get("vendor")
             vendor = names.vendor(name, line=row.line)
             amount = row.money("paid")
@@ -851,12 +922,38 @@ def carry_items(session: Staff, conn: Conn, new: Items) -> Counted:
     """The old system's checks (negative) and deposits the bank had not cleared at the cutover:
     a CSV file with date, amount, description and an optional reference."""
     bank_of(conn, session.pmc_id, new.bank_account_id)
-    added = 0
+    # The file's lines are matched to the items carried over already, each once (F-083): sent
+    # again, it carries nothing over twice; two alike in one file both come in. One import at a
+    # time for the account, so two sent at once can't both add.
+    conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended('trust_cutover_items:' || %s, 0))",
+        (str(new.bank_account_id),),
+    )
+    already = Counter(
+        conn.execute(
+            "SELECT issued_on, amount, description, reference FROM trust_cutover_items"
+            " WHERE pmc_id = %s AND bank_account_id = %s",
+            (session.pmc_id, new.bank_account_id),
+        ).fetchall()
+    )
+    added = kept = 0
     try:
-        for row in rows(new.content, ("date", "amount", "description")):
+        for row in rows(
+            new.content, ("date", "amount", "description"), days.date_order(conn, session.pmc_id)
+        ):
             amount = row.money("amount")
             if amount == 0:
                 raise Bad(f"line {row.line}: an item moved some money")
+            item = (
+                row.day("date"),
+                amount,
+                row.get("description"),
+                row.get("reference", required=False) or None,
+            )
+            if already[item] > 0:
+                already[item] -= 1
+                kept += 1
+                continue
             try:
                 with conn.transaction():
                     conn.execute(
@@ -878,7 +975,7 @@ def carry_items(session: Staff, conn: Conn, new: Items) -> Counted:
             added += 1
     except Bad as bad:
         raise HTTPException(422, str(bad)) from None
-    return Counted(added=added, kept=0)
+    return Counted(added=added, kept=kept)
 
 
 class SignOff(BaseModel):

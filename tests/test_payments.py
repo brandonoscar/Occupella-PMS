@@ -279,6 +279,10 @@ def test_stripe_is_called_over_https_with_the_companys_key_and_a_retry_key(monke
     )
     assert post.get_header("Authorization") == "Bearer sk_test_not_real"
     assert post.get_header("Idempotency-key") == f"checkout-{payment}"
+    # docs/edge-cases.md P-014: every call names the API version whose shapes the PMS reads
+    # (latest_charge), whatever the account's own default is.
+    assert {r.get_header("Stripe-version") for r, _ in sent} == {payments.STRIPE_VERSION}
+    assert payments.STRIPE_VERSION == "2024-06-20"
     assert f"client_reference_id={payment}".encode() in post.data
     # A read carries its form in the query string, and no retry key.
     assert (get.get_method(), get.data, get.get_header("Idempotency-key")) == ("GET", None, None)

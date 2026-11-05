@@ -483,6 +483,9 @@ def main() -> None:
         autopay_saved_before(app, seeded["features"]["autopay"]["pmc_id"])
         draws_prepared(app, seeded["features"]["payouts"]["pmc_id"])
         rent_past_due(app, seeded["features"]["reminders"]["pmc_id"])
+        seeded["features"]["drafts"]["ids"] = drafts_named(
+            app, seeded["features"]["drafts"]["pmc_id"]
+        )
         # Year close: books as of this year's first day, so last year's November is approved and
         # its December waits for approval in each trust bank account, whatever the day today.
         seeded["features"]["year-close"] = feature_pmc(
@@ -571,6 +574,23 @@ def rent_past_due(app: psycopg.Connection[Any], pmc_id: str) -> None:
     )
 
 
+def drafts_named(app: psycopg.Connection[Any], pmc_id: str) -> dict[str, str]:
+    """The drafts feature's PMC (ADR 0011): the ids the software names its drafts by, which it
+    would read through the API, and an email on file for Drew Sample, whom one draft writes to."""
+    tenant = app.execute(
+        "SELECT id FROM trust_tenants WHERE pmc_id = %s AND display_name = 'Drew Sample'", (pmc_id,)
+    ).fetchone()[0]
+    prop = app.execute(
+        "SELECT id FROM trust_properties WHERE pmc_id = %s AND display_name = 'Aspen Row'",
+        (pmc_id,),
+    ).fetchone()[0]
+    app.execute(
+        "INSERT INTO trust_contacts (pmc_id, tenant_id, email) VALUES (%s, %s, %s)",
+        (pmc_id, tenant, "drew.sample.drafts@example.com"),
+    )
+    return {"drew": str(tenant), "aspen_row": str(prop)}
+
+
 # The feature tests (frontend/e2e/features.spec.ts), each on a demo PMC of its own.
 FEATURES = (
     "rent",
@@ -649,6 +669,9 @@ FEATURES = (
     "receive-payment",
     "tax-ids",
     "ai-keys",
+    "drafts",
+    "events",
+    "mcp",
     "reminders",
     "owner-portal-two",
     "portal-messages",

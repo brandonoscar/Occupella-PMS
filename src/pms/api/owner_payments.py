@@ -266,6 +266,7 @@ def apply(conn: psycopg.Connection[Any], event: payments.Event, partner: str) ->
                 (row.pmc_id, row.id, event.kind, event.event_id, event.fee, event.happened_at),
             )
     except psycopg.errors.CheckViolation:
+        online.refuse_too_soon(conn, "trust_owner_online_payment_events", row.id, event.kind)
         return True  # out of order (paid after failed, say): kept as it first came
     settle(conn, row)
     return True

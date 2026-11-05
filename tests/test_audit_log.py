@@ -14,9 +14,11 @@ from helpers import (
     NOT_FROM_AN_EXTENSION,
     acting_as,
     add_staff,
+    add_tenant,
     add_unit,
     charge,
     make_pmc,
+    offer_lease,
     open_application_link,
     open_lease,
     post,
@@ -39,6 +41,13 @@ FEB = datetime(2026, 2, 1, tzinfo=UTC)
 NOT_AUDITED = {
     "trust_audit_log",
     "trust_login_secrets",
+    # When each session was last used (migration 20261105000200): moved forward every few minutes
+    # while someone works, it would bury the log; the session's start and end stay audited.
+    "trust_session_activity",
+    # Events and their deliveries (ADR 0011, migration 20261105000500): each event repeats a
+    # write the log already keeps, and each delivery attempt is the courier's, as an email's is.
+    "trust_events",
+    "trust_event_deliveries",
     "trust_document_files",
     "trust_emails",
     "trust_email_deliveries",
@@ -328,6 +337,59 @@ def test_the_report_lists_each_change_with_who_made_it(conn, app_conn, pmc):
         "SELECT count(*) FROM trust_audit_log WHERE pmc_id = %s", (pmc.pmc_id,)
     ).fetchone()[0]
     assert len(changes) == count and before < last_id(conn)
+
+
+def test_a_files_bytes_read_as_their_size_never_as_millions_of_characters(conn, pmc):
+    """docs/edge-cases.md F-122: a lease offer's 4 MB PDF read as 8 million hex characters in one
+    detail cell, which a PDF export never finished wrapping. A binary field reads as its size."""
+    staff = add_staff(conn, pmc.pmc_id, "Leasing 1")
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "Unit 1")
+    tenant = add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, "Tenant 2")
+    lease = open_lease(
+        conn, pmc.pmc_id, unit, date(2026, 1, 1), date(2026, 12, 31), "1500.00", [tenant]
+    )
+    offer = offer_lease(conn, pmc.pmc_id, unit, staff, date(2027, 1, 1), renews_lease_id=lease)
+    big = b"%PDF-1.4 " + b"x" * 4_000_000
+    offered = conn.execute(
+        "INSERT INTO trust_lease_offers (pmc_id, renews_lease_id, unit_id, starts_on, monthly_rent,"
+        " document_title, document, offered_by)"
+        " VALUES (%s, %s, %s, '2028-01-01', 1500, 'Big lease', %s, %s) RETURNING id",
+        (pmc.pmc_id, lease, unit, big, staff),
+    ).fetchone()[0]
+
+    details = {
+        row[-1] for row in report(conn, pmc) if row[1] == "change" and row[6] == "lease_offers"
+    }
+
+    assert offer and offered and len(details) == 2
+    assert all(len(detail) < 2000 for detail in details)
+    assert any(f"document: ({len(big)} bytes)" in detail for detail in details)
+    assert any(f"document: ({len(b'%PDF-1.4 a synthetic lease')} bytes)" in d for d in details)
+
+
+def test_a_files_bytes_changed_read_as_their_sizes_before_and_after(conn, pmc):
+    # No audited table lets a file change today; one that did would read the same way.
+    with conn.transaction(force_rollback=True):
+        conn.execute(
+            "CREATE TABLE trust_test_files (id int PRIMARY KEY, pmc_id uuid, content bytea,"
+            " note text)"
+        )
+        conn.execute(
+            "CREATE TRIGGER trust_audit AFTER INSERT OR UPDATE ON trust_test_files"
+            " FOR EACH ROW EXECUTE FUNCTION trust_audit()"
+        )
+        conn.execute(
+            "INSERT INTO trust_test_files VALUES (1, %s, NULL, 'x'), (2, %s, %s, 'x')",
+            (pmc.pmc_id, pmc.pmc_id, b"12345"),
+        )
+        conn.execute("UPDATE trust_test_files SET content = %s, note = 'y'", (b"123",))
+        updates = [
+            row[-1] for row in report(conn, pmc) if row[6] == "test_files" and row[5] == "update"
+        ]
+    assert sorted(updates) == [
+        "content: (5 bytes) to (3 bytes), note: x to y",
+        "content: null to (3 bytes), note: x to y",
+    ]
 
 
 def test_the_report_holds_the_period_and_no_other_pmcs_changes(conn, pmc):

@@ -135,7 +135,7 @@ tests = [
 
 [[invariant]]
 id = "an-api-key-reads-and-never-moves-money"
-statement = "An API key (ADR 0011) is made and taken back, once, only by an admin (the database refuses anyone else and a key names who made it); its secret is shown once and kept only as its SHA-256, in no list, audit row or export. A request with a standing key runs its whole transaction as trust_ai_agent, which holds no grant that writes: it reads what that role reads, its report is always of the key's own company, and it names no staff member. trust_app may become that role and never inherits its grants. A key that doesn't exist, was taken back or is malformed is refused alike; a key is no session and a session is no key; each key is rate-limited."
+statement = "An API key (ADR 0011) is made and taken back, once, only by an admin (the database refuses anyone else and a key names who made it); its secret is shown once and kept only as its SHA-256, in no list, audit row or export. A request with a standing key runs its whole transaction as trust_ai_agent, which holds no grant that writes but proposing a draft: it reads what that role reads, its report is always of the key's own company, and it names no staff member. trust_app may become that role and never inherits its grants. A key that doesn't exist, was taken back or is malformed is refused alike; a key is no session and a session is no key; each key is rate-limited."
 tests = [
   "tests/properties/test_api_key_properties.py::test_a_key_reads_as_the_ai_only_while_it_stands_and_only_its_company",
   "tests/properties/test_api_key_properties.py::test_a_key_makes_at_most_its_limit_in_any_window",
@@ -157,6 +157,58 @@ tests = [
   "tests/test_privileges.py::test_ai_role_has_no_powers_beyond_its_grants",
   "tests/test_ai_role.py::test_the_ai_role_cannot_move_money_or_change_a_record",
   "tests/test_records_export.py::test_no_credential_comes_out",
+]
+
+[[invariant]]
+id = "a-draft-is-done-only-once-a-person-approves-it"
+statement = "A draft (ADR 0011, migration 20261105000300) is proposed by software with a standing API key of an active company, as the AI's role, whose one write is that INSERT; it names the company's records by id, never a contact detail, and its kind moves no money (an email, a notice, a work order opened, assigned or scheduled, a note). A staff member decides it once: declined, with why, nothing is done; approved, as proposed or edited, the PMS does it through the write path staff use by hand, as that staff member and with the area of what it does, all of it or none, and records what it made, checked at commit. The software reads what became of its own drafts, never what staff made of one. Append-only and audited."
+tests = [
+  "tests/properties/test_draft_properties.py::test_a_draft_is_decided_once_done_exactly_when_approved_by_staff_who_may",
+  "tests/test_draft_rules.py::test_the_ai_role_proposes_a_draft_and_nothing_else",
+  "tests/test_draft_rules.py::test_the_app_never_proposes_a_draft",
+  "tests/test_draft_rules.py::test_a_draft_needs_a_standing_key_of_an_active_company",
+  "tests/test_draft_rules.py::test_a_drafts_kind_is_one_that_moves_no_money_and_its_proposal_says_it",
+  "tests/test_draft_rules.py::test_a_draft_is_decided_once_by_a_named_staff_member_and_approved_means_done",
+  "tests/test_draft_rules.py::test_drafts_and_their_decisions_never_change",
+  "tests/test_privileges.py::test_the_ai_roles_one_write_is_proposing_a_draft",
+  "tests/api/test_drafts.py::test_staff_see_who_a_proposed_email_goes_to_and_approving_it_writes_it_as_them",
+  "tests/api/test_drafts.py::test_staff_change_a_draft_before_approving_it_and_it_is_done_as_changed",
+  "tests/api/test_drafts.py::test_a_declined_draft_does_nothing_and_the_software_reads_why",
+  "tests/api/test_drafts.py::test_approving_takes_the_area_of_what_the_draft_does_and_declining_takes_none",
+  "tests/api/test_drafts.py::test_a_draft_names_only_the_companys_own_records_each_once",
+  "tests/api/test_drafts.py::test_only_a_standing_key_proposes_and_a_key_opens_no_staff_page",
+]
+
+[[invariant]]
+id = "rent-once-a-month"
+statement = "The rent run charges a lease due on the first its rent at most once in a month, and each monthly charge at most once in a month, whatever day it is run for (Run rent now's Rent due on may be any day): a month with any of the lease's rent due already, from a run for another day or carried over from the old system, is not charged again (migration 20261105000400). No month is missed: a lease in effect on a day the run was run for has its rent in that month. Run again, it charges nothing new."
+tests = [
+  "tests/properties/test_rent_once_a_month_properties.py::test_rent_and_monthly_charges_are_charged_once_a_month_whatever_day_the_run_is_for",
+  "tests/test_rent_once_a_month.py::test_a_mid_month_run_charges_no_month_twice",
+  "tests/test_rent_once_a_month.py::test_a_month_whose_rent_came_over_on_another_day_is_not_charged_again",
+  "tests/test_rent_once_a_month.py::test_a_mid_month_run_still_charges_a_month_not_charged_yet",
+  "tests/test_rent_once_a_month.py::test_each_lease_is_counted_on_its_own",
+  "tests/test_rent_once_a_month.py::test_another_company_is_not_counted",
+]
+
+[[invariant]]
+id = "events-in-order-never-skipped"
+statement = "An event (ADR 0011, migration 20261105000500) is written by the database alone (trust_record_event, as the owner; neither the app nor the AI's role may write one) in the same transaction as the write it tells of, its kind and ids only, and none for a write undone; append-only. A reader with a key reads its company's events after the last it got, in the order their transactions began writing, each only once every transaction that began writing before it has finished, so it gets every committed event exactly once and never a rolled-back one, and never another company's. A webhook goes only to an https address whose every resolved address is public, signed with its sealed secret, retried after each wait up to its last attempt, from when it was added and while it stands; only an admin adds or takes one back."
+tests = [
+  "tests/properties/test_event_properties.py::test_a_reader_gets_every_committed_event_once_never_skipping_a_slower_transaction",
+  "tests/test_event_rules.py::test_a_reader_never_skips_an_event_of_a_transaction_that_finished_later",
+  "tests/test_event_rules.py::test_an_undone_write_writes_no_event",
+  "tests/test_event_rules.py::test_neither_the_app_nor_the_ai_writes_an_event",
+  "tests/test_event_rules.py::test_a_lease_its_payment_and_its_bounce_are_events",
+  "tests/test_event_rules.py::test_a_work_order_its_steps_and_a_request_are_events",
+  "tests/test_webhooks.py::test_each_event_goes_signed_with_ids_only_and_once",
+  "tests/test_webhooks.py::test_an_address_that_leads_inside_is_never_sent_to",
+  "tests/test_webhooks.py::test_a_webhook_gets_its_own_companys_events_from_when_it_was_added_while_it_stands",
+  "tests/test_webhooks.py::test_an_event_tried_every_time_is_given_up_on",
+  "tests/test_webhooks.py::test_the_database_takes_a_webhook_from_an_admin_only",
+  "tests/api/test_events.py::test_software_reads_its_companys_events_in_order_after_the_last_it_read",
+  "tests/api/test_events.py::test_another_companys_events_are_never_read",
+  "tests/api/test_events.py::test_only_a_key_reads_events",
 ]
 
 [[invariant]]
@@ -854,9 +906,11 @@ tests = [
 
 [[invariant]]
 id = "quickbooks-journal-moves-as-the-ledger"
-statement = "The QuickBooks journal of some days is the ledger's transfers of those days (UTC), each debiting the QuickBooks account the money left and crediting the one it reached, so each entry balances and each QuickBooks account's debits less credits are what its ledger accounts lost; the Desktop file's transactions and the Online file's journal numbers each sum to zero. A ledger account's QuickBooks name is the company's latest, or the PMS's, of its own company's accounts only, one QuickBooks can read, and never rewritten."
+statement = "The QuickBooks journal of some days is the ledger's transfers of those days (UTC), each debiting the QuickBooks account the money left and crediting the one it reached, so each entry balances and each QuickBooks account's debits less credits are what its ledger accounts lost; the Desktop file's transactions and the Online file's journal numbers each sum to zero. A ledger account's QuickBooks name is the company's latest, or the PMS's, of its own company's accounts only, one QuickBooks can read, and never rewritten. No two of a company's accounts share a name the PMS makes (the oldest keeps its plain name, each after it adds its tenant's property, then a number), and none changes as others come."
 tests = [
   "tests/properties/test_quickbooks_properties.py::test_the_journal_moves_quickbooks_balances_as_the_ledger_moves",
+  "tests/properties/test_quickbooks_properties.py::test_no_two_accounts_share_a_pms_made_name_and_none_ever_changes",
+  "tests/test_quickbooks.py::test_two_people_of_one_name_never_share_a_quickbooks_account",
   "tests/test_quickbooks.py::test_the_journal_debits_where_money_left_and_credits_where_it_went",
   "tests/test_quickbooks.py::test_desktop_reads_balanced_general_journal_entries",
   "tests/test_quickbooks.py::test_online_reads_two_lines_an_entry_under_its_journal_number",
@@ -1131,9 +1185,10 @@ tests = [
 
 [[invariant]]
 id = "roles-decide-who-pays-and-who-approves"
-statement = "A staff member the app names pays out money (a bill, an owner draw) only holding the disburse role, approves a reconciliation or signs off a cutover only holding approve, and invites or disables a staff login only holding admin. Only an admin changes a role, a change changes something, and a PMC keeps one admin. Month-end is approved by a staff member other than the one who prepared it, on the figures prepared."
+statement = "A staff member the app names pays out money (a bill, an owner draw) only holding the disburse role, approves a reconciliation or signs off a cutover only holding approve, and invites or disables a staff login only holding admin. Only an admin changes a role, a change changes something, and a PMC keeps one admin, one whose login isn't disabled (migration 20261105000600): the last of those can't drop admin, and with none, the server's operator makes one naming nobody. Month-end is approved by a staff member other than the one who prepared it, on the figures prepared."
 tests = [
   "tests/properties/test_staff_roles_properties.py::test_roles_decide_who_pays_out_and_who_approves",
+  "tests/test_staff_roles.py::test_an_admin_whose_login_is_disabled_doesnt_keep_the_pmc_its_admin",
   "tests/test_staff_roles.py::test_paying_a_bill_takes_a_staff_member_who_may_disburse",
   "tests/test_staff_roles.py::test_whoever_prepared_it_does_not_approve_it",
   "tests/test_staff_roles.py::test_a_pmc_keeps_an_admin",
@@ -1722,6 +1777,18 @@ tests = [
   "tests/api/test_payment_keys_api.py::test_a_companys_webhook_records_none_of_another_companys_payments",
   "tests/api/test_payment_keys_api.py::test_a_payment_started_under_keys_since_changed_or_taken_away_still_reports_in",
   "tests/api/test_payment_keys_api.py::test_keys_that_dont_open_here_take_no_payment_and_never_fall_back",
+]
+
+[[invariant]]
+id = "company-status-latest-holds"
+statement = "A company's status (migration 20261105000100), set by the server's operator with python -m pms.admin status, is the latest it was set to, active before any. A person signs in only while it is active, refused the same way whatever the password while it is suspended or closed; open sessions and API keys stop answering and no password reset is sent then. The nightly run passes over a company only while it is closed. Another company's status never changes with it."
+tests = [
+  "tests/properties/test_company_status_properties.py::test_a_companys_status_is_its_latest_and_decides_who_signs_in_and_what_runs",
+  "tests/api/test_company_status.py::test_a_company_is_active_until_its_operator_says_otherwise",
+  "tests/api/test_company_status.py::test_nobody_signs_in_to_a_company_that_isnt_active",
+  "tests/api/test_company_status.py::test_a_suspended_company_sends_no_password_reset",
+  "tests/api/test_company_status.py::test_a_suspended_companys_api_keys_stop",
+  "tests/api/test_company_status.py::test_a_closed_companys_nightly_run_stops_and_a_suspended_ones_goes_on",
 ]
 
 [[invariant]]

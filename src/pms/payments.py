@@ -173,6 +173,16 @@ def fake_saved(autopay_id: UUID, happened_at: datetime) -> Saved:
     )
 
 
+# The Stripe API version every call names (docs/edge-cases.md P-014): without it Stripe answers in
+# the account's own default version, and one older than 2022-11-15 has no PaymentIntent
+# latest_charge, so every paid report would fail on its fee. This one has every shape the PMS
+# reads (latest_charge, Checkout's us_bank_account, SetupIntents). A webhook's own payload keeps
+# the endpoint's version; the PMS reads only ids, statuses and metadata from it, and fetches the
+# fee with this version. Not tried against Stripe from here (NOT VERIFIED); tests/test_payments.py
+# pins that it is sent.
+STRIPE_VERSION = "2024-06-20"
+
+
 class StripePartner:
     """The company's own Stripe account (Stripe, Inc.'s API over HTTPS, no SDK): a Checkout Session
     takes the payment on Stripe's page, and Stripe's signed webhook reports what the bank did."""
@@ -194,6 +204,7 @@ class StripePartner:
         url = f"{self.api}{path}" + ("" if data else "?" + urllib.parse.urlencode(form))
         request = urllib.request.Request(url, data=data, method=method)  # noqa: S310 (fixed https)
         request.add_header("Authorization", f"Bearer {self._key}")
+        request.add_header("Stripe-Version", STRIPE_VERSION)
         if key:
             # Stripe's own retry key: the same payment asked twice is one session.
             request.add_header("Idempotency-Key", key)
@@ -352,6 +363,12 @@ STRIPE_KINDS: dict[str, Kind] = {
 }
 
 
+# Every event the PMS reads from Stripe, which the company's webhook endpoint must be sent
+# (docs/edge-cases.md P-012): one not subscribed to the bank's async reports never sees a bank
+# payment paid. Settings, Company setup lists them.
+STRIPE_EVENTS = tuple(sorted({*STRIPE_KINDS, "setup_intent.succeeded"}))
+
+
 def checkout_form(
     payment_id: UUID, lines: list[tuple[str, Decimal]], done_url: str
 ) -> list[tuple[str, str]]:
@@ -505,11 +522,23 @@ def seal_keys(row: UUID, secret_key: str, webhook_secret: str, key: bytes) -> tu
     )
 
 
+def many_companies(conn: psycopg.Connection[Any]) -> bool:
+    """Whether the database holds more than one company."""
+    row = conn.execute("SELECT count(*) FROM (SELECT 1 FROM trust_pmcs LIMIT 2) AS two").fetchone()
+    return row is not None and row[0] > 1
+
+
 class Resolver:
     """Which partner takes a company's payments: its own Stripe account once an admin entered its
     keys, else the server's partner (PMS_PAYMENTS), else none. A company with keys of its own that
     don't open here (the server lost its PMS_DATA_KEY, or another server's) takes no payment
-    online: it never falls back to the server's account, which isn't where its money goes."""
+    online: it never falls back to the server's account, which isn't where its money goes.
+
+    The server's own keys are one Stripe account, paying out to one company's trust account, so a
+    real partner of the server's serves only a server holding one company (`server_for`): on a
+    server with more, a company without keys of its own would take its tenants' rent into another
+    company's account, so it takes none online until it enters its own. The fake partner, which
+    moves no money, serves any."""
 
     def __init__(self, server: Partner | None, environ: Mapping[str, str] = os.environ) -> None:
         self.server = server
@@ -544,11 +573,18 @@ class Resolver:
             return None
         return StripePartner(secret, webhook)
 
+    def server_for(self, conn: psycopg.Connection[Any]) -> Partner | None:
+        """The server's partner, where it may take a company's payments: the fake one always, a
+        real one only on a server holding one company."""
+        if self.server is None or self.server.name == "fake":
+            return self.server
+        return None if many_companies(conn) else self.server
+
     def for_pmc(self, conn: psycopg.Connection[Any], pmc_id: UUID) -> Partner | None:
         own = self.own(conn, pmc_id)
         if own is False:
             return None
-        return own if own is not None else self.server
+        return own if own is not None else self.server_for(conn)
 
     def name_for(self, conn: psycopg.Connection[Any], pmc_id: UUID) -> str | None:
         partner = self.for_pmc(conn, pmc_id)

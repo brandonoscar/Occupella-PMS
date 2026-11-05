@@ -10,6 +10,7 @@ from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from pms import accounts, admin
+from pms.api import setup
 
 
 @pytest.fixture
@@ -180,6 +181,53 @@ def test_setup_starts_a_company_with_its_first_admin_and_their_invite(
         app_conn.execute("SET ROLE trust_app")
         invite = accounts.view_invite(app_conn, link.split("#", 1)[1])
     assert invite.email == "first.admin@example.com"
+    # Its starting chart of accounts, each on its Schedule E line.
+    assert sorted(
+        conn.execute(
+            "SELECT name, schedule_e_line FROM trust_expense_accounts WHERE pmc_id = %s",
+            (pmc_id,),
+        ).fetchall()
+    ) == sorted(setup.STARTING_CHART)
+
+
+def test_starting_chart_adds_what_a_company_lacks_once(conn, database_url, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    pmc = make_pmc(conn)
+    # The company already keeps repairs, spelled its own way, and one account of its own.
+    conn.execute(
+        "INSERT INTO trust_expense_accounts (pmc_id, name, schedule_e_line)"
+        " VALUES (%s, 'REPAIRS', 14), (%s, 'Snow removal', 7)",
+        (pmc.pmc_id, pmc.pmc_id),
+    )
+
+    assert admin.main(["starting-chart", str(pmc.pmc_id)]) == 0
+    assert capsys.readouterr().out == f"added {len(setup.STARTING_CHART) - 1} expense accounts\n"
+    assert admin.main(["starting-chart", str(pmc.pmc_id)]) == 0
+    assert capsys.readouterr().out == "added 0 expense accounts\n"
+
+    names = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM trust_expense_accounts WHERE pmc_id = %s", (pmc.pmc_id,)
+        )
+    }
+    assert names == {name for name, _ in setup.STARTING_CHART if name != "Repairs"} | {
+        "REPAIRS",
+        "Snow removal",
+    }
+
+
+def test_starting_chart_refuses_a_company_that_isnt_there(database_url, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    assert admin.main(["starting-chart", str(uuid.uuid4())]) == 2
+    assert capsys.readouterr().err == "refused: no company has that id\n"
+
+
+def test_the_starting_chart_sits_on_expense_lines_and_never_on_management_fees():
+    lines = {line for _, line in setup.STARTING_CHART}
+    assert lines <= set(setup.SCHEDULE_E) and 11 not in lines
+    names = [name.lower() for name, _ in setup.STARTING_CHART]
+    assert len(names) == len(set(names))
 
 
 def test_setup_is_all_or_nothing(conn, database_url, monkeypatch, capsys):

@@ -98,11 +98,19 @@ function SettingsForm({ settings, save }: { settings: PaymentSettings; save: (bo
 // company's fee account can't cover (the company deposits it from its own account, then Record).
 export function OnlinePaymentsWaiting({ refresh }: { refresh: number }) {
   const [items, setItems] = useState<Waiting[]>([]);
+  const [unread, setUnread] = useState("");
   const [runs, setRuns] = useState(0);
   const { said, error, record } = useRecord(() => setRuns((n) => n + 1));
   const { ask, prompt } = useConfirm();
   useEffect(() => {
-    api.get<Waiting[]>("/api/payments/waiting").then(setItems).catch(() => setItems([]));
+    api.get<Waiting[]>("/api/payments/waiting").then((found) => {
+      setItems(found);
+      setUnread("");
+    }).catch((failed) => {
+      // Never as if nothing waited (docs/edge-cases.md P-040).
+      setItems([]);
+      setUnread(`Online payments waiting couldn't load: ${failed instanceof ApiError ? failed.detail : String(failed)}`);
+    });
   }, [runs, refresh]);
   const banks = [...new Map(items.filter((w) => w.company_owes !== null)
     .map((w) => [w.bank_account_id, w.cover_needed])).entries()].filter(([, needed]) => needed !== "0.00");
@@ -111,6 +119,7 @@ export function OnlinePaymentsWaiting({ refresh }: { refresh: number }) {
   return (
     <>
       <Said>{said}</Said>
+      {unread !== "" && <Notice tone="error">{unread}</Notice>}
       {items.length > 0 && (
     <Card title="Online payments waiting">
       <Notice tone="error">{error}</Notice>
@@ -128,7 +137,10 @@ export function OnlinePaymentsWaiting({ refresh }: { refresh: number }) {
                 onConfirm={() => record(`/api/payments/${item.payment_id}/record`, {},
                   () => `Recorded ${money(item.amount)} paid online.`)}>Try again</AskFirst>
             )}
-            {item.what === "payment" && item.owner_id === null && (
+            {item.what === "payment" && item.owner_id === null && item.choose_account.length > 0 && (
+              <ChooseOwner item={item} record={record} />
+            )}
+            {item.what === "payment" && item.owner_id === null && item.choose_account.length === 0 && (
               <Button variant="secondary" onClick={() => ask(
                 `Record ${money(item.amount)} paid online for ${item.memo}, accepting it past the lease's payment hold?`
                   + " The bank already paid it; this puts it on the lease's balance. The hold stays for other payments.",
@@ -166,5 +178,29 @@ export function OnlinePaymentsWaiting({ refresh }: { refresh: number }) {
     </Card>
       )}
     </>
+  );
+}
+
+// A payment whose property has several owner accounts and no ownership shares: staff say whose it
+// is, then record it into that owner's account (docs/edge-cases.md P-040).
+function ChooseOwner({ item, record }: {
+  item: Waiting;
+  record: (path: string, body: unknown, said: () => string) => unknown;
+}) {
+  const [account, setAccount] = useState(item.choose_account[0]?.account_id ?? "");
+  const owner = item.choose_account.find((choice) => choice.account_id === account)?.owner ?? "";
+  return (
+    <span className="flex flex-wrap items-end gap-2">
+      <Select label="Whose payment" id={`whose-${item.payment_id}`} value={account}
+        onChange={(e) => setAccount(e.target.value)}>
+        {item.choose_account.map((choice) => (
+          <option key={choice.account_id} value={choice.account_id}>{choice.owner}</option>
+        ))}
+      </Select>
+      <AskFirst variant="secondary"
+        question={`Record ${money(item.amount)} paid online for ${item.memo} into ${owner}'s account? The bank already paid it.`}
+        onConfirm={() => record(`/api/payments/${item.payment_id}/record`, { account },
+          () => `Recorded ${money(item.amount)} paid online.`)}>Record it</AskFirst>
+    </span>
   );
 }

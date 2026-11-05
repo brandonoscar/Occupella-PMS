@@ -43,6 +43,24 @@ class Needed:
     increase_percent: Decimal
 
 
+def whole_years(start: date, end: date) -> int:
+    """The whole years from `start` to `end` (the day after the last): the anniversaries of
+    `start` reached by `end`, a February 29's falling on February 28 in a common year. Never
+    days over 365.25, which read a 12-month lease of 365 days as no year and two years of 730
+    days as one (docs/edge-cases.md D-067, D-068)."""
+
+    def on(years: int) -> date:
+        try:
+            return start.replace(year=start.year + years)
+        except ValueError:  # February 29 in a common year
+            return start.replace(year=start.year + years, day=28)
+
+    if end <= start:
+        return 0
+    years = end.year - start.year
+    return years if on(years) <= end else years - 1
+
+
 def percent_over(new: Decimal, old: Decimal) -> Decimal:
     """The increase in percent, exact: a rule compares its threshold with this, never a rounding."""
     return (new - old) * 100 / old

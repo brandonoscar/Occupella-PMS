@@ -1,0 +1,8 @@
+line	item	staff	db_role	action	record	detail
+1	PMC	Golden PMC	NULL	NULL	NULL	NULL
+2	period	yesterday to tomorrow	NULL	NULL	NULL	NULL
+3	change	not recorded	postgres	insert	pmcs	display_name: Golden PMC
+4	change	not recorded	postgres	insert	staff	display_name: Manager 1
+5	change	not recorded	postgres	insert	staff_roles	granted: true, role: admin
+6	change	Manager 1	trust_app	insert	api_keys	name: Golden key, prefix: occ_golden01, recorded_by: <uuid1>, secret_sha256: (32 bytes)
+7	total	NULL	NULL	NULL	NULL	4 changes

@@ -167,3 +167,13 @@ def test_a_units_file_brings_their_details(client, conn, staff, pmc):
         422,
         "line 2: the bathrooms isn't one the PMS can keep",
     )
+    # A decimal comma is refused, never read as 100 times the rent (docs/edge-cases.md F-064).
+    refused(
+        imported(client, header, f'{prop},Unit 9,2,1,850,"1450,50"'),
+        422,
+        "line 2: the market rent '1450,50' has a comma that separates no thousands",
+    )
+    assert conn.execute(
+        "SELECT count(*) FROM trust_units WHERE pmc_id = %s AND display_name = 'Unit 9'",
+        (pmc.pmc_id,),
+    ).fetchone() == (0,)

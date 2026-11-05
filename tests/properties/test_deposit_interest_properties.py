@@ -239,3 +239,95 @@ def test_deposit_interest_is_each_days_deposit_at_its_rate_paid_once(database_ur
     ):
         app.execute("SET ROLE trust_app")
         check(conn, app)
+
+
+# --- a deposit shared by two leases: each day paid once (M-081, M-082) -------------------------
+
+
+@given(
+    deposit=MONEY,
+    percent=RATE.filter(lambda r: r > 0),
+    # (which lease pays, days in its run)
+    runs=st.lists(st.tuples(st.integers(0, 1), st.integers(1, 200)), min_size=1, max_size=6),
+)
+def check_shared(conn, app, deposit, percent, runs):
+    """One tenant on two leases at once (two units of one property), so one deposit account:
+    whichever lease pays a day first pays it, at the model's exact interest for the days it
+    pays that nothing paid before, and the other finds nothing due for it. No day is ever paid
+    twice, and every day paid is paid at its exact interest, rounded per payment."""
+    pmc = make_pmc(conn)
+    prop = pmc.owners[0].property_id
+    tenant = add_tenant(conn, pmc.pmc_id, prop, "Tenant 0")
+    account = open_account(
+        conn, pmc.pmc_id, pmc.deposit_bank_id, "tenant_deposit", tenant_id=tenant
+    )
+    leases = [
+        open_lease(
+            conn, pmc.pmc_id, add_unit(conn, pmc.pmc_id, prop), START, None, "900.00", [tenant]
+        )
+        for _ in range(2)
+    ]
+    transfer_batch(conn, [(pmc.deposit_cash, account, deposit)], noon(START))
+    deposit_interest_terms(conn, pmc.pmc_id, prop, START, percent)
+
+    paid_days: set[date] = set()
+    paid_total = Decimal(0)
+    starts = [START, START]
+    latest = START  # payments are made on days that go forward
+    for k, (which, length) in enumerate(runs):
+        start = starts[which]
+        through = start + timedelta(days=length - 1)
+        latest = max(latest, through + timedelta(days=1))
+        unpaid = [
+            start + timedelta(days=d)
+            for d in range(length)
+            if start + timedelta(days=d) not in paid_days
+        ]
+        exact = sum(
+            (Fraction(deposit) * Fraction(percent) / 100 / days_in_year(day) for day in unpaid),
+            Fraction(0),
+        )
+        cents = exact * 100
+        if abs(cents - int(cents) - Fraction(1, 2)) < Fraction(1, 10**9):
+            event("within a hair of a half cent")
+            return
+        expected = (Decimal(cents.numerator) / Decimal(cents.denominator) / 100).quantize(
+            CENT, ROUND_HALF_UP
+        )
+        key = f"shared-{k}"
+        if expected == 0:
+            event("nothing left due on this lease's days")
+            try:
+                pay_deposit_interest(
+                    app, pmc.pmc_id, leases[which], through, "rent_credit", key, noon(latest)
+                )
+            except psycopg.errors.CheckViolation as refused:
+                assert "no interest is due" in str(refused)
+            else:
+                raise AssertionError("a payment of nothing went through")
+            continue
+        if len(unpaid) < length:
+            event("some of its days paid by the other lease")
+        paid = pay_deposit_interest(
+            app, pmc.pmc_id, leases[which], through, "rent_credit", key, noon(latest)
+        )
+        assert paid == expected
+        paid_total += paid
+        paid_days.update(unpaid)
+        starts[which] = through + timedelta(days=1)
+
+    # All both leases paid is the sum of what each day earned once.
+    assert conn.execute(
+        "SELECT coalesce(sum(p.amount), 0) FROM trust_deposit_interest_payments AS p"
+        " WHERE p.lease_id = ANY(%s)",
+        (leases,),
+    ).fetchone() == (paid_total,)
+
+
+def test_a_deposit_two_leases_share_is_paid_each_day_once(database_url):
+    with (
+        psycopg.connect(database_url, autocommit=True) as conn,
+        psycopg.connect(database_url, autocommit=True) as app,
+    ):
+        app.execute("SET ROLE trust_app")
+        check_shared(conn, app)

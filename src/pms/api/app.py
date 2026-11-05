@@ -23,11 +23,13 @@ refusal is answered 403.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import secrets
-from collections.abc import AsyncIterator, Awaitable, Callable
+import tempfile
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -40,14 +42,28 @@ import psycopg
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg import sql
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
+from starlette.requests import ClientDisconnect
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from pms import accounts, days, email, exports, geocoding, nightly, payments, phones
+from pms import (
+    accounts,
+    days,
+    deployment,
+    email,
+    exports,
+    geocoding,
+    nightly,
+    payments,
+    phones,
+    schema,
+    webhooks,
+)
 from pms.api import (
     addresses,
     ai_keys,
@@ -63,10 +79,14 @@ from pms.api import (
     custom_roles,
     dashboard,
     deposit_interest,
+    deps,
     directory,
     documents,
+    drafts,
     emails,
+    events,
     general_ledger,
+    go_live,
     groups,
     history,
     household,
@@ -76,6 +96,7 @@ from pms.api import (
     leasing,
     listings,
     maintenance,
+    mcp,
     messages,
     moveout,
     notes,
@@ -109,6 +130,7 @@ from pms.api import (
     tax_credit,
     tax_ids,
     tenant,
+    throttle,
     today,
     unit_details,
     utilities,
@@ -117,11 +139,35 @@ from pms.api import (
     work_orders,
     year_close,
 )
-from pms.api.deps import COOKIE, Conn, Current, Staff, download, refusal
+from pms.api.deps import COOKIE, DISK_FULL, Conn, Current, Staff, download, refusal
 from pms.leasing import screening
 
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
+log = logging.getLogger("pms.api")
+# Each origin a change was refused from is logged once per process, at most this many.
+LOGGED_ORIGINS = 50
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+class NearestProxy:
+    """With PMS_TRUSTED_PROXIES "*" the only one that connects is the HTTPS proxy on the server
+    itself (compose.selfhost.yaml), and the address it adds to X-Forwarded-For is the last: nginx
+    as docs/install.md sets it ($proxy_add_x_forwarded_for) appends it to whatever the visitor
+    sent. uvicorn, trusting everyone, would take the first, the visitor's own words, so a visitor
+    could dodge the sign-in limit with a new address each try and write any address into a
+    signature's evidence. This keeps the last alone."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] in ("http", "websocket"):
+            named = [value for name, value in scope["headers"] if name == b"x-forwarded-for"]
+            if named:
+                last = b",".join(named).split(b",")[-1].strip()
+                headers = [(n, v) for n, v in scope["headers"] if n != b"x-forwarded-for"]
+                scope = {**scope, "headers": [*headers, (b"x-forwarded-for", last)]}
+        await self.app(scope, receive, send)
 
 
 @dataclass(frozen=True)
@@ -146,6 +192,12 @@ class Settings:
     # The nightly run (pms.nightly): rent, late fees and recurring bills post by themselves at
     # start and every day at 06:00 UTC. On unless PMS_NIGHTLY is "off".
     nightly: bool = False
+    # Webhooks (pms.webhooks): each event goes to the company's webhooks every 30 seconds. On
+    # unless PMS_WEBHOOKS is "off"; a server without PMS_DATA_KEY keeps and sends none.
+    webhooks: bool = False
+    # "allow" lets a server at an https address run fake partners: a public demo of a synthetic
+    # company, and nothing else (pms.deployment). Empty refuses them there.
+    fake_partners: str = ""
     # The HTTPS proxy in front of the app (docs/install.md, step 4), whose X-Forwarded-For names
     # the visitor: its address, a comma list of them, or "*" (compose.selfhost.yaml, where only
     # the server itself reaches the app). Then a signature's evidence keeps the signer's address,
@@ -167,13 +219,23 @@ class Settings:
             geocoder=os.environ.get("PMS_GEOCODER", ""),
             payments=os.environ.get("PMS_PAYMENTS", ""),
             nightly=os.environ.get("PMS_NIGHTLY", "on").lower() != "off",
+            webhooks=os.environ.get("PMS_WEBHOOKS", "on").lower() != "off",
+            fake_partners=os.environ.get("PMS_FAKE_PARTNERS", ""),
             trusted_proxies=os.environ.get("PMS_TRUSTED_PROXIES", "").strip(),
         )
 
     @property
     def origin(self) -> str:
-        parts = urlsplit(self.public_url)
-        return f"{parts.scheme}://{parts.netloc}"
+        """PMS_PUBLIC_URL's origin as a browser sends it in Origin: the scheme and host in lower
+        case, without the scheme's default port (docs/edge-cases.md H-161, H-162)."""
+        parts = urlsplit(self.public_url.strip())
+        scheme = parts.scheme.lower()
+        host = parts.hostname or ""
+        if ":" in host:  # an IPv6 address
+            host = f"[{host}]"
+        port = parts.port
+        default = {"https": 443, "http": 80}.get(scheme)
+        return f"{scheme}://{host}" + (f":{port}" if port is not None and port != default else "")
 
 
 # --- request and answer shapes ------------------------------------------------------------
@@ -199,6 +261,14 @@ class NewInvite(BaseModel):
 
 class InviteToken(BaseModel):
     token: Token
+
+
+class ServerCompany(BaseModel):
+    # The company this server signs in to, when it holds exactly one (a company's own server, or
+    # its own stack when hosted), so its sign-in page needs no ?pmc= link. Both empty on a server
+    # with more companies, which names none of them.
+    pmc_id: UUID | None
+    name: str | None
 
 
 class ResetRequest(BaseModel):
@@ -272,12 +342,29 @@ class Enroll(BaseModel):
 
 
 def create_app(settings: Settings) -> FastAPI:
+    # An address no browser opens it at refuses every change (pms.deployment).
+    deployment.refuse_public_url(settings.public_url)
+    # A server at an https address is one real people use: it refuses the test partners.
+    deployment.refuse_fakes(
+        settings.public_url,
+        {
+            "PMS_PAYMENTS": settings.payments,
+            "PMS_SCREENING_PARTNER": settings.screening_partner,
+            "PMS_GEOCODER": settings.geocoder,
+            "PMS_EMAIL_SENDER": settings.email_sender,
+        },
+        settings.fake_partners,
+    )
+
     def configure(conn: psycopg.Connection[Any]) -> None:
         conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(settings.db_role)))
         # The planner's JIT compiling costs more than it saves on the app's queries: on a
         # 1,000-unit company it made the trial balance take 1.2 s instead of 0.18 s, and the
         # general ledger 2.1 s instead of 0.5 s (tools/speed.py).
         conn.execute("SET jit = off")
+        # A database a newer PMS migrated, or not migrated yet, gets no request (H-041): the
+        # connection is refused, and the pool says why in the log.
+        schema.check(conn)
         conn.commit()
 
     pool = ConnectionPool(
@@ -297,9 +384,22 @@ def create_app(settings: Settings) -> FastAPI:
                 payments=app.state.payments,
             )
             runs.start()
+        else:
+            # Nothing posts by itself then (docs/edge-cases.md H-022).
+            log.warning(
+                "the nightly run is off (PMS_NIGHTLY=off): rent, recurring charges, late fees,"
+                " recurring bills and draws post only when `python -m pms.nightly` runs, once a"
+                " day, or an admin presses Run rent now"
+            )
+        courier = None
+        if settings.webhooks:
+            courier = webhooks.Courier(settings.database_url, settings.db_role)
+            courier.start()
         try:
             yield
         finally:
+            if courier is not None:
+                courier.stop()
             if runs is not None:
                 runs.stop()
             pool.close()
@@ -309,6 +409,10 @@ def create_app(settings: Settings) -> FastAPI:
         # uvicorn's own: from a trusted proxy only, the visitor's address (and the scheme) come
         # from X-Forwarded-For (and -Proto); from anyone else the headers are ignored.
         app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.trusted_proxies)
+        if settings.trusted_proxies == "*":
+            # Before it: uvicorn takes the first address when it trusts everyone, which the
+            # visitor may write themselves (docs/edge-cases.md U-033).
+            app.add_middleware(NearestProxy)
     app.state.settings = settings
     app.state.pool = pool
     app.state.screening = screening.partner_named(settings.screening_partner)
@@ -319,8 +423,28 @@ def create_app(settings: Settings) -> FastAPI:
     # The SMTP settings come straight from the environment, so a password is never part of
     # Settings (which a log or an error could print).
     app.state.email = email.sender_named(settings.email_sender, os.environ)
+    # What one address may try (pms.api.throttle): failed sign-ins and password resets.
+    app.state.sign_in_failures = throttle.Limiter(
+        throttle.SIGN_IN_FAILURES, throttle.SIGN_IN_WINDOW
+    )
+    app.state.resets_asked = throttle.Limiter(throttle.RESETS, throttle.RESET_WINDOW)
 
     https = urlsplit(settings.public_url).scheme == "https"
+    refused_from: set[str] = set()
+
+    def log_refused(origin: str) -> None:
+        # A server whose PMS_PUBLIC_URL isn't the address people use refuses every change
+        # (docs/edge-cases.md H-059); its log names both origins, each once, so another site's
+        # requests can't flood it.
+        if origin in refused_from or len(refused_from) >= LOGGED_ORIGINS:
+            return
+        refused_from.add(origin)
+        log.warning(
+            "refused a change from %r: PMS_PUBLIC_URL's origin is %r, so a browser at another"
+            " address can't sign in or change anything",
+            origin,
+            settings.origin,
+        )
 
     @app.middleware("http")
     async def guard(
@@ -333,6 +457,8 @@ def create_app(settings: Settings) -> FastAPI:
             fetched_from = request.headers.get("sec-fetch-site")
             origin = request.headers.get("origin")
             if fetched_from in CROSS_SITE or (origin is not None and origin != settings.origin):
+                if origin is not None and origin != settings.origin:
+                    log_refused(origin)
                 return JSONResponse({"detail": "this request came from another site"}, 403)
             if request.headers.get("content-type", "").split(";")[0].strip() != (
                 "application/json"
@@ -378,6 +504,7 @@ def create_app(settings: Settings) -> FastAPI:
             accounts.Conflict: 409,
             accounts.SignInRefused: 401,
             accounts.CodeNeeded: 401,
+            accounts.CompanyNotActive: 403,
         }.get(type(error), 422)
         return JSONResponse({"detail": str(error)}, status)
 
@@ -396,6 +523,12 @@ def create_app(settings: Settings) -> FastAPI:
         if "NUL (0x00)" not in str(error):
             raise error
         return JSONResponse({"detail": "text can't contain a NUL character"}, 422)
+
+    @app.exception_handler(psycopg.errors.DiskFull)
+    async def disk_full(request: Request, error: psycopg.Error) -> JSONResponse:
+        # The transaction is rolled back; whoever runs the server frees space (docs/support.md).
+        log.error("the database's disk is full: %s", error.diag.message_primary)
+        return JSONResponse({"detail": DISK_FULL}, 503, headers={"Retry-After": "60"})
 
     @app.exception_handler(psycopg.errors.InsufficientPrivilege)
     async def not_allowed(request: Request, error: psycopg.Error) -> JSONResponse:
@@ -440,9 +573,24 @@ def create_app(settings: Settings) -> FastAPI:
             return JSONResponse({"status": "database unavailable"}, 503)
         return JSONResponse({"status": "ok"})
 
+    @app.get("/api/sign-in")
+    def server_company(conn: Conn) -> ServerCompany:
+        rows = conn.execute(
+            "SELECT pmc_id, display_name FROM trust_pmcs ORDER BY pmc_id LIMIT 2"
+        ).fetchall()
+        if len(rows) != 1:
+            return ServerCompany(pmc_id=None, name=None)
+        return ServerCompany(pmc_id=rows[0][0], name=rows[0][1])
+
     @app.post("/api/sign-in")
-    def sign_in(body: SignIn, response: Response, conn: Conn) -> Me:
-        signed = accounts.sign_in(conn, body.pmc_id, body.email, body.password, body.code)
+    def sign_in(body: SignIn, request: Request, response: Response, conn: Conn) -> Me:
+        address = throttle.address_of(request)
+        throttle.refuse_if_waiting(app.state.sign_in_failures, address, "failed sign-ins")
+        try:
+            signed = accounts.sign_in(conn, body.pmc_id, body.email, body.password, body.code)
+        except accounts.SignInRefused:
+            app.state.sign_in_failures.hit(address)
+            raise
         return signed_in(response, signed, conn)
 
     @app.post("/api/sign-out", status_code=204)
@@ -485,9 +633,13 @@ def create_app(settings: Settings) -> FastAPI:
         return ResetAvailable(available=app.state.email is not None)
 
     @app.post("/api/password-reset", status_code=202)
-    def ask_reset(body: ResetRequest, conn: Conn) -> ResetAsked:
+    def ask_reset(body: ResetRequest, request: Request, conn: Conn) -> ResetAsked:
         """Emails an owner or a tenant a link to set a new password (ADR 0007). The answer is the
-        same whether or not the email has a login, so it tells no one who does."""
+        same whether or not the email has a login, so it tells no one who does. An address asks
+        at most throttle.RESETS times an hour."""
+        address = throttle.address_of(request)
+        throttle.refuse_if_waiting(app.state.resets_asked, address, "password resets")
+        app.state.resets_asked.hit(address)
         if app.state.email is not None:
             reset = accounts.request_reset(conn, body.pmc_id, body.email)
             if reset is not None:
@@ -546,6 +698,16 @@ def create_app(settings: Settings) -> FastAPI:
     def disable(login_id: UUID, session: Staff, conn: Conn) -> None:
         if login_id == session.login_id:
             raise HTTPException(422, "you can't disable your own login")
+        # A staff login takes admin (the database checks it); an owner's or a tenant's, the area
+        # their invite takes, "who can sign in" (docs/edge-cases.md U-009).
+        kind = conn.execute(
+            "SELECT kind FROM trust_logins WHERE pmc_id = %s AND id = %s",
+            (session.pmc_id, login_id),
+        ).fetchone()
+        if kind is not None and kind[0] != "staff" and not deps.may(conn, session, "people"):
+            raise HTTPException(
+                403, f"your roles don't let you change {deps.AREAS['people']}: an admin can add it"
+            )
         accounts.disable_login(conn, session.pmc_id, login_id)
 
     @app.get("/api/reports/{name}", response_model=None)
@@ -595,7 +757,24 @@ def create_app(settings: Settings) -> FastAPI:
         ).fetchone()
         if row is None or not row[0]:
             raise HTTPException(403, "only an admin downloads everything")
-        return download(exports.records_zip(conn, session.pmc_id), "records", "zip")
+        # Written to a file as its rows come and sent from it a block at a time, never whole in
+        # memory: a company may hold gigabytes of files (docs/edge-cases.md H-097, F-126).
+        with contextlib.ExitStack() as stack:
+            spool = stack.enter_context(tempfile.TemporaryFile())
+            exports.write_records_zip(conn, session.pmc_id, spool)
+            spool.seek(0)
+            sent = stack.pop_all()  # the file stays open until it is sent
+
+        def blocks() -> Iterator[bytes]:
+            with sent:
+                while block := spool.read(1024 * 1024):
+                    yield block
+
+        return StreamingResponse(
+            blocks(),
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="records.zip"'},
+        )
 
     app.include_router(owner.router)
     app.include_router(tenant.router)
@@ -611,6 +790,7 @@ def create_app(settings: Settings) -> FastAPI:
     calendar.hide_feed_tokens(logging.getLogger("uvicorn.access"))
     app.include_router(people.router)
     app.include_router(setup.router)
+    app.include_router(go_live.router)
     app.include_router(payment_files.router)
     app.include_router(rent.router)
     # Before online_payments, whose paths it shares a prefix with.
@@ -666,9 +846,68 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(applicant_details.router)
     # Software with an API key (ADR 0011): its own header, never a session's cookie.
     app.include_router(ai_keys.router)
+    app.include_router(drafts.router)
+    app.include_router(events.router)
+    app.include_router(mcp.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
+    # Outermost: no request reads more than MAX_BODY bytes into the process (H-072).
+    app.add_middleware(BodyLimit)
     return app
+
+
+# The most a request may send, in bytes: the largest thing the PMS takes is a 5 MB file as base64
+# in JSON, about 7 MB (docs/edge-cases.md H-072: with no limit, anyone could make the one process
+# read hundreds of megabytes into memory, signed in or not).
+MAX_BODY = 10 * 1024 * 1024
+TOO_BIG = "this request is larger than the PMS takes (10 MB)"
+
+
+class BodyLimit:
+    """Refuses a request whose body is larger than MAX_BODY (413): at once when it says its
+    length, else counted as it streams in, its reading stopped there."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        declared = dict(scope.get("headers") or []).get(b"content-length")
+        if declared is not None and (not declared.isdigit() or int(declared) > MAX_BODY):
+            await JSONResponse({"detail": TOO_BIG}, 413)(scope, receive, send)
+            return
+        read = 0
+        too_big = False
+        started = False
+
+        async def counted() -> Message:
+            nonlocal read, too_big
+            message = await receive()
+            if message["type"] == "http.request":
+                read += len(message.get("body", b""))
+                if read > MAX_BODY:
+                    too_big = True
+                    # The app reads no more: to it, the client went away.
+                    return {"type": "http.disconnect"}
+            return message
+
+        async def watched(message: Message) -> None:
+            nonlocal started
+            if too_big:
+                return  # the app's answer to a body it never got whole: the 413 goes instead
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, counted, watched)
+        except ClientDisconnect:
+            if not too_big:
+                raise
+        if too_big and not started:
+            await JSONResponse({"detail": TOO_BIG}, 413)(scope, receive, send)
 
 
 # What a browser's Sec-Fetch-Site says of a request from another site, or from another origin

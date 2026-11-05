@@ -165,6 +165,38 @@ def test_new_york_asks_30_days_in_the_first_year(client, conn, staff, pmc):
     assert plan(client, lately, monthly_rent="1060.00")["notice"]["days"] == 30
 
 
+def years_on(day: date, years: int) -> date:
+    """The same day `years` later (February 29 to February 28)."""
+    try:
+        return day.replace(year=day.year + years)
+    except ValueError:
+        return day.replace(year=day.year + years, day=28)
+
+
+def test_new_york_counts_a_twelve_month_lease_as_a_year(client, conn, staff, pmc):
+    """docs/edge-cases.md D-067: a 12-month lease is 365 days when no February 29 falls in it,
+    which a count of 1461 days every four years read as no year at all (30 days asked);
+    RPL 226-c asks 60 for a lease term of at least a year."""
+    in_state(conn, pmc, "NY")
+    starts = first_of_last_months(6)
+    year_lease, _ = lease_of(conn, pmc, starts, years_on(starts, 1) - DAY)
+
+    assert plan(client, year_lease, monthly_rent="1060.00")["notice"]["days"] == 60
+
+
+def test_new_york_counts_a_tenant_there_exactly_two_years_as_two(client, conn, staff, pmc):
+    """docs/edge-cases.md D-068: two years are 730 days without a February 29, which the same
+    count read as one (60 days asked instead of 90)."""
+    in_state(conn, pmc, "NY")
+    renews = first_of_next_month(TODAY)
+    two_years, _ = lease_of(conn, pmc, years_on(renews, -2), None)
+
+    assert plan(client, two_years, monthly_rent="1060.00")["notice"]["days"] == 90
+    # A day short of two years is one.
+    one_and_more, _ = lease_of(conn, pmc, years_on(renews, -2) + DAY, None)
+    assert plan(client, one_and_more, monthly_rent="1060.00")["notice"]["days"] == 60
+
+
 def test_a_state_without_a_recorded_rule_gets_no_notice(client, conn, staff, pmc):
     in_state(conn, pmc, "TX")
     lease, _ = lease_of(conn, pmc, TODAY - 300 * DAY, TODAY + 20 * DAY)

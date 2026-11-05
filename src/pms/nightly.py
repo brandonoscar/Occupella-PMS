@@ -51,7 +51,7 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
-from pms import autopay, days, email, notices, payments
+from pms import autopay, days, deployment, email, notices, payments, schema
 from pms.api import payables, rent
 
 log = logging.getLogger("pms.nightly")
@@ -158,6 +158,18 @@ def run_pmc(
     )
 
 
+def companies(conn: psycopg.Connection[Any]) -> list[UUID]:
+    """The companies a run of every company runs: all but the closed ones, whose books stay as
+    they are (a suspended company's keep posting; migration 20261105000100)."""
+    return [
+        row[0]
+        for row in conn.execute(
+            "SELECT pmc_id FROM trust_pmcs WHERE trust_pmc_status(pmc_id) <> 'closed'"
+            " ORDER BY pmc_id"
+        )
+    ]
+
+
 def run_all(
     conn: psycopg.Connection[Any],
     day: date | None,
@@ -178,7 +190,7 @@ def run_all(
         return []
     try:
         if pmcs is None:
-            pmcs = [row[0] for row in conn.execute("SELECT pmc_id FROM trust_pmcs ORDER BY pmc_id")]
+            pmcs = companies(conn)
             conn.commit()
         done = []
         for pmc_id in pmcs:
@@ -276,6 +288,7 @@ class Scheduler:
         at = self.clock()
         with psycopg.connect(self.database_url) as conn:
             conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(self.role)))
+            schema.check(conn)  # never a run on a schema this code doesn't know (H-041)
             conn.commit()
             due = days_at(conn, at, self.pmcs)
             if begun_only:
@@ -321,9 +334,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args:
         print("usage: python -m pms.nightly", file=sys.stderr)
         return 2
+    deployment.refuse_fakes_in(os.environ)
     public_url = os.environ.get("PMS_PUBLIC_URL", "http://localhost:8000")
     with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
         conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier("trust_app")))
+        schema.check(conn)
         conn.commit()
         # What it writes to the outbox goes out with `python -m pms.email deliver`.
         sending = bool(os.environ.get("PMS_EMAIL_SENDER"))

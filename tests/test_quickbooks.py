@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import psycopg
 import pytest
-from helpers import make_pmc, transfer_batch
+from helpers import add_tenant, make_pmc, open_account, transfer_batch
 
 from pms import exports, quickbooks
 
@@ -53,6 +53,40 @@ def test_each_account_has_the_pms_name_until_the_company_names_it(conn, app_conn
     assert before[pmc.vendor_payable] == "Vendor bills to pay:Vendor 1"
     assert after[pmc.operating_cash] == "Trust checking"
     assert after[pmc.pmc_income] == before[pmc.pmc_income]
+
+
+def test_two_people_of_one_name_never_share_a_quickbooks_account(conn, app_conn):
+    """docs/edge-cases.md F-129: two tenants of one name at different properties both got
+    "Prepaid rent:Pat Sample", so QuickBooks posted both people's money to one account. The
+    first keeps the plain name; each after it is told apart by its property, else numbered."""
+    pmc = make_pmc(conn)
+    first, second = pmc.owners[0].property_id, pmc.owners[1].property_id
+    accounts = {}
+    for n, where in enumerate((first, second, second)):
+        tenant = add_tenant(conn, pmc.pmc_id, where, "Pat Sample")
+        accounts[n] = open_account(
+            conn, pmc.pmc_id, pmc.operating_bank_id, "prepaid_rent", tenant_id=tenant
+        )
+    vendors = {}
+    # Another holder already named as a number would make it: the number goes past it.
+    for n, called in enumerate(("Vendor 1 2", "Vendor 1")):
+        vendor = conn.execute(
+            "INSERT INTO trust_vendors (pmc_id, display_name) VALUES (%s, %s) RETURNING id",
+            (pmc.pmc_id, called),
+        ).fetchone()[0]
+        vendors[n] = conn.execute(
+            "SELECT trust_open_vendor_account(%s, %s, %s)",
+            (pmc.pmc_id, pmc.operating_bank_id, vendor),
+        ).fetchone()[0]
+    shown = names(app_conn, pmc)
+
+    assert shown[accounts[0]] == "Prepaid rent:Pat Sample"
+    assert shown[accounts[1]] == "Prepaid rent:Pat Sample (Property 2)"
+    assert shown[accounts[2]] == "Prepaid rent:Pat Sample (Property 2) 2"
+    assert shown[pmc.vendor_payable] == "Vendor bills to pay:Vendor 1"
+    assert shown[vendors[0]] == "Vendor bills to pay:Vendor 1 2"
+    assert shown[vendors[1]] == "Vendor bills to pay:Vendor 1 3"
+    assert len(set(shown.values())) == len(shown)
 
 
 @pytest.mark.parametrize("bad", ["Trust:", ":Trust", "Trust::Cash", "Trust :Cash", "a\tb", " x"])

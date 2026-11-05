@@ -162,9 +162,14 @@ def test_the_link_shows_who_it_is_for(client, app_conn, pmc):
     assert details["pmc_name"].startswith("Synthetic PMC")
 
 
-@pytest.mark.parametrize("state", ["accepted", "expired", "disabled", "made up"])
+@pytest.mark.parametrize("state", ["accepted", "expired", "disabled", "made up", "replaced"])
 def test_a_link_that_cant_be_used_says_so(client, conn, app_conn, pmc, state):
     token = invite_token(app_conn, pmc.pmc_id, "owner", pmc.owners[0].owner_id, "o@example.com")
+    if state == "replaced":
+        # A newer invite or password reset for the same login: only the newest link works, so
+        # an old one in a mailbox can't set a password (docs/edge-cases.md U-013).
+        newer = invite_token(app_conn, pmc.pmc_id, "owner", pmc.owners[0].owner_id, "o@example.com")
+        assert client.post("/api/invites/view", json={"token": newer}).status_code == 200
     if state == "accepted":
         client.post("/api/invites/accept", json=accept(token))
     elif state == "expired":
@@ -175,7 +180,7 @@ def test_a_link_that_cant_be_used_says_so(client, conn, app_conn, pmc, state):
         )
     elif state == "disabled":
         conn.execute("UPDATE trust_logins SET disabled_at = now() WHERE email = 'o@example.com'")
-    else:
+    elif state == "made up":
         token = "x" * 43
 
     for path, body in [

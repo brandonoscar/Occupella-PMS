@@ -8,14 +8,21 @@ import base64
 import io
 import json
 import os
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
+from uuid import UUID
 
+import psycopg
 import pytest
+from fastapi import HTTPException
 from helpers import add_agreement, post
 from people import join_as_owner, join_as_staff
 from pypdf import PdfReader
+
+from pms.api import payouts
 
 NOW = datetime.now(UTC)
 TODAY = NOW.date()
@@ -388,10 +395,69 @@ def test_an_ach_file_taken_again_is_the_one_made_when_the_run_was_paid(client, c
         )
     )
     owner_bank(client, pmc, number="99999999")
-    again = client.get(f"/api/payouts/runs/{run}/ach").content
+    again = client.get(f"/api/payouts/runs/{run}/ach?again=true").content
     # Byte for byte: the bank details, the account and the time are the run's.
     assert again == first
     assert first.decode("ascii").splitlines()[0][63:86].strip() == "GOLDEN PMC"
+
+
+def test_an_ach_file_taken_already_is_given_again_only_when_asked_for_again(
+    client, conn, staff, pmc
+):
+    """docs/edge-cases.md C-055: a second take of a run's ACH file asked nothing, and uploading
+    it to the bank twice pays everyone in it twice. Checks print again as often as needed."""
+    fund(conn, pmc, "500.00")
+    ach_details(client, pmc)
+    owner_bank(client, pmc)
+    run = ok(pay_owners(client, pmc, "EFT", amount="125.50"), 201)[0]["run_id"]
+    first = client.get(f"/api/payouts/runs/{run}/ach")
+    assert first.status_code == 200, first.text
+
+    refused(
+        client.get(f"/api/payouts/runs/{run}/ach"),
+        409,
+        "this ACH file was taken already: uploading it to the bank again pays everyone in it"
+        " twice, so ask for it again only to replace a file the bank never took",
+    )
+    refused(client.get(f"/api/payouts/runs/{run}/ach?again=maybe"), 422)
+    assert client.get(f"/api/payouts/runs/{run}/ach?again=true").content == first.content
+    assert ok(client.get("/api/payouts/runs?kind=owners"))[0]["downloads"] == 2
+
+
+@pytest.mark.timing
+def test_two_first_takes_at_once_give_the_ach_file_once(client, conn, staff, pmc, database_url):
+    """docs/edge-cases.md C-143: two staff asking for a run's ACH file at the same moment each
+    read no take yet, so both got it without the question a second take asks."""
+    fund(conn, pmc, "500.00")
+    ach_details(client, pmc)
+    owner_bank(client, pmc)
+    run = UUID(ok(pay_owners(client, pmc, "EFT"), 201)[0]["run_id"])
+    session = SimpleNamespace(pmc_id=pmc.pmc_id, person_id=staff.person_id)
+    outcome: list[object] = []
+
+    with psycopg.connect(database_url) as first, psycopg.connect(database_url) as second:
+        for each in (first, second):
+            each.execute("SET ROLE trust_app")
+            each.execute("SELECT set_config('trust.staff_id', %s, false)", (str(staff.person_id),))
+            each.commit()
+        payouts.take_file(first, session, run, "EFT", again=False)  # not committed yet
+
+        def take_too() -> None:
+            try:
+                payouts.take_file(second, session, run, "EFT", again=False)
+                outcome.append("taken")
+            except HTTPException as refused:
+                outcome.append(refused.status_code)
+            second.rollback()
+
+        other = threading.Thread(target=take_too)
+        other.start()
+        other.join(1)
+        assert other.is_alive()  # it waits for the first take
+        first.commit()
+        other.join(10)
+
+    assert outcome == [409]
 
 
 def test_owners_paid_by_check_get_their_checks_numbered_on(client, conn, staff, pmc):
@@ -545,6 +611,33 @@ def test_a_server_without_its_key_records_no_ach_payout(client, conn, staff, pmc
         ).fetchone()[0]
         == 0
     )
+
+
+def test_a_server_with_another_key_records_no_ach_payout(client, conn, staff, pmc, monkeypatch):
+    """docs/edge-cases.md P-111: a key set, but not the one that sealed the payees' numbers,
+    passed the pay-time check, so the draws were recorded as paid by ACH and then the file
+    couldn't be made. Each payee's number must open before anything is recorded."""
+    fund(conn, pmc, "500.00")
+    ach_details(client, pmc)
+    owner_bank(client, pmc)
+    monkeypatch.setenv("PMS_DATA_KEY", base64.b64encode(os.urandom(32)).decode())
+
+    answer = pay_owners(client, pmc, "EFT")
+
+    refused(
+        answer,
+        409,
+        "Owner 1's bank account number doesn't open under this server's key, so it makes no ACH"
+        " file: pay by check, or run the PMS with the key that sealed it (PMS_DATA_KEY)",
+    )
+    assert (
+        conn.execute(
+            "SELECT count(*) FROM trust_owner_draws WHERE pmc_id = %s", (pmc.pmc_id,)
+        ).fetchone()[0]
+        == 0
+    )
+    # By check, nothing needs the key.
+    ok(pay_owners(client, pmc, "check"), 201)
 
 
 def test_an_ach_file_opens_its_numbers_only_under_the_key_they_were_sealed_with(

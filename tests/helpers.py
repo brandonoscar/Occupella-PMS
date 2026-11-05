@@ -1456,3 +1456,18 @@ def png(width=40, height=20):
         + chunk(b"IDAT", zlib.compress(rows))
         + chunk(b"IEND", b"")
     )
+
+
+def events_seen(connection, pmc_id, wait=60.0) -> None:
+    """Waits until every event of the company is past each transaction that began writing before
+    it, anywhere on the server (another test run beside this one, say): only then is it read
+    (GET /api/events) or sent to a webhook (src/pms/api/events.py), as a client asking again or
+    the courier's next pass would see it. `connection` commits each statement (autocommit)."""
+    deadline = time.monotonic() + wait
+    while connection.execute(
+        "SELECT count(*) FROM trust_events WHERE pmc_id = %s"
+        " AND xact >= pg_snapshot_xmin(pg_current_snapshot())",
+        (pmc_id,),
+    ).fetchone() != (0,):
+        assert time.monotonic() < deadline, "a transaction on the server held the events back"
+        time.sleep(0.05)

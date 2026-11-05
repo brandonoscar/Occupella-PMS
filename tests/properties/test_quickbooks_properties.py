@@ -24,7 +24,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 
 import psycopg
-from helpers import make_pmc, transfer_batch
+from helpers import add_tenant, make_pmc, open_account, transfer_batch
 from hypothesis import event, given
 from hypothesis import strategies as st
 
@@ -116,3 +116,51 @@ def check(conn, moves, named, first, span):
 def test_the_journal_moves_quickbooks_balances_as_the_ledger_moves(database_url):
     with psycopg.connect(database_url, autocommit=True) as conn:
         check(conn)
+
+
+HOLDERS = st.lists(
+    st.tuples(
+        st.sampled_from(["prepaid_rent", "tenant_deposit", "vendor_payable"]),
+        st.sampled_from(["Pat Sample", "Pat Sample (Property 2)", "Pat Sample 2", "Vendor 1"]),
+        st.integers(0, 1),
+    ),
+    min_size=1,
+    max_size=10,
+)
+
+
+@given(holders=HOLDERS)
+def check_names(conn, holders):
+    """docs/edge-cases.md F-129: holders of one name, at one property or two, added one after
+    another (some named as a told-apart one would be)."""
+    pmc = make_pmc(conn)
+    before: dict[str, str] = {}
+    for kind, called, where in holders:
+        place = pmc.owners[where].property_id
+        if kind == "vendor_payable":
+            vendor = conn.execute(
+                "INSERT INTO trust_vendors (pmc_id, display_name) VALUES (%s, %s) RETURNING id",
+                (pmc.pmc_id, called),
+            ).fetchone()[0]
+            conn.execute(
+                "SELECT trust_open_vendor_account(%s, %s, %s)",
+                (pmc.pmc_id, pmc.operating_bank_id, vendor),
+            )
+        else:
+            tenant = add_tenant(conn, pmc.pmc_id, place, called)
+            bank = pmc.deposit_bank_id if kind == "tenant_deposit" else pmc.operating_bank_id
+            open_account(conn, pmc.pmc_id, bank, kind, tenant_id=tenant)
+        found = quickbooks.accounts(conn, pmc.pmc_id)
+        now = {a.ledger_account_id: a.default_name for a in found}
+        # No two of the company's accounts share a name the PMS makes...
+        assert len(set(now.values())) == len(now)
+        # ...and an account's name stays what it was as others come.
+        assert {k: now[k] for k in before} == before
+        before = now
+    if len(holders) > 1 and any(a.default_name.endswith(" 2") for a in found):
+        event("a name told apart by a number")
+
+
+def test_no_two_accounts_share_a_pms_made_name_and_none_ever_changes(database_url):
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        check_names(conn)

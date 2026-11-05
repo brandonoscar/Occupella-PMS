@@ -26,7 +26,9 @@ jobs:
   e2e:
     name: e2e
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # The portal's checks, the build and 108 browser tests: 12.8 minutes on a 4-core machine, and
+    # past 15 on GitHub's slower runners, which cut the job off unfinished (the founder, 11/05).
+    timeout-minutes: 25
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16

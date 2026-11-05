@@ -97,3 +97,39 @@ def test_each_file_follows_the_letter_on_pages_of_its_own():
     assert "Broken PDF could not be added here: it is with the lease's files." in broken
     assert "Living room" in photo
     assert "Kitchen could not be added here: it is with the lease's files." in cut
+
+
+def png_bomb(width=30000, height=30000):
+    """A PNG that says it is width x height pixels in a few bytes: the image library refuses it
+    as a decompression bomb, with an error that is no OSError."""
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+        )
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(b"\x00" * 64))
+        + chunk(b"IEND", b"")
+    )
+
+
+def test_a_photo_that_says_it_is_huge_leaves_the_letter_whole():
+    # docs/edge-cases.md F-015: a move-out photo of 30000 x 30000 pixels in a few bytes passes
+    # the upload's check (it starts as a PNG does); the statement still goes, saying where it is.
+    files = (
+        ds.File("Hallway", "image/png", png_bomb()),
+        ds.File("Living room", "image/png", png()),
+    )
+    letter, bomb, photo = pages(ds.render(statement(files=files, photos=2), MADE))
+    assert "2 move-out photo(s)" in letter
+    assert "Hallway could not be added here: it is with the lease's files." in bomb
+    assert "Living room" in photo

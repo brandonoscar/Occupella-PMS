@@ -62,3 +62,18 @@ def time_zone(conn: psycopg.Connection[Any], pmc_id: UUID) -> str:
     row = conn.execute("SELECT trust_pmc_time_zone(%s)", (pmc_id,)).fetchone()
     assert row is not None
     return str(row[0])
+
+
+DateOrder = Literal["month_first", "day_first"]
+
+
+def date_order(conn: psycopg.Connection[Any], pmc_id: UUID) -> DateOrder:
+    """How the company writes a day like 05/01/2026 (migration 20261105001200): its latest
+    profile's order, month first (the US's) until it picks day first. A file's dates read in the
+    order the file proves, else this (pms.statements.date_order)."""
+    row = conn.execute(
+        "SELECT date_order FROM trust_company_profiles WHERE pmc_id = %s"
+        " ORDER BY created_at DESC, id DESC LIMIT 1",
+        (pmc_id,),
+    ).fetchone()
+    return "day_first" if row is not None and row[0] == "day_first" else "month_first"

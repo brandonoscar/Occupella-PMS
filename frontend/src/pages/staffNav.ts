@@ -2,6 +2,7 @@ import {
   BarChart3,
   Building2,
   FolderOpen,
+  Inbox,
   KeyRound,
   Landmark,
   LayoutDashboard,
@@ -66,6 +67,8 @@ export const STAFF_NAV: NavEntry[] = [
       { href: "/announcements", label: "Announcements" },
     ],
   },
+  // What software with an API key proposed for staff to decide (ADR 0011).
+  { href: "/drafts", label: "Drafts", icon: Inbox },
   { href: "/files", label: "Files", icon: FolderOpen },
   { href: "/reports", label: "Reports", icon: BarChart3 },
   { href: "/settings", label: "Settings", icon: Settings },

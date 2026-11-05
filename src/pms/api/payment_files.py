@@ -24,7 +24,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import notices
+from pms import days, notices, statements
 from pms.api import outbox, rent, switching
 from pms.api.deps import Conn, Staff, refusal
 from pms.api.rentals import Page, Paged, PerPage
@@ -82,10 +82,10 @@ class Line:
     method: rent.Method | None
 
 
-def read(content: str, today: date) -> list[Line]:
+def read(content: str, today: date, preferred: statements.DateOrder = "month_first") -> list[Line]:
     """A file's lines, each a payment received by today (the company's day); Bad names the first
     line that isn't."""
-    found = switching.rows(content, ("date", "amount"))
+    found = switching.rows(content, ("date", "amount"), preferred)
     headers = set(found[0].cells) if found else set()
     picked = {
         what: next((name for name in names if name in headers), None)
@@ -330,7 +330,7 @@ def came_in(conn: psycopg.Connection[Any], pmc_id: UUID, content: str) -> dateti
 
 def lines_of(conn: psycopg.Connection[Any], pmc_id: UUID, content: str) -> list[Line]:
     try:
-        return read(content, rent.today(conn, pmc_id))
+        return read(content, rent.today(conn, pmc_id), days.date_order(conn, pmc_id))
     except switching.Bad as bad:
         raise HTTPException(422, str(bad)) from None
 

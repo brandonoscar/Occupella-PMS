@@ -199,6 +199,38 @@ def test_a_pmc_keeps_an_admin(conn, pmc, admin):
         change_role(conn, pmc.pmc_id, second, "admin", granted=False, by=second)
 
 
+def login_for(conn, pmc, staff_id, disabled=False):
+    """A login for a staff member, maybe disabled (one per staff member)."""
+    login = accounts.create_invite(
+        conn, pmc.pmc_id, "staff", staff_id, f"staff.{staff_id.hex[:8]}@example.com", None
+    ).login_id
+    if disabled:
+        conn.execute("UPDATE trust_logins SET disabled_at = now() WHERE id = %s", (login,))
+    return login
+
+
+def test_an_admin_whose_login_is_disabled_doesnt_keep_the_pmc_its_admin(conn, pmc, admin):
+    # docs/edge-cases.md U-051: the only admin who could sign in dropped admin while the other
+    # admin's login was disabled: nobody could change a role again, and make-admin refused
+    # because an admin "existed".
+    login_for(conn, pmc, admin)
+    gone = add_staff(conn, pmc.pmc_id, "Admin 2")
+    change_role(conn, pmc.pmc_id, gone, "admin", by=admin)
+    login_for(conn, pmc, gone, disabled=True)
+    with refused("is the PMC's last admin"):
+        change_role(conn, pmc.pmc_id, admin, "admin", granted=False, by=admin)
+
+    # And with every admin's login disabled, the server's operator makes a new one, naming
+    # nobody (python -m pms.admin make-admin), as for a company's first.
+    conn.execute(
+        "UPDATE trust_logins SET disabled_at = now() WHERE staff_id = %s AND pmc_id = %s",
+        (admin, pmc.pmc_id),
+    )
+    rescuer = add_staff(conn, pmc.pmc_id, "Admin 3")
+    change_role(conn, pmc.pmc_id, rescuer, "admin")
+    assert roles_of(conn, pmc.pmc_id, rescuer) == {"admin"}
+
+
 @pytest.mark.timing
 def test_two_admins_taking_each_others_role_leave_one(conn, database_url, pmc, admin):
     second = add_staff(conn, pmc.pmc_id, "Admin 2")

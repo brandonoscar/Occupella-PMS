@@ -1,5 +1,6 @@
 """`python -m pms.api`: the server reads its settings from the environment."""
 
+import logging
 import runpy
 
 from pms.api import Settings
@@ -9,24 +10,27 @@ def test_the_server_reads_its_settings_from_the_environment(monkeypatch, databas
     served = {}
     monkeypatch.setattr("uvicorn.run", lambda app, **options: served.update(app=app, **options))
     monkeypatch.setenv("DATABASE_URL", database_url)
-    monkeypatch.setenv("PMS_PUBLIC_URL", "https://pms.example.com")
+    monkeypatch.setenv("PMS_PUBLIC_URL", "https://rentals.example.com")
     monkeypatch.setenv("PMS_COOKIE_SECURE", "False")
     monkeypatch.setenv("PMS_HOST", "0.0.0.0")
     monkeypatch.setenv("PMS_PORT", "9000")
     monkeypatch.delenv("PMS_NIGHTLY", raising=False)
+    monkeypatch.delenv("PMS_WEBHOOKS", raising=False)
 
     runpy.run_module("pms.api", run_name="__main__")
 
     assert (served["host"], served["port"], served["proxy_headers"]) == ("0.0.0.0", 9000, False)
-    # The nightly run is on unless PMS_NIGHTLY=off (src/pms/nightly.py).
+    # The nightly run is on unless PMS_NIGHTLY=off (src/pms/nightly.py), and so are webhooks
+    # unless PMS_WEBHOOKS=off (src/pms/webhooks.py).
     assert served["app"].state.settings == Settings(
         database_url=database_url,
-        public_url="https://pms.example.com",
+        public_url="https://rentals.example.com",
         cookie_secure=False,
         db_role="trust_app",
         nightly=True,
+        webhooks=True,
     )
-    assert served["app"].state.settings.origin == "https://pms.example.com"
+    assert served["app"].state.settings.origin == "https://rentals.example.com"
 
 
 def test_by_default_cookies_are_secure_and_the_server_listens_locally(monkeypatch, database_url):
@@ -51,3 +55,62 @@ def test_each_pooled_connection_acts_as_the_app_with_the_planners_jit_off(client
             "trust_app",
             "off",
         )
+
+
+def test_a_server_with_the_nightly_run_off_says_so_at_start(database_url, caplog, monkeypatch):
+    """docs/edge-cases.md H-022: PMS_NIGHTLY=off with no cron running `python -m pms.nightly`
+    posts nothing by itself, and nothing said the run was off. The log says it at start, and what
+    to run instead."""
+    from fastapi.testclient import TestClient
+
+    from pms.api import create_app
+
+    caplog.set_level(logging.WARNING, logger="pms.api")
+    off = Settings(database_url=database_url, cookie_secure=False, nightly=False)
+    with TestClient(create_app(off)):
+        pass
+    said = [r.getMessage() for r in caplog.records if r.name == "pms.api"]
+    assert said == [
+        "the nightly run is off (PMS_NIGHTLY=off): rent, recurring charges, late fees, recurring"
+        " bills and draws post only when `python -m pms.nightly` runs, once a day, or an admin"
+        " presses Run rent now"
+    ]
+
+    caplog.clear()
+
+    class Quiet:  # the scheduler, which would run every test company's night
+        def __init__(self, *args, **kwargs):
+            pass
+
+        start = stop = lambda self: None
+
+    monkeypatch.setattr("pms.nightly.Scheduler", Quiet)
+    on = Settings(database_url=database_url, cookie_secure=False, nightly=True)
+    with TestClient(create_app(on)):
+        pass
+    assert not [r for r in caplog.records if r.name == "pms.api"]
+
+
+def test_the_server_starts_and_stops_the_webhook_courier(database_url, monkeypatch):
+    """PMS_WEBHOOKS on (the default): the API runs the courier while it serves (pms.webhooks)."""
+    from fastapi.testclient import TestClient
+
+    from pms.api import create_app
+
+    seen = []
+
+    class Courier:
+        def __init__(self, url, role):
+            seen.append(("made", role))
+
+        def start(self):
+            seen.append("started")
+
+        def stop(self):
+            seen.append("stopped")
+
+    monkeypatch.setattr("pms.webhooks.Courier", Courier)
+    on = Settings(database_url=database_url, cookie_secure=False, webhooks=True)
+    with TestClient(create_app(on)):
+        assert seen == [("made", "trust_app"), "started"]
+    assert seen[-1] == "stopped"

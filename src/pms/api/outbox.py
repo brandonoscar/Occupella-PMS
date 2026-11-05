@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Callable
 from contextvars import ContextVar
 from typing import Any
 
@@ -22,11 +24,50 @@ SENDING: ContextVar[bool] = ContextVar("pms_sending", default=False)
 PARTNER: ContextVar[payments.Resolver | None] = ContextVar("pms_payments_partner", default=None)
 
 
-def deliver(pool: ConnectionPool[Any], sender: email.Sender) -> None:
-    """Delivers what waits in the outbox, each email in a transaction of its own."""
-    with pool.connection() as conn:
-        conn.autocommit = True
+class OneAtATime:
+    """A job a process runs once at a time (docs/edge-cases.md H-016, P-075): a call while it
+    runs returns at once and makes it run once more after, so nothing the call's request wrote
+    waits for the next one. Delivery waits on a mail server (20 s an email when it hangs) and
+    autopay on the payments partner, each on a pooled connection: run after every write, a
+    handful at once filled the pool and everyone was told the PMS was busy."""
+
+    def __init__(self) -> None:
+        self._state = threading.Lock()
+        self._running = self._again = False
+
+    def run(self, job: Callable[[], object]) -> None:
+        with self._state:
+            if self._running:
+                self._again = True
+                return
+            self._running = True
         try:
-            email.deliver_pending(conn, sender)
-        finally:
-            conn.autocommit = False
+            while True:
+                job()
+                with self._state:
+                    if not self._again:
+                        self._running = False
+                        return
+                    self._again = False
+        except BaseException:
+            with self._state:
+                self._running = self._again = False
+            raise
+
+
+DELIVERY = OneAtATime()
+
+
+def deliver(pool: ConnectionPool[Any], sender: email.Sender) -> None:
+    """Delivers what waits in the outbox, each email in a transaction of its own; one delivery
+    at a time in the process."""
+
+    def job() -> None:
+        with pool.connection() as conn:
+            conn.autocommit = True
+            try:
+                email.deliver_pending(conn, sender)
+            finally:
+                conn.autocommit = False
+
+    DELIVERY.run(job)

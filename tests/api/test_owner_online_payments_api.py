@@ -30,6 +30,7 @@ from people import join_as_owner, join_as_staff
 
 from pms import payments
 from pms.api import Settings, create_app
+from pms.api import online_payments as online
 
 TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
@@ -243,6 +244,25 @@ def test_paid_is_the_owners_contribution_once_and_the_company_pays_the_fee(
     assert ok(client.get("/api/payments/waiting")) == []
 
 
+def test_a_return_before_the_owners_payment_is_paid_is_sent_again_later(
+    client, owner_client, conn, staff, owner, pmc
+):
+    """docs/edge-cases.md C-088: a return reported before the payment's paid report was
+    acknowledged and dropped, so the owner's account kept money the bank took back. It is
+    refused for now (409), and the partner's next try, once paid is in, takes it back out."""
+    turn_on(client)
+    payment = pay(owner_client, pmc.owners[0].account)["id"]
+    early = owner_client.post(f"/api/payments/fake/{payment}", json={"outcome": "returned"})
+    assert early.status_code == 409
+    assert early.json() == {"detail": online.SEND_AGAIN}
+
+    bank_says(owner_client, payment, "paid")
+    paid_in = balance(conn, pmc.owners[0].account)
+    assert paid_in > Decimal("0.00")
+    assert bank_says(owner_client, payment, "returned") == {"recorded": True}
+    assert balance(conn, pmc.owners[0].account) == Decimal("0.00")
+
+
 def test_a_failed_or_unfinished_payment_moves_nothing(
     client, owner_client, conn, staff, owner, pmc
 ):
@@ -291,7 +311,9 @@ def test_a_return_is_taken_back_out_of_the_owners_account(
     turn_on(client)
     fund_company(conn, pmc, "10.00")
     payment = pay(owner_client, pmc.owners[0].account, "500.00")["id"]
-    bank_says(owner_client, payment, "returned")  # not paid yet: nothing came back
+    # Not paid yet: refused for now, to be sent again (C-088), and nothing came back.
+    early = owner_client.post(f"/api/payments/fake/{payment}", json={"outcome": "returned"})
+    assert early.status_code == 409
     assert f"owner-payment-back/{payment}" not in keys(conn, pmc)
     bank_says(owner_client, payment, "paid")
     bank_says(owner_client, payment, "returned")
@@ -396,6 +418,9 @@ def test_a_partner_that_does_not_answer_starts_no_payment(
 
 @pytest.fixture
 def stripe_app(database_url, monkeypatch):
+    # The server's own Stripe keys serve only a server holding one company (payments.Resolver);
+    # the test database holds many, so it answers as a server with one.
+    monkeypatch.setattr(payments, "many_companies", lambda conn: False)
     monkeypatch.setenv("PMS_STRIPE_SECRET_KEY", "sk_test_not_real")
     monkeypatch.setenv("PMS_STRIPE_WEBHOOK_SECRET", SECRET)
     answers = {}

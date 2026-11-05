@@ -22,7 +22,9 @@ from helpers import (
     balance,
     charge,
     import_statement,
+    open_account,
     open_lease,
+    set_ownership,
     staff_named,
 )
 from people import join_as_staff, join_as_tenant, tenant_of
@@ -376,12 +378,30 @@ def test_the_company_covers_the_partners_fee_its_account_cant(
     assert balance(conn, pmc.pmc_income) == Decimal("0.00")
 
 
+def test_a_return_for_a_payment_that_failed_is_acknowledged_and_changes_nothing(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    """A failed payment is never paid, so a return about it can't wait for one: it is
+    acknowledged (the partner stops) and changes nothing."""
+    turn_on(client, "tenant")
+    payment = pay(tenant_client, lease, "1000.00")["id"]
+    bank_says(tenant_client, payment, "failed")
+    owner_before = balance(conn, pmc.owners[0].account)
+    assert bank_says(tenant_client, payment, "returned") == {"recorded": True}
+    assert balance(conn, pmc.owners[0].account) == owner_before
+    assert f"bounce/payment/{payment}" not in keys(conn, pmc)
+
+
 def test_a_return_is_a_bounce_and_the_tenants_fee_goes_back_out(
     client, tenant_client, conn, staff, tenant, lease, pmc
 ):
     turn_on(client, "tenant")
     payment = pay(tenant_client, lease, "1000.00")["id"]
-    bank_says(tenant_client, payment, "returned")  # not paid yet: nothing came back
+    # A return reported before the payment is paid in the books (docs/edge-cases.md C-087,
+    # P-024): refused for now, so the partner sends it again later, never acknowledged and lost.
+    early = tenant_client.post(f"/api/payments/fake/{payment}", json={"outcome": "returned"})
+    assert early.status_code == 409
+    assert early.json() == {"detail": op.SEND_AGAIN}
     assert f"bounce/payment/{payment}" not in keys(conn, pmc)
     owner_before = balance(conn, pmc.owners[0].account)
     bank_says(tenant_client, payment, "paid")
@@ -448,6 +468,130 @@ def test_a_payment_paid_during_a_hold_waits_for_staff_to_accept_it(
     assert [w["what"] for w in ok(client.get("/api/payments/waiting"))] == ["partner fee"]
 
 
+def second_owner_account(conn, pmc):
+    """Another owner's account at the lease's property, and no ownership shares: the books
+    can't tell whose a payment there is until staff choose."""
+    other = pmc.owners[1].owner_id
+    return open_account(
+        conn, pmc.pmc_id, pmc.operating_bank_id, "owner_property", other, pmc.owners[0].property_id
+    )
+
+
+def test_a_property_with_two_owner_accounts_and_no_shares_takes_no_payment_online(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    """docs/edge-cases.md P-040: the books can't tell whose a payment there is, so the tenant
+    can't start one online; they see the company's How to pay us, as when payments are off."""
+    turn_on(client)
+    second_owner_account(conn, pmc)
+    view = ok(tenant_client.get(f"/api/payments/leases/{lease}"))
+    assert (view["available"], view["why_not"]) == (False, "off")
+    refused(
+        tenant_client.post(f"/api/payments/leases/{lease}/checkout", json={"amount": "1.00"}),
+        409,
+        op.OFF,
+    )
+
+
+def test_a_payment_paid_after_a_second_owner_account_waits_for_staff_to_choose_one(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    """docs/edge-cases.md P-040: a payment started while the property had one owner account and
+    paid after a second came: the waiting list failed whole (422), so Banking showed nothing, and
+    Record couldn't name an account. It is listed with the accounts to choose among, and Record
+    takes one."""
+    turn_on(client)
+    payment = pay(tenant_client, lease, "300.00")["id"]
+    second = second_owner_account(conn, pmc)
+    bank_says(tenant_client, payment, "paid")
+    assert f"payment/{payment}" not in keys(conn, pmc)
+
+    (waiting,) = ok(client.get("/api/payments/waiting"))
+    assert waiting["what"] == "payment"
+    assert waiting["bank_account_id"] == str(pmc.operating_bank_id)
+    assert waiting["choose_account"] == [
+        {"account_id": pmc.owners[0].account, "owner": "Owner 1"},
+        {"account_id": second, "owner": "Owner 2"},
+    ]
+    refused(
+        client.post(f"/api/payments/{payment}/record", json={}),
+        422,
+        "the property has more than one owner account; choose one",
+    )
+    refused(
+        client.post(f"/api/payments/{payment}/record", json={"account": pmc.owners[1].account}),
+        404,
+    )
+    # An account that is no owner's is no choice at all.
+    refused(
+        client.post(f"/api/payments/{payment}/record", json={"account": pmc.operating_cash}),
+        404,
+        "no such owner account for this lease's property",
+    )
+    before = balance(conn, second)
+    ok(client.post(f"/api/payments/{payment}/record", json={"account": second}), 204)
+    assert f"payment/{payment}" in keys(conn, pmc)
+    assert balance(conn, second) == before + Decimal("300.00")
+    assert "payment" not in [w["what"] for w in ok(client.get("/api/payments/waiting"))]
+
+
+def test_owners_in_shares_leave_no_choice_to_staff(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    """Two owner accounts in shares: a payment paid during a hold waits for staff to accept it,
+    and splits by the shares, so nobody chooses whose it is."""
+    turn_on(client)
+    second = second_owner_account(conn, pmc)
+    set_ownership(
+        conn,
+        pmc.pmc_id,
+        pmc.owners[0].property_id,
+        TODAY - 30 * DAY,
+        [(pmc.owners[0].account, "50"), (second, "50")],
+    )
+    payment = pay(tenant_client, lease, "300.00")["id"]
+    conn.execute(
+        "INSERT INTO trust_payment_holds (pmc_id, lease_id, starts_on, reason)"
+        " VALUES (%s, %s, %s, 'filed')",
+        (pmc.pmc_id, lease, TODAY - DAY),
+    )
+    bank_says(tenant_client, payment, "paid")
+    (waiting,) = ok(client.get("/api/payments/waiting"))
+    assert (waiting["what"], waiting["choose_account"]) == ("payment", [])
+
+
+def test_owner_accounts_in_two_trust_bank_accounts_still_list_the_payment(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    """docs/edge-cases.md P-163: the property's owners' accounts sit in two trust bank accounts,
+    so no one bank is the property's, and the waiting list failed whole again. The payment is
+    listed in the first choice's bank, and recorded into the account staff choose."""
+    turn_on(client)
+    payment = pay(tenant_client, lease, "300.00")["id"]
+    other_bank = conn.execute(
+        "INSERT INTO trust_bank_accounts (pmc_id, kind, display_name)"
+        " VALUES (%s, 'operating', 'Second operating trust account') RETURNING id",
+        (pmc.pmc_id,),
+    ).fetchone()[0]
+    open_account(conn, pmc.pmc_id, other_bank, "bank_cash")
+    open_account(conn, pmc.pmc_id, other_bank, "pmc_income")
+    second = open_account(
+        conn,
+        pmc.pmc_id,
+        other_bank,
+        "owner_property",
+        pmc.owners[1].owner_id,
+        pmc.owners[0].property_id,
+    )
+    bank_says(tenant_client, payment, "paid")
+
+    (waiting,) = ok(client.get("/api/payments/waiting"))
+    assert [c["account_id"] for c in waiting["choose_account"]] == [pmc.owners[0].account, second]
+    assert waiting["bank_account_id"] == str(pmc.operating_bank_id)
+    ok(client.post(f"/api/payments/{payment}/record", json={"account": second}), 204)
+    assert balance(conn, second) == Decimal("300.00")
+
+
 def test_a_partner_that_does_not_answer_starts_no_payment(
     client, tenant_client, conn, staff, tenant, lease, pmc, monkeypatch
 ):
@@ -492,6 +636,9 @@ def test_the_fake_partners_page_is_only_the_fake_partners(
 
 @pytest.fixture
 def stripe_app(database_url, monkeypatch):
+    # The server's own Stripe keys serve only a server holding one company (payments.Resolver);
+    # the test database holds many, so it answers as a server with one.
+    monkeypatch.setattr(payments, "many_companies", lambda conn: False)
     monkeypatch.setenv("PMS_STRIPE_SECRET_KEY", "sk_test_not_real")
     monkeypatch.setenv("PMS_STRIPE_WEBHOOK_SECRET", SECRET)
     answers = {}

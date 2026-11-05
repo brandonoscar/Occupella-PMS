@@ -991,6 +991,8 @@ DECLARE
     v_fee numeric;
     v_fee_id uuid;
     v_charged integer := 0;
+    v_fee_day date;
+    v_closed date;
 BEGIN
     IF current_setting('transaction_isolation') <> 'read committed' THEN
         RAISE EXCEPTION 'trust: assess late fees at READ COMMITTED, not %',
@@ -1066,6 +1068,18 @@ BEGIN
         WHERE c.id = ANY (v_due)
         ORDER BY c.due_on + p.grace_days, c.due_on, c.id
     LOOP
+        v_fee_day := v_rent.due_on + v_rent.grace_days + 1;
+        -- A fee that would fall in a closed year is never charged: the year is locked (migration
+        -- 20261021000106), and the one charge it refuses stopped the company's whole run, rent
+        -- included, every night (docs/edge-cases.md M-050). The PMC is locked FOR SHARE first,
+        -- as the year's own check does, so a close under way and this wait for each other.
+        IF v_fee_day < date_trunc('year', now() AT TIME ZONE 'UTC')::date THEN
+            IF v_closed IS NULL THEN
+                PERFORM 1 FROM trust_pmcs AS p WHERE p.pmc_id = p_pmc_id FOR SHARE;
+                v_closed := coalesce(trust_closed_until(p_pmc_id), '-infinity'::date);
+            END IF;
+            CONTINUE WHEN v_fee_day <= v_closed;
+        END IF;
         v_cutoff := (v_rent.due_on + v_rent.grace_days + 1)::timestamp AT TIME ZONE 'UTC';
         -- What is open of it then: payments and bounces dated before then, and the lease's
         -- credits due by its last day of grace, oldest charges first (the fees this run charged
@@ -1082,7 +1096,7 @@ BEGIN
 
         INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
         VALUES (
-            p_pmc_id, v_rent.lease_id, v_rent.due_on + v_rent.grace_days + 1, 'fee', v_fee,
+            p_pmc_id, v_rent.lease_id, v_fee_day, 'fee', v_fee,
             'Late fee, rent due ' || to_char(v_rent.due_on, 'YYYY-MM-DD')
         )
         RETURNING id INTO v_fee_id;
@@ -1541,6 +1555,13 @@ BEGIN
       AND l.starts_on <= p_due_on AND (l.ends_on IS NULL OR p_due_on <= l.ends_on)
       AND trust_rent_due_day(l.id, p_due_on) = 1
       AND p.amount > 0  -- a day of a few cents rounds to nothing
+      -- Once a month: nothing of this monthly charge is due in the month already.
+      AND NOT EXISTS (
+          SELECT c.id FROM trust_charges AS c
+          WHERE c.recurring_charge_id = r.id
+            AND c.due_on >= date_trunc('month', p_due_on::timestamp)::date
+            AND c.due_on < (date_trunc('month', p_due_on::timestamp) + interval '1 month')::date
+      )
     ORDER BY r.id
     ON CONFLICT (recurring_charge_id, due_on) WHERE recurring_charge_id IS NOT NULL DO NOTHING;
     GET DIAGNOSTICS v_charged = ROW_COUNT;
@@ -1651,6 +1672,14 @@ BEGIN
       AND (l.ends_on IS NULL OR p_due_on <= l.ends_on)
       AND trust_rent_due_day(l.id, p_due_on) = 1
       AND r.amount > 0  -- a day of a few cents' rent rounds to nothing
+      -- Once a month: none of this lease's rent is due in the month already (a run for another
+      -- day of it, or a rent carried over from the old system), so no day charges it twice.
+      AND NOT EXISTS (
+          SELECT c.id FROM trust_charges AS c
+          WHERE c.lease_id = l.id AND c.kind = 'rent'
+            AND c.due_on >= date_trunc('month', p_due_on::timestamp)::date
+            AND c.due_on < (date_trunc('month', p_due_on::timestamp) + interval '1 month')::date
+      )
     ORDER BY l.id
     ON CONFLICT (lease_id, due_on) WHERE kind = 'rent' DO NOTHING;
     GET DIAGNOSTICS v_charged = ROW_COUNT;
@@ -2902,6 +2931,55 @@ BEGIN
     IF NOT EXISTS (SELECT f.document_id FROM trust_document_files AS f
                    WHERE f.document_id = NEW.id) THEN
         RAISE EXCEPTION 'trust: document % has no file', NEW.id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: trust_check_draft(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_draft() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM trust_api_key_revocations AS r WHERE r.key_id = NEW.api_key_id) THEN
+        RAISE EXCEPTION 'trust: API key % was taken back; it proposes nothing', NEW.api_key_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF trust_pmc_status(NEW.pmc_id) <> 'active' THEN
+        RAISE EXCEPTION 'trust: company % is not active; nothing is proposed to it', NEW.pmc_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    NEW.created_at := clock_timestamp();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_draft_action(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_draft_action() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_approved boolean;
+    v_acted boolean;
+BEGIN
+    SELECT d.decision = 'approved' INTO v_approved
+    FROM trust_draft_decisions AS d WHERE d.draft_id = NEW.draft_id;
+    v_acted := EXISTS (SELECT 1 FROM trust_draft_actions AS a WHERE a.draft_id = NEW.draft_id);
+    IF coalesce(v_approved, false) <> v_acted THEN
+        RAISE EXCEPTION 'trust: draft % % approved but % done', NEW.draft_id,
+            CASE WHEN v_approved THEN 'was' ELSE 'was not' END,
+            CASE WHEN v_acted THEN 'was' ELSE 'nothing was' END
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NULL;
@@ -4274,9 +4352,13 @@ BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('staff roles of ' || NEW.pmc_id, 0));
     NEW.changed_by := nullif(current_setting('trust.staff_id', true), '')::uuid;
     NEW.created_at := clock_timestamp();
+    -- An admin counts while their login isn't disabled (one not invited yet still counts: the
+    -- server's operator can invite them); docs/edge-cases.md U-051.
     v_has_admin := EXISTS (
         SELECT s.id FROM trust_staff AS s
         WHERE s.pmc_id = NEW.pmc_id AND trust_staff_holds(NEW.pmc_id, s.id, 'admin')
+          AND NOT EXISTS (SELECT 1 FROM trust_logins AS l
+                          WHERE l.staff_id = s.id AND l.disabled_at IS NOT NULL)
     );
     IF NEW.changed_by IS NULL THEN
         IF v_has_admin OR NEW.role <> 'admin' OR NOT NEW.granted THEN
@@ -4296,6 +4378,8 @@ BEGIN
         SELECT s.id FROM trust_staff AS s
         WHERE s.pmc_id = NEW.pmc_id AND s.id <> NEW.staff_id
           AND trust_staff_holds(NEW.pmc_id, s.id, 'admin')
+          AND NOT EXISTS (SELECT 1 FROM trust_logins AS l
+                          WHERE l.staff_id = s.id AND l.disabled_at IS NOT NULL)
     ) THEN
         RAISE EXCEPTION 'trust: staff member % is the PMC''s last admin', NEW.staff_id
             USING ERRCODE = 'check_violation',
@@ -4570,6 +4654,27 @@ BEGIN
         RAISE EXCEPTION 'trust: this work order is not assigned to the link''s vendor'
             USING ERRCODE = 'check_violation';
     END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_webhook_admin(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_webhook_admin() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM trust_require_role(
+        NEW.pmc_id,
+        NEW.recorded_by,
+        'admin',
+        CASE TG_TABLE_NAME WHEN 'trust_event_subscriptions' THEN 'add a webhook'
+            ELSE 'take a webhook back' END
+    );
     RETURN NEW;
 END;
 $$;
@@ -5049,6 +5154,14 @@ CREATE FUNCTION public.trust_deposit_interest_on(p_account text, p_property_id u
     ), 0)
     FROM held AS h
     JOIN terms AS t ON t.starts_on <= h.day AND (t.next_on IS NULL OR h.day < t.next_on)
+    -- A day of a deposit account is paid once, by whichever lease paid it: a tenant on two
+    -- leases (M-082), or a renewal and the lease it renewed (M-081), share the account.
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM trust_deposit_interest_lines AS li
+        JOIN trust_deposit_interest_payments AS p ON p.id = li.payment_id
+        WHERE li.deposit_account = p_account AND h.day BETWEEN p.from_on AND p.through_on
+    )
 $$;
 
 
@@ -6805,6 +6918,23 @@ $$;
 
 
 --
+-- Name: trust_pmc_status(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_pmc_status(p_pmc_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT coalesce(
+        (SELECT s.status FROM trust_company_statuses AS s
+         WHERE s.pmc_id = p_pmc_id
+         ORDER BY s.created_at DESC, s.id DESC LIMIT 1),
+        'active'
+    )
+$$;
+
+
+--
 -- Name: trust_pmc_time_zone(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7534,6 +7664,86 @@ $$;
 
 
 --
+-- Name: trust_record_event(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_record_event() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_new jsonb := to_jsonb(NEW);
+    v_old jsonb;
+    v_kind text;
+    v_subject jsonb;
+    v_meta jsonb;
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        v_old := to_jsonb(OLD);
+    END IF;
+    IF TG_TABLE_NAME = 'trust_idempotency_keys' THEN
+        -- A posting under its key: a tenant's payment, or one bouncing.
+        SELECT t.metadata INTO v_meta FROM pgledger_transfers AS t
+        WHERE t.id = v_new -> 'transfer_ids' ->> 0;
+        v_kind := CASE v_meta ->> 'kind'
+            WHEN 'tenant payment' THEN 'payment.recorded'
+            WHEN 'bounced payment' THEN 'payment.returned'
+        END;
+        v_subject := jsonb_build_object(
+            'lease_id', v_meta ->> 'lease_id', 'transfer_id', v_new -> 'transfer_ids' ->> 0
+        );
+    ELSIF TG_TABLE_NAME = 'trust_late_fees' THEN
+        v_kind := 'late_fee.charged';
+        v_subject := jsonb_build_object(
+            'lease_id', (SELECT c.lease_id FROM trust_charges AS c
+                         WHERE c.id = (v_new ->> 'fee_charge_id')::uuid),
+            'charge_id', v_new ->> 'fee_charge_id', 'rent_charge_id', v_new ->> 'rent_charge_id'
+        );
+    ELSIF TG_TABLE_NAME = 'trust_leases' THEN
+        IF TG_OP = 'INSERT' THEN
+            v_kind := 'lease.opened';
+        ELSIF v_old ->> 'ends_on' IS DISTINCT FROM v_new ->> 'ends_on' THEN
+            v_kind := 'lease.end_changed';
+        END IF;
+        v_subject := jsonb_build_object('lease_id', v_new ->> 'id', 'unit_id', v_new ->> 'unit_id');
+    ELSIF TG_TABLE_NAME = 'trust_bills' THEN
+        -- Over the approval limit of the agreement in force on its date (0 without one): it
+        -- waits for its owner.
+        v_kind := CASE WHEN (v_new ->> 'amount')::numeric > coalesce((
+            SELECT g.approval_limit FROM trust_management_agreements AS g
+            WHERE g.ledger_account_id = v_new ->> 'ledger_account_id'
+              AND g.starts_on <= (v_new ->> 'bill_date')::date
+            ORDER BY g.starts_on DESC LIMIT 1
+        ), 0) THEN 'bill.waiting_for_owner' ELSE 'bill.entered' END;
+        v_subject := jsonb_build_object('bill_id', v_new ->> 'id', 'vendor_id', v_new ->> 'vendor_id');
+    ELSIF TG_TABLE_NAME = 'trust_work_orders' THEN
+        v_kind := 'work_order.opened';
+        v_subject := jsonb_build_object(
+            'work_order_id', v_new ->> 'id', 'property_id', v_new ->> 'property_id',
+            'unit_id', v_new ->> 'unit_id'
+        );
+    ELSIF TG_TABLE_NAME = 'trust_work_order_steps' THEN
+        v_kind := 'work_order.' || (v_new ->> 'step');
+        v_subject := jsonb_build_object('work_order_id', v_new ->> 'work_order_id');
+    ELSIF TG_TABLE_NAME = 'trust_maintenance_requests' THEN
+        v_kind := 'maintenance.requested';
+        v_subject := jsonb_build_object(
+            'request_id', v_new ->> 'id', 'lease_id', v_new ->> 'lease_id'
+        );
+    ELSIF TG_TABLE_NAME = 'trust_draft_decisions' THEN
+        v_kind := 'draft.' || (v_new ->> 'decision');
+        v_subject := jsonb_build_object('draft_id', v_new ->> 'draft_id');
+    END IF;
+    IF v_kind IS NOT NULL THEN
+        INSERT INTO trust_events (pmc_id, kind, subject)
+        VALUES ((v_new ->> 'pmc_id')::uuid, v_kind, jsonb_strip_nulls(v_subject));
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: trust_record_evidenced_signature(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8212,8 +8422,19 @@ BEGIN
                    -- An update: each field it changed, from what to what.
                    WHEN a.action = 'update' THEN (
                        SELECT coalesce(string_agg(
-                           n.key || ': ' || coalesce(a.before ->> n.key, 'null') || ' to '
-                           || coalesce(n.value #>> '{}', 'null'),
+                           n.key || ': ' || CASE WHEN EXISTS (
+                               SELECT att.attnum FROM pg_attribute AS att
+                               WHERE att.attrelid = to_regclass(a.table_name)
+                                 AND att.attname = n.key AND att.atttypid = 'bytea'::regtype
+                           )
+                               -- A file's bytes, as hex: its size before and after.
+                               THEN coalesce('(' || (length(a.before ->> n.key) - 2) / 2
+                                       || ' bytes)', 'null')
+                                   || ' to ' || coalesce('(' || (length(n.value #>> '{}') - 2) / 2
+                                       || ' bytes)', 'null')
+                               ELSE coalesce(a.before ->> n.key, 'null') || ' to '
+                                   || coalesce(n.value #>> '{}', 'null')
+                           END,
                            ', ' ORDER BY n.key COLLATE "C"
                        ), 'no change')
                        FROM jsonb_each(a.row_data) AS n
@@ -8223,7 +8444,16 @@ BEGIN
                    -- (the log's own time says when).
                    ELSE (
                        SELECT string_agg(
-                           n.key || ': ' || n.value, ', ' ORDER BY n.key COLLATE "C"
+                           n.key || ': ' || CASE WHEN EXISTS (
+                               SELECT att.attnum FROM pg_attribute AS att
+                               WHERE att.attrelid = to_regclass(a.table_name)
+                                 AND att.attname = n.key AND att.atttypid = 'bytea'::regtype
+                           )
+                               -- A file's bytes, as hex ("\\x2550..."): their size.
+                               THEN '(' || (length(n.value) - 2) / 2 || ' bytes)'
+                               ELSE n.value
+                           END,
+                           ', ' ORDER BY n.key COLLATE "C"
                        )
                        FROM jsonb_each_text(a.row_data) AS n
                        WHERE n.value IS NOT NULL AND n.key <> 'id' AND n.key NOT LIKE '%\_id'
@@ -13054,8 +13284,9 @@ BEGIN
         FROM trust_leases AS l
         WHERE l.pmc_id = p_pmc_id
           AND l.ends_on < p_day AND l.ends_on >= p_day - 7
-          -- Entered while its term still ran: a lease from the past stays as it was.
-          AND l.created_at::date <= l.ends_on
+          -- Entered while its term still ran, by the company's day: a lease from the past
+          -- stays as it was (one entered at 9 pm in New York on its last day is no such lease).
+          AND trust_pmc_day(p_pmc_id, l.created_at) <= l.ends_on
           AND NOT EXISTS (SELECT 1 FROM trust_lease_holdovers AS h WHERE h.lease_id = l.id)
           AND NOT EXISTS (SELECT 1 FROM trust_lease_end_notices AS n WHERE n.lease_id = l.id)
           AND NOT EXISTS (SELECT 1 FROM trust_leases AS later
@@ -13122,6 +13353,18 @@ BEGIN
     RETURNING id INTO v_id;
     RETURN v_id;
 END;
+$$;
+
+
+--
+-- Name: trust_schema_versions(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_schema_versions() RETURNS SETOF text
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT m.version::text FROM schema_migrations AS m ORDER BY m.version
 $$;
 
 
@@ -15177,11 +15420,13 @@ CREATE TABLE public.trust_company_profiles (
     terms_url text,
     privacy_url text,
     time_zone text,
+    date_order text,
     CONSTRAINT trust_company_profiles_address_line_1_check CHECK (((btrim(address_line_1) <> ''::text) AND (char_length(address_line_1) <= 200))),
     CONSTRAINT trust_company_profiles_address_line_2_check CHECK (((btrim(address_line_2) <> ''::text) AND (char_length(address_line_2) <= 200))),
     CONSTRAINT trust_company_profiles_check CHECK (((num_nonnulls(address_line_1, city, state, postal_code) = ANY (ARRAY[0, 4])) AND ((address_line_2 IS NULL) OR (address_line_1 IS NOT NULL)))),
     CONSTRAINT trust_company_profiles_check1 CHECK (((num_nonnulls(late_grace_days, late_flat_fee, late_percent) = ANY (ARRAY[0, 3])) AND ((late_maximum IS NULL) OR (late_grace_days IS NOT NULL)))),
     CONSTRAINT trust_company_profiles_city_check CHECK (((btrim(city) <> ''::text) AND (char_length(city) <= 100))),
+    CONSTRAINT trust_company_profiles_date_order_check CHECK ((date_order = ANY (ARRAY['month_first'::text, 'day_first'::text]))),
     CONSTRAINT trust_company_profiles_late_flat_fee_check CHECK (((late_flat_fee >= (0)::numeric) AND (late_flat_fee = round(late_flat_fee, 2)))),
     CONSTRAINT trust_company_profiles_late_grace_days_check CHECK (((late_grace_days >= 0) AND (late_grace_days <= 365))),
     CONSTRAINT trust_company_profiles_late_maximum_check CHECK (((late_maximum >= (0)::numeric) AND (late_maximum = round(late_maximum, 2)))),
@@ -15193,6 +15438,21 @@ CREATE TABLE public.trust_company_profiles (
     CONSTRAINT trust_company_profiles_state_check CHECK (((btrim(state) <> ''::text) AND (char_length(state) <= 50))),
     CONSTRAINT trust_company_profiles_terms_url_check CHECK (((terms_url ~ '^https://[^[:space:]]+$'::text) AND (char_length(terms_url) <= 500))),
     CONSTRAINT trust_company_profiles_time_zone_check CHECK ((time_zone = ANY (ARRAY['America/New_York'::text, 'America/Chicago'::text, 'America/Denver'::text, 'America/Phoenix'::text, 'America/Los_Angeles'::text, 'America/Anchorage'::text, 'Pacific/Honolulu'::text, 'America/Puerto_Rico'::text, 'UTC'::text])))
+);
+
+
+--
+-- Name: trust_company_statuses; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_company_statuses (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    status text NOT NULL,
+    reason text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_company_statuses_reason_check CHECK (((reason ~ '\S'::text) AND (length(reason) <= 500))),
+    CONSTRAINT trust_company_statuses_status_check CHECK ((status = ANY (ARRAY['active'::text, 'suspended'::text, 'closed'::text])))
 );
 
 
@@ -15477,6 +15737,61 @@ CREATE TABLE public.trust_documents (
 
 
 --
+-- Name: trust_draft_actions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_draft_actions (
+    draft_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    acted jsonb NOT NULL,
+    result jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_draft_actions_acted_check CHECK (((jsonb_typeof(acted) = 'object'::text) AND (octet_length((acted)::text) <= 65536))),
+    CONSTRAINT trust_draft_actions_result_check CHECK ((jsonb_typeof(result) = 'object'::text))
+);
+
+
+--
+-- Name: trust_draft_decisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_draft_decisions (
+    draft_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    decision text NOT NULL,
+    edited boolean,
+    reason text,
+    recorded_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_draft_decisions_check CHECK (
+CASE decision
+    WHEN 'approved'::text THEN ((edited IS NOT NULL) AND (reason IS NULL))
+    ELSE ((edited IS NULL) AND (reason IS NOT NULL))
+END),
+    CONSTRAINT trust_draft_decisions_decision_check CHECK ((decision = ANY (ARRAY['approved'::text, 'declined'::text]))),
+    CONSTRAINT trust_draft_decisions_reason_check CHECK (((reason = btrim(reason)) AND ((char_length(reason) >= 1) AND (char_length(reason) <= 2000))))
+);
+
+
+--
+-- Name: trust_drafts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_drafts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    api_key_id uuid NOT NULL,
+    kind text NOT NULL,
+    proposal jsonb NOT NULL,
+    why text,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_drafts_check CHECK (((jsonb_typeof(proposal) = 'object'::text) AND ((proposal ->> 'kind'::text) = kind) AND (octet_length((proposal)::text) <= 65536))),
+    CONSTRAINT trust_drafts_kind_check CHECK ((kind = ANY (ARRAY['email'::text, 'notice'::text, 'work_order_open'::text, 'work_order_assign'::text, 'work_order_schedule'::text, 'note'::text]))),
+    CONSTRAINT trust_drafts_why_check CHECK (((why = btrim(why)) AND ((char_length(why) >= 1) AND (char_length(why) <= 2000))))
+);
+
+
+--
 -- Name: trust_draw_run_approvals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15608,6 +15923,97 @@ CREATE TABLE public.trust_emergency_contacts (
     CONSTRAINT trust_emergency_contacts_check CHECK ((num_nonnulls(tenant_id, applicant_id) = 1)),
     CONSTRAINT trust_emergency_contacts_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 200))),
     CONSTRAINT trust_emergency_contacts_phone_check CHECK ((phone ~ '^[+]?[0-9 ().-]{7,30}$'::text))
+);
+
+
+--
+-- Name: trust_event_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_event_deliveries (
+    id bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    subscription_id uuid NOT NULL,
+    event_id bigint NOT NULL,
+    attempted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    status integer,
+    error text,
+    CONSTRAINT trust_event_deliveries_check CHECK ((((status >= 200) AND (status <= 299)) OR (error IS NOT NULL))),
+    CONSTRAINT trust_event_deliveries_error_check CHECK ((char_length(error) <= 1000)),
+    CONSTRAINT trust_event_deliveries_status_check CHECK (((status >= 100) AND (status <= 599)))
+);
+
+
+--
+-- Name: trust_event_deliveries_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_event_deliveries ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.trust_event_deliveries_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: trust_event_subscription_revocations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_event_subscription_revocations (
+    subscription_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    recorded_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_event_subscriptions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_event_subscriptions (
+    id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    url text NOT NULL,
+    secret_sealed bytea NOT NULL,
+    secret_last4 text NOT NULL,
+    recorded_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_event_subscriptions_secret_last4_check CHECK ((secret_last4 ~ '^[A-Za-z0-9_-]{4}$'::text)),
+    CONSTRAINT trust_event_subscriptions_url_check CHECK (((url ~ '^https://[^/?#@\s]+(/[^\s]*)?$'::text) AND (char_length(url) <= 500)))
+);
+
+
+--
+-- Name: trust_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_events (
+    id bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    kind text NOT NULL,
+    subject jsonb NOT NULL,
+    xact xid8 DEFAULT pg_current_xact_id() NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_events_kind_check CHECK ((kind = ANY (ARRAY['payment.recorded'::text, 'payment.returned'::text, 'late_fee.charged'::text, 'lease.opened'::text, 'lease.end_changed'::text, 'bill.entered'::text, 'bill.waiting_for_owner'::text, 'work_order.opened'::text, 'work_order.assigned'::text, 'work_order.scheduled'::text, 'work_order.completed'::text, 'work_order.cancelled'::text, 'maintenance.requested'::text, 'draft.approved'::text, 'draft.declined'::text]))),
+    CONSTRAINT trust_events_subject_check CHECK ((jsonb_typeof(subject) = 'object'::text))
+);
+
+
+--
+-- Name: trust_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_events ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.trust_events_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
 );
 
 
@@ -17558,6 +17964,17 @@ CREATE TABLE public.trust_screenings (
 
 
 --
+-- Name: trust_session_activity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_session_activity (
+    session_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    last_seen_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: trust_sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19022,6 +19439,14 @@ ALTER TABLE ONLY public.trust_company_profiles
 
 
 --
+-- Name: trust_company_statuses trust_company_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_company_statuses
+    ADD CONSTRAINT trust_company_statuses_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_contacts trust_contacts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19318,6 +19743,38 @@ ALTER TABLE public.trust_documents
 
 
 --
+-- Name: trust_draft_actions trust_draft_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draft_actions
+    ADD CONSTRAINT trust_draft_actions_pkey PRIMARY KEY (draft_id);
+
+
+--
+-- Name: trust_draft_decisions trust_draft_decisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draft_decisions
+    ADD CONSTRAINT trust_draft_decisions_pkey PRIMARY KEY (draft_id);
+
+
+--
+-- Name: trust_drafts trust_drafts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_drafts
+    ADD CONSTRAINT trust_drafts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_drafts trust_drafts_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_drafts
+    ADD CONSTRAINT trust_drafts_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_draw_run_approvals trust_draw_run_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19445,6 +19902,46 @@ END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARR
 
 ALTER TABLE ONLY public.trust_emergency_contacts
     ADD CONSTRAINT trust_emergency_contacts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_event_deliveries trust_event_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_event_deliveries
+    ADD CONSTRAINT trust_event_deliveries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_event_subscription_revocations trust_event_subscription_revocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_event_subscription_revocations
+    ADD CONSTRAINT trust_event_subscription_revocations_pkey PRIMARY KEY (subscription_id);
+
+
+--
+-- Name: trust_event_subscriptions trust_event_subscriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_event_subscriptions
+    ADD CONSTRAINT trust_event_subscriptions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_event_subscriptions trust_event_subscriptions_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_event_subscriptions
+    ADD CONSTRAINT trust_event_subscriptions_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_events trust_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_events
+    ADD CONSTRAINT trust_events_pkey PRIMARY KEY (id);
 
 
 --
@@ -21056,6 +21553,14 @@ ALTER TABLE ONLY public.trust_screenings
 
 
 --
+-- Name: trust_session_activity trust_session_activity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_session_activity
+    ADD CONSTRAINT trust_session_activity_pkey PRIMARY KEY (session_id);
+
+
+--
 -- Name: trust_sessions trust_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22137,6 +22642,13 @@ CREATE INDEX trust_company_profiles_recorded_by ON public.trust_company_profiles
 
 
 --
+-- Name: trust_company_statuses_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_company_statuses_pmc ON public.trust_company_statuses USING btree (pmc_id, created_at);
+
+
+--
 -- Name: trust_contacts_by_owner; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22326,6 +22838,27 @@ CREATE INDEX trust_documents_work_order_id ON public.trust_documents USING btree
 
 
 --
+-- Name: trust_draft_decisions_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_draft_decisions_recorded_by ON public.trust_draft_decisions USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_drafts_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_drafts_key ON public.trust_drafts USING btree (pmc_id, api_key_id, created_at);
+
+
+--
+-- Name: trust_drafts_made; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_drafts_made ON public.trust_drafts USING btree (pmc_id, created_at);
+
+
+--
 -- Name: trust_draw_run_approvals_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22505,6 +23038,41 @@ CREATE INDEX trust_emergency_contacts_recorded_by ON public.trust_emergency_cont
 --
 
 CREATE INDEX trust_emergency_contacts_tenant ON public.trust_emergency_contacts USING btree (pmc_id, tenant_id, created_at);
+
+
+--
+-- Name: trust_event_deliveries_event; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_event_deliveries_event ON public.trust_event_deliveries USING btree (event_id);
+
+
+--
+-- Name: trust_event_deliveries_of; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_event_deliveries_of ON public.trust_event_deliveries USING btree (subscription_id, event_id);
+
+
+--
+-- Name: trust_event_subscription_revocations_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_event_subscription_revocations_recorded_by ON public.trust_event_subscription_revocations USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_event_subscriptions_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_event_subscriptions_recorded_by ON public.trust_event_subscriptions USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_events_in_order; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_events_in_order ON public.trust_events USING btree (pmc_id, xact, id);
 
 
 --
@@ -24580,6 +25148,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_company_statuses trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_company_statuses FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_contacts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24678,6 +25253,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_draft_actions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_draft_actions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_draft_decisions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_draft_decisions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_drafts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_drafts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_draw_run_approvals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24724,6 +25320,34 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_emergency_contacts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_event_deliveries trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_event_deliveries FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_event_subscription_revocations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_event_subscription_revocations FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_event_subscriptions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_event_subscriptions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_events trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_events FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -26197,6 +26821,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_comp
 
 
 --
+-- Name: trust_company_statuses trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_company_statuses FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_contacts trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26288,6 +26919,27 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_docu
 
 
 --
+-- Name: trust_draft_actions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_draft_actions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_draft_decisions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_draft_decisions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_drafts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_drafts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_draw_run_approvals trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26320,6 +26972,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_emai
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_emergency_contacts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_event_subscription_revocations trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_event_subscription_revocations FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_event_subscriptions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_event_subscriptions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -27541,6 +28207,13 @@ CREATE TRIGGER trust_check_autopay_run BEFORE INSERT ON public.trust_autopay_run
 
 
 --
+-- Name: trust_drafts trust_check_draft; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_draft BEFORE INSERT ON public.trust_drafts FOR EACH ROW EXECUTE FUNCTION public.trust_check_draft();
+
+
+--
 -- Name: trust_history_lines trust_check_history_line; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27793,6 +28466,20 @@ CREATE TRIGGER trust_document_staff BEFORE INSERT ON public.trust_documents FOR 
 
 
 --
+-- Name: trust_draft_actions trust_draft_done; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_draft_done AFTER INSERT ON public.trust_draft_actions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_draft_action();
+
+
+--
+-- Name: trust_draft_decisions trust_draft_done; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_draft_done AFTER INSERT ON public.trust_draft_decisions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_draft_action();
+
+
+--
 -- Name: trust_property_group_members trust_group_member; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28003,6 +28690,62 @@ CREATE TRIGGER trust_payout_method BEFORE INSERT ON public.trust_payout_methods 
 
 
 --
+-- Name: trust_bills trust_record_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_record_event AFTER INSERT ON public.trust_bills FOR EACH ROW EXECUTE FUNCTION public.trust_record_event();
+
+
+--
+-- Name: trust_draft_decisions trust_record_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_record_event AFTER INSERT ON public.trust_draft_decisions FOR EACH ROW EXECUTE FUNCTION public.trust_record_event();
+
+
+--
+-- Name: trust_idempotency_keys trust_record_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_record_event AFTER INSERT ON public.trust_idempotency_keys FOR EACH ROW EXECUTE FUNCTION public.trust_record_event();
+
+
+--
+-- Name: trust_late_fees trust_record_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_record_event AFTER INSERT ON public.trust_late_fees FOR EACH ROW EXECUTE FUNCTION public.trust_record_event();
+
+
+--
+-- Name: trust_leases trust_record_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_record_event AFTER INSERT OR UPDATE OF ends_on ON public.trust_leases FOR EACH ROW EXECUTE FUNCTION public.trust_record_event();
+
+
+--
+-- Name: trust_maintenance_requests trust_record_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_record_event AFTER INSERT ON public.trust_maintenance_requests FOR EACH ROW EXECUTE FUNCTION public.trust_record_event();
+
+
+--
+-- Name: trust_work_order_steps trust_record_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_record_event AFTER INSERT ON public.trust_work_order_steps FOR EACH ROW EXECUTE FUNCTION public.trust_record_event();
+
+
+--
+-- Name: trust_work_orders trust_record_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_record_event AFTER INSERT ON public.trust_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_record_event();
+
+
+--
 -- Name: trust_api_key_revocations trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28157,6 +28900,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_deposit_interest_
 
 
 --
+-- Name: trust_draft_decisions trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_draft_decisions FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_draw_run_approvals trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28175,6 +28925,20 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_email_settings FO
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_emergency_contacts FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_event_subscription_revocations trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_event_subscription_revocations FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_event_subscriptions trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_event_subscriptions FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -28700,6 +29464,20 @@ CREATE TRIGGER trust_recorded_by_admin BEFORE INSERT ON public.trust_api_key_rev
 --
 
 CREATE TRIGGER trust_recorded_by_admin BEFORE INSERT ON public.trust_api_keys FOR EACH ROW EXECUTE FUNCTION public.trust_check_api_key_admin();
+
+
+--
+-- Name: trust_event_subscription_revocations trust_recorded_by_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by_admin BEFORE INSERT ON public.trust_event_subscription_revocations FOR EACH ROW EXECUTE FUNCTION public.trust_check_webhook_admin();
+
+
+--
+-- Name: trust_event_subscriptions trust_recorded_by_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by_admin BEFORE INSERT ON public.trust_event_subscriptions FOR EACH ROW EXECUTE FUNCTION public.trust_check_webhook_admin();
 
 
 --
@@ -30293,6 +31071,14 @@ ALTER TABLE ONLY public.trust_company_profiles
 
 
 --
+-- Name: trust_company_statuses trust_company_statuses_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_company_statuses
+    ADD CONSTRAINT trust_company_statuses_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
 -- Name: trust_contacts trust_contacts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30749,6 +31535,46 @@ ALTER TABLE ONLY public.trust_documents
 
 
 --
+-- Name: trust_draft_actions trust_draft_actions_pmc_id_draft_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draft_actions
+    ADD CONSTRAINT trust_draft_actions_pmc_id_draft_id_fkey FOREIGN KEY (pmc_id, draft_id) REFERENCES public.trust_drafts(pmc_id, id);
+
+
+--
+-- Name: trust_draft_decisions trust_draft_decisions_pmc_id_draft_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draft_decisions
+    ADD CONSTRAINT trust_draft_decisions_pmc_id_draft_id_fkey FOREIGN KEY (pmc_id, draft_id) REFERENCES public.trust_drafts(pmc_id, id);
+
+
+--
+-- Name: trust_draft_decisions trust_draft_decisions_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draft_decisions
+    ADD CONSTRAINT trust_draft_decisions_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_drafts trust_drafts_pmc_id_api_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_drafts
+    ADD CONSTRAINT trust_drafts_pmc_id_api_key_id_fkey FOREIGN KEY (pmc_id, api_key_id) REFERENCES public.trust_api_keys(pmc_id, id);
+
+
+--
+-- Name: trust_drafts trust_drafts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_drafts
+    ADD CONSTRAINT trust_drafts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
 -- Name: trust_draw_run_approvals trust_draw_run_approvals_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31002,6 +31828,62 @@ ALTER TABLE ONLY public.trust_emergency_contacts
 
 ALTER TABLE ONLY public.trust_emergency_contacts
     ADD CONSTRAINT trust_emergency_contacts_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
+-- Name: trust_event_deliveries trust_event_deliveries_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_event_deliveries
+    ADD CONSTRAINT trust_event_deliveries_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.trust_events(id);
+
+
+--
+-- Name: trust_event_deliveries trust_event_deliveries_pmc_id_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_event_deliveries
+    ADD CONSTRAINT trust_event_deliveries_pmc_id_subscription_id_fkey FOREIGN KEY (pmc_id, subscription_id) REFERENCES public.trust_event_subscriptions(pmc_id, id);
+
+
+--
+-- Name: trust_event_subscription_revocations trust_event_subscription_revocation_pmc_id_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_event_subscription_revocations
+    ADD CONSTRAINT trust_event_subscription_revocation_pmc_id_subscription_id_fkey FOREIGN KEY (pmc_id, subscription_id) REFERENCES public.trust_event_subscriptions(pmc_id, id);
+
+
+--
+-- Name: trust_event_subscription_revocations trust_event_subscription_revocations_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_event_subscription_revocations
+    ADD CONSTRAINT trust_event_subscription_revocations_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_event_subscriptions trust_event_subscriptions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_event_subscriptions
+    ADD CONSTRAINT trust_event_subscriptions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_event_subscriptions trust_event_subscriptions_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_event_subscriptions
+    ADD CONSTRAINT trust_event_subscriptions_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_events trust_events_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_events
+    ADD CONSTRAINT trust_events_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
 
 
 --
@@ -33741,6 +34623,22 @@ ALTER TABLE ONLY public.trust_screenings
 
 
 --
+-- Name: trust_session_activity trust_session_activity_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_session_activity
+    ADD CONSTRAINT trust_session_activity_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_session_activity trust_session_activity_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_session_activity
+    ADD CONSTRAINT trust_session_activity_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.trust_sessions(id);
+
+
+--
 -- Name: trust_sessions trust_sessions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34810,4 +35708,16 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261104000600'),
     ('20261104000700'),
     ('20261104000800'),
-    ('20261104000900');
+    ('20261104000900'),
+    ('20261105000100'),
+    ('20261105000200'),
+    ('20261105000300'),
+    ('20261105000400'),
+    ('20261105000500'),
+    ('20261105000600'),
+    ('20261105000700'),
+    ('20261105000800'),
+    ('20261105000900'),
+    ('20261105001000'),
+    ('20261105001100'),
+    ('20261105001200');

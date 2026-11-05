@@ -398,7 +398,7 @@ def ready(conn: psycopg.Connection[Any], pmc_id: UUID, payouts: list[Payout]) ->
     if not by_ach:
         return
     try:
-        sealed.key_from()
+        key = sealed.key_from()
     except sealed.NoKey as missing:
         raise HTTPException(409, f"{missing}, so it makes no ACH file") from None
     for bank in sorted({p.bank for p in by_ach}, key=str):
@@ -411,22 +411,33 @@ def ready(conn: psycopg.Connection[Any], pmc_id: UUID, payouts: list[Payout]) ->
                 f"{name[0] if name else 'This trust bank account'} has no ACH details from its "
                 "bank yet: add them on its Payouts tab first",
             )
-    lacking = sorted(
-        {
-            p.name
-            for p in by_ach
-            if bank_of(
-                conn,
-                pmc_id,
-                "owner" if p.owner_id else "vendor",
-                p.owner_id or p.vendor_id,  # type: ignore[arg-type]
-            )
-            is None
-        }
-    )
+    lacking, unreadable = set(), set()
+    for p in by_ach:
+        found = bank_of(
+            conn,
+            pmc_id,
+            "owner" if p.owner_id else "vendor",
+            p.owner_id or p.vendor_id,  # type: ignore[arg-type]
+        )
+        if found is None:
+            lacking.add(p.name)
+            continue
+        # Another key set than the one that sealed the number (docs/edge-cases.md P-111): the
+        # file couldn't be made, so nothing is recorded.
+        try:
+            sealed.unseal(found[3], str(found[0]), key)
+        except sealed.Unreadable:
+            unreadable.add(p.name)
     if lacking:
         raise HTTPException(
-            409, f"no bank account on file for {', '.join(lacking)}: add it or pay by check"
+            409, f"no bank account on file for {', '.join(sorted(lacking))}: add it or pay by check"
+        )
+    if unreadable:
+        raise HTTPException(
+            409,
+            f"{', '.join(sorted(unreadable))}'s bank account number doesn't open under this"
+            " server's key, so it makes no ACH file: pay by check, or run the PMS with the key"
+            " that sealed it (PMS_DATA_KEY)",
         )
 
 
@@ -598,10 +609,27 @@ def items_of(conn: psycopg.Connection[Any], run: UUID) -> list[Item]:
     ]
 
 
+# docs/edge-cases.md C-055: the bank pays every ACH file it is given, so one uploaded twice pays
+# everyone in it twice. Checks print again as often as needed (a jam, a lost page).
+TAKEN = (
+    "this ACH file was taken already: uploading it to the bank again pays everyone in it twice,"
+    " so ask for it again only to replace a file the bank never took"
+)
+
+
 def take_file(
-    conn: psycopg.Connection[Any], session: Any, run_id: UUID, method: PayoutMethod
+    conn: psycopg.Connection[Any],
+    session: Any,
+    run_id: UUID,
+    method: PayoutMethod,
+    again: bool = True,
 ) -> RunShown:
-    """The run, once staff who may pay out money ask for its file; logs who took it."""
+    """The run, once staff who may pay out money ask for its file; logs who took it. A file
+    taken before is given again only when asked for `again`."""
+    # Two takes at once wait for each other, so the second sees the first (C-143).
+    conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"payout-file:{run_id}",)
+    )
     found = runs_of(conn, session.pmc_id, run=run_id)
     if not found:
         raise HTTPException(404, "no such payout run")
@@ -620,6 +648,8 @@ def take_file(
         raise HTTPException(
             403, "only staff who may pay out money (the disburse role) take a payout file"
         )
+    if run.downloads and not again:
+        raise HTTPException(409, TAKEN)
     conn.execute(
         "INSERT INTO trust_payout_file_downloads (pmc_id, run_id, file) VALUES (%s, %s, %s)",
         (session.pmc_id, run_id, "ach" if method == "EFT" else "checks"),
@@ -628,10 +658,11 @@ def take_file(
 
 
 @router.get("/runs/{run_id}/ach")
-def ach_file(session: Staff, conn: Conn, run_id: UUID) -> Response:
+def ach_file(session: Staff, conn: Conn, run_id: UUID, again: bool = False) -> Response:
     """The run's ACH file (NACHA) for the company to upload to its bank: one credit to each
-    payee's bank account, their payouts in the run summed."""
-    run = take_file(conn, session, run_id, "EFT")
+    payee's bank account, their payouts in the run summed. Taken before, it comes again only
+    with `again` (the portal asks first)."""
+    run = take_file(conn, session, run_id, "EFT", again)
     try:
         key = sealed.key_from()
     except sealed.NoKey as missing:

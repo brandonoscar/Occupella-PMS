@@ -16,17 +16,25 @@ RUN npm run build
 # x/net and x/crypto with known critical and high vulnerabilities (Grype, selfhost.yml). Without
 # cgo: the image uses only dbmate's Postgres driver, which is pure Go. It is built in a module of
 # its own that also asks for klauspost/compress 1.18.7: v2.37.0 pins 1.18.5, which has a high
-# vulnerability (GHSA-259r-337f-4rfw), and Go picks the higher of the two.
+# vulnerability (GHSA-259r-337f-4rfw), and Go picks the higher of the two. Likewise x/net 0.62.0:
+# v2.37.0 pins 0.60.0, which has a high one (GO-2026-6860).
 FROM mirror.gcr.io/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS dbmate
 ENV CGO_ENABLED=0 GOFLAGS=-trimpath GOTOOLCHAIN=local
 WORKDIR /build
 RUN go mod init build \
     && go get github.com/amacneil/dbmate/v2@v2.37.0 github.com/klauspost/compress@v1.18.7 \
+        golang.org/x/net@v0.62.0 \
     && go build -o /go/bin/dbmate github.com/amacneil/dbmate/v2
 
 FROM mirror.gcr.io/library/python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60
 
 COPY --from=dbmate /go/bin/dbmate /usr/local/bin/dbmate
+# The base image's Debian packages with their security fixes since it was published: Grype
+# (selfhost.yml) fails the image on a high vulnerability with a fix, such as apt 3.0.3's
+# CVE-2026-109518, fixed in 3.0.4, before the pinned image catches up.
+RUN apt-get update \
+    && apt-get upgrade --yes --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 RUN useradd --create-home --uid 10001 pms
 
 WORKDIR /app

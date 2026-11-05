@@ -208,7 +208,51 @@ def test_a_quiet_day_shows_nothing(client, conn, staff, pmc):
         "month_to_month": [],
         "move_out_notices": [],
         "messages_waiting": [],
+        "drafts_waiting": [],
+        "rent_not_posted": None,
     }
+
+
+def test_rent_not_posted_for_two_days_is_noted_with_the_last_day_it_did(client, conn, staff, pmc):
+    """docs/edge-cases.md H-021: when the nightly run's thread died, it failed every night or it
+    was off, rent, late fees and draws silently stopped posting and no page said when rent last
+    posted. Needs attention says it once two days pass without a run, by itself or Run rent now."""
+    prop = pmc.owners[0].property_id
+    unit = add_unit(conn, pmc.pmc_id, prop, "Unit 9")
+    open_lease(
+        conn,
+        pmc.pmc_id,
+        unit,
+        START,
+        None,
+        "1000.00",
+        [add_tenant(conn, pmc.pmc_id, prop, "Tenant 9")],
+    )
+
+    def noted(on):
+        return client.get("/api/today", params={"on": str(on)}).json()["rent_not_posted"]
+
+    # Never posted, the lease entered today: its first night is still to come.
+    assert noted(TODAY) is None
+    assert noted(TODAY + DAY) is None
+    assert noted(TODAY + 2 * DAY) == {"last_posted_on": None, "waiting_since": str(TODAY)}
+
+    conn.execute("SELECT trust_run_rent(%s, %s, %s)", (pmc.pmc_id, TODAY.replace(day=1), TODAY))
+    assert noted(TODAY + DAY) is None
+    assert noted(TODAY + 2 * DAY) == {"last_posted_on": str(TODAY), "waiting_since": str(TODAY)}
+    # Another company's run is none of this one's.
+    other = make_pmc(conn)
+    conn.execute(
+        "SELECT trust_run_rent(%s, %s, %s)", (other.pmc_id, TODAY.replace(day=1), TODAY + DAY)
+    )
+    assert noted(TODAY + 3 * DAY) == {"last_posted_on": str(TODAY), "waiting_since": str(TODAY)}
+
+
+def test_a_company_with_no_lease_needs_no_rent_run(client, conn, staff, pmc):
+    assert (
+        client.get("/api/today", params={"on": str(TODAY + 30 * DAY)}).json()["rent_not_posted"]
+        is None
+    )
 
 
 def test_a_lease_gone_month_to_month_is_noted_for_thirty_days_while_it_is(client, conn, staff, pmc):

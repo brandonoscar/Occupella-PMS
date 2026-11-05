@@ -7,6 +7,7 @@ and types are covered; the property test covers arbitrary values.
 import csv
 import io
 import re
+import time
 import uuid
 import zipfile
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -276,6 +277,28 @@ def test_a_cells_text_wraps_at_spaces_and_inside_a_word_only_when_it_must():
     assert long[0] == "a" and long[-1].endswith("b") and "".join(long[1:-1]).startswith("xxx")
     assert all(pdf.get_string_width(line) <= narrow for line in long)
     assert "".join(long).replace(" ", "") == "a" + "x" * 40 + "b"
+
+
+def test_a_cell_of_millions_of_characters_is_cut_where_a_file_cant_hold_it():
+    """docs/edge-cases.md F-122: one cell of 10 million characters (a PDF's bytes as hex in the
+    audit log) took the PDF export a character at a time, copying the rest each line, and never
+    finished; an Excel cell holds 32,767 characters. The PDF cuts a cell at a page's lines and
+    the sheet at its limit, each ending in "…"; the CSV keeps it whole."""
+    huge = "\\x" + "25504446" * 1_250_000
+    words = " ".join(["word"] * 20_000)
+    table = exports.Table("big", ("line", "detail", "more"), ((1, huge, words), (2, "short", "")))
+    started = time.monotonic()
+
+    pages = read_pdf(exports.to_pdf(table, GENERATED))
+    sheet = load_workbook(io.BytesIO(exports.to_xlsx(table, GENERATED))).active
+    whole = exports.to_csv(table).decode()
+
+    assert time.monotonic() - started < 30
+    assert len(pages) == 1 and "short" in pages[0] and "…" in pages[0]
+    for cell in (sheet["B2"].value, sheet["C2"].value):
+        assert len(cell) == exports.SHEET_MOST and cell.endswith("…")
+    assert sheet["B3"].value == "short"
+    assert f"1,{huge},{words}\r\n" in whole
 
 
 def test_a_long_report_repeats_its_header_on_every_page():
