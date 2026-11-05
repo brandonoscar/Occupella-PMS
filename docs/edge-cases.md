@@ -25,7 +25,7 @@ answer in the portal for everything that can fail.
 
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
-| [Money and the ledger](#money-and-the-ledger) | 150 | 110 | 7 | 33 | 7 |
+| [Money and the ledger](#money-and-the-ledger) | 150 | 111 | 7 | 32 | 6 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 159 | 81 | 15 | 63 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 63 | 30 | 49 | 2 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 162 | 62 | 8 | 92 | 27 |
@@ -33,7 +33,7 @@ answer in the portal for everything that can fail.
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 166 | 68 | 14 | 84 | 9 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1137** | **571** | **110** | **456** | **72** |
+| **All** | **1137** | **572** | **110** | **455** | **71** |
 
 ## Open, high risk: the work list
 
@@ -43,7 +43,6 @@ its ten most pressing, each with the test that would close it.
 **Money and the ledger**
 
 - M-049: Late fee terms added with a start day in the past
-- M-050: A backdated late fee that falls in a closed year
 - M-072: Prepaid rent left over at move-out
 - M-073: A renewal while the old lease still owes
 - M-081: A renewed lease: the old lease's interest paid through today and the new lease's from its first day
@@ -138,7 +137,6 @@ its ten most pressing, each with the test that would close it.
 | ID | Edge case | What the PMS does | Status | Evidence | Risk |
 |---|---|---|---|---|---|
 | M-049 | Late fee terms added with a start day in the past | The next night charges a late fee on every rent since then not paid within its grace, even ones paid late since; nothing limits backdating | Open | `src/pms/api/setup.py:751` | H |
-| M-050 | A backdated late fee that falls in a closed year | The closed-year trigger raises and the company's whole nightly run, rent included, fails every night | Open | `src/pms/nightly.py:115`; `db/migrations/20261021000106_year_close.sql:138` | H |
 | M-072 | Prepaid rent left over at move-out | Not used for what the lease owes before the deposit is kept, and never refunded by the return | Open | `db/migrations/20261019000094_ownership_shares.sql:190` | H |
 | M-073 | A renewal while the old lease still owes | New payments don't pay it, and the final return keeps only the renewal's debt; whichever lease is returned first takes the whole deposit | Open | `db/migrations/20261018000091_lease_transfers.sql:62` | H |
 | M-081 | A renewed lease: the old lease's interest paid through today and the new lease's from its first day | The same days are paid twice: the old lease's through day is not capped at its end | Open | `db/migrations/20261022000122_deposit_interest.sql:152` | H |
@@ -152,6 +150,7 @@ its ten most pressing, each with the test that would close it.
 | M-034 | Run rent now with a mid-month due date (the 15th) after the 1st was charged | Charged once a month whatever day the run is for: a month with any of its rent due already is not charged again (migration 20261105000400) | Tested | `tests/test_rent_once_a_month.py::test_a_mid_month_run_charges_no_month_twice`; `tests/properties/test_rent_once_a_month_properties.py` | H |
 | M-035 | The same mid-month run for recurring charges (pet rent, parking) | Each monthly charge is charged once a month whatever day the run is for (migration 20261105000400) | Tested | `tests/test_rent_once_a_month.py::test_a_mid_month_run_charges_no_month_twice`; `tests/properties/test_rent_once_a_month_properties.py` | H |
 | M-047 | Two late-fee runs at the same moment | One late fee per rent | Tested | `tests/test_rent_automation.py::test_two_runs_at_once_charge_one_late_fee` | H |
+| M-050 | A backdated late fee that falls in a closed year | trust_assess_late_fees passes over a rent whose fee would fall in a closed year (migration 20261105000700); the run goes on | Tested | tests/test_year_close.py::test_a_late_fee_that_would_fall_in_a_closed_year_is_never_charged_and_the_run_goes_on; tests/properties/test_year_close_properties.py (late fees step) | H |
 | M-057 | The same payment bounced twice | Owed again once; the second bounce is refused | Tested | `tests/api/test_rent.py::test_a_bounced_payment_is_owed_again_once` | H |
 | M-058 | A bounce after the owner was already drawn | Refused: the owner's account would go below zero | Tested | `tests/api/test_rent.py::test_a_payment_the_owner_was_paid_out_of_cannot_bounce_into_the_negative` | H |
 | M-059 | A bounce after the payment's prepaid part was used | Refused, nothing written | Tested | `tests/properties/test_rent_properties.py::test_rent_invariants_hold_under_random_charges_payments_and_bounces` | H |

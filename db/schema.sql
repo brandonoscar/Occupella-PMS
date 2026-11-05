@@ -991,6 +991,8 @@ DECLARE
     v_fee numeric;
     v_fee_id uuid;
     v_charged integer := 0;
+    v_fee_day date;
+    v_closed date;
 BEGIN
     IF current_setting('transaction_isolation') <> 'read committed' THEN
         RAISE EXCEPTION 'trust: assess late fees at READ COMMITTED, not %',
@@ -1066,6 +1068,18 @@ BEGIN
         WHERE c.id = ANY (v_due)
         ORDER BY c.due_on + p.grace_days, c.due_on, c.id
     LOOP
+        v_fee_day := v_rent.due_on + v_rent.grace_days + 1;
+        -- A fee that would fall in a closed year is never charged: the year is locked (migration
+        -- 20261021000106), and the one charge it refuses stopped the company's whole run, rent
+        -- included, every night (docs/edge-cases.md M-050). The PMC is locked FOR SHARE first,
+        -- as the year's own check does, so a close under way and this wait for each other.
+        IF v_fee_day < date_trunc('year', now() AT TIME ZONE 'UTC')::date THEN
+            IF v_closed IS NULL THEN
+                PERFORM 1 FROM trust_pmcs AS p WHERE p.pmc_id = p_pmc_id FOR SHARE;
+                v_closed := coalesce(trust_closed_until(p_pmc_id), '-infinity'::date);
+            END IF;
+            CONTINUE WHEN v_fee_day <= v_closed;
+        END IF;
         v_cutoff := (v_rent.due_on + v_rent.grace_days + 1)::timestamp AT TIME ZONE 'UTC';
         -- What is open of it then: payments and bounces dated before then, and the lease's
         -- credits due by its last day of grace, oldest charges first (the fees this run charged
@@ -1082,7 +1096,7 @@ BEGIN
 
         INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
         VALUES (
-            p_pmc_id, v_rent.lease_id, v_rent.due_on + v_rent.grace_days + 1, 'fee', v_fee,
+            p_pmc_id, v_rent.lease_id, v_fee_day, 'fee', v_fee,
             'Late fee, rent due ' || to_char(v_rent.due_on, 'YYYY-MM-DD')
         )
         RETURNING id INTO v_fee_id;
@@ -35657,4 +35671,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261105000300'),
     ('20261105000400'),
     ('20261105000500'),
-    ('20261105000600');
+    ('20261105000600'),
+    ('20261105000700');

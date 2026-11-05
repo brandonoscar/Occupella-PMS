@@ -72,6 +72,11 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   the owners to choose among (Record it, naming whose), a lease at such a property takes no
   payment online (the tenant sees the company's How to pay us) nor by autopay (its month reads as
   online payments off), and the card says when the list couldn't load instead of showing nothing.
+- **Fixed: one late fee in a closed year stopped the whole nightly run.** Late fee terms entered
+  after a year closed, in force from before it, reached that year's rents still open; the fee was
+  dated in the closed year, the year's lock refused it, and the company's whole run, rent
+  included, failed every night. Such a rent is now charged no late fee and the run goes on.
+  Migration `20261105000700`.
 - **The Dashboard says when rent stopped posting.** When no rent run (the nightly one, or an
   admin's Run rent now) ran in two days while the company has leases, because the nightly run
   failed every night, its thread died or it was off, Needs attention says so first, with the last

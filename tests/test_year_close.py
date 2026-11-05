@@ -245,3 +245,33 @@ def test_a_charge_dated_in_the_year_waits_for_a_close_under_way_and_then_is_refu
 
     assert isinstance(outcome.get("error"), psycopg.errors.CheckViolation), outcome
     assert "2025 is closed" in str(outcome["error"])
+
+
+def test_a_late_fee_that_would_fall_in_a_closed_year_is_never_charged_and_the_run_goes_on(
+    conn, app_conn, pmc, closer
+):
+    """docs/edge-cases.md M-050, D-082: late fee terms entered after a year closed, in force
+    from before it, reach a rent of that year still open. Its fee falls in the closed year, the
+    year's lock refused it, and the company's whole run, rent included, failed every night. Such
+    a rent is charged no late fee, and the rest of the run goes on."""
+    lease = a_lease(conn, pmc)
+    old = charge(conn, pmc.pmc_id, lease, DEC_1, "1000.00")  # unpaid since
+    december(conn, pmc)
+    close(conn, pmc.pmc_id, 2025, closer)
+    conn.execute(
+        "INSERT INTO trust_late_fee_policies (pmc_id, property_id, starts_on, grace_days,"
+        " flat_fee) VALUES (%s, %s, %s, 5, 50.00)",
+        (pmc.pmc_id, pmc.owners[0].property_id, date(2025, 1, 1)),
+    )
+    today = datetime.now(UTC).date()
+
+    app_conn.execute("SELECT trust_run_rent(%s, %s, %s)", (pmc.pmc_id, today.replace(day=1), today))
+
+    assert conn.execute(
+        "SELECT count(*) FROM trust_late_fees WHERE rent_charge_id = %s", (old,)
+    ).fetchone() == (0,)
+    # This month's rent posted all the same.
+    assert conn.execute(
+        "SELECT count(*) FROM trust_charges WHERE lease_id = %s AND kind = 'rent' AND due_on = %s",
+        (lease, today.replace(day=1)),
+    ).fetchone() == (1,)
