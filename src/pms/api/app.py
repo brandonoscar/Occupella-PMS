@@ -133,6 +133,7 @@ from pms.api import (
     tenant,
     throttle,
     today,
+    unapplied,
     unit_details,
     utilities,
     vendor_links,
@@ -792,6 +793,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(people.router)
     app.include_router(setup.router)
     app.include_router(chart.router)
+    app.include_router(unapplied.router)
     app.include_router(go_live.router)
     app.include_router(payment_files.router)
     app.include_router(rent.router)

@@ -538,6 +538,8 @@ def record_payment(
     method: PaidBy | None = None,
     past_hold_by: str | None = None,
     chosen: list[tuple[UUID, Decimal]] | None = None,
+    source: tuple[str, UUID] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> Recorded:
     """A tenant's payment into the operating trust bank account: the owner's account takes
     what the lease owes, matched to its rent first, then its other charges, each oldest first
@@ -552,7 +554,9 @@ def record_payment(
     it, unless staff accept it past the hold (`past_hold_by` names them): then every hold in
     force that day allows it, in the same transaction. Staff may choose the open charges it pays
     (`chosen`: each charge with how much, in that order); what is left of it pays the rest in the
-    usual order."""
+    usual order. Unapplied cash applied to the lease (migration 20261106000240) pays from its own
+    account (`source`: the account and its trust bank account) instead of the cash, every part in
+    that trust bank account, with what names it in the metadata (`extra`)."""
     lease = lease_of(conn, pmc_id, lease_id)
     owners = owners_of(conn, pmc_id, lease.property_id, received_on, account)
     bank = owners.bank
@@ -574,6 +578,8 @@ def record_payment(
     }
     if chosen:
         metadata["charges"] = [[str(charge), cents(part)] for charge, part in chosen]
+    if extra:
+        metadata |= extra
     # Each lease's part, oldest first. Every lease's rent comes before any lease's other charges.
     chain = [*(each for each, _, _ in earlier_leases), lease_id]
     still = {each: open_rent_and_fees(conn, pmc_id, each) for each in chain}
@@ -611,10 +617,26 @@ def record_payment(
     to_owner = amount - left
     to_prepaid = left
     to_company = sum((s.to_company for s in splits.values()), ZERO)
-    transfers = [(cash_of(conn, b), o, part) for _, o, b, part, _ in parts]
+    if source is not None and any(b != source[1] for _, _, b, _, _ in parts):
+        raise HTTPException(
+            409,
+            "this lease's owners keep their money in another trust bank account than the one"
+            " this unapplied cash is in",
+        )
+
+    def paid_from(b: UUID) -> str:
+        return source[0] if source is not None else cash_of(conn, b)
+
+    transfers = [(paid_from(b), o, part) for _, o, b, part, _ in parts]
     if to_prepaid > 0:
+        if source is not None and source[1] != bank:
+            raise HTTPException(
+                409,
+                "this lease's tenants hold prepaid rent in another trust bank account than the"
+                " one this unapplied cash is in",
+            )
         prepaid = tenant_account(conn, pmc_id, bank, "prepaid_rent", lease.tenants[0])
-        transfers.append((cash_of(conn, bank), prepaid, to_prepaid))
+        transfers.append((paid_from(bank), prepaid, to_prepaid))
     posted = post(conn, pmc_id, key, transfers, received_on, metadata)
     if posted is None:
         return replay(conn, pmc_id, key, metadata)
@@ -789,6 +811,12 @@ def bounce(conn: psycopg.Connection[Any], pmc_id: UUID, transfer_id: str, on: da
     ).fetchall()
     if not rows:
         raise HTTPException(404, "no such tenant payment")
+    if rows[0][4].get("unapplied_id"):
+        raise HTTPException(
+            409,
+            "this payment is unapplied cash applied to the lease: it came in before, so it can't"
+            " bounce here",
+        )
     payment_key = rows[0][4]["key"]
     lease_id = UUID(rows[0][4]["lease_id"])
     lock_lease(conn, lease_id)

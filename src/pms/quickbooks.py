@@ -35,6 +35,7 @@ PARENTS = {
     "tenant_deposit": "Tenant deposits",
     "vendor_payable": "Vendor bills to pay",
     "pmc_income": "Fees earned in trust",
+    "unapplied_cash": "Unapplied cash",
 }
 
 ACCOUNTS = """
@@ -44,6 +45,7 @@ SELECT t.ledger_account_id, t.kind, b.display_name,
            WHEN 'owner_property' THEN o.display_name || ' - ' || pr.display_name
            WHEN 'vendor_payable' THEN v.display_name
            WHEN 'pmc_income' THEN b.display_name
+           WHEN 'unapplied_cash' THEN b.display_name
            ELSE tn.display_name || coalesce(' (' || t.deposit_kind || ' deposit)', '')
        END,
        (SELECT q.name FROM trust_quickbooks_accounts AS q

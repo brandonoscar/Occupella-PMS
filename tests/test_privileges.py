@@ -119,6 +119,11 @@ TABLES = {
     "trust_charge_type_archivals_id_seq": set(),
     "trust_charge_type_payees": {"SELECT", "INSERT"},
     "trust_charge_type_payees_id_seq": set(),
+    # Unapplied cash (migration 20261106000240): staff record a receipt and its application to a
+    # lease; a refund is written only by trust_refund_unapplied_cash, a payout.
+    "trust_unapplied_receipts": {"SELECT", "INSERT"},
+    "trust_unapplied_applications": {"SELECT", "INSERT"},
+    "trust_unapplied_refunds": {"SELECT"},
     # QuickBooks names (migration 0102): staff name a ledger account for QuickBooks; the latest
     # row holds, so a change is an insert. The ids order the rows.
     "trust_quickbooks_accounts": {"SELECT", "INSERT"},
@@ -579,6 +584,12 @@ FUNCTIONS = {
     "trust_check_chart_archival()": set(),
     "trust_check_chart_choice()": set(),
     "trust_check_charge_type_payee()": set(),
+    # Unapplied cash (migration 20261106000240): what is left of a receipt, its checks, and its
+    # refund, a payout.
+    "trust_unapplied_left(uuid)": {"trust_app"},
+    "trust_check_unapplied_receipt()": set(),
+    "trust_check_unapplied_use()": set(),
+    "trust_refund_unapplied_cash(uuid,uuid,numeric,text,text,text,timestamptz)": {"trust_app"},
     # A company's time zone and its day (migration 20261104000900): read from its profile, which
     # the AI role never reads.
     "trust_pmc_time_zone(uuid)": {"trust_app"},
@@ -942,6 +953,10 @@ SECURITY_DEFINER = {
     # Reads households' certifications for the AI role, which never reads them, and prints words,
     # limits and rents, never income or household size (migration 0123).
     "trust_report_tax_credit_compliance(uuid,date)",
+    # Refunds unapplied cash through the cash, a payout writing the refund only it writes.
+    "trust_refund_unapplied_cash(uuid,uuid,numeric,text,text,text,timestamptz)",
+    # Locks the receipt an application or a refund takes from, which the app can't.
+    "trust_check_unapplied_use()",
     # Reads the chart of accounts for the AI role through the app's helpers (codes, names today,
     # archivals, payees), returning only the chart (migration 20261106000230).
     "trust_report_chart_of_accounts(uuid)",

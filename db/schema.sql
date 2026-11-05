@@ -735,7 +735,8 @@ BEGIN
         SELECT f.ledger_account_id FROM trust_ledger_accounts AS f
         WHERE f.ledger_account_id = v_transfer.from_account_id AND f.pmc_id = p_pmc_id
           AND (
-              f.kind = 'bank_cash'
+              -- Cash, or unapplied cash applied to the lease (migration 20261106000240).
+              f.kind IN ('bank_cash', 'unapplied_cash')
               OR (f.kind IN ('prepaid_rent', 'tenant_deposit') AND f.tenant_id IN (
                   SELECT lt.tenant_id FROM trust_lease_tenants AS lt
                   WHERE lt.lease_id = v_charge.lease_id
@@ -823,7 +824,7 @@ $$;
 CREATE FUNCTION public.trust_approve_bank_reconciliation(p_pmc_id uuid, p_preparation_id uuid) RETURNS uuid
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
-    AS $$
+    AS $_$
 DECLARE
     v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
     v_prepared trust_reconciliation_preparations;
@@ -870,6 +871,21 @@ BEGIN
             v_prepared.through
             USING ERRCODE = 'check_violation';
     END IF;
+    -- Money received that is no one's yet can't stand in a month that is signed off: apply it
+    -- to a lease or refund it first (migration 20261106000240).
+    IF EXISTS (
+        SELECT 1 FROM trust_ledger_accounts AS t
+        JOIN pgledger_accounts AS a ON a.id = t.ledger_account_id
+        WHERE t.bank_account_id = v_bank.id AND t.kind = 'unapplied_cash' AND a.balance <> 0
+    ) THEN
+        RAISE EXCEPTION 'trust: % of unapplied cash is held in this trust bank account: apply it '
+            'to a lease or refund it before approving',
+            (SELECT to_char(sum(a.balance), 'FM$999,999,990.00')
+             FROM trust_ledger_accounts AS t
+             JOIN pgledger_accounts AS a ON a.id = t.ledger_account_id
+             WHERE t.bank_account_id = v_bank.id AND t.kind = 'unapplied_cash')
+            USING ERRCODE = 'check_violation';
+    END IF;
     SELECT array_agg(r.amount ORDER BY r.line) INTO v_figures
     FROM trust_report_bank_reconciliation(p_pmc_id, v_bank.id, v_prepared.through) AS r
     WHERE r.line IN (4, 8, 9);
@@ -894,7 +910,7 @@ BEGIN
         (SELECT s.display_name FROM trust_staff AS s WHERE s.id = v_staff)
     );
 END;
-$$;
+$_$;
 
 
 --
@@ -5053,6 +5069,73 @@ $$;
 
 
 --
+-- Name: trust_check_unapplied_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_unapplied_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pgledger_transfers AS tr
+        JOIN trust_ledger_accounts AS u ON u.ledger_account_id = tr.to_account_id
+        JOIN trust_ledger_accounts AS c ON c.ledger_account_id = tr.from_account_id
+        WHERE tr.id = NEW.transfer_id AND tr.amount = NEW.amount
+          AND u.ledger_account_id = NEW.ledger_account_id AND u.kind = 'unapplied_cash'
+          AND u.pmc_id = NEW.pmc_id AND u.bank_account_id = NEW.bank_account_id
+          AND c.kind = 'bank_cash' AND c.bank_account_id = NEW.bank_account_id
+          AND (tr.event_at AT TIME ZONE 'UTC')::date = NEW.received_on
+    ) THEN
+        RAISE EXCEPTION 'trust: unapplied cash is received from the trust bank account''s cash '
+            'into its unapplied cash account, % of it on %', NEW.amount, NEW.received_on
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_unapplied_use(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_unapplied_use() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $_$
+DECLARE
+    v_receipt trust_unapplied_receipts;
+    v_left numeric;
+BEGIN
+    SELECT r.* INTO v_receipt FROM trust_unapplied_receipts AS r
+    WHERE r.id = NEW.receipt_id AND r.pmc_id = NEW.pmc_id
+    FOR NO KEY UPDATE;
+    v_left := trust_unapplied_left(NEW.receipt_id);
+    IF NEW.amount > v_left THEN
+        RAISE EXCEPTION 'trust: only % of this unapplied cash is left; % is more',
+            to_char(v_left, 'FM$999,999,990.00'), to_char(NEW.amount, 'FM$999,999,990.00')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    -- (Each table's own columns are read only in its own branch.)
+    IF TG_TABLE_NAME = 'trust_unapplied_applications' THEN
+        IF NEW.amount <> coalesce((
+            SELECT sum(tr.amount) FROM pgledger_transfers AS tr
+            WHERE tr.metadata ->> 'key' = NEW.payment_key
+              AND tr.from_account_id = v_receipt.ledger_account_id
+        ), 0) THEN
+            RAISE EXCEPTION 'trust: an application of unapplied cash is the payment it posted '
+                'from that account, all of it'
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$_$;
+
+
+--
 -- Name: trust_check_vendor_link_step(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6321,7 +6404,7 @@ CREATE TABLE public.trust_ledger_accounts (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     vendor_id uuid,
     deposit_kind text,
-    CONSTRAINT trust_ledger_accounts_kind_shape_v2 CHECK ((((kind = 'owner_property'::text) AND (owner_id IS NOT NULL) AND (property_id IS NOT NULL) AND (tenant_id IS NULL) AND (vendor_id IS NULL)) OR ((kind = ANY (ARRAY['tenant_deposit'::text, 'prepaid_rent'::text])) AND (tenant_id IS NOT NULL) AND (owner_id IS NULL) AND (property_id IS NULL) AND (vendor_id IS NULL)) OR ((kind = 'vendor_payable'::text) AND (vendor_id IS NOT NULL) AND (owner_id IS NULL) AND (property_id IS NULL) AND (tenant_id IS NULL)) OR ((kind = ANY (ARRAY['pmc_income'::text, 'bank_cash'::text])) AND (owner_id IS NULL) AND (property_id IS NULL) AND (tenant_id IS NULL) AND (vendor_id IS NULL))))
+    CONSTRAINT trust_ledger_accounts_kind_shape_v3 CHECK ((((kind = 'owner_property'::text) AND (owner_id IS NOT NULL) AND (property_id IS NOT NULL) AND (tenant_id IS NULL) AND (vendor_id IS NULL)) OR ((kind = ANY (ARRAY['tenant_deposit'::text, 'prepaid_rent'::text])) AND (tenant_id IS NOT NULL) AND (owner_id IS NULL) AND (property_id IS NULL) AND (vendor_id IS NULL)) OR ((kind = 'vendor_payable'::text) AND (vendor_id IS NOT NULL) AND (owner_id IS NULL) AND (property_id IS NULL) AND (tenant_id IS NULL)) OR ((kind = ANY (ARRAY['pmc_income'::text, 'bank_cash'::text, 'unapplied_cash'::text])) AND (owner_id IS NULL) AND (property_id IS NULL) AND (tenant_id IS NULL) AND (vendor_id IS NULL))))
 );
 
 
@@ -8303,6 +8386,76 @@ $$;
 
 
 --
+-- Name: trust_refund_unapplied_cash(uuid, uuid, numeric, text, text, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_refund_unapplied_cash(p_pmc_id uuid, p_receipt_id uuid, p_amount numeric, p_paid_to text, p_method text, p_request_key text, p_event_at timestamp with time zone) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $_$
+DECLARE
+    v_receipt trust_unapplied_receipts;
+    v_done trust_unapplied_refunds;
+    v_cash text;
+    v_transfer text;
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: refund unapplied cash at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+    IF coalesce(p_request_key, '') = '' OR p_amount IS NULL OR p_amount <= 0
+       OR p_amount <> round(p_amount, 2) THEN
+        RAISE EXCEPTION 'trust: a refund of unapplied cash takes a request key and a positive '
+            'amount in cents'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT r.* INTO v_receipt FROM trust_unapplied_receipts AS r
+    WHERE r.id = p_receipt_id AND r.pmc_id = p_pmc_id
+    FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no unapplied cash % in PMC %', p_receipt_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT f.* INTO v_done FROM trust_unapplied_refunds AS f
+    WHERE f.pmc_id = p_pmc_id AND f.request_key = p_request_key;
+    IF FOUND THEN
+        IF (v_done.receipt_id, v_done.amount) IS DISTINCT FROM (p_receipt_id, p_amount) THEN
+            RAISE EXCEPTION 'trust: request key % refunded other unapplied cash already',
+                p_request_key
+                USING ERRCODE = 'unique_violation';
+        END IF;
+        RETURN v_done.transfer_id;  -- a retry: the refund made then
+    END IF;
+    IF p_amount > trust_unapplied_left(p_receipt_id) THEN
+        RAISE EXCEPTION 'trust: only % of this unapplied cash is left; % is more',
+            to_char(trust_unapplied_left(p_receipt_id), 'FM$999,999,990.00'),
+            to_char(p_amount, 'FM$999,999,990.00')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT t.ledger_account_id INTO v_cash FROM trust_ledger_accounts AS t
+    WHERE t.bank_account_id = v_receipt.bank_account_id AND t.kind = 'bank_cash';
+    SELECT t.id INTO v_transfer
+    FROM pgledger_create_transfers(
+        ARRAY[(v_receipt.ledger_account_id, v_cash, p_amount)::transfer_request],
+        p_event_at,
+        jsonb_build_object(
+            'key', 'unapplied-refund/' || p_request_key, 'kind', 'unapplied cash refunded',
+            'memo', 'Unapplied cash refunded to ' || p_paid_to
+        )
+    ) AS t;
+    INSERT INTO trust_unapplied_refunds (
+        pmc_id, receipt_id, request_key, ledger_account_id, transfer_id, amount, paid_to, method
+    ) VALUES (
+        p_pmc_id, p_receipt_id, p_request_key, v_receipt.ledger_account_id, v_transfer, p_amount,
+        p_paid_to, p_method
+    );
+    RETURN v_transfer;
+END;
+$_$;
+
+
+--
 -- Name: trust_refuse_cancelled_request_order(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8882,6 +9035,7 @@ BEGIN
                    WHEN 'bank_cash' THEN b.display_name
                    WHEN 'owner_property' THEN o.display_name || ' / ' || pr.display_name
                    WHEN 'vendor_payable' THEN v.display_name
+                   WHEN 'unapplied_cash' THEN 'received, not yet applied'
                    WHEN 'pmc_income' THEN pmc.display_name
                    ELSE tn.display_name
                END AS holder
@@ -9021,7 +9175,9 @@ BEGIN
                ('tenant_deposit', 2, 'tenants'' security deposits'),
                ('prepaid_rent', 3, 'tenants'' prepaid rent'),
                ('vendor_payable', 4, 'set aside for vendors'' bills'),
-               ('pmc_income', 5, 'the company''s fees not yet taken')
+               ('pmc_income', 5, 'the company''s fees not yet taken'),
+               -- Money received that is no one's yet (migration 20261106000240).
+               ('unapplied_cash', 6, 'unapplied cash: received, not yet applied')
     ),
     banks AS (
         -- Book cash is what the bank holds: the cash account's balance runs below zero as
@@ -9629,6 +9785,7 @@ BEGIN
                t.kind || ': ' || CASE t.kind
                    WHEN 'owner_property' THEN o.display_name || ' / ' || pr.display_name
                    WHEN 'vendor_payable' THEN v.display_name
+                   WHEN 'unapplied_cash' THEN 'received, not yet applied'
                    WHEN 'pmc_income' THEN pmc.display_name
                    ELSE tn.display_name
                END AS holder
@@ -10084,6 +10241,7 @@ BEGIN
                    ELSE t.kind || ': ' || CASE t.kind
                        WHEN 'owner_property' THEN o.display_name || ' / ' || pr.display_name
                        WHEN 'vendor_payable' THEN v.display_name
+                       WHEN 'unapplied_cash' THEN 'received, not yet applied'
                        WHEN 'pmc_income' THEN pmc.display_name
                        ELSE tn.display_name
                    END
@@ -10093,6 +10251,7 @@ BEGIN
                    WHEN 'bank_cash' THEN b.display_name
                    WHEN 'owner_property' THEN o.display_name || ' / ' || pr.display_name
                    WHEN 'vendor_payable' THEN v.display_name
+                   WHEN 'unapplied_cash' THEN 'received, not yet applied'
                    WHEN 'pmc_income' THEN pmc.display_name
                    ELSE tn.display_name
                END AS holder,
@@ -12385,6 +12544,7 @@ DECLARE
     v_unknown text;
     v_journal numeric;
     v_ledgers numeric;
+    v_unapplied numeric;
     v_in_transit numeric;
     v_outstanding numeric;
     v_items integer := 0;
@@ -12403,6 +12563,13 @@ BEGIN
     JOIN pgledger_entries AS e ON e.account_id = t.ledger_account_id
     JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
     WHERE t.bank_account_id = v_rec.bank_account_id AND tr.event_at < v_rec.period_end;
+    -- Of what it holds, money received that is no one's yet (migration 20261106000240).
+    SELECT coalesce(sum(e.amount), 0.00) INTO v_unapplied
+    FROM trust_ledger_accounts AS t
+    JOIN pgledger_entries AS e ON e.account_id = t.ledger_account_id
+    JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
+    WHERE t.bank_account_id = v_rec.bank_account_id AND t.kind = 'unapplied_cash'
+      AND tr.event_at < v_rec.period_end;
 
     -- What had not cleared the bank by the period's last day, from the imported statements and
     -- their matches, as the bank reconciliation shows it.
@@ -12448,26 +12615,29 @@ BEGIN
     UNION ALL
     SELECT 8, 'beneficiary ledgers', NULL, v_ledgers
     UNION ALL
-    SELECT 9, 'difference: bank statement - trust journal', NULL,
+    SELECT 9, 'of which unapplied cash', 'received, not yet applied to a lease or refunded',
+           v_unapplied
+    UNION ALL
+    SELECT 10, 'difference: bank statement - trust journal', NULL,
            v_rec.statement_balance - v_journal
     UNION ALL
-    SELECT 10, 'difference: trust journal - beneficiary ledgers', NULL, v_journal - v_ledgers
+    SELECT 11, 'difference: trust journal - beneficiary ledgers', NULL, v_journal - v_ledgers
     UNION ALL
-    SELECT 11, 'deposits in transit', v_unknown, v_in_transit
+    SELECT 12, 'deposits in transit', v_unknown, v_in_transit
     UNION ALL
-    SELECT 12, 'outstanding withdrawals', v_unknown, v_outstanding
+    SELECT 13, 'outstanding withdrawals', v_unknown, v_outstanding
     UNION ALL
-    SELECT 13, 'adjusted bank balance', v_unknown,
+    SELECT 14, 'adjusted bank balance', v_unknown,
            v_rec.statement_balance + v_in_transit + v_outstanding
     UNION ALL
-    SELECT 14, 'difference: adjusted bank balance - trust journal', v_unknown,
+    SELECT 15, 'difference: adjusted bank balance - trust journal', v_unknown,
            v_rec.statement_balance + v_in_transit + v_outstanding - v_journal
     ORDER BY 1;
 
     -- Each item that had not cleared, and each bank line the books lack, oldest first.
     IF v_unknown IS NULL THEN
         RETURN QUERY
-        SELECT (14 + row_number() OVER (ORDER BY b.line))::integer, b.item, b.detail, b.amount
+        SELECT (15 + row_number() OVER (ORDER BY b.line))::integer, b.item, b.detail, b.amount
         FROM trust_report_bank_reconciliation(p_pmc_id, v_rec.bank_account_id, v_through) AS b
         WHERE b.item IN (
             'deposit in transit', 'outstanding withdrawal', 'bank line not in the books'
@@ -12493,6 +12663,7 @@ BEGIN
                    WHEN 'owner_property' THEN o.display_name || ' / ' || pr.display_name
                    WHEN 'vendor_payable' THEN v.display_name
                    WHEN 'pmc_income' THEN pmc.display_name
+                   WHEN 'unapplied_cash' THEN 'received, not yet applied'
                    ELSE tn.display_name
                END AS holder,
                b.balance,
@@ -12505,7 +12676,7 @@ BEGIN
         LEFT JOIN trust_vendors AS v ON v.id = b.vendor_id
         WHERE pmc.pmc_id = p_pmc_id
     )
-    SELECT (14 + v_items + row_number() OVER (
+    SELECT (15 + v_items + row_number() OVER (
                ORDER BY ld.holder COLLATE "C", ld.ledger_account_id
            ))::integer,
            'ledger', ld.holder, ld.balance
@@ -12545,6 +12716,7 @@ BEGIN
                    ELSE t.kind || ': ' || CASE t.kind
                        WHEN 'owner_property' THEN o.display_name || ' / ' || pr.display_name
                        WHEN 'vendor_payable' THEN v.display_name
+                       WHEN 'unapplied_cash' THEN 'received, not yet applied'
                        WHEN 'pmc_income' THEN pmc.display_name
                        ELSE tn.display_name
                    END
@@ -14637,6 +14809,24 @@ BEGIN
     ) VALUES (p_lease_id, p_pmc_id, v_new, p_moved_on, v_owner, p_deposit_agreed_on);
     RETURN v_new;
 END;
+$$;
+
+
+--
+-- Name: trust_unapplied_left(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_unapplied_left(p_receipt_id uuid) RETURNS numeric
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT r.amount
+           - coalesce((SELECT sum(a.amount) FROM trust_unapplied_applications AS a
+                       WHERE a.receipt_id = r.id), 0)
+           - coalesce((SELECT sum(f.amount) FROM trust_unapplied_refunds AS f
+                       WHERE f.receipt_id = r.id), 0)
+    FROM trust_unapplied_receipts AS r
+    WHERE r.id = p_receipt_id
 $$;
 
 
@@ -19137,6 +19327,71 @@ CREATE TABLE public.trust_text_consents (
 
 
 --
+-- Name: trust_unapplied_applications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_unapplied_applications (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    receipt_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    amount numeric NOT NULL,
+    payment_key text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_unapplied_applications_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2))))
+);
+
+
+--
+-- Name: trust_unapplied_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_unapplied_receipts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    ledger_account_id text NOT NULL,
+    transfer_id text NOT NULL,
+    amount numeric NOT NULL,
+    received_on date NOT NULL,
+    payer text NOT NULL,
+    memo text,
+    method text NOT NULL,
+    reference text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_unapplied_receipts_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_unapplied_receipts_memo_check CHECK (((memo = btrim(memo)) AND ((char_length(memo) >= 1) AND (char_length(memo) <= 500)))),
+    CONSTRAINT trust_unapplied_receipts_method_check CHECK ((method = ANY (ARRAY['check'::text, 'cashier''s check'::text, 'money order'::text, 'EFT'::text, 'cash'::text]))),
+    CONSTRAINT trust_unapplied_receipts_payer_check CHECK (((payer = btrim(payer)) AND ((char_length(payer) >= 1) AND (char_length(payer) <= 200)))),
+    CONSTRAINT trust_unapplied_receipts_reference_check CHECK (((reference = btrim(reference)) AND ((char_length(reference) >= 1) AND (char_length(reference) <= 100))))
+);
+
+
+--
+-- Name: trust_unapplied_refunds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_unapplied_refunds (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    receipt_id uuid NOT NULL,
+    request_key text NOT NULL,
+    ledger_account_id text NOT NULL,
+    transfer_id text NOT NULL,
+    amount numeric NOT NULL,
+    paid_to text NOT NULL,
+    method text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_unapplied_refunds_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_unapplied_refunds_method_check CHECK ((method = ANY (ARRAY['check'::text, 'EFT'::text]))),
+    CONSTRAINT trust_unapplied_refunds_paid_to_check CHECK (((paid_to = btrim(paid_to)) AND ((char_length(paid_to) >= 1) AND (char_length(paid_to) <= 200))))
+);
+
+
+--
 -- Name: trust_unit_areas; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -22693,6 +22948,70 @@ ALTER TABLE ONLY public.trust_text_consents
 
 
 --
+-- Name: trust_unapplied_applications trust_unapplied_applications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_applications
+    ADD CONSTRAINT trust_unapplied_applications_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_unapplied_applications trust_unapplied_applications_pmc_id_payment_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_applications
+    ADD CONSTRAINT trust_unapplied_applications_pmc_id_payment_key_key UNIQUE (pmc_id, payment_key);
+
+
+--
+-- Name: trust_unapplied_receipts trust_unapplied_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_receipts
+    ADD CONSTRAINT trust_unapplied_receipts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_unapplied_receipts trust_unapplied_receipts_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_receipts
+    ADD CONSTRAINT trust_unapplied_receipts_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_unapplied_receipts trust_unapplied_receipts_transfer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_receipts
+    ADD CONSTRAINT trust_unapplied_receipts_transfer_id_key UNIQUE (transfer_id);
+
+
+--
+-- Name: trust_unapplied_refunds trust_unapplied_refunds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_refunds
+    ADD CONSTRAINT trust_unapplied_refunds_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_unapplied_refunds trust_unapplied_refunds_pmc_id_request_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_refunds
+    ADD CONSTRAINT trust_unapplied_refunds_pmc_id_request_key_key UNIQUE (pmc_id, request_key);
+
+
+--
+-- Name: trust_unapplied_refunds trust_unapplied_refunds_transfer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_refunds
+    ADD CONSTRAINT trust_unapplied_refunds_transfer_id_key UNIQUE (transfer_id);
+
+
+--
 -- Name: trust_unit_areas trust_unit_areas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24396,6 +24715,13 @@ CREATE UNIQUE INDEX trust_ledger_accounts_one_tenant_deposit ON public.trust_led
 
 
 --
+-- Name: trust_ledger_accounts_one_unapplied; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_ledger_accounts_one_unapplied ON public.trust_ledger_accounts USING btree (bank_account_id) WHERE (kind = 'unapplied_cash'::text);
+
+
+--
 -- Name: trust_ledger_accounts_one_vendor_payable; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -25443,6 +25769,69 @@ CREATE INDEX trust_text_consents_by_tenant ON public.trust_text_consents USING b
 --
 
 CREATE INDEX trust_transfers_key ON public.pgledger_transfers USING btree (((metadata ->> 'key'::text)));
+
+
+--
+-- Name: trust_unapplied_applications_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_unapplied_applications_lease ON public.trust_unapplied_applications USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_unapplied_applications_receipt; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_unapplied_applications_receipt ON public.trust_unapplied_applications USING btree (receipt_id);
+
+
+--
+-- Name: trust_unapplied_applications_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_unapplied_applications_recorded_by ON public.trust_unapplied_applications USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_unapplied_receipts_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_unapplied_receipts_account ON public.trust_unapplied_receipts USING btree (ledger_account_id);
+
+
+--
+-- Name: trust_unapplied_receipts_bank; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_unapplied_receipts_bank ON public.trust_unapplied_receipts USING btree (pmc_id, bank_account_id);
+
+
+--
+-- Name: trust_unapplied_receipts_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_unapplied_receipts_recorded_by ON public.trust_unapplied_receipts USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_unapplied_refunds_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_unapplied_refunds_account ON public.trust_unapplied_refunds USING btree (ledger_account_id);
+
+
+--
+-- Name: trust_unapplied_refunds_receipt; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_unapplied_refunds_receipt ON public.trust_unapplied_refunds USING btree (receipt_id);
+
+
+--
+-- Name: trust_unapplied_refunds_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_unapplied_refunds_recorded_by ON public.trust_unapplied_refunds USING btree (pmc_id, recorded_by);
 
 
 --
@@ -27238,6 +27627,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_unapplied_applications trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_unapplied_applications FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_unapplied_receipts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_unapplied_receipts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_unapplied_refunds trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_unapplied_refunds FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_unit_areas trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28981,6 +29391,27 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_text
 
 
 --
+-- Name: trust_unapplied_applications trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_unapplied_applications FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_unapplied_receipts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_unapplied_receipts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_unapplied_refunds trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_unapplied_refunds FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_unit_areas trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -29559,6 +29990,13 @@ CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_owner_fees FOR EACH 
 --
 
 CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_pmc_fee_withdrawals FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'pay out money');
+
+
+--
+-- Name: trust_unapplied_refunds trust_disburse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_unapplied_refunds FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'pay out money');
 
 
 --
@@ -30556,6 +30994,27 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tenant_links FOR 
 
 
 --
+-- Name: trust_unapplied_applications trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_unapplied_applications FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_unapplied_receipts trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_unapplied_receipts FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_unapplied_refunds trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_unapplied_refunds FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_unit_areas trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -30780,6 +31239,13 @@ CREATE TRIGGER trust_signer BEFORE INSERT ON public.trust_pmc_fee_withdrawals FO
 
 
 --
+-- Name: trust_unapplied_refunds trust_signer; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_signer BEFORE INSERT ON public.trust_unapplied_refunds FOR EACH ROW EXECUTE FUNCTION public.trust_check_draw_signer();
+
+
+--
 -- Name: trust_account_signers trust_signer_change; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -30840,6 +31306,27 @@ CREATE TRIGGER trust_tenant_payment_not_assistance BEFORE INSERT ON public.trust
 --
 
 CREATE TRIGGER trust_transfer_scope BEFORE INSERT ON public.pgledger_transfers FOR EACH ROW EXECUTE FUNCTION public.trust_check_transfer_scope();
+
+
+--
+-- Name: trust_unapplied_receipts trust_unapplied_receipt; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_unapplied_receipt BEFORE INSERT ON public.trust_unapplied_receipts FOR EACH ROW EXECUTE FUNCTION public.trust_check_unapplied_receipt();
+
+
+--
+-- Name: trust_unapplied_applications trust_unapplied_use; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_unapplied_use BEFORE INSERT ON public.trust_unapplied_applications FOR EACH ROW EXECUTE FUNCTION public.trust_check_unapplied_use();
+
+
+--
+-- Name: trust_unapplied_refunds trust_unapplied_use; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_unapplied_use BEFORE INSERT ON public.trust_unapplied_refunds FOR EACH ROW EXECUTE FUNCTION public.trust_check_unapplied_use();
 
 
 --
@@ -36477,6 +36964,102 @@ ALTER TABLE ONLY public.trust_text_consents
 
 
 --
+-- Name: trust_unapplied_applications trust_unapplied_applications_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_applications
+    ADD CONSTRAINT trust_unapplied_applications_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_unapplied_applications trust_unapplied_applications_pmc_id_receipt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_applications
+    ADD CONSTRAINT trust_unapplied_applications_pmc_id_receipt_id_fkey FOREIGN KEY (pmc_id, receipt_id) REFERENCES public.trust_unapplied_receipts(pmc_id, id);
+
+
+--
+-- Name: trust_unapplied_applications trust_unapplied_applications_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_applications
+    ADD CONSTRAINT trust_unapplied_applications_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_unapplied_receipts trust_unapplied_receipts_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_receipts
+    ADD CONSTRAINT trust_unapplied_receipts_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_unapplied_receipts trust_unapplied_receipts_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_receipts
+    ADD CONSTRAINT trust_unapplied_receipts_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_unapplied_receipts trust_unapplied_receipts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_receipts
+    ADD CONSTRAINT trust_unapplied_receipts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_unapplied_receipts trust_unapplied_receipts_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_receipts
+    ADD CONSTRAINT trust_unapplied_receipts_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_unapplied_receipts trust_unapplied_receipts_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_receipts
+    ADD CONSTRAINT trust_unapplied_receipts_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_unapplied_refunds trust_unapplied_refunds_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_refunds
+    ADD CONSTRAINT trust_unapplied_refunds_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_unapplied_refunds trust_unapplied_refunds_pmc_id_receipt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_refunds
+    ADD CONSTRAINT trust_unapplied_refunds_pmc_id_receipt_id_fkey FOREIGN KEY (pmc_id, receipt_id) REFERENCES public.trust_unapplied_receipts(pmc_id, id);
+
+
+--
+-- Name: trust_unapplied_refunds trust_unapplied_refunds_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_refunds
+    ADD CONSTRAINT trust_unapplied_refunds_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_unapplied_refunds trust_unapplied_refunds_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unapplied_refunds
+    ADD CONSTRAINT trust_unapplied_refunds_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
 -- Name: trust_unit_areas trust_unit_areas_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -37043,4 +37626,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261106000210'),
     ('20261106000220'),
     ('20261106000225'),
-    ('20261106000230');
+    ('20261106000230'),
+    ('20261106000240');

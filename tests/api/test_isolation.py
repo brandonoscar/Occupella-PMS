@@ -206,6 +206,8 @@ RECORDS = {
     + _LEASE_AT.format("Harbor Tower", demo.HARBOR_ENDED)
     + ")",
     "online payment": _ONLY.format("trust_online_payments"),
+    # Made by fill_in: money received that staff couldn't match yet.
+    "unapplied cash": _ONLY.format("trust_unapplied_receipts"),
     "autopay": _ONLY.format("trust_autopay"),
     # Made by fill_in: a bill paid with its check printed.
     "payout run": _ONLY.format("trust_payout_runs"),
@@ -266,6 +268,7 @@ PATH_IDS = {
     "pmc_id": "company",
     "announcement_id": "announcement",
     "type_id": "charge type",
+    "receipt_id": "unapplied cash",
 }
 ROUTE_PATH_IDS = {
     ("/api/payables/recurring/{recurring_id}/expense-account", "recurring_id"): "recurring bill",
@@ -984,6 +987,17 @@ def fill_in(client: TestClient, company: Company, conn: psycopg.Connection[Any])
             },
         )
     staff("POST", f"/api/leases/{lease}/occupants", {"name": "Occupant 1", "relationship": "Child"})
+    staff(
+        "POST",
+        "/api/unapplied",
+        {
+            "request_id": str(uuid.uuid4()),
+            "amount": "40.00",
+            "received_on": str(TODAY),
+            "payer": "Unknown payer",
+            "method": "check",
+        },
+    )
     staff(
         "POST",
         f"/api/assistance/leases/{lease}/charges",

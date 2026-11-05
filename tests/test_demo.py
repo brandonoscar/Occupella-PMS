@@ -77,7 +77,17 @@ def test_the_manager_approves_last_month_and_it_ties_three_ways(conn, app_conn, 
 
     assert by_item["prepared by"][0] == "Demo Bookkeeper"
     assert by_item["approved by"][0].startswith("Demo Manager at ")
-    assert by_item["difference: trust journal - beneficiary ledgers"][1] == 0
+    # Every difference is 0 but the bank's before the roof check, not yet cleared, comes off:
+    # the books, the owners' and tenants' ledgers and the bank tie out three ways, and nothing
+    # is held as unapplied cash (migration 20261106000240).
+    differences = {item: amount for item, (_, amount) in by_item.items() if "difference" in item}
+    assert differences == {
+        "difference: bank statement - trust journal": Decimal("650.00"),
+        "difference: trust journal - beneficiary ledgers": 0,
+        "difference: adjusted bank balance - trust journal": 0,
+    }
+    assert by_item["outstanding withdrawals"][1] == Decimal("-650.00")
+    assert by_item["of which unapplied cash"][1] == 0
     # The bank's side ties once the roof check, not yet cleared, is taken off.
     assert report(
         conn,
