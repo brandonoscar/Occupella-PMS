@@ -7,6 +7,7 @@ import type { DrawRun } from "../payouts";
 import type { Today } from "../today";
 import type { Reminder } from "./AttentionActions";
 import { DashboardPage } from "./DashboardPage";
+import type { GoLive } from "./GoLiveCard";
 
 afterEach(() => {
   cleanup();
@@ -68,14 +69,24 @@ const REMINDER: Reminder = {
 
 type Call = { method: string; path: string; body: unknown };
 
-// The Dashboard asks for its figures and for what needs someone today; a row's action posts.
-function server(today: Today | { detail: string }, status = 200, answers: Record<string, unknown> = {}) {
+// A company ready to go live: the Dashboard shows no Getting started list.
+const READY: GoLive = { steps: [], ready: true };
+
+// The Dashboard asks for its figures, for what needs someone today and for what going live still
+// needs; a row's action posts.
+function server(
+  today: Today | { detail: string },
+  status = 200,
+  answers: Record<string, unknown> = {},
+  goLive: GoLive = READY,
+) {
   const calls: Call[] = [];
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     calls.push({ method, path, body: init?.body ? JSON.parse(String(init.body)) : undefined });
-    if (path === "/api/dashboard" || path === "/api/today") {
-      const answer = path === "/api/dashboard" && status === 200 ? FIGURES : today;
+    if (path === "/api/dashboard" || path === "/api/today" || path === "/api/go-live") {
+      const answer =
+        status !== 200 ? today : path === "/api/dashboard" ? FIGURES : path === "/api/go-live" ? goLive : today;
       return new Response(JSON.stringify(answer), { status });
     }
     const answer = answers[`${method} ${path}`];
@@ -329,6 +340,28 @@ describe("Dashboard", () => {
     expect(await screen.findByText("Nothing is late or waiting.")).toBeTruthy();
     expect(screen.getByTestId("empty-state").textContent).toContain("owner draws ready to pay");
     expect(screen.queryByRole("list", { name: "Needs attention" })).toBeNull();
+  });
+
+  it("lists what going live still needs until the company is ready", async () => {
+    server({ ...QUIET, late_rent: [LATE] }, 200, {}, {
+      ready: false,
+      steps: [
+        { key: "company", label: "Company details", detail: "Your mailing address", done: true, required: true, href: "/settings/setup" },
+        { key: "leases", label: "Leases in place", detail: "Leases and their tenants", done: false, required: true, href: "/rent-roll" },
+      ],
+    });
+    render(<DashboardPage me={ME} />);
+
+    expect(await screen.findByText("1 step left before you go live.")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Leases in place" }).getAttribute("href")).toBe("/rent-roll");
+  });
+
+  it("shows no Getting started list once the company is ready", async () => {
+    server({ ...QUIET, late_rent: [LATE] });
+    render(<DashboardPage me={ME} />);
+
+    await list();
+    expect(screen.queryByRole("list", { name: "Getting started" })).toBeNull();
   });
 
   it("says what went wrong", async () => {
