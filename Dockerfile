@@ -27,6 +27,12 @@ RUN go mod init build \
 FROM mirror.gcr.io/library/python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60
 
 COPY --from=dbmate /go/bin/dbmate /usr/local/bin/dbmate
+# The base image's Debian packages with their security fixes since it was published: Grype
+# (selfhost.yml) fails the image on a high vulnerability with a fix, such as apt 3.0.3's
+# CVE-2026-109518, fixed in 3.0.4, before the pinned image catches up.
+RUN apt-get update \
+    && apt-get upgrade --yes --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 RUN useradd --create-home --uid 10001 pms
 
 WORKDIR /app
