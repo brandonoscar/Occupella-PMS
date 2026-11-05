@@ -1163,7 +1163,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Deposit interest (migration 0122, q041, `docs/law.md`): a property's yearly rate on its deposits
   from a day (`trust_deposit_interest_terms`, as late fee terms; 0 earns none; set on its page,
   `POST /api/setup/deposit-interest`). Each day's deposit earns the day's rate over the days in its
-  year, to the cent per deposit (`trust_deposit_interest_due`). `trust_pay_deposit_interest` pays a
+  year, to the cent per deposit (`trust_deposit_interest_due`), each day of a deposit account paid once
+  whichever lease pays it (migration 20261105000800: a tenant on two leases, a renewal). `trust_pay_deposit_interest` pays a
   lease's interest from the day after its last payment through a day gone by, once per request key:
   as a credit against the rent (a lease in effect; no money moves) or added to the deposits from
   the owner's account (its owners' by their shares) with its cash, taking the disburse role; none

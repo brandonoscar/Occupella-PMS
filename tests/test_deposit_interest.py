@@ -424,3 +424,65 @@ def test_nothing_is_rewritten_and_the_ai_reads_it_but_pays_none(
         pay_deposit_interest(
             ai_conn, pmc.pmc_id, lease, date(2026, 1, 4), "rent_credit", "ai", JAN_5_2026
         )
+
+
+# --- a deposit's days are paid once, whichever lease pays them (M-081, M-082) -----------------
+
+
+def test_a_tenant_on_two_leases_earns_each_days_interest_once(conn, app_conn, pmc, lease):
+    """docs/edge-cases.md M-082: a tenant on two leases at once (two units of one property)
+    holds one deposit account, and each lease's interest counted all of it: the same days were
+    paid twice. A day of a deposit account is paid once, by whichever lease pays it."""
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (pmc.tenant_deposit,),
+    ).fetchone()[0]
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "1B")
+    second = open_lease(conn, pmc.pmc_id, unit, JAN_1_2025, None, "900.00", [tenant])
+
+    paid = pay_deposit_interest(
+        app_conn, pmc.pmc_id, lease, DEC_31_2025, "rent_credit", "first-2025", JAN_5_2026
+    )
+    assert paid == Decimal("12.00")
+    assert [i for _, _, i in due(conn, second, JAN_1_2025, DEC_31_2025)] == [Decimal("0.00")]
+    with refused("no interest is due"):
+        pay_deposit_interest(
+            app_conn, pmc.pmc_id, second, DEC_31_2025, "rent_credit", "second-2025", JAN_5_2026
+        )
+    # Days neither lease paid are still due to whichever pays them first.
+    assert [i for _, _, i in due(conn, second, date(2026, 1, 1), date(2026, 1, 4))] == [
+        Decimal("0.13")
+    ]
+
+
+def test_a_renewal_and_the_lease_it_renewed_never_pay_the_same_days(conn, app_conn, pmc):
+    """docs/edge-cases.md M-081: the old lease paid through today after its renewal's days were
+    paid from the renewal's first day (or the other way round) paid the overlap twice."""
+    prop = pmc.owners[0].property_id
+    tenant = add_tenant(conn, pmc.pmc_id, prop, "Tenant 2")
+    deposit = open_account(
+        conn, pmc.pmc_id, pmc.deposit_bank_id, "tenant_deposit", tenant_id=tenant
+    )
+    unit = add_unit(conn, pmc.pmc_id, prop, "2A")
+    old = open_lease(conn, pmc.pmc_id, unit, JAN_1_2025, JUN_30_2025, "1500.00", [tenant])
+    renewal = open_lease(conn, pmc.pmc_id, unit, date(2025, 7, 1), None, "1550.00", [tenant])
+    transfer_batch(conn, [(pmc.deposit_cash, deposit, Decimal(1200))], at(JAN_1_2025))
+    deposit_interest_terms(conn, pmc.pmc_id, prop, JAN_1_2025, 1)
+
+    # The renewal's days first: July to December (184 days).
+    assert pay_deposit_interest(
+        app_conn, pmc.pmc_id, renewal, DEC_31_2025, "rent_credit", "renewal-2025", JAN_5_2026
+    ) == Decimal("6.05")
+    # Then the old lease, through the same day (it ended, so its interest goes to the deposit
+    # from the owner): only its own days are left, January to June (181 days), not the year.
+    fund(conn, pmc, pmc.owners[0].account, "100.00")
+    assert pay_deposit_interest(
+        app_conn,
+        pmc.pmc_id,
+        old,
+        DEC_31_2025,
+        "deposit",
+        "old-2025",
+        JAN_5_2026,
+        pmc.owners[0].account,
+    ) == Decimal("5.95")

@@ -73,6 +73,11 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   the owners to choose among (Record it, naming whose), a lease at such a property takes no
   payment online (the tenant sees the company's How to pay us) nor by autopay (its month reads as
   online payments off), and the card says when the list couldn't load instead of showing nothing.
+- **Fixed: deposit interest paid twice for the same days.** A tenant's deposit is one account, and
+  each lease's interest counted all of it: a tenant on two leases at once, or a renewal and the
+  lease it renewed (the old one paid through a day after its end), were paid each day twice. Each
+  day of a deposit is now paid once, by whichever lease pays it first. Migration
+  `20261105000800`.
 - **Fixed: one late fee in a closed year stopped the whole nightly run.** Late fee terms entered
   after a year closed, in force from before it, reached that year's rents still open; the fee was
   dated in the closed year, the year's lock refused it, and the company's whole run, rent

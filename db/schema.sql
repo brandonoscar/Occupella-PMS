@@ -5154,6 +5154,14 @@ CREATE FUNCTION public.trust_deposit_interest_on(p_account text, p_property_id u
     ), 0)
     FROM held AS h
     JOIN terms AS t ON t.starts_on <= h.day AND (t.next_on IS NULL OR h.day < t.next_on)
+    -- A day of a deposit account is paid once, by whichever lease paid it: a tenant on two
+    -- leases (M-082), or a renewal and the lease it renewed (M-081), share the account.
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM trust_deposit_interest_lines AS li
+        JOIN trust_deposit_interest_payments AS p ON p.id = li.payment_id
+        WHERE li.deposit_account = p_account AND h.day BETWEEN p.from_on AND p.through_on
+    )
 $$;
 
 
@@ -35672,4 +35680,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261105000400'),
     ('20261105000500'),
     ('20261105000600'),
-    ('20261105000700');
+    ('20261105000700'),
+    ('20261105000800');

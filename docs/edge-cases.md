@@ -25,7 +25,7 @@ answer in the portal for everything that can fail.
 
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
-| [Money and the ledger](#money-and-the-ledger) | 151 | 111 | 7 | 33 | 6 |
+| [Money and the ledger](#money-and-the-ledger) | 151 | 113 | 7 | 31 | 4 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 159 | 81 | 15 | 63 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 63 | 30 | 49 | 2 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 163 | 63 | 8 | 92 | 27 |
@@ -33,7 +33,7 @@ answer in the portal for everything that can fail.
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 167 | 69 | 14 | 84 | 9 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1140** | **574** | **110** | **456** | **71** |
+| **All** | **1140** | **576** | **110** | **454** | **69** |
 
 ## Open, high risk: the work list
 
@@ -45,8 +45,6 @@ its ten most pressing, each with the test that would close it.
 - M-049: Late fee terms added with a start day in the past
 - M-072: Prepaid rent left over at move-out
 - M-073: A renewal while the old lease still owes
-- M-081: A renewed lease: the old lease's interest paid through today and the new lease's from its first day
-- M-082: A tenant on two leases at once (two units of one property)
 - M-144: A cutover mid-month for leases already paid for the month in the old system
 
 **Dates, time zones and calendars**
@@ -139,8 +137,6 @@ its ten most pressing, each with the test that would close it.
 | M-049 | Late fee terms added with a start day in the past | The next night charges a late fee on every rent since then not paid within its grace, even ones paid late since; nothing limits backdating | Open | `src/pms/api/setup.py:751` | H |
 | M-072 | Prepaid rent left over at move-out | Not used for what the lease owes before the deposit is kept, and never refunded by the return | Open | `db/migrations/20261019000094_ownership_shares.sql:190` | H |
 | M-073 | A renewal while the old lease still owes | New payments don't pay it, and the final return keeps only the renewal's debt; whichever lease is returned first takes the whole deposit | Open | `db/migrations/20261018000091_lease_transfers.sql:62` | H |
-| M-081 | A renewed lease: the old lease's interest paid through today and the new lease's from its first day | The same days are paid twice: the old lease's through day is not capped at its end | Open | `db/migrations/20261022000122_deposit_interest.sql:152` | H |
-| M-082 | A tenant on two leases at once (two units of one property) | Each lease's interest counts the tenant's whole deposit account | Open | `db/migrations/20261022000122_deposit_interest.sql:165` | H |
 | M-144 | A cutover mid-month for leases already paid for the month in the old system | The first nightly run charges every imported lease the whole month again, and late fees if past grace | Open | `src/pms/nightly.py:115`; `src/pms/api/switching.py:399` | H |
 | M-013 | Two payments with the same request id, then the same id with another amount | Recorded once; the different amount is refused 409 | Tested | `tests/api/test_rent.py::test_sending_a_payment_again_records_it_once` | H |
 | M-015 | Two payments to one charge at the same moment | The second waits and never overpays the charge | Tested | `tests/test_leases_and_charges.py::test_two_payments_at_once_cannot_overpay_a_charge` | H |
@@ -158,6 +154,8 @@ its ten most pressing, each with the test that would close it.
 | M-068 | A deposit return dated on or before the lease's last day | Refused | Tested | `tests/test_move_out.py::test_a_deposit_goes_back_only_once_the_lease_has_ended` | H |
 | M-069 | A deposit return sent twice, or again under another key | Same answer once; another key refused | Tested | `tests/test_move_out.py::test_the_same_request_again_returns_nothing_twice_and_another_is_refused` | H |
 | M-075 | A deposit kept for damages | Moves with its cash to the operating account in one transaction | Tested | `tests/test_tie_out.py::test_a_deposit_kept_for_damages_moves_with_its_cash` | H |
+| M-081 | A renewed lease: the old lease's interest paid through today and the new lease's from its first day | Each day of a deposit account is paid once, whichever lease pays it (trust_deposit_interest_on, migration 20261105000800): the old lease of a renewal pays only days the renewal didn't | Tested | tests/test_deposit_interest.py::test_a_renewal_and_the_lease_it_renewed_never_pay_the_same_days; tests/properties/test_deposit_interest_properties.py::test_a_deposit_two_leases_share_is_paid_each_day_once | H |
+| M-082 | A tenant on two leases at once (two units of one property) | The same rule: a tenant on two leases is paid each day of their deposit once, by the lease that pays it first; the other finds nothing due | Tested | tests/test_deposit_interest.py::test_a_tenant_on_two_leases_earns_each_days_interest_once; tests/properties/test_deposit_interest_properties.py::test_a_deposit_two_leases_share_is_paid_each_day_once | H |
 | M-086 | Two draws on one account at once | Never pay out more than is there | Tested | `tests/test_owner_money.py::test_two_draws_at_once_cannot_pay_out_more_than_is_there` | H |
 | M-087 | A draw retried with its key | Returns the original draw | Tested | `tests/test_owner_money.py::test_a_draw_retried_with_its_key_returns_the_original` | H |
 | M-088 | A draw when unpaid bills sit on top of the reserve | Keeps back both | Tested | `tests/test_vendor_bills.py::test_a_draw_keeps_back_unpaid_bills_on_top_of_the_reserve` | H |

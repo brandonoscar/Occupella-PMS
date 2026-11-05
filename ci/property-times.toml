@@ -43,6 +43,7 @@ nightly_factor = 60
 "tests/properties/test_deduction_receipt_properties.py::test_a_deposit_is_due_back_14_days_after_the_last_day_or_10_owing_nothing" = 0.2
 "tests/properties/test_deduction_receipt_properties.py::test_a_receipt_is_a_lease_document_of_its_fees_lease_listed_until_removed" = 8.3
 "tests/properties/test_departure_properties.py::test_a_leaving_tenants_deposit_moves_whole_and_someone_always_stays" = 8.8
+"tests/properties/test_deposit_interest_properties.py::test_a_deposit_two_leases_share_is_paid_each_day_once" = 9.1
 "tests/properties/test_deposit_interest_properties.py::test_deposit_interest_is_each_days_deposit_at_its_rate_paid_once" = 13.4
 "tests/properties/test_deposit_kind_properties.py::test_each_kind_of_deposit_is_held_moved_and_returned_as_the_model_says" = 20.7
 "tests/properties/test_deposit_return_properties.py::test_a_deposit_return_keeps_what_is_owed_and_gives_back_the_rest" = 15.9
