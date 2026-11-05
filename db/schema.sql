@@ -7644,61 +7644,71 @@ CREATE FUNCTION public.trust_record_event() RETURNS trigger
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
+    v_new jsonb := to_jsonb(NEW);
+    v_old jsonb;
     v_kind text;
     v_subject jsonb;
     v_meta jsonb;
 BEGIN
-    CASE TG_TABLE_NAME
-    WHEN 'trust_idempotency_keys' THEN
+    IF TG_OP = 'UPDATE' THEN
+        v_old := to_jsonb(OLD);
+    END IF;
+    IF TG_TABLE_NAME = 'trust_idempotency_keys' THEN
         -- A posting under its key: a tenant's payment, or one bouncing.
-        SELECT t.metadata INTO v_meta FROM pgledger_transfers AS t WHERE t.id = NEW.transfer_ids[1];
+        SELECT t.metadata INTO v_meta FROM pgledger_transfers AS t
+        WHERE t.id = v_new -> 'transfer_ids' ->> 0;
         v_kind := CASE v_meta ->> 'kind'
             WHEN 'tenant payment' THEN 'payment.recorded'
             WHEN 'bounced payment' THEN 'payment.returned'
         END;
         v_subject := jsonb_build_object(
-            'lease_id', v_meta ->> 'lease_id', 'transfer_id', NEW.transfer_ids[1]
+            'lease_id', v_meta ->> 'lease_id', 'transfer_id', v_new -> 'transfer_ids' ->> 0
         );
-    WHEN 'trust_late_fees' THEN
+    ELSIF TG_TABLE_NAME = 'trust_late_fees' THEN
         v_kind := 'late_fee.charged';
         v_subject := jsonb_build_object(
-            'lease_id', (SELECT c.lease_id FROM trust_charges AS c WHERE c.id = NEW.fee_charge_id),
-            'charge_id', NEW.fee_charge_id, 'rent_charge_id', NEW.rent_charge_id
+            'lease_id', (SELECT c.lease_id FROM trust_charges AS c
+                         WHERE c.id = (v_new ->> 'fee_charge_id')::uuid),
+            'charge_id', v_new ->> 'fee_charge_id', 'rent_charge_id', v_new ->> 'rent_charge_id'
         );
-    WHEN 'trust_leases' THEN
+    ELSIF TG_TABLE_NAME = 'trust_leases' THEN
         IF TG_OP = 'INSERT' THEN
             v_kind := 'lease.opened';
-        ELSIF OLD.ends_on IS DISTINCT FROM NEW.ends_on THEN
+        ELSIF v_old ->> 'ends_on' IS DISTINCT FROM v_new ->> 'ends_on' THEN
             v_kind := 'lease.end_changed';
         END IF;
-        v_subject := jsonb_build_object('lease_id', NEW.id, 'unit_id', NEW.unit_id);
-    WHEN 'trust_bills' THEN
+        v_subject := jsonb_build_object('lease_id', v_new ->> 'id', 'unit_id', v_new ->> 'unit_id');
+    ELSIF TG_TABLE_NAME = 'trust_bills' THEN
         -- Over the approval limit of the agreement in force on its date (0 without one): it
         -- waits for its owner.
-        v_kind := CASE WHEN NEW.amount > coalesce((
+        v_kind := CASE WHEN (v_new ->> 'amount')::numeric > coalesce((
             SELECT g.approval_limit FROM trust_management_agreements AS g
-            WHERE g.ledger_account_id = NEW.ledger_account_id AND g.starts_on <= NEW.bill_date
+            WHERE g.ledger_account_id = v_new ->> 'ledger_account_id'
+              AND g.starts_on <= (v_new ->> 'bill_date')::date
             ORDER BY g.starts_on DESC LIMIT 1
         ), 0) THEN 'bill.waiting_for_owner' ELSE 'bill.entered' END;
-        v_subject := jsonb_build_object('bill_id', NEW.id, 'vendor_id', NEW.vendor_id);
-    WHEN 'trust_work_orders' THEN
+        v_subject := jsonb_build_object('bill_id', v_new ->> 'id', 'vendor_id', v_new ->> 'vendor_id');
+    ELSIF TG_TABLE_NAME = 'trust_work_orders' THEN
         v_kind := 'work_order.opened';
         v_subject := jsonb_build_object(
-            'work_order_id', NEW.id, 'property_id', NEW.property_id, 'unit_id', NEW.unit_id
+            'work_order_id', v_new ->> 'id', 'property_id', v_new ->> 'property_id',
+            'unit_id', v_new ->> 'unit_id'
         );
-    WHEN 'trust_work_order_steps' THEN
-        v_kind := 'work_order.' || NEW.step;
-        v_subject := jsonb_build_object('work_order_id', NEW.work_order_id);
-    WHEN 'trust_maintenance_requests' THEN
+    ELSIF TG_TABLE_NAME = 'trust_work_order_steps' THEN
+        v_kind := 'work_order.' || (v_new ->> 'step');
+        v_subject := jsonb_build_object('work_order_id', v_new ->> 'work_order_id');
+    ELSIF TG_TABLE_NAME = 'trust_maintenance_requests' THEN
         v_kind := 'maintenance.requested';
-        v_subject := jsonb_build_object('request_id', NEW.id, 'lease_id', NEW.lease_id);
-    WHEN 'trust_draft_decisions' THEN
-        v_kind := 'draft.' || NEW.decision;
-        v_subject := jsonb_build_object('draft_id', NEW.draft_id);
-    END CASE;
+        v_subject := jsonb_build_object(
+            'request_id', v_new ->> 'id', 'lease_id', v_new ->> 'lease_id'
+        );
+    ELSIF TG_TABLE_NAME = 'trust_draft_decisions' THEN
+        v_kind := 'draft.' || (v_new ->> 'decision');
+        v_subject := jsonb_build_object('draft_id', v_new ->> 'draft_id');
+    END IF;
     IF v_kind IS NOT NULL THEN
         INSERT INTO trust_events (pmc_id, kind, subject)
-        VALUES (NEW.pmc_id, v_kind, jsonb_strip_nulls(v_subject));
+        VALUES ((v_new ->> 'pmc_id')::uuid, v_kind, jsonb_strip_nulls(v_subject));
     END IF;
     RETURN NULL;
 END;
