@@ -77,6 +77,10 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   are all positive, with a column saying Debit or Credit (Type, Transaction type, Dr/Cr), went in
   with every check and fee as a deposit. Each line's way now comes from that column; a type saying
   neither is refused with its line, and a bank that signs its amounts keeps its signs.
+- **Fixed: payouts recorded as paid by ACH under the wrong data key.** With `PMS_DATA_KEY` set
+  to another key than the one that sealed the payees' bank account numbers, Pay owners and Pay
+  bills recorded the payouts and only then found the ACH file couldn't be made. Each payee's
+  number must now open before anything is recorded; by check, nothing needs the key.
 - **Fixed: an ACH file could be taken twice without a question.** A bank pays every file it is
   given, so one uploaded twice pays everyone in it twice. Once a run's ACH file was taken, the
   Payout files list offers Download again, which asks first, and the API gives it again only when

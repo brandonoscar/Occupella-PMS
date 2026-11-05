@@ -398,7 +398,7 @@ def ready(conn: psycopg.Connection[Any], pmc_id: UUID, payouts: list[Payout]) ->
     if not by_ach:
         return
     try:
-        sealed.key_from()
+        key = sealed.key_from()
     except sealed.NoKey as missing:
         raise HTTPException(409, f"{missing}, so it makes no ACH file") from None
     for bank in sorted({p.bank for p in by_ach}, key=str):
@@ -411,22 +411,33 @@ def ready(conn: psycopg.Connection[Any], pmc_id: UUID, payouts: list[Payout]) ->
                 f"{name[0] if name else 'This trust bank account'} has no ACH details from its "
                 "bank yet: add them on its Payouts tab first",
             )
-    lacking = sorted(
-        {
-            p.name
-            for p in by_ach
-            if bank_of(
-                conn,
-                pmc_id,
-                "owner" if p.owner_id else "vendor",
-                p.owner_id or p.vendor_id,  # type: ignore[arg-type]
-            )
-            is None
-        }
-    )
+    lacking, unreadable = set(), set()
+    for p in by_ach:
+        found = bank_of(
+            conn,
+            pmc_id,
+            "owner" if p.owner_id else "vendor",
+            p.owner_id or p.vendor_id,  # type: ignore[arg-type]
+        )
+        if found is None:
+            lacking.add(p.name)
+            continue
+        # Another key set than the one that sealed the number (docs/edge-cases.md P-111): the
+        # file couldn't be made, so nothing is recorded.
+        try:
+            sealed.unseal(found[3], str(found[0]), key)
+        except sealed.Unreadable:
+            unreadable.add(p.name)
     if lacking:
         raise HTTPException(
-            409, f"no bank account on file for {', '.join(lacking)}: add it or pay by check"
+            409, f"no bank account on file for {', '.join(sorted(lacking))}: add it or pay by check"
+        )
+    if unreadable:
+        raise HTTPException(
+            409,
+            f"{', '.join(sorted(unreadable))}'s bank account number doesn't open under this"
+            " server's key, so it makes no ACH file: pay by check, or run the PMS with the key"
+            " that sealed it (PMS_DATA_KEY)",
         )
 
 

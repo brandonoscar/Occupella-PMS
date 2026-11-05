@@ -570,6 +570,33 @@ def test_a_server_without_its_key_records_no_ach_payout(client, conn, staff, pmc
     )
 
 
+def test_a_server_with_another_key_records_no_ach_payout(client, conn, staff, pmc, monkeypatch):
+    """docs/edge-cases.md P-111: a key set, but not the one that sealed the payees' numbers,
+    passed the pay-time check, so the draws were recorded as paid by ACH and then the file
+    couldn't be made. Each payee's number must open before anything is recorded."""
+    fund(conn, pmc, "500.00")
+    ach_details(client, pmc)
+    owner_bank(client, pmc)
+    monkeypatch.setenv("PMS_DATA_KEY", base64.b64encode(os.urandom(32)).decode())
+
+    answer = pay_owners(client, pmc, "EFT")
+
+    refused(
+        answer,
+        409,
+        "Owner 1's bank account number doesn't open under this server's key, so it makes no ACH"
+        " file: pay by check, or run the PMS with the key that sealed it (PMS_DATA_KEY)",
+    )
+    assert (
+        conn.execute(
+            "SELECT count(*) FROM trust_owner_draws WHERE pmc_id = %s", (pmc.pmc_id,)
+        ).fetchone()[0]
+        == 0
+    )
+    # By check, nothing needs the key.
+    ok(pay_owners(client, pmc, "check"), 201)
+
+
 def test_an_ach_file_opens_its_numbers_only_under_the_key_they_were_sealed_with(
     client, conn, staff, pmc, monkeypatch
 ):
