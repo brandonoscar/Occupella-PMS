@@ -29,11 +29,11 @@ answer in the portal for everything that can fail.
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 161 | 82 | 15 | 64 | 14 |
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 69 | 8 | 88 | 22 |
-| [Bad files and imports](#bad-files-and-imports) | 152 | 64 | 16 | 72 | 3 |
+| [Bad files and imports](#bad-files-and-imports) | 152 | 65 | 16 | 71 | 2 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 73 | 14 | 85 | 5 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1157** | **593** | **110** | **454** | **55** |
+| **All** | **1157** | **594** | **110** | **453** | **54** |
 
 ## Open, high risk: the work list
 
@@ -97,7 +97,6 @@ its ten most pressing, each with the test that would close it.
 
 - F-010: A PDF with JavaScript (OpenAction, /JS), uploaded by a tenant as their own lease document or by an anonymous applicant as proof of income
 - F-061: Day-first dates from a UK or European file ("05/01/2026" meaning 5 January)
-- F-077: A charge dated after a new lease started at the unit (the old tenant's move-out fee dated after the next move-in)
 
 **People doing the unexpected, permissions and security**
 
@@ -814,13 +813,13 @@ its ten most pressing, each with the test that would close it.
 |---|---|---|---|---|---|
 | F-010 | A PDF with JavaScript (OpenAction, /JS), uploaded by a tenant as their own lease document or by an anonymous applicant as proof of income | Kept and served byte for byte. It goes out as an attachment with nosniff and a CSP sandbox, which only protects the browser, so a desktop reader opening it may run its script. Staff and co-tenants receive it | Open | src/pms/api/documents.py:452-469; src/pms/api/tenant.py:535-548; src/pms/api/applicant_details.py:141-150 | H |
 | F-061 | Day-first dates from a UK or European file ("05/01/2026" meaning 5 January) | Read as May 1 with no warning; "13/01/2026" is refused. A payment file records a payment in the wrong month, and charges get wrong due days | Open | src/pms/statements.py:77 | H |
-| F-077 | A charge dated after a new lease started at the unit (the old tenant's move-out fee dated after the next move-in) | Goes to the newest lease started by its due day, so the new tenant owes the old tenant's charge. The file has no tenant or lease column to say otherwise | Open | src/pms/api/switching.py:441-447 | H |
 | F-088 | The same payments again under other bytes (renamed, re-exported, a trailing newline) | Another SHA, but each line looks recorded already (same lease, day and amount) and waits for staff | Guarded | src/pms/api/payment_files.py:160-214 (the nearest test is tests/api/test_payment_files_api.py::test_a_payment_that_looks_recorded_already_waits) | H |
 | F-015 | A PNG bomb: a 5 MB PNG declaring 30000 x 30000 pixels, kept as a move-out photo or a receipt | The statement still goes: the photo's page says it could not be added here and is with the lease's files, whatever error the image library raises | Tested | tests/test_deposit_statement.py::test_a_photo_that_says_it_is_huge_leaves_the_letter_whole | H |
 | F-016 | That same statement emailed (deposit_statement) | Any error making an email's file is that attempt's failed delivery, with the error; the emails behind it go out in the same run | Tested | tests/test_email_attachments.py::test_an_attachment_that_fails_in_any_way_is_a_failed_delivery_and_stops_nothing_behind_it | H |
 | F-055 | Formula text in an imported cell ("=HYPERLINK(...)" as a tenant name) | Kept as text and never run by the PMS. Every CSV download puts an apostrophe before it, and Excel downloads hold it as text | Tested | tests/test_exports.py::test_csv_neutralizes_formulas_and_keeps_everything_else | H |
 | F-064 | A decimal comma ("1234,56" or "1200,50") | Refused saying the line: a comma only separates thousands (1,234.56), so a decimal comma is never read as 100 times the amount; in bank statements, payment files, every switching file and a units file's details | Tested | tests/test_amounts.py; tests/api/test_payment_files_api.py::test_a_file_that_is_not_payments_received_is_refused_whole; tests/api/test_unit_details_api.py::test_a_units_file_brings_their_details | H |
 | F-076 | Two identical charges in one file (two $25.00 fees due the same day with the same memo) | Each line is matched to one charge alike already there: two alike in one file are two charges, and the file sent again adds nothing | Tested | tests/api/test_switch.py::test_two_alike_charges_in_one_file_both_come_in_and_once | H |
+| F-077 | A charge dated after a new lease started at the unit (the old tenant's move-out fee dated after the next move-in) | A charge goes on the lease its file's Tenant column names; without one, rent on the lease in effect on its due day, and a fee only when no earlier lease of the unit holds someone else; otherwise the import stops with the line and the leases it could be on | Tested | tests/api/test_switch.py::test_a_fee_goes_on_the_lease_the_file_names_never_a_guess | H |
 | F-083 | The uncleared checks and deposits file (cutover items) sent twice | Its lines are matched to the items carried over already, each once: sent again it adds nothing; two alike in one file both come in; one import at a time per account | Tested | tests/api/test_switch.py::test_an_items_file_sent_again_carries_nothing_over_twice | H |
 | F-084 | Opening balances sent again, or sent differently | Once per trust bank account: the same again returns the first; a different one is refused | Tested | tests/test_cutover.py::test_the_same_opening_again_returns_the_original_transfers; tests/test_cutover.py::test_a_different_opening_of_the_same_trust_bank_account_is_refused | H |
 | F-085 | Opening balances that don't add up to the book cash, or one account on two lines | Refused | Tested | tests/api/test_switch.py::test_opening_balances_that_dont_tie_out_are_refused | H |
@@ -1157,7 +1156,7 @@ its ten most pressing, each with the test that would close it.
 | ID | Edge case | What the PMS does | Status | Evidence | Risk |
 |---|---|---|---|---|---|
 | H-008 | A payment's answer is lost, staff close the panel and record it again | The reopened panel makes a new request id, so the payment is recorded twice; Receive payment has no same lease, day and amount warning (payment files have one) | Open | frontend/src/pages/LeaseForms.tsx:109; src/pms/api/payment_files.py:161 has the check, src/pms/api/rent.py none | H |
-| H-031 | The daily backup fails (password changed, pg_dump error, disk) | "FAIL" in the backup container's log, and since this fix the backup service reads unhealthy in `docker compose ps` once no good dump is less than 26 hours old (tested); still no admin email and nothing on the Dashboard: whom to tell about a server's backup when it holds several companies is the founder's call | Open | tests/tools/test_backup_daily.py::test_healthy_while_a_good_dump_is_less_than_26_hours_old; scripts/backup-daily.sh (healthy); docs/support.md | H |
+| H-031 | The daily backup fails (password changed, pg_dump error, disk) | "FAIL" in the backup container's log, and since this fix the backup service reads unhealthy in `docker compose ps` once no good dump is less than 26 hours old (tested); still no admin email and nothing on the Dashboard: the founder deferred emailing anyone (11/05): it touches self-hosting only, and the hosted product's backups are Supabase's | Open | tests/tools/test_backup_daily.py::test_healthy_while_a_good_dump_is_less_than_26_hours_old; scripts/backup-daily.sh (healthy); docs/support.md | H |
 | H-055 | PMS_DATA_KEY changed while bank payments are on their way | The company's webhook answers 404, Stripe retries then stops; rent the bank paid never reaches the books; one log line | Open | src/pms/api/online_payments.py:680-683; src/pms/payments.py:551-556 | H |
 | H-067 | PMS_TRUSTED_PROXIES empty behind a proxy on another host or network | Every visitor has the proxy's address: 20 failed sign-ins by anyone lock the whole company out for 15 minutes, 10 resets an hour for everyone, signatures record the proxy's address | Open | src/pms/api/throttle.py:84-86 | H |
 | H-089 | The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st) | The next run charges only the new month, so that rent is never charged by itself, and nothing says so | Open | src/pms/nightly.py:116-118; db/schema.sql:1688-1720 (only the run's month) | H |

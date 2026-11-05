@@ -73,6 +73,11 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   the owners to choose among (Record it, naming whose), a lease at such a property takes no
   payment online (the tenant sees the company's How to pay us) nor by autopay (its month reads as
   online payments off), and the card says when the list couldn't load instead of showing nothing.
+- **Fixed: switching put an old tenant's charge on the new tenant.** A charges file names a unit,
+  and every charge went on the newest lease started by its due day, so a move-out fee dated after
+  the next tenant moved in became theirs. A charges file may now say whose each charge is (a
+  Tenant column); without one, rent goes on the lease in effect on its due day, and a fee that
+  more than one tenant could owe stops the import with the line and the leases it could be on.
 - **Fixed: a bank statement of positive amounts read as all money in.** A bank CSV whose amounts
   are all positive, with a column saying Debit or Credit (Type, Transaction type, Dr/Cr), went in
   with every check and fee as a deposit. Each line's way now comes from that column; a type saying

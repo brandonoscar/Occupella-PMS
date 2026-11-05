@@ -332,6 +332,76 @@ def test_a_lease_over_another_is_refused_with_its_line(client, staff, pmc):
     )
 
 
+def test_a_fee_goes_on_the_lease_the_file_names_never_a_guess(client, conn, staff, pmc):
+    """docs/edge-cases.md F-077: a charges file names a unit, not whose charge it is, and every
+    charge went on the newest lease started by its due day, so an old tenant's move-out fee
+    dated after the next tenant moved in became the new tenant's. A fee now goes on a lease
+    only when one lease's people could owe it, or the file's Tenant column says whose it is."""
+    roster(client)
+    ok(
+        imported(
+            client,
+            "leases",
+            "Property,Unit,Tenants,Starts On,Ends On,Monthly Rent",
+            "Property A,Unit 2,Tenant C,2025-06-01,2025-10-31,1250.00",
+            "Property A,Unit 2,Tenant D,2025-11-01,,1300.00",
+            # A renewal: the same people on a second lease.
+            "Property A,Unit 1,Tenant A,2025-01-01,2025-06-30,1500.00",
+            "Property A,Unit 1,Tenant A,2025-07-01,,1550.00",
+        )
+    )
+
+    def owes(tenant):
+        return conn.execute(
+            "SELECT array_agg(c.memo ORDER BY c.memo) FROM trust_charges AS c"
+            " JOIN trust_lease_tenants AS lt ON lt.lease_id = c.lease_id"
+            " JOIN trust_tenants AS t ON t.id = lt.tenant_id"
+            " WHERE c.pmc_id = %s AND t.display_name = %s",
+            (pmc.pmc_id, tenant),
+        ).fetchone()[0]
+
+    unsaid = imported(
+        client,
+        "charges",
+        "Property,Unit,Due On,Amount,Kind,Memo",
+        "Property A,Unit 2,2025-11-03,150.00,fee,Move-out cleaning",
+    )
+    refused(
+        unsaid,
+        422,
+        "line 2: a fee due 2025-11-03 at Unit 2 could be owed on Tenant D's lease (from"
+        " 2025-11-01) or Tenant C's (from 2025-06-01): add a Tenant column naming whose it is",
+    )
+    assert owes("Tenant D") is None  # the whole file waits
+
+    ok(
+        imported(
+            client,
+            "charges",
+            "Property,Unit,Due On,Amount,Kind,Memo,Tenant",
+            "Property A,Unit 2,2025-11-03,150.00,fee,Move-out cleaning,Tenant C",
+            # Rent is the lease's in effect on its due day; no Tenant needed.
+            "Property A,Unit 2,2025-11-01,1300.00,rent,November rent,",
+            # A renewal's people are the same: the newest lease, no Tenant needed.
+            "Property A,Unit 1,2025-08-05,40.00,fee,Key copy,",
+        )
+    )
+    assert owes("Tenant C") == ["Move-out cleaning"]
+    assert owes("Tenant D") == ["November rent"]
+    assert owes("Tenant A") == ["Key copy"]
+
+    refused(
+        imported(
+            client,
+            "charges",
+            "Property,Unit,Due On,Amount,Kind,Tenant",
+            "Property A,Unit 2,2025-11-04,20.00,fee,Tenant A",
+        ),
+        422,
+        "line 2: Tenant A is on no lease of Unit 2 started by 2025-11-04",
+    )
+
+
 def test_a_rent_charged_twice_is_refused_with_its_line(client, staff, pmc):
     roster(client)
     ok(

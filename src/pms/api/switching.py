@@ -442,6 +442,53 @@ def import_lease(names: Names, row: Row) -> None:
     names.added += 1
 
 
+# The leases of a unit started by a day, newest first, each with its tenants' names.
+STARTED = """
+SELECT l.id, l.starts_on,
+       array(SELECT t.display_name FROM trust_lease_tenants AS lt
+             JOIN trust_tenants AS t ON t.id = lt.tenant_id
+             WHERE lt.lease_id = l.id ORDER BY t.display_name COLLATE "C"),
+       array(SELECT lt.tenant_id FROM trust_lease_tenants AS lt WHERE lt.lease_id = l.id)
+FROM trust_leases AS l
+WHERE l.unit_id = %s AND l.starts_on <= %s
+ORDER BY l.starts_on DESC, l.id
+"""
+
+
+def lease_owing(
+    names: Names, prop: UUID, unit: UUID, row: Row, due: date | None, kind: str
+) -> UUID:
+    """The lease a charge carried over is owed on, never a guess (docs/edge-cases.md F-077): the
+    newest lease started by its due day holding the file's Tenant, when it names one; else rent
+    is the lease's in effect then (the newest started), and a fee the newest's only when no
+    earlier lease of the unit holds someone else, who could owe it (a move-out fee dated after
+    the next tenant moved in). Otherwise the line says to name whose it is."""
+    started = names.conn.execute(STARTED, (unit, due)).fetchall()
+    unit_name = row.get("unit")
+    if not started:
+        raise Bad(f"line {row.line}: no lease of that unit had started by {due}")
+    who = row.get("tenant", required=False)
+    if who:
+        tenant = names.tenant(prop, who, line=row.line)
+        theirs = [lease for lease, _, _, ids in started if tenant in ids]
+        if not theirs:
+            raise Bad(f"line {row.line}: {who} is on no lease of {unit_name} started by {due}")
+        return UUID(str(theirs[0]))
+    newest = set(started[0][2])
+    others = [lease for lease in started[1:] if not set(lease[2]) <= newest]
+    if kind == "fee" and others:
+        could = [started[0], *others]
+        said = " or ".join(
+            f"{' and '.join(people)}'s" + (" lease" if n == 0 else "") + f" (from {starts})"
+            for n, (_, starts, people, _) in enumerate(could)
+        )
+        raise Bad(
+            f"line {row.line}: a fee due {due} at {unit_name} could be owed on {said}: add a"
+            " Tenant column naming whose it is"
+        )
+    return UUID(str(started[0][0]))
+
+
 def import_charge(names: Names, row: Row) -> None:
     conn, pmc = names.conn, names.pmc
     prop = names.property(row.get("property"), row.line)
@@ -451,14 +498,7 @@ def import_charge(names: Names, row: Row) -> None:
     kind = (row.get("kind", required=False) or "rent").lower()
     if kind not in ("rent", "fee") or amount <= 0:
         raise Bad(f"line {row.line}: a charge carried over is rent or a fee, of more than 0")
-    lease = one(
-        conn,
-        "SELECT id FROM trust_leases WHERE unit_id = %s AND starts_on <= %s"
-        " ORDER BY starts_on DESC LIMIT 1",
-        (unit, due),
-    )
-    if lease is None:
-        raise Bad(f"line {row.line}: no lease of that unit had started by {due}")
+    lease = lease_owing(names, prop, unit, row, due, kind)
     memo = row.get("memo", required=False) or None
     alike = (lease, due, kind, amount, memo)
     there = one(
