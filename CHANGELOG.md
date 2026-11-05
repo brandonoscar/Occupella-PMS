@@ -77,6 +77,11 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   are all positive, with a column saying Debit or Credit (Type, Transaction type, Dr/Cr), went in
   with every check and fee as a deposit. Each line's way now comes from that column; a type saying
   neither is refused with its line, and a bank that signs its amounts keeps its signs.
+- **Fixed: a slow or hung mail server could make the whole PMS answer busy.** After every change
+  the API delivered what waited in the outbox on a pooled connection, up to 20 seconds an email
+  when the mail server hung, so a handful of changes filled the pool. Delivery, and autopay's
+  submissions to the payments partner, now run one at a time in a process; a change made while
+  one runs makes it run once more after, so nothing waits for the next change.
 - **Fixed: the everything export could take the PMS down for a large company.** Settings, Data
   export's records.zip fetched every table and every document's bytes at once and zipped them in
   memory, sorting each table by its rows as text (a 5 MB file as 10 MB of hex). Rows now come two

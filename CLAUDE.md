@@ -164,7 +164,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the server's `PMS_EMAIL_SENDER` ("fake" keeps it in the outbox and sends it nowhere, for
   development and CI; "smtp" with `PMS_SMTP_*` and `PMS_EMAIL_FROM` from the environment, over
   STARTTLS; none by default) and records each attempt (`trust_email_deliveries`, delivered at
-  most once, given up after five failures). `python -m pms.email deliver` delivers what waits.
+  most once, given up after five failures), one delivery at a time in a process (a write while
+  one runs makes it run once more; autopay's submissions the same, `outbox.OneAtATime`), so a
+  hung mail server holds one pooled connection, never the pool. `python -m pms.email deliver` delivers what waits.
   Staff see each bill's email, and whether it went, on the bill's page (`/bills/<id>`). Since
   migration 0152 (`docs/adr/0010-design-pass.md`) a Short bill's page also asks its owner for the
   money (`bill_funds_needed`: to their contact email, else their login's, once a day per bill,

@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1149 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1150 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -28,12 +28,12 @@ answer in the portal for everything that can fail.
 | [Money and the ledger](#money-and-the-ledger) | 151 | 113 | 7 | 31 | 4 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 160 | 82 | 15 | 63 | 14 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 64 | 30 | 48 | 1 |
-| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 66 | 8 | 91 | 25 |
+| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 67 | 8 | 90 | 24 |
 | [Bad files and imports](#bad-files-and-imports) | 151 | 64 | 16 | 71 | 3 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 167 | 70 | 14 | 83 | 8 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 168 | 71 | 14 | 83 | 7 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1149** | **586** | **110** | **453** | **61** |
+| **All** | **1150** | **588** | **110** | **452** | **59** |
 
 ## Open, high risk: the work list
 
@@ -89,7 +89,6 @@ its ten most pressing, each with the test that would close it.
 - P-065: The company changes Stripe accounts (server's to own, or new keys) with autopays saved at the old one
 - P-067: Stripe leaves an off-session payment waiting on the tenant (requires_action; NOT VERIFIED for ACH)
 - P-068: A hand payment left on Stripe's page whose expired report never comes
-- P-075: SMTP server hangs
 - P-087: The attachment or HTML fails with something other than a database or lookup error (fpdf, ValueError, HTTPException; NOT VERIFIED that any does today)
 - P-115: The bank returns an owner's ACH draw (account closed, no account)
 - P-116: The bank returns a vendor's ACH payment
@@ -114,7 +113,6 @@ its ten most pressing, each with the test that would close it.
 **Hosting, operations and the portal's failure states**
 
 - H-008: A payment's answer is lost, staff close the panel and record it again
-- H-016: The mail server is slow or down
 - H-028: The disk fills, and the backups live on it
 - H-031: The daily backup fails (password changed, pg_dump error, disk)
 - H-041: A newer backup restored under an older tag, or the old tag checked out after migrations ran
@@ -652,7 +650,6 @@ its ten most pressing, each with the test that would close it.
 | P-065 | The company changes Stripe accounts (server's to own, or new keys) with autopays saved at the old one | The partner name is still "stripe", so the new account is asked to charge a customer it doesn't know; fails three days, given up, tenant emailed every month; a give-up never counts toward stopping it and staff aren't told | Open | src/pms/autopay.py:162-165, 476-478 | H |
 | P-067 | Stripe leaves an off-session payment waiting on the tenant (requires_action; NOT VERIFIED for ACH) | Recorded as sent, and no report follows; it stays "on its way", so every later balance autopay pays less and the tenant falls behind into late fees | Open | src/pms/autopay.py:128-137, 484-501 | H |
 | P-068 | A hand payment left on Stripe's page whose expired report never comes | Counted on its way forever, lowering every balance autopay | Open | src/pms/autopay.py:128-137 | H |
-| P-075 | SMTP server hangs | Each email waits up to 20 s inside an open transaction on a pool connection; a delivery runs after every successful change, so several fill the pool and everyone gets 503 busy | Open | src/pms/email.py:128, 646-675; src/pms/api/app.py:383-391 | H |
 | P-087 | The attachment or HTML fails with something other than a database or lookup error (fpdf, ValueError, HTTPException; NOT VERIFIED that any does today) | Not caught: the pass stops at that email, which is first again next time, so every later email waits behind it unrecorded | Open | src/pms/email.py:662-672 | H |
 | P-115 | The bank returns an owner's ACH draw (account closed, no account) | No way to record it: the draw stays paid and the owner's balance wrong until two staff post a journal entry | Open | src/pms/api/payouts.py (no return path); src/pms/api/journal.py | H |
 | P-116 | The bank returns a vendor's ACH payment | The bill stays Paid and can't be voided once money was taken | Open | src/pms/api/payables.py:1309-1328 (void refused once money was taken) | H |
@@ -660,6 +657,7 @@ its ten most pressing, each with the test that would close it.
 | P-130 | The wrong statement imported (another account's, wrong days, wrong signs) | Permanent: statements are append-only and there is no undo; its lines the books lack block month-end; Import statement asks nothing first | Open | tests/test_bank_statements.py::test_statements_and_lines_are_append_only pins it; frontend/src/pages/ReconcilePage.tsx:370-371 | H |
 | P-024 | A return (dispute) arrives before the paid report lands (paid kept failing on its fee, or isn't subscribed) | As C-087: refused for now so Stripe retries; a return after a failure is still acknowledged | Tested | tests/api/test_online_payments_api.py::test_a_return_for_a_payment_that_failed_is_acknowledged_and_changes_nothing | H |
 | P-040 | Paid online for a property with two owner accounts and no ownership shares | Checkout says off for such a lease; the waiting list names the owners to choose among (choose_account), Record takes account; the card says when the list couldn't load | Tested | tests/api/test_online_payments_api.py::test_a_property_with_two_owner_accounts_and_no_shares_takes_no_payment_online, ::test_a_payment_paid_after_a_second_owner_account_waits_for_staff_to_choose_one; frontend/src/pages/OnlinePaymentsCards.test.tsx (asks whose a payment is..., says so when the list couldn't load) | H |
+| P-075 | SMTP server hangs | Delivery after a write, and autopay's submissions, run one at a time in a process (outbox.OneAtATime): a write while one runs returns at once and makes it run once more after, so a hung mail server or partner holds one pooled connection, never the pool | Tested | tests/api/test_outbox.py::test_many_writes_at_once_lend_the_slow_partner_one_connection | H |
 | P-111 | PMS_DATA_KEY changed (one is set, but not the one that sealed the numbers) | Before anything is recorded, each ACH payee's bank account number must open under the server's key; one that doesn't is refused (409 naming them: pay by check, or run with the key that sealed it), and checks need no key | Tested | tests/api/test_payouts_api.py::test_a_server_with_another_key_records_no_ach_payout | H |
 | P-129 | Every amount positive with a separate Type (Debit or Credit) column | Each line's way is read from the type column (Debit, Credit, Dr, Cr, ACH_DEBIT...) when every amount is positive; a type saying neither is refused with its line; signed amounts keep their signs | Tested | tests/test_statement_files.py::test_a_csv_of_positive_amounts_reads_each_ones_way_from_its_type | H |
 | P-004 | Stripe slow (up to 20 s a call) while many tenants pay at once | Each checkout holds one of the pool's 10 connections and an open transaction for the whole Stripe call; staff pages then get 503 busy | Open | src/pms/payments.py:183; src/pms/api/app.py:311 (max_size=10); src/pms/api/online_payments.py:334-337 | M |
@@ -1160,13 +1158,13 @@ its ten most pressing, each with the test that would close it.
 | ID | Edge case | What the PMS does | Status | Evidence | Risk |
 |---|---|---|---|---|---|
 | H-008 | A payment's answer is lost, staff close the panel and record it again | The reopened panel makes a new request id, so the payment is recorded twice; Receive payment has no same lease, day and amount warning (payment files have one) | Open | frontend/src/pages/LeaseForms.tsx:109; src/pms/api/payment_files.py:161 has the check, src/pms/api/rent.py none | H |
-| H-016 | The mail server is slow or down | After every write a background delivery takes a pooled connection and works through up to 100 emails at a 20 s SMTP timeout each; a handful of them fill the pool and the whole PMS answers busy | Open | src/pms/api/outbox.py:25-32; src/pms/email.py:128,610 | H |
 | H-028 | The disk fills, and the backups live on it | The dump fails, its .partial stays, and old dumps are pruned only after a dump succeeds, so the disk never frees itself | Open | scripts/backup-daily.sh:54-56; scripts/backup.sh:51 | H |
 | H-031 | The daily backup fails (password changed, pg_dump error, disk) | "FAIL" goes to the backup container's log only: no admin email, no health status, nothing on the Dashboard | Open | scripts/backup-daily.sh:77,81-84; docs/support.md ("A backup that failed") | H |
 | H-041 | A newer backup restored under an older tag, or the old tag checked out after migrations ran | Nothing compares schema_migrations to the code: the old app starts and posts money on a schema it was never tested on | Open | no schema version check in src/ (only scripts/backup.sh:155 prints the version) | H |
 | H-055 | PMS_DATA_KEY changed while bank payments are on their way | The company's webhook answers 404, Stripe retries then stops; rent the bank paid never reaches the books; one log line | Open | src/pms/api/online_payments.py:680-683; src/pms/payments.py:551-556 | H |
 | H-067 | PMS_TRUSTED_PROXIES empty behind a proxy on another host or network | Every visitor has the proxy's address: 20 failed sign-ins by anyone lock the whole company out for 15 minutes, 10 resets an hour for everyone, signatures record the proxy's address | Open | src/pms/api/throttle.py:84-86 | H |
 | H-089 | The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st) | The next run charges only the new month, so that rent is never charged by itself, and nothing says so | Open | src/pms/nightly.py:116-118; db/schema.sql:1688-1720 (only the run's month) | H |
+| H-016 | The mail server is slow or down | Delivery after a write, and autopay's submissions, run one at a time in a process (outbox.OneAtATime): a write while one runs returns at once and makes it run once more after, so a hung mail server or partner holds one pooled connection, never the pool | Tested | tests/api/test_outbox.py::test_many_writes_at_once_lend_the_slow_partner_one_connection | H |
 | H-020 | The nightly run fails on a server that sends no email (compose sets none by default) | A run failing every night leaves no rent run (one transaction a company), so after two days Needs attention says rent isn't posting; one night's failure that the next night makes up is still only in the log | Tested | tests/api/test_today.py::test_rent_not_posted_for_two_days_is_noted_with_the_last_day_it_did | H |
 | H-021 | The nightly hasn't run for days (its thread died, it fails every night, or it is off) | Needs attention says first, with the last day rent posted, when no rent run ran in two days while the company has leases (today.rent_not_posted) | Tested | tests/api/test_today.py::test_rent_not_posted_for_two_days_is_noted_with_the_last_day_it_did; frontend/src/pages/PortalsTwo.test.tsx (says in Needs attention when rent stopped posting) | H |
 | H-022 | PMS_NIGHTLY=off with no cron running python -m pms.nightly | The server's log says at start that the run is off and what to run instead; the Dashboard saying when rent last posted is H-021 | Tested | tests/api/test_server.py::test_a_server_with_the_nightly_run_off_says_so_at_start | H |
@@ -1243,6 +1241,7 @@ its ten most pressing, each with the test that would close it.
 | H-164 | A writing transaction left open anywhere on the Postgres server (idle in transaction, a long import, another database on a shared server) | Every company's events and webhooks wait until it ends: GET /api/events and recent_events return nothing new and the courier sends nothing, with no log line | Open | src/pms/api/events.py EVENTS (pg_snapshot_xmin) | M |
 | H-165 | The disk fills while the courier or the nightly run writes | Only requests answer it in words; the courier and the nightly run log an exception and try again later (after two days the Dashboard says rent isn't posting) | Open | src/pms/webhooks.py Courier; src/pms/nightly.py | M |
 | H-166 | The nightly run off while an admin presses Run rent now every day | The Dashboard counts a hand run as rent posting and says nothing, while recurring bills, monthly management fees, recurring work orders and draws, which only the nightly run does, stop | Open | src/pms/api/today.py rent_not_posted | M |
+| H-168 | The mail server hangs while a hundred emails wait, and a tenant asks for a password reset | One delivery at a time now, so the pool is safe, but that delivery works through the waiting emails oldest first at up to 20 s each: the reset (its link held ten minutes) can wait half an hour and be given up on; nothing sends a newer or more urgent email first | Open | src/pms/email.py (deliver_pending: oldest first, LIMIT 100; SMTP timeout 20 s) | M |
 | H-026 | A company's run fails at 00:01 (the database restarting) | That company waits for its next day unless an admin uses Run rent now; support.md says so | Guarded | src/pms/nightly.py:200-206; docs/support.md "What to do" | M |
 | H-043 | A migration fails halfway through an upgrade | dbmate rolls that one back, the ones before stay; migrate exits 1 and the new app doesn't start | Guarded | compose.selfhost.yaml:62-64; docs/release.md "Migrations" | M |
 | H-053 | PMS_DATA_KEY changed, then a tax ID is revealed or the 1099 export taken | 409 "that tax ID doesn't open under this server's key" | Guarded | src/pms/api/tax_ids.py:115-119 | M |

@@ -115,15 +115,23 @@ def autopays(
     ]
 
 
+SUBMISSION = outbox.OneAtATime()
+
+
 def submit(pool: ConnectionPool[Any], partner: payments.Partner | payments.Resolver) -> None:
     """Sends the autopay payments started and not yet accepted to the partner (after a request
-    that may have started some committed: an admin's Run rent now)."""
-    with pool.connection() as conn:
-        conn.autocommit = True
-        try:
-            autopay.submit_waiting(conn, partner)
-        finally:
-            conn.autocommit = False
+    that may have started some committed: an admin's Run rent now); one submission at a time
+    in the process, as the partner may be slow (outbox.OneAtATime)."""
+
+    def job() -> None:
+        with pool.connection() as conn:
+            conn.autocommit = True
+            try:
+                autopay.submit_waiting(conn, partner)
+            finally:
+                conn.autocommit = False
+
+    SUBMISSION.run(job)
 
 
 # --- the tenant's side ------------------------------------------------------------------------
