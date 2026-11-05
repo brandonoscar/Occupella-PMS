@@ -7,7 +7,9 @@ bounced back) stays out of the trust ledger. Money is recorded as it reached the
 account, and only through the database's write paths: trust_post_transfers (with a key built
 from the request's id, so a retry posts nothing twice), trust_apply_payment and
 trust_reverse_payment. A payment pays the owner's account for what the lease owes, matched to
-its open charges oldest first; anything more is held for the tenant as prepaid rent.
+its open charges oldest first, but a fee the company keeps (its type's payee, migration
+20261106000220), which it pays into the company's fee account in the same trust bank account;
+anything more is held for the tenant as prepaid rent.
 
 Nothing here sends money anywhere: the PMS records what the bank already did.
 """
@@ -178,6 +180,92 @@ def allocate(charges: list[tuple[UUID, Decimal]], amount: Decimal) -> list[tuple
     return matches
 
 
+def plan(
+    order: list[tuple[UUID, Decimal]],
+    amount: Decimal,
+    wanted: dict[UUID, Decimal] | None = None,
+) -> list[tuple[UUID, Decimal]]:
+    """What `amount` pays of a lease's open charges (`order`, in the order money pays them), in
+    the order it pays them: first the charges staff chose (`wanted`, each with what is still to
+    pay of it), then the rest in order, each up to what is open of it. A charge may come twice:
+    what was chosen of it, then the rest of it."""
+    if not wanted:
+        return allocate(order, amount)
+    opens = dict(order)
+    first = allocate([(c, min(w, opens.get(c, ZERO))) for c, w in wanted.items() if w > 0], amount)
+    for charge, part in first:
+        opens[charge] -= part
+    rest = allocate(
+        [(c, opens[c]) for c, _ in order if opens[c] > 0],
+        amount - sum((part for _, part in first), ZERO),
+    )
+    return first + rest
+
+
+def take(pieces: list[list[Any]], amount: Decimal) -> list[tuple[UUID, Decimal]]:
+    """The next `amount` of a plan's pieces (each [charge, what is left of it], used up as they
+    are taken), a charge taken twice at once added up: what one transfer pays."""
+    taken: dict[UUID, Decimal] = {}
+    while amount > 0 and pieces:
+        charge, left = pieces[0]
+        part = min(left, amount)
+        taken[charge] = taken.get(charge, ZERO) + part
+        amount -= part
+        if part == left:
+            pieces.pop(0)
+        else:
+            pieces[0][1] = left - part
+    return list(taken.items())
+
+
+# Of a lease's charges, those whose money the company keeps (a fee of a type it keeps, as the
+# type's payee was when it was charged; migration 20261106000220).
+KEPT_BY_COMPANY = """
+SELECT c.id FROM trust_charges AS c
+WHERE c.id = ANY(%s) AND trust_charge_payee(c) = 'company'
+"""
+
+
+def kept_by_company(conn: psycopg.Connection[Any], charges: list[UUID]) -> set[UUID]:
+    if not charges:
+        return set()
+    return {row[0] for row in conn.execute(KEPT_BY_COMPANY, (charges,)).fetchall()}
+
+
+@dataclass
+class Split:
+    """A lease's part of a payment as its plan pays it: the pieces paying charges its owners
+    keep, and those paying fees the company keeps, with what each comes to."""
+
+    owners: list[list[Any]]
+    company: list[list[Any]]
+
+    @property
+    def to_owners(self) -> Decimal:
+        return sum((Decimal(left) for _, left in self.owners), ZERO)
+
+    @property
+    def to_company(self) -> Decimal:
+        return sum((Decimal(left) for _, left in self.company), ZERO)
+
+
+def split(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    lease_id: UUID,
+    amount: Decimal,
+    wanted: dict[UUID, Decimal] | None = None,
+) -> Split:
+    """`amount` over the lease's open charges as it pays them (rent first, or the charges staff
+    chose first), parted into what its owners keep and what the company keeps."""
+    pieces = plan(open_charges(conn, pmc_id, lease_id), amount, wanted)
+    company = kept_by_company(conn, [c for c, _ in pieces])
+    return Split(
+        [[c, part] for c, part in pieces if c not in company],
+        [[c, part] for c, part in pieces if c in company],
+    )
+
+
 # --- ledger accounts --------------------------------------------------------------------------
 
 
@@ -286,6 +374,22 @@ ORDER BY m.n
 
 def moved_from(conn: psycopg.Connection[Any], lease_id: UUID) -> list[tuple[UUID, str, UUID]]:
     return [(row[0], row[1], row[2]) for row in conn.execute(MOVED_FROM, (lease_id,)).fetchall()]
+
+
+def company_income(conn: psycopg.Connection[Any], pmc_id: UUID, bank_id: UUID) -> str:
+    """The company's fee account in a trust bank account, opened if it has none yet."""
+    row = conn.execute(
+        "SELECT ledger_account_id FROM trust_ledger_accounts"
+        " WHERE pmc_id = %s AND bank_account_id = %s AND kind = 'pmc_income'",
+        (pmc_id, bank_id),
+    ).fetchone()
+    if row is not None:
+        return str(row[0])
+    opened = conn.execute(
+        "SELECT trust_open_ledger_account(%s, %s, 'pmc_income')", (pmc_id, bank_id)
+    ).fetchone()
+    assert opened is not None
+    return str(opened[0])
 
 
 def cash_of(conn: psycopg.Connection[Any], bank_id: UUID) -> str:
@@ -397,48 +501,29 @@ def lock_lease(conn: psycopg.Connection[Any], lease_id: UUID) -> None:
 def match(
     conn: psycopg.Connection[Any],
     pmc_id: UUID,
-    lease_id: UUID,
     transfer: str,
-    amount: Decimal,
-    wanted: dict[UUID, Decimal] | None = None,
+    paying: list[tuple[UUID, Decimal]],
 ) -> list[tuple[UUID, Decimal]]:
-    """Matches a transfer to the lease's open charges, oldest first, or first to the charges
-    staff chose (`wanted`, each with what is still to pay of it; what this transfer pays of them
-    comes off). A transfer matched before (posted again by a retry that asked for the very same
-    thing) is left as it was."""
+    """Matches a transfer to the charges it pays (each with how much, as its plan took them). A
+    transfer matched before (posted again by a retry that asked for the very same thing) is left
+    as it was."""
     if conn.execute(
         "SELECT 1 FROM trust_charge_payments WHERE transfer_id = %s LIMIT 1", (transfer,)
     ).fetchone():
         return []
-    order = open_charges(conn, pmc_id, lease_id)
-    if wanted:
-        opens = dict(order)
-        first = allocate(
-            [(c, min(w, opens.get(c, ZERO))) for c, w in wanted.items() if w > 0], amount
-        )
-        for charge, part in first:
-            wanted[charge] -= part
-            opens[charge] -= part
-        rest = allocate(
-            [(c, opens[c]) for c, _ in order if opens[c] > 0],
-            amount - sum((part for _, part in first), ZERO),
-        )
-        together: dict[UUID, Decimal] = {}
-        for charge, part in first + rest:
-            together[charge] = together.get(charge, ZERO) + part
-        matched = list(together.items())
-    else:
-        matched = allocate(order, amount)
-    for charge, part in matched:
+    for charge, part in paying:
         conn.execute("SELECT trust_apply_payment(%s, %s, %s, %s)", (pmc_id, charge, transfer, part))
-    return matched
+    return paying
 
 
 @dataclass(frozen=True)
 class Recorded:
     transfers: list[str]
+    # What paid the lease's charges: into its owners' accounts, and of it into the company's fee
+    # account for fees the company keeps (to_company).
     to_owner: Decimal
     to_prepaid: Decimal
+    to_company: Decimal = ZERO
 
 
 def record_payment(
@@ -456,10 +541,13 @@ def record_payment(
 ) -> Recorded:
     """A tenant's payment into the operating trust bank account: the owner's account takes
     what the lease owes, matched to its rent first, then its other charges, each oldest first
-    (migration 0093); the rest is the first tenant's prepaid rent. A lease its tenants moved into
+    (migration 0093), but what pays a fee the company keeps (migration 20261106000220), which
+    goes into the company's fee account in the same trust bank account; the rest is the first
+    tenant's prepaid rent. A lease its tenants moved into
     (migration 0091) pays the rent each lease they moved from still owes first, oldest lease
     first, then this lease's rent, then the other charges in the same order, each part into the
-    owner's account its lease or move names. The same
+    owner's account its lease or move names (or the company's fee account in its trust bank
+    account). The same
     request id again returns the payment as it was recorded. A lease on a payment hold refuses
     it, unless staff accept it past the hold (`past_hold_by` names them): then every hold in
     force that day allows it, in the same transaction. Staff may choose the open charges it pays
@@ -497,27 +585,45 @@ def record_payment(
             if share > 0:
                 shares[each] = shares.get(each, ZERO) + share
                 left -= share
-    # Each part as (the lease, an owner's account, that account's bank, amount): a lease moved
-    # from pays the owner's account its move names, this lease its owners by their shares.
-    parts = [(each, o, b, shares[each]) for each, o, b in earlier_leases if each in shares]
-    parts += [(lease_id, o, bank, p) for o, p in owners.parts(conn, shares.get(lease_id, ZERO))]
+    # Each part as (an account, that account's bank, amount, the pieces of charges it pays): a
+    # lease moved from pays the owner's account its move names, this lease its owners by their
+    # shares; a fee the company keeps, its fee account in the same bank.
+    splits = {
+        each: split(conn, pmc_id, each, shares[each], wanted if each == lease_id else None)
+        for each in chain
+        if each in shares
+    }
+    parts: list[tuple[UUID, str, UUID, Decimal, list[list[Any]]]] = [
+        (each, o, b, splits[each].to_owners, splits[each].owners)
+        for each, o, b in earlier_leases
+        if each in splits and splits[each].to_owners > 0
+    ]
+    here = splits.get(lease_id, Split([], []))
+    parts += [
+        (lease_id, o, bank, p, here.owners) for o, p in owners.parts(conn, here.to_owners) if p > 0
+    ]
+    banks = {each: b for each, _, b in earlier_leases} | {lease_id: bank}
+    parts += [
+        (each, company_income(conn, pmc_id, banks[each]), banks[each], s.to_company, s.company)
+        for each, s in splits.items()
+        if s.to_company > 0
+    ]
     to_owner = amount - left
     to_prepaid = left
-    transfers = [(cash_of(conn, b), o, part) for _, o, b, part in parts]
+    to_company = sum((s.to_company for s in splits.values()), ZERO)
+    transfers = [(cash_of(conn, b), o, part) for _, o, b, part, _ in parts]
     if to_prepaid > 0:
         prepaid = tenant_account(conn, pmc_id, bank, "prepaid_rent", lease.tenants[0])
         transfers.append((cash_of(conn, bank), prepaid, to_prepaid))
     posted = post(conn, pmc_id, key, transfers, received_on, metadata)
     if posted is None:
-        return replay(
-            conn, pmc_id, key, metadata, {*owners.accounts, *(o for _, o, _ in earlier_leases)}
-        )
-    # The owners' parts come first; prepaid rent, if any, last.
-    for (each, _, _, part), transfer in zip(parts, posted[: len(parts)], strict=True):
+        return replay(conn, pmc_id, key, metadata)
+    # The owners' parts come first, then the company's; prepaid rent, if any, last.
+    for (each, _, _, part, pieces), transfer in zip(parts, posted[: len(parts)], strict=True):
         if past_hold_by is not None:
             allow_past_holds(conn, pmc_id, each, transfer, received_on, past_hold_by)
-        match(conn, pmc_id, each, transfer, part, wanted if each == lease_id else None)
-    return Recorded(posted, to_owner, to_prepaid)
+        match(conn, pmc_id, transfer, take(pieces, part))
+    return Recorded(posted, to_owner, to_prepaid, to_company)
 
 
 def chosen_charges(
@@ -588,17 +694,21 @@ def replay(
     pmc_id: UUID,
     key: str,
     metadata: dict[str, Any],
-    owners: set[str],
 ) -> Recorded:
     try:
         posted = earlier(conn, pmc_id, key, metadata)
     except Conflict:
         raise HTTPException(409, "this request id was used for a different payment") from None
     rows = conn.execute(
-        "SELECT to_account_id, amount FROM pgledger_transfers WHERE id = ANY(%s)", (posted,)
+        "SELECT a.kind, t.amount FROM pgledger_transfers AS t"
+        " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id"
+        " WHERE t.id = ANY(%s)",
+        (posted,),
     ).fetchall()
-    to_owner = sum((Decimal(a) for to, a in rows if to in owners), ZERO)
-    return Recorded(posted, to_owner, sum((Decimal(a) for _, a in rows), ZERO) - to_owner)
+    total = sum((Decimal(a) for _, a in rows), ZERO)
+    to_prepaid = sum((Decimal(a) for kind, a in rows if kind == "prepaid_rent"), ZERO)
+    to_company = sum((Decimal(a) for kind, a in rows if kind == "pmc_income"), ZERO)
+    return Recorded(posted, total - to_prepaid, to_prepaid, to_company)
 
 
 def use_prepaid(
@@ -610,7 +720,8 @@ def use_prepaid(
     account: str | None = None,
 ) -> Recorded:
     """The lease's tenants' prepaid rent paid to the owner's account for what the lease owes,
-    matched to its rent first, then its other charges, each oldest first."""
+    matched to its rent first, then its other charges, each oldest first; what pays a fee the
+    company keeps goes to the company's fee account in the same trust bank account."""
     lease = lease_of(conn, pmc_id, lease_id)
     owners = owners_of(conn, pmc_id, lease.property_id, on, account)
     bank = owners.bank
@@ -630,8 +741,15 @@ def use_prepaid(
     held = balances(conn, list(prepaid.values()))
     sources = [(account_id, held.get(account_id, ZERO)) for account_id in prepaid.values()]
     using = min(sum((given for _, given in sources), ZERO), max(owed(conn, lease_id), ZERO))
-    # Into the owner's account, or the owners' by their shares.
-    transfers = pair(sources, owners.parts(conn, using))
+    # Into the owner's account, or the owners' by their shares; a fee the company keeps into its
+    # fee account.
+    parted = split(conn, pmc_id, lease_id, using)
+    to_company = parted.to_company
+    company = company_income(conn, pmc_id, bank) if to_company > 0 else None
+    sinks = [(o, p) for o, p in owners.parts(conn, using - to_company) if p > 0]
+    if company is not None:
+        sinks.append((company, to_company))
+    transfers = pair(sources, sinks)
     if not transfers:
         try:  # a retry finds nothing left to use: what it used the first time
             earlier(conn, pmc_id, key, metadata)
@@ -639,13 +757,14 @@ def use_prepaid(
             raise HTTPException(
                 409, "there is no prepaid rent to use, or nothing is owed"
             ) from None
-        return replay(conn, pmc_id, key, metadata, set(owners.accounts))
+        return replay(conn, pmc_id, key, metadata)
     posted = post(conn, pmc_id, key, transfers, on, metadata)
     if posted is None:
-        return replay(conn, pmc_id, key, metadata, set(owners.accounts))
-    for transfer, (_, _, part) in zip(posted, transfers, strict=True):
-        match(conn, pmc_id, lease_id, transfer, part)
-    return Recorded(posted, sum((t[2] for t in transfers), ZERO), ZERO)
+        return replay(conn, pmc_id, key, metadata)
+    for transfer, (_, sink, part) in zip(posted, transfers, strict=True):
+        pieces = parted.company if sink == company else parted.owners
+        match(conn, pmc_id, transfer, take(pieces, part))
+    return Recorded(posted, sum((t[2] for t in transfers), ZERO), ZERO, to_company)
 
 
 @dataclass(frozen=True)
@@ -1034,7 +1153,8 @@ ORDER BY d.starts_on, d.id
 
 # Recurring charges not stopped by the day: still charged, or to be.
 RECURRING = """
-SELECT r.lease_id, r.id, r.kind, r.memo, r.amount, r.starts_on, e.ends_on, t.name
+SELECT r.lease_id, r.id, r.kind, r.memo, r.amount, r.starts_on, e.ends_on,
+       trust_charge_type_name(t.id)
 FROM trust_recurring_charges AS r
 LEFT JOIN trust_recurring_charge_ends AS e ON e.recurring_charge_id = r.id
 LEFT JOIN trust_charge_types AS t ON t.id = r.charge_type_id
@@ -1388,19 +1508,20 @@ class Created(BaseModel):
 def check_charge_type(
     conn: psycopg.Connection[Any], pmc_id: UUID, kind: str, charge_type: UUID | None
 ) -> None:
-    """A charge type names a fee of the company's own types."""
+    """A charge type names a fee of the company's own types, one not archived."""
     if charge_type is None:
         return
     if kind != "fee":
         raise HTTPException(422, "only a fee has a charge type")
-    if (
-        conn.execute(
-            "SELECT 1 FROM trust_charge_types WHERE pmc_id = %s AND id = %s",
-            (pmc_id, charge_type),
-        ).fetchone()
-        is None
-    ):
+    row = conn.execute(
+        "SELECT trust_charge_type_name(id), trust_charge_type_archived(id)"
+        " FROM trust_charge_types WHERE pmc_id = %s AND id = %s",
+        (pmc_id, charge_type),
+    ).fetchone()
+    if row is None:
         raise HTTPException(404, "no such charge type")
+    if row[1]:
+        raise HTTPException(409, f"{row[0]} is archived; bring it back or choose another type")
 
 
 @router.post("/leases/{lease_id}/charges", status_code=201)
@@ -1705,8 +1826,10 @@ class NewPayment(BaseModel):
 
 class Payment(BaseModel):
     transfers: list[str]
+    # What paid the lease's charges, and of it what went to the company for fees it keeps.
     to_owner: str
     to_prepaid: str
+    to_company: str = "0.00"
 
 
 def answer(recorded: Recorded) -> Payment:
@@ -1714,6 +1837,7 @@ def answer(recorded: Recorded) -> Payment:
         transfers=recorded.transfers,
         to_owner=cents(recorded.to_owner),
         to_prepaid=cents(recorded.to_prepaid),
+        to_company=cents(recorded.to_company),
     )
 
 

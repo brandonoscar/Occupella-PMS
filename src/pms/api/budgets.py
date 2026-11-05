@@ -104,18 +104,23 @@ def budget(
     """An owner's property account's budget for a year: every line it may have, month by
     month (a month never budgeted reads 0.00)."""
     owner_id, owner, place = account_of(conn, session.pmc_id, account)
-    expense_accounts = conn.execute(
-        "SELECT id, name FROM trust_expense_accounts WHERE pmc_id = %s"
-        ' ORDER BY name COLLATE "C", id',
-        (session.pmc_id,),
-    ).fetchall()
+    found = latest(conn, account, year)
+    # Each expense account by its name today; one archived only when this year budgets it.
+    expense_accounts = [
+        (i, name)
+        for i, name, archived in conn.execute(
+            "SELECT id, trust_expense_account_name(id) AS name, trust_expense_account_archived(id)"
+            ' FROM trust_expense_accounts WHERE pmc_id = %s ORDER BY name COLLATE "C", id',
+            (session.pmc_id,),
+        ).fetchall()
+        if not archived or ("expense account", i) in found
+    ]
     keys: list[tuple[Line, UUID | None, str]] = [
         *((line, None, f"income: {line}") for line in INCOME),
         *((line, None, f"expense: {line}") for line in FEES),
         *(("expense account", i, f"expense: {name}") for i, name in expense_accounts),
         ("bills not in an expense account", None, "expense: bills not in an expense account"),
     ]
-    found = latest(conn, account, year)
     lines = []
     for line, expense, label in keys:
         months = found.get((line, expense), [Decimal(0)] * 12)

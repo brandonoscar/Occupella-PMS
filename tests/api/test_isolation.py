@@ -108,7 +108,7 @@ RECORDS = {
     " WHERE pmc_id = %(pmc)s AND kind = 'security_deposit'",
     "bill": "SELECT id FROM trust_bills WHERE pmc_id = %(pmc)s AND reference = 'PLB-3002'",
     "expense account": "SELECT id FROM trust_expense_accounts"
-    " WHERE pmc_id = %(pmc)s AND name = 'Repairs'",
+    " WHERE pmc_id = %(pmc)s AND name = 'General repairs'",
     "charge type": "SELECT id FROM trust_charge_types WHERE pmc_id = %(pmc)s AND name = 'Cleaning'",
     # The plumber's, scheduled: open, so the plumber's link sees it.
     "work order": "SELECT id FROM trust_work_orders"
@@ -265,6 +265,7 @@ PATH_IDS = {
     "subscription_id": "webhook",
     "pmc_id": "company",
     "announcement_id": "announcement",
+    "type_id": "charge type",
 }
 ROUTE_PATH_IDS = {
     ("/api/payables/recurring/{recurring_id}/expense-account", "recurring_id"): "recurring bill",
@@ -284,6 +285,8 @@ ROUTE_PATH_IDS = {
     # A line of the tenant's ledger: the lease's latest payment.
     ("/api/tenant/leases/{lease_id}/ledger/sources/{kind}/{source_id}", "source_id"): "payment",
     ("/api/messages/{about}/{person_id}", "person_id"): "tenant",
+    ("/api/setup/expense-accounts/{account_id}/name", "account_id"): "expense account",
+    ("/api/setup/expense-accounts/{account_id}/archive", "account_id"): "expense account",
 }
 # Path parameters that name no record, and what the route is sent.
 NOT_ID_PARAMS = {
@@ -594,6 +597,13 @@ BODIES: dict[str, dict[str, Any]] = {
     },
     # A lead is reached by an email or a phone.
     "POST /api/leasing/leads": {"email": "lead@example.com"},
+    # A code for one account: the company's expense account, in its range.
+    "POST /api/setup/codes": {
+        "code": "6455",
+        "line": None,
+        "charge_type_id": None,
+        "expense_account_id": Rec("expense account"),
+    },
     # Two owners' shares of one invoice.
     "POST /api/payables/shared-bills": {
         "shares": [

@@ -54,39 +54,127 @@ SCHEDULE_E = {
     19: "Other",
 }
 
-# The expense accounts a new company starts with (`python -m pms.admin setup`), each on its
-# Schedule E line, so its first bill has somewhere to go. Management fees (line 11) come from the
-# ledger, never an expense account. Staff rename, add and leave unused ones as they like.
+# The expense accounts a new company starts with (`python -m pms.admin setup`, and
+# `starting-chart` for a company already here), each on its Schedule E line, so its bills have
+# somewhere to go from the first. Our own plain names, grouped as a manager files bills: the
+# leasing fees an outside agent bills, repairs by trade, turnover, services, each utility, the
+# HOA, taxes, insurance, the legal side, the bank and the rest. Management and leasing fees the
+# company takes are the income statement's own lines (the ledger's), never an expense account,
+# and so is security deposit interest; nothing sits on line 18 (depreciation is the owner's
+# accountant's). A mortgage's principal is no Schedule E expense, so only its interest is here.
+# Each takes the next code of its line's block as it is added (migration 20261106000200). Staff
+# rename, add, archive and leave unused ones as they like.
 STARTING_CHART: tuple[tuple[str, int], ...] = (
-    ("Advertising", 5),
-    ("Cleaning and maintenance", 7),
+    ("Advertising and listings", 5),
+    ("Travel and mileage", 6),
+    ("Turnover cleaning", 7),
+    ("Carpet cleaning", 7),
     ("Landscaping", 7),
     ("Pest control", 7),
-    ("Insurance", 9),
-    ("Legal and professional fees", 10),
-    ("Repairs", 14),
+    ("Pool and spa service", 7),
+    ("Snow removal", 7),
+    ("Gutter cleaning", 7),
+    ("Common area upkeep", 7),
+    ("Leasing commissions", 8),
+    ("Renewal fees", 8),
+    ("Property insurance", 9),
+    ("Liability insurance", 9),
+    ("Flood insurance", 9),
+    ("Legal fees", 10),
+    ("Eviction costs", 10),
+    ("Court and filing fees", 10),
+    ("Accounting and tax preparation", 10),
+    ("Inspections", 10),
+    ("Mortgage interest", 12),
+    ("Other interest", 13),
+    ("General repairs", 14),
+    ("Plumbing repairs", 14),
+    ("Electrical repairs", 14),
+    ("Heating and cooling repairs", 14),
+    ("Appliance repairs", 14),
+    ("Roof repairs", 14),
+    ("Door and window repairs", 14),
+    ("Interior repairs", 14),
+    ("Exterior repairs", 14),
+    ("Painting", 14),
+    ("Flooring", 14),
+    ("Locks and keys", 14),
     ("Supplies", 15),
     ("Property taxes", 16),
-    ("Utilities", 17),
+    ("Other taxes", 16),
+    ("Electric", 17),
+    ("Gas", 17),
+    ("Water and sewer", 17),
+    ("Trash and recycling", 17),
+    ("Internet and cable", 17),
     ("HOA dues", 19),
+    ("HOA fines", 19),
+    ("Licenses and permits", 19),
+    ("Postage and shipping", 19),
+    ("Bank fees", 19),
+    ("Home warranty", 19),
     ("Other expenses", 19),
+)
+
+# The kinds of fee a new company starts with (migration 20261106000225 gave every company here
+# the same), and who keeps each one's money: the company keeps what it charges for its own work
+# (a lease set up, renewed or changed, its admin fee, the resident benefit package it runs), the
+# owner the rest. Each is a charge type like any other: renamed, archived or given to the other.
+STARTING_CHARGE_TYPES: tuple[tuple[str, Literal["owner", "company"]], ...] = (
+    ("Housing assistance rent", "owner"),
+    ("Resident benefit package", "company"),
+    ("Pet rent", "owner"),
+    ("One-time pet fee", "owner"),
+    ("Lease initiation fee", "company"),
+    ("Renewal fee", "company"),
+    ("Lease change fee", "company"),
+    ("Admin fee", "company"),
+    ("Lease break fee", "owner"),
+    ("Utility reimbursement", "owner"),
+    ("Parking and storage", "owner"),
+    ("Deposit forfeited to owner", "owner"),
 )
 
 
 def add_starting_chart(conn: psycopg.Connection[Any], pmc_id: UUID) -> int:
-    """Add the starting chart's accounts the company doesn't have yet, by name whatever its
+    """Add the starting chart's accounts the company doesn't have yet, by name today whatever its
     case; the number added. Safe to run again: it adds nothing the second time."""
     added = 0
     for name, line in STARTING_CHART:
         row = conn.execute(
             "INSERT INTO trust_expense_accounts (pmc_id, name, schedule_e_line)"
             " SELECT %s, %s, %s WHERE NOT EXISTS ("
-            "   SELECT 1 FROM trust_expense_accounts"
-            "   WHERE pmc_id = %s AND lower(name) = lower(%s))"
+            "   SELECT 1 FROM trust_expense_accounts AS e"
+            "   WHERE e.pmc_id = %s AND lower(trust_expense_account_name(e.id)) = lower(%s))"
             " RETURNING id",
             (pmc_id, name, line, pmc_id, name),
         ).fetchone()
         added += row is not None
+    return added
+
+
+def add_starting_charge_types(conn: psycopg.Connection[Any], pmc_id: UUID) -> int:
+    """Add the starting kinds of fee the company doesn't have yet, by name today whatever its
+    case, each with who keeps it; the number added. Safe to run again."""
+    added = 0
+    for name, payee in STARTING_CHARGE_TYPES:
+        row = conn.execute(
+            "INSERT INTO trust_charge_types (pmc_id, name)"
+            " SELECT %s, %s WHERE NOT EXISTS ("
+            "   SELECT 1 FROM trust_charge_types AS t"
+            "   WHERE t.pmc_id = %s AND lower(trust_charge_type_name(t.id)) = lower(%s))"
+            " RETURNING id",
+            (pmc_id, name, pmc_id, name),
+        ).fetchone()
+        if row is None:
+            continue
+        if payee == "company":
+            conn.execute(
+                "INSERT INTO trust_charge_type_payees (pmc_id, charge_type_id, payee)"
+                " VALUES (%s, %s, 'company')",
+                (pmc_id, row[0]),
+            )
+        added += 1
     return added
 
 
@@ -384,10 +472,13 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
                 (pmc,),
             ).fetchall()
         ],
+        # The accounts a bill may go in: each not archived, by its name today.
         expense_accounts=[
             ExpenseAccount(id=i, name=n, schedule_e_line=line)
             for i, n, line in conn.execute(
-                "SELECT id, name, schedule_e_line FROM trust_expense_accounts WHERE pmc_id = %s"
+                "SELECT id, trust_expense_account_name(id) AS name, schedule_e_line"
+                " FROM trust_expense_accounts WHERE pmc_id = %s"
+                " AND NOT trust_expense_account_archived(id)"
                 ' ORDER BY name COLLATE "C", id',
                 (pmc,),
             ).fetchall()
@@ -488,13 +579,20 @@ def add_expense_account(session: Staff, conn: Conn, new: NewExpenseAccount) -> C
 INCOME_LINES = ("rent", "recurring charges", "late fees", "nsf fees", "other charges")
 
 
+class ChargeType(Named):
+    # Who keeps the money of the fees charged under it from now on (migration 20261106000220).
+    payee: Literal["owner", "company"]
+
+
 @router.get("/charge-types")
-def charge_types(session: Staff, conn: Conn) -> list[Named]:
-    """The company's own kinds of fee (migration 0100), each on its own income statement line."""
+def charge_types(session: Staff, conn: Conn) -> list[ChargeType]:
+    """The company's own kinds of fee (migration 0100) a fee may be given: each not archived, by
+    its name today, with who keeps its money."""
     return [
-        Named(id=i, name=n)
-        for i, n in conn.execute(
-            "SELECT id, name FROM trust_charge_types WHERE pmc_id = %s"
+        ChargeType(id=i, name=n, payee=payee)
+        for i, n, payee in conn.execute(
+            "SELECT id, trust_charge_type_name(id) AS name, trust_charge_type_payee(id)"
+            " FROM trust_charge_types WHERE pmc_id = %s AND NOT trust_charge_type_archived(id)"
             ' ORDER BY name COLLATE "C", id',
             (session.pmc_id,),
         ).fetchall()
@@ -503,22 +601,29 @@ def charge_types(session: Staff, conn: Conn) -> list[Named]:
 
 class NewChargeType(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    # Who keeps its fees' money: the owner unless the company says it keeps them.
+    payee: Literal["owner", "company"] = "owner"
 
 
 @router.post("/charge-types", status_code=201)
 def add_charge_type(session: Staff, conn: Conn, new: NewChargeType) -> Created:
     """A kind of fee the company charges (Application fee, Key replacement, Pet rent), which the
-    owners' income statements count on a line of its own."""
+    owners' income statements count on a line of its own, and who keeps its money."""
     if new.name.lower() in INCOME_LINES:
         raise HTTPException(422, f"{new.name} is a line of the income statement already")
     with refusals("the company has a charge type of that name already"):
-        return Created(
-            id=insert(
-                conn,
-                "INSERT INTO trust_charge_types (pmc_id, name) VALUES (%s, %s) RETURNING id",
-                (session.pmc_id, new.name),
-            )
+        made = insert(
+            conn,
+            "INSERT INTO trust_charge_types (pmc_id, name) VALUES (%s, %s) RETURNING id",
+            (session.pmc_id, new.name),
         )
+    if new.payee == "company":
+        conn.execute(
+            "INSERT INTO trust_charge_type_payees (pmc_id, charge_type_id, payee)"
+            " VALUES (%s, %s, 'company')",
+            (session.pmc_id, made),
+        )
+    return Created(id=made)
 
 
 class NewProperty(BaseModel):

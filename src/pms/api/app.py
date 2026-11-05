@@ -75,6 +75,7 @@ from pms.api import (
     banking,
     budgets,
     calendar,
+    chart,
     company,
     custom_roles,
     dashboard,
@@ -790,6 +791,7 @@ def create_app(settings: Settings) -> FastAPI:
     calendar.hide_feed_tokens(logging.getLogger("uvicorn.access"))
     app.include_router(people.router)
     app.include_router(setup.router)
+    app.include_router(chart.router)
     app.include_router(go_live.router)
     app.include_router(payment_files.router)
     app.include_router(rent.router)

@@ -51,8 +51,8 @@ def test_staff_add_charge_types_and_list_them_by_name(client, conn, staff):
     fee = add_type(client, "  Application fee ")
 
     assert ok(client.get("/api/setup/charge-types"), 200) == [
-        {"id": fee, "name": "Application fee"},
-        {"id": pets, "name": "Pet rent"},
+        {"id": fee, "name": "Application fee", "payee": "owner"},
+        {"id": pets, "name": "Pet rent", "payee": "owner"},
     ]
     (by,) = conn.execute(
         "SELECT recorded_by FROM trust_charge_types WHERE id = %s", (pets,)
@@ -189,7 +189,9 @@ def test_a_type_is_a_fees_and_the_companys_own(client, conn, staff, lease):
 
     assert [a.status_code for a in (credit, monthly_credit, other, unknown)] == [422, 422, 404, 404]
     assert credit.json()["detail"] == "only a fee has a charge type"
-    assert ok(client.get("/api/setup/charge-types"), 200) == [{"id": mine, "name": "Cleaning"}]
+    assert ok(client.get("/api/setup/charge-types"), 200) == [
+        {"id": mine, "name": "Cleaning", "payee": "owner"}
+    ]
     (count,) = conn.execute(
         "SELECT count(*) FROM trust_charges WHERE lease_id = %s", (lease,)
     ).fetchone()

@@ -121,8 +121,11 @@ def test_the_owners_bills_show_on_their_income_statement_as_repairs(conn, built)
         this_month - DAY,
     )
 
-    # The kitchen drain at Elm Court and the roof at Cedar House, both in Repairs.
-    assert [(p, amount) for p, item, _, amount in rows if item.endswith("expense: Repairs")] == [
+    # The kitchen drain at Elm Court and the roof at Cedar House, both in General repairs, of
+    # the starting chart a company is set up with.
+    assert [
+        (p, amount) for p, item, _, amount in rows if item.endswith("expense: General repairs")
+    ] == [
         ("Cedar House", Decimal("650.00")),
         ("Elm Court", Decimal("380.00")),
         (None, Decimal("1030.00")),
@@ -290,7 +293,7 @@ def test_every_other_page_has_something_on_it(conn, app_conn, built):
     assert [(item, amount) for _, item, amount in budget] == [
         ("income: rent", Decimal("35700.00")),
         ("total income", Decimal("35700.00")),
-        ("expense: Repairs", Decimal("1200.00")),
+        ("expense: General repairs", Decimal("1200.00")),
         ("total expenses", Decimal("1200.00")),
         ("net income", Decimal("34500.00")),
     ]

@@ -189,7 +189,7 @@ WITH listed AS (
     LEFT JOIN trust_shared_bill_parts AS sh ON sh.bill_id = b.id
     LEFT JOIN trust_bill_holds(%(pmc)s) AS h ON h.bill_id = b.id
     LEFT JOIN LATERAL (
-        SELECT e.id AS expense_account_id, e.name,
+        SELECT e.id AS expense_account_id, trust_expense_account_name(e.id) AS name,
                EXISTS (SELECT 1 FROM trust_bill_splits AS sp WHERE sp.categorized_id = x.id)
                    AS split
         FROM trust_bill_expense_accounts AS x
@@ -544,7 +544,7 @@ def bill_page(session: Staff, conn: Conn, bill_id: UUID) -> BillPage:
         raise HTTPException(404, "no such bill")
     bill = found[0]
     head = conn.execute(
-        "SELECT x.id, e.id, e.name FROM trust_bill_expense_accounts AS x"
+        "SELECT x.id, e.id, trust_expense_account_name(e.id) FROM trust_bill_expense_accounts AS x"
         " JOIN trust_expense_accounts AS e ON e.id = x.expense_account_id"
         " WHERE x.bill_id = %s ORDER BY x.id DESC LIMIT 1",
         (bill_id,),
@@ -553,7 +553,8 @@ def bill_page(session: Staff, conn: Conn, bill_id: UUID) -> BillPage:
         [
             BillLine(expense_account_id=i, expense_account=name, amount=cents(amount))
             for i, name, amount in conn.execute(
-                "SELECT e.id, e.name, s.amount FROM trust_bill_splits AS s"
+                "SELECT e.id, trust_expense_account_name(e.id), s.amount"
+                " FROM trust_bill_splits AS s"
                 " JOIN trust_expense_accounts AS e ON e.id = s.expense_account_id"
                 " WHERE s.categorized_id = %s ORDER BY s.id",
                 (head[0],),
@@ -780,13 +781,18 @@ class Created(BaseModel):
 
 
 def expense_account_of(conn: psycopg.Connection[Any], pmc_id: UUID, account: UUID) -> None:
-    if (
-        conn.execute(
-            "SELECT 1 FROM trust_expense_accounts WHERE pmc_id = %s AND id = %s", (pmc_id, account)
-        ).fetchone()
-        is None
-    ):
+    """An expense account of the PMC a bill may go in: one not archived."""
+    row = conn.execute(
+        "SELECT trust_expense_account_name(id), trust_expense_account_archived(id)"
+        " FROM trust_expense_accounts WHERE pmc_id = %s AND id = %s",
+        (pmc_id, account),
+    ).fetchone()
+    if row is None:
         raise HTTPException(404, "no such expense account")
+    if row[1]:
+        raise HTTPException(
+            409, f"{row[0]} is archived; bring it back or choose another expense account"
+        )
 
 
 def vendor_of(conn: psycopg.Connection[Any], pmc_id: UUID, vendor: UUID) -> None:
@@ -1559,7 +1565,7 @@ def recurring(session: Staff, conn: Conn) -> list[Recurring]:
                 " JOIN trust_owners AS o ON o.id = a.owner_id"
                 " JOIN trust_properties AS p ON p.id = a.property_id"
                 " LEFT JOIN trust_recurring_bill_ends AS e ON e.recurring_bill_id = r.id"
-                " LEFT JOIN LATERAL (SELECT x.id, x.name"
+                " LEFT JOIN LATERAL (SELECT x.id, trust_expense_account_name(x.id) AS name"
                 "  FROM trust_recurring_bill_expense_accounts AS y"
                 "  JOIN trust_expense_accounts AS x ON x.id = y.expense_account_id"
                 "  WHERE y.recurring_bill_id = r.id ORDER BY y.id DESC LIMIT 1) AS ex ON true"
