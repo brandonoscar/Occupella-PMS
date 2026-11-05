@@ -684,6 +684,11 @@ describe("BankingPage", () => {
     cleanup();
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
     render(<BankingPage me={ME} />);
-    expect((await screen.findByRole("alert")).textContent).toBe("sign in first");
+    // The page's own, and the online payments waiting card's (docs/edge-cases.md P-040), neither
+    // ever reading as if nothing were there.
+    await vi.waitFor(() => expect(screen.getAllByRole("alert").map((a) => a.textContent)).toEqual([
+      "Online payments waiting couldn't load: sign in first",
+      "sign in first",
+    ]));
   });
 });
