@@ -378,6 +378,11 @@ def test_another_pmcs_file_line_or_lease_reads_as_not_found(client, conn, staff,
         (lambda: a_file(f"{TODAY},-100.00,,1A,,,"), "line 2: a payment file lists money received"),
         (lambda: a_file(f"{TODAY},0.00,,1A,,,"), "line 2: a payment file lists money received"),
         (lambda: a_file(f"{TODAY},12.345,,1A,,,"), "line 2: '12.345' is not an amount in cents"),
+        # A decimal comma: never $123,456.00 (docs/edge-cases.md F-064).
+        (
+            lambda: a_file(f'{TODAY},"1234,56",,1A,,,'),
+            "line 2: '1234,56' is not an amount: a comma only separates thousands",
+        ),
         (lambda: a_file(f"{TODAY + DAY},100.00,,1A,,,"), "line 2: "),
         (a_file("10/32/2026,100.00,,1A,,,"), "line 2: '10/32/2026' is not a date"),
         (

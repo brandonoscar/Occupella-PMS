@@ -119,7 +119,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   draw over what is available, the last admin), and a request that finds every database connection
   busy for 30 s is told so (503, `deps.BUSY`), never a server error. An address that failed 20
   sign-ins in 15 minutes is refused (429, Retry-After) whatever email it tries, and an address asks
-  for at most 10 password resets an hour (`src/pms/api/throttle.py`, counted per process).
+  for at most 10 password resets an hour (`src/pms/api/throttle.py`, counted per process). No
+  request sends more than 10 MB (`app.MAX_BODY`, 413, counted as it streams too): a 5 MB file as
+  base64 fits. A comma in an amount from a file only separates thousands (`statements.read_amount`:
+  "1234,56" is refused, never 123,456.00), and a switching file's lines are matched to what came
+  over already one to one (two alike in one file are two; the file again adds nothing).
 - Logins (`src/pms/accounts.py`, migration 0028): staff invite a staff member, owner or tenant
   by email; the link carries a token kept only as its SHA-256, in the URL fragment. A session
   lasts 12 hours, and ends sooner when left alone for an hour (`accounts.IDLE_MINUTES`;
@@ -871,7 +875,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   a key to `trust_lease_tenants` refuses anyone else). Staff open at most one work order for it,
   at the lease's unit (`trust_maintenance_request_work_orders`, one each way), and its status is
   that work order's latest step. The portal files them only under a lease in effect, at most
-  10 a day per lease. Since migration 20261104000600 a request says what kind of repair it is
+  10 a day per lease, an emergency besides those up to 5 a day (`tenant.EMERGENCIES_PER_DAY`). Since migration 20261104000600 a request says what kind of repair it is
   (plumbing, electrical, appliance, heating/cooling, pests, other) and where in the unit; a tenant
   on the lease cancels it while it is still received (`trust_maintenance_request_cancellations`,
   once; staff open no work order for it after, the two waiting for each other) and adds notes

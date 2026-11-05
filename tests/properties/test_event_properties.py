@@ -15,6 +15,7 @@ Invariants (ci/registry.toml maps them to this test):
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
 
+import time
 from datetime import UTC, datetime
 
 import psycopg
@@ -91,7 +92,14 @@ def check(conn, writers, reader, steps):
         committed.extend(open_orders[n])
         if open_orders[n]:
             batches.append((began[n], open_orders[n]))
+    # Every writer here has finished; an event still waits only for a writing transaction
+    # elsewhere on the server, begun before it (another test run beside this one, say), so the
+    # reader asks again until that one finishes too, as a client polling would.
+    deadline = time.monotonic() + 60
     read()
+    while len(got) < len(committed) and time.monotonic() < deadline:
+        time.sleep(0.05)
+        read()
 
     assert sorted(got) == sorted(committed)
     assert not set(got) & rolled_back

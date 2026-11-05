@@ -1,8 +1,8 @@
 # Edge cases
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
-does about it, whether a test proves it, and how much harm it would do. Seven areas, one table
-each, 1069 cases in all, each table ranked by risk (high first), then open before guarded
+does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
+each, 1126 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -16,7 +16,8 @@ answer in the portal for everything that can fail.
   reviewers, one per area; every test cited was checked to exist by name. Nothing was run to make
   this list, so an Open row's behaviour is NOT VERIFIED by a test run, and a `src/` line number
   cited may drift as the code changes. Rows that rest on how an outside service or a library
-  behaves say NOT VERIFIED where they do.
+  behaves say NOT VERIFIED where they do. The AI link's area was written as it was built, and
+  each row closed since names the test that was run for it.
 - **Keeping it.** A PR that closes an Open row changes it to Tested and names the test. A new
   case takes the next ID of its area and goes where its risk ranks it.
 
@@ -28,10 +29,11 @@ answer in the portal for everything that can fail.
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 157 | 79 | 15 | 63 | 17 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 61 | 30 | 51 | 4 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 160 | 59 | 8 | 93 | 29 |
-| [Bad files and imports](#bad-files-and-imports) | 145 | 57 | 16 | 72 | 9 |
-| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 155 | 82 | 10 | 63 | 11 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 160 | 56 | 14 | 90 | 19 |
-| **All** | **1069** | **504** | **100** | **465** | **96** |
+| [Bad files and imports](#bad-files-and-imports) | 145 | 60 | 16 | 69 | 6 |
+| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 155 | 85 | 10 | 60 | 8 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 160 | 57 | 14 | 89 | 18 |
+| [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
+| **All** | **1126** | **551** | **110** | **465** | **89** |
 
 ## Open, high risk: the work list
 
@@ -111,19 +113,14 @@ its ten most pressing, each with the test that would close it.
 
 - F-010: A PDF with JavaScript (OpenAction, /JS), uploaded by a tenant as their own lease document or by an anonymous applicant as proof of income
 - F-061: Day-first dates from a UK or European file ("05/01/2026" meaning 5 January)
-- F-064: A decimal comma ("1234,56" or "1200,50")
-- F-076: Two identical charges in one file (two $25.00 fees due the same day with the same memo)
 - F-077: A charge dated after a new lease started at the unit (the old tenant's move-out fee dated after the next move-in)
-- F-083: The uncleared checks and deposits file (cutover items) sent twice
 - F-122: An audit log report over a day a lease offer or a drawn signature was saved
 - F-126: The everything export (records.zip) of a company with GBs of files
 - F-129: Two tenants of the same name at different properties, in the QuickBooks export
 
 **People doing the unexpected, permissions and security**
 
-- U-009: A staff member without admin, or whose custom role lacks "who can sign in", disables an owner's or tenant's login
 - U-010: An owner's or tenant's login is disabled by mistake
-- U-013: Two invites (or a reset email and an invite) are open for one login; the person uses the newer
 - U-014: A staff member uses the invite link shown on screen to become an owner or tenant who already has a password
 - U-015: An admin re-invites another staff member (an approver, the trust account's broker) and uses the link
 - U-033: PMS_TRUSTED_PROXIES "*" behind nginx set as the install guide says ($proxy_add_x_forwarded_for)
@@ -131,7 +128,6 @@ its ten most pressing, each with the test that would close it.
 - U-085: A former owner (the property sold, or its ownership moved to another owner)
 - U-099: Staff mark the wrong person's record as "the same person"
 - U-100: A tenant left a lease others stay on
-- U-109: The 11th request in 24 hours is an emergency
 
 **Hosting, operations and the portal's failure states**
 
@@ -149,7 +145,6 @@ its ten most pressing, each with the test that would close it.
 - H-060: PMS_PUBLIC_URL left as .env.example's https://pms.example.com
 - H-067: PMS_TRUSTED_PROXIES empty behind a proxy on another host or network
 - H-068: "*" trusted, with nginx's $proxy_add_x_forwarded_for as install.md says
-- H-072: A very large JSON body (hundreds of MB) to /api/apply or /api/sign-in, no sign-in needed
 - H-089: The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st)
 - H-097: The everything export of a large company
 - H-115: A session signed out after an hour idle, page still open
@@ -842,10 +837,7 @@ its ten most pressing, each with the test that would close it.
 |---|---|---|---|---|---|
 | F-010 | A PDF with JavaScript (OpenAction, /JS), uploaded by a tenant as their own lease document or by an anonymous applicant as proof of income | Kept and served byte for byte. It goes out as an attachment with nosniff and a CSP sandbox, which only protects the browser, so a desktop reader opening it may run its script. Staff and co-tenants receive it | Open | src/pms/api/documents.py:452-469; src/pms/api/tenant.py:535-548; src/pms/api/applicant_details.py:141-150 | H |
 | F-061 | Day-first dates from a UK or European file ("05/01/2026" meaning 5 January) | Read as May 1 with no warning; "13/01/2026" is refused. A payment file records a payment in the wrong month, and charges get wrong due days | Open | src/pms/statements.py:77 | H |
-| F-064 | A decimal comma ("1234,56" or "1200,50") | Every comma is stripped, so it reads as $123,456.00. A payment file records it (the rest as prepaid rent); a charge, bill, cutover item, market rent or 1099 carry-over comes in 100 times too big. Only opening balances catch it, through the book cash | Open | src/pms/statements.py:62; src/pms/api/switching.py:333 | H |
-| F-076 | Two identical charges in one file (two $25.00 fees due the same day with the same memo) | The second counts as "kept" and is dropped: what the tenant owes is understated | Open | src/pms/api/switching.py:450-461 | H |
 | F-077 | A charge dated after a new lease started at the unit (the old tenant's move-out fee dated after the next move-in) | Goes to the newest lease started by its due day, so the new tenant owes the old tenant's charge. The file has no tenant or lease column to say otherwise | Open | src/pms/api/switching.py:441-447 | H |
-| F-083 | The uncleared checks and deposits file (cutover items) sent twice | Every item is carried over again: there is no "kept" and no unique key, so the tie-out is off by the whole file until someone notices before sign-off | Open | src/pms/api/switching.py:849-883 | H |
 | F-122 | An audit log report over a day a lease offer or a drawn signature was saved | to_jsonb of the row carries the offer's 5 MB PDF as 10 million hex characters into one detail cell. The PDF export wraps it a character at a time, copying the rest each line, and effectively never finishes; the Excel cell runs far past 32,767. NOT VERIFIED by running | Open | db/schema.sql trust_audit (to_jsonb(NEW)) and trust_report_audit_log (jsonb_each_text detail); src/pms/exports.py:279-286 | H |
 | F-126 | The everything export (records.zip) of a company with GBs of files | Built whole in memory: each table fetched in full, every document's bytes, the zip in a BytesIO, one response. Each table is sorted by row_to_json(r)::text, which turns every 5 MB file into 10 MB of hex to sort. May exhaust memory or never finish; not timed | Open | src/pms/exports.py:433-491 | H |
 | F-129 | Two tenants of the same name at different properties, in the QuickBooks export | Both get the default account "Prepaid rent:Pat Sample" (and "Tenant deposits:Pat Sample"), so QuickBooks posts both people's money to one account | Open | src/pms/quickbooks.py:42-48,109 | H |
@@ -853,6 +845,9 @@ its ten most pressing, each with the test that would close it.
 | F-015 | A PNG bomb: a 5 MB PNG declaring 30000 x 30000 pixels, kept as a move-out photo or a receipt | The statement still goes: the photo's page says it could not be added here and is with the lease's files, whatever error the image library raises | Tested | tests/test_deposit_statement.py::test_a_photo_that_says_it_is_huge_leaves_the_letter_whole | H |
 | F-016 | That same statement emailed (deposit_statement) | Any error making an email's file is that attempt's failed delivery, with the error; the emails behind it go out in the same run | Tested | tests/test_email_attachments.py::test_an_attachment_that_fails_in_any_way_is_a_failed_delivery_and_stops_nothing_behind_it | H |
 | F-055 | Formula text in an imported cell ("=HYPERLINK(...)" as a tenant name) | Kept as text and never run by the PMS. Every CSV download puts an apostrophe before it, and Excel downloads hold it as text | Tested | tests/test_exports.py::test_csv_neutralizes_formulas_and_keeps_everything_else | H |
+| F-064 | A decimal comma ("1234,56" or "1200,50") | Refused saying the line: a comma only separates thousands (1,234.56), so a decimal comma is never read as 100 times the amount; in bank statements, payment files, every switching file and a units file's details | Tested | tests/test_amounts.py; tests/api/test_payment_files_api.py::test_a_file_that_is_not_payments_received_is_refused_whole; tests/api/test_unit_details_api.py::test_a_units_file_brings_their_details | H |
+| F-076 | Two identical charges in one file (two $25.00 fees due the same day with the same memo) | Each line is matched to one charge alike already there: two alike in one file are two charges, and the file sent again adds nothing | Tested | tests/api/test_switch.py::test_two_alike_charges_in_one_file_both_come_in_and_once | H |
+| F-083 | The uncleared checks and deposits file (cutover items) sent twice | Its lines are matched to the items carried over already, each once: sent again it adds nothing; two alike in one file both come in; one import at a time per account | Tested | tests/api/test_switch.py::test_an_items_file_sent_again_carries_nothing_over_twice | H |
 | F-084 | Opening balances sent again, or sent differently | Once per trust bank account: the same again returns the first; a different one is refused | Tested | tests/test_cutover.py::test_the_same_opening_again_returns_the_original_transfers; tests/test_cutover.py::test_a_different_opening_of_the_same_trust_bank_account_is_refused | H |
 | F-085 | Opening balances that don't add up to the book cash, or one account on two lines | Refused | Tested | tests/api/test_switch.py::test_opening_balances_that_dont_tie_out_are_refused | H |
 | F-087 | A payment file sent twice | 409 "this file came in on ...; it comes in once" | Tested | tests/api/test_payment_files_api.py::test_a_file_comes_in_once | H |
@@ -1003,9 +998,7 @@ its ten most pressing, each with the test that would close it.
 
 | ID | Edge case | What the PMS does | Status | Evidence | Risk |
 |---|---|---|---|---|---|
-| U-009 | A staff member without admin, or whose custom role lacks "who can sign in", disables an owner's or tenant's login | Allowed: the database checks admin only for staff logins and the path is no area's, though inviting the same person needs the area | Open | db/migrations/20261012000034_staff_roles.sql:140 (WHEN OLD.kind = 'staff'); tests/test_staff_roles.py::test_only_an_admin_invites_or_disables_a_staff_login shows a clerk disabling an owner's login; tests/api/test_custom_roles.py NOT_AN_AREA calls it "admin" | H |
 | U-010 | An owner's or tenant's login is disabled by mistake | No way back: nothing re-enables it, a new invite is refused at its link, and a second login for the person is impossible (one per person) | Open | src/pms/accounts.py:487 disable_login only sets disabled_at; db/migrations/20261011000028_logins.sql:43-46 UNIQUE (pmc_id, owner_id) and (pmc_id, tenant_id) | H |
-| U-013 | Two invites (or a reset email and an invite) are open for one login; the person uses the newer | The older link still sets a new password for up to 7 days and ends the person's sessions | Open | src/pms/accounts.py:347 _finish_invite marks only its own invite used; tests/api/test_invites.py::test_inviting_again_reuses_the_login shows two working links | H |
 | U-014 | A staff member uses the invite link shown on screen to become an owner or tenant who already has a password | Possible: whoever has the area makes an invite, sees its link once, sets a password and acts as the owner (approves bills over the limit by typing the owner's name) | Open | src/pms/api/app.py:508 invite returns the link; src/pms/api/owner.py:433 approve_bill trusts the session | H |
 | U-015 | An admin re-invites another staff member (an approver, the trust account's broker) and uses the link | The admin sets their password and authenticator and acts as them, defeating prepared-by-one-approved-by-another and the signer rules; the audit log shows only who made the invite | Open | src/pms/accounts.py:303 accept_invite replaces the password and TOTP secret; db/migrations/20261012000034_staff_roles.sql trust_check_staff_invite | H |
 | U-033 | PMS_TRUSTED_PROXIES "*" behind nginx set as the install guide says ($proxy_add_x_forwarded_for) | The app takes the leftmost X-Forwarded-For, which the visitor writes: the sign-in limit is bypassed and a signature's evidence keeps a made-up address | Open | src/pms/api/app.py:338; uvicorn 0.54.0 picks the first host when every host is trusted; docs/install.md:94; tests/api/test_signing.py::test_behind_a_trusted_proxy_the_evidence_keeps_the_signers_address sends one value only | H |
@@ -1013,10 +1006,11 @@ its ten most pressing, each with the test that would close it.
 | U-085 | A former owner (the property sold, or its ownership moved to another owner) | Still sees the property's units, tenants' names, rents, what each lease owes, repairs and files, as their account there remains | Open | src/pms/api/owner_portal.py:63 owned_properties (any owner_property account, no share or date) | H |
 | U-099 | Staff mark the wrong person's record as "the same person" | Nothing undoes a link: the wrong person signs in to the other's lease, ledger, receipts and files, and may pay or file under it | Open | src/pms/api/directory.py:463 same_person; db/migrations/20261021000105_tenant_records.sql:25 (no removal table) | H |
 | U-100 | A tenant left a lease others stay on | Still reads it: the staying tenant's later payments, rent changes, files and the property's announcements | Open | src/pms/api/tenant.py:268 lease_of ignores departures; tests/api/test_lease_people_api.py::test_a_tenant_who_left_reads_the_lease_and_files_nothing_more; src/pms/api/announcements.py:145 | H |
-| U-109 | The 11th request in 24 hours is an emergency | Refused 429 "call your manager" with no number shown; emergencies count in the 10 | Open | src/pms/api/tenant.py:696; tests/api/test_tenant.py::test_ten_requests_a_day_per_lease | H |
 | U-078 | An owner approves in one tab and declines in another at the same moment | One decision stands; the other is 409 | Guarded | src/pms/api/owner.py:421 decide; db/migrations/20261013000041_owner_bill_decisions.sql:90 trust_bill_decision | H |
 | U-002 | Company A's session cookie used with company B's record ids in a path or body | Every route answers not found or refuses, and changes nothing of B's | Tested | tests/api/test_isolation.py::test_a_route_refuses_another_companys_record_in_its_path; ::test_a_write_refuses_another_companys_record_in_its_body | H |
 | U-003 | A's staff, owner or tenant lists, searches or runs reports hoping to see B's rows | Every list, page and report is swept; nothing of B's shows | Tested | tests/api/test_isolation.py::test_a_list_or_page_shows_nothing_of_another_companys; ::test_no_report_shows_another_companys_books | H |
+| U-009 | A staff member without admin, or whose custom role lacks "who can sign in", disables an owner's or tenant's login | Disabling an owner's or a tenant's login takes the area their invite takes, who can sign in (403 without it); a staff login still takes admin | Tested | tests/api/test_custom_roles.py::test_disabling_an_owners_or_tenants_login_takes_who_can_sign_in | H |
+| U-013 | Two invites (or a reset email and an invite) are open for one login; the person uses the newer | Only a login's newest invite opens: a newer invite or password reset retires the older links, which read as can't be used | Tested | tests/api/test_invites.py::test_a_link_that_cant_be_used_says_so | H |
 | U-039 | Another site posts to the API (CSRF) | Refused when the browser says cross-site or same-site, with or without an Origin | Tested | tests/api/test_sign_in.py::test_a_browser_saying_another_site_is_refused_with_or_without_an_origin | H |
 | U-049 | The last admin takes away their own admin role | Refused "the company keeps an admin: give another staff member admin first" | Tested | tests/api/test_staff.py::test_an_admin_adds_a_staff_member_and_changes_roles; tests/test_staff_roles.py::test_a_pmc_keeps_an_admin | H |
 | U-050 | Two admins take each other's admin role at once | One admin is left | Tested | tests/test_staff_roles.py::test_two_admins_taking_each_others_role_leave_one | H |
@@ -1044,6 +1038,7 @@ its ten most pressing, each with the test that would close it.
 | U-093 | A tenant guesses another tenant's receipt id | Not found | Tested | tests/api/test_receipts_api.py::test_a_payment_not_theirs_reads_as_not_found | H |
 | U-094 | A tenant opens a lease they aren't on | Not found | Tested | tests/api/test_tenant.py::test_a_lease_that_isnt_theirs_reads_as_not_found | H |
 | U-095 | A tenant looks for a neighbour's repair requests | Never shown | Tested | tests/api/test_tenant.py::test_a_neighbours_requests_are_never_shown | H |
+| U-109 | The 11th request in 24 hours is an emergency | An emergency goes through past the day's ten requests, up to five emergencies a day; the sixth is told to call the manager, and 911 first for gas, fire or flooding | Tested | tests/api/test_tenant.py::test_an_emergency_goes_through_past_the_days_requests_up_to_its_own_limit | H |
 | U-113 | A tenant pays online for a lease that isn't theirs | Refused | Tested | tests/api/test_online_payments_api.py::test_a_tenant_pays_only_a_lease_they_are_on_and_a_sane_amount | H |
 | U-118 | A withdrawn application's offer gets every signature | It never becomes a lease | Tested | tests/test_application_withdrawals.py::test_no_offer_of_a_withdrawn_application_becomes_a_lease | H |
 | U-119 | A withdrawal and making the lease at the same moment | One waits and is refused | Tested | tests/test_application_withdrawals.py::test_a_withdrawal_waits_for_a_lease_being_made_and_then_is_refused | H |
@@ -1190,11 +1185,11 @@ its ten most pressing, each with the test that would close it.
 | H-060 | PMS_PUBLIC_URL left as .env.example's https://pms.example.com | The same refusal, and emailed links point at example.com | Open | .env.example (PMS_PUBLIC_URL prefilled) | H |
 | H-067 | PMS_TRUSTED_PROXIES empty behind a proxy on another host or network | Every visitor has the proxy's address: 20 failed sign-ins by anyone lock the whole company out for 15 minutes, 10 resets an hour for everyone, signatures record the proxy's address | Open | src/pms/api/throttle.py:84-86 | H |
 | H-068 | "*" trusted, with nginx's $proxy_add_x_forwarded_for as install.md says | uvicorn takes the leftmost address, which the visitor writes: the sign-in throttle is bypassed with a new forged address each try, and a signer's address in the evidence can be forged | Open | uvicorn 0.54 ProxyHeadersMiddleware (always_trust takes the first host); docs/install.md step 4 | H |
-| H-072 | A very large JSON body (hundreds of MB) to /api/apply or /api/sign-in, no sign-in needed | The app has no body limit and reads it into memory; Caddy sets none; the one process can run out of memory | Open | src/pms/api/app.py:358-372 (the guard checks only type and origin) | H |
 | H-089 | The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st) | The next run charges only the new month, so that rent is never charged by itself, and nothing says so | Open | src/pms/nightly.py:116-118; db/schema.sql:1688-1720 (only the run's month) | H |
 | H-097 | The everything export of a large company | Every table and every document's bytes are fetched and zipped in memory in one request; it can exhaust the process and take the PMS down for everyone | Open | src/pms/exports.py:433-491 | H |
 | H-115 | A session signed out after an hour idle, page still open | Only the first /api/me sends people to sign in; afterwards every load and save says "sign in first" in notices and toasts, nothing signs them in, and the page test pins it | Open | frontend/src/App.tsx:100; frontend/src/pages/RentPage.test.tsx > says when no lease is listed, and when the leases can't be read | H |
 | H-152 | Any error while drawing a page (an answer of an unexpected shape after an upgrade, a status the page doesn't know) | No error boundary: the whole portal goes blank white | Open | frontend/src/main.tsx (no boundary); e.g. frontend/src/pages/PayOnlineCard.tsx:105 | H |
+| H-072 | A very large JSON body (hundreds of MB) to /api/apply or /api/sign-in, no sign-in needed | Refused 413 above 10 MB before it is read: at once when it says its length, counted as it streams otherwise; a 5 MB file as base64 still fits | Tested | tests/api/test_body_limit.py | H |
 | H-003 | The database is down while staff open pages | Each request waits 30 s for a pool connection, then gets 503 "the PMS is busy just now: try again in a moment": it says busy, not down, and every click takes 30 s | Open | src/pms/api/deps.py:121-132 (PoolTimeout always read as busy); no test of a page with the database down | M |
 | H-004 | The database is down when the portal first loads | Home renders nothing while /api/me waits 30 s (a white page), then shows one error line with no menu, no retry button and no word of what to do | Open | frontend/src/App.tsx:96-109 | M |
 | H-005 | The database restarts in the middle of the day | The pool has no connection check, so each idle pooled connection fails once after the restart: those requests answer 500 and the portal says "the server answered 500" | Open | src/pms/api/app.py:310-311 (ConnectionPool with no check=) | M |
@@ -1349,3 +1344,65 @@ its ten most pressing, each with the test that would close it.
 - H-008 (payment recorded twice): warn before recording a payment of the same lease, day and amount already recorded, as payment files do; an API test and a vitest on Receive payment.
 - H-016 (mail server fills the pool): deliver in one background worker per process on its own connection, with a time between attempts (H-017); a test that a slow sender leaves the pool free.
 - H-072 and H-097 (memory): a request body limit in the app (beyond the 5 MB files) and the everything export streamed to a temporary file; tests in tests/api that an oversized body is 413 and that the export doesn't hold the documents in memory.
+
+## The AI link: drafts, events, webhooks and the MCP server
+
+| ID | Edge case | What the PMS does | Status | Evidence | Risk |
+|---|---|---|---|---|---|
+| A-030 | DNS that changes between the check and the connection (rebinding) | The request goes to the address checked, the certificate checked against the host | Guarded | src/pms/webhooks.py _Pinned | H |
+| A-032 | A receiver that redirects (to an internal address) | Not followed: a 3xx is a failed attempt | Guarded | src/pms/webhooks.py post | H |
+| A-001 | Software proposes a draft with a key that was taken back | 401 at the API; the database refuses a draft of a key taken back whatever the app does | Tested | tests/api/test_drafts.py::test_only_a_standing_key_proposes_and_a_key_opens_no_staff_page; tests/test_draft_rules.py::test_a_draft_needs_a_standing_key_of_an_active_company | H |
+| A-002 | A suspended or closed company's key proposes a draft | Refused by the draft's trigger: nothing is proposed to a company that isn't active | Tested | tests/test_draft_rules.py::test_a_draft_needs_a_standing_key_of_an_active_company | H |
+| A-003 | A draft names another company's tenant, lease, unit or work order | Refused 422 naming the record; an edit by staff is checked the same way | Tested | tests/api/test_drafts.py::test_a_draft_names_only_the_companys_own_records_each_once; tests/api/test_drafts.py::test_an_edit_keeps_the_drafts_kind_and_names_only_the_companys_records | H |
+| A-004 | A draft carries an email address or a phone in an extra field | Refused: a proposal says only what its kind takes | Tested | tests/api/test_drafts.py::test_a_malformed_proposal_is_refused | H |
+| A-005 | Software proposes a payment, a charge, a bill or a draw | No such kind: refused 422 by the API and by the table's check | Tested | tests/api/test_drafts.py::test_a_malformed_proposal_is_refused; tests/test_draft_rules.py::test_a_drafts_kind_is_one_that_moves_no_money_and_its_proposal_says_it | H |
+| A-007 | A staff member without the area approves a draft (repairs only, approving an email) | Refused 403 naming the area; nothing is written; they may still decline it | Tested | tests/api/test_drafts.py::test_approving_takes_the_area_of_what_the_draft_does_and_declining_takes_none | H |
+| A-014 | A bug approves a draft without doing it, or does it without approving | Refused at commit: approved means done, and only approved | Tested | tests/test_draft_rules.py::test_a_draft_is_decided_once_by_a_named_staff_member_and_approved_means_done | H |
+| A-015 | The AI reads what staff changed a draft to (a note's words) | Never: the action table is out of its reach; it learns only that it was edited | Tested | tests/api/test_drafts.py::test_staff_change_a_draft_before_approving_it_and_it_is_done_as_changed; tests/test_privileges.py | H |
+| A-020 | An event of a transaction still running when the reader asks | Not read yet, and read once it commits: the reader never skips one, even one that began first and finished last | Tested | tests/test_event_rules.py::test_a_reader_never_skips_an_event_of_a_transaction_that_finished_later; tests/properties/test_event_properties.py | H |
+| A-021 | A write undone (rolled back) | Its event is undone with it | Tested | tests/test_event_rules.py::test_an_undone_write_writes_no_event | H |
+| A-022 | The app or the AI's role writes an event | Refused: only the trigger, as the owner, writes them | Tested | tests/test_event_rules.py::test_neither_the_app_nor_the_ai_writes_an_event | H |
+| A-028 | A webhook whose host resolves to a cloud's metadata address (169.254.169.254) or the server's own network | Nothing is sent; the attempt is recorded saying why | Tested | tests/test_webhooks.py::test_an_address_that_leads_inside_is_never_sent_to | H |
+| A-029 | A host that resolves to a public and a private address | Refused: every address must be public | Tested | tests/test_webhooks.py::test_every_address_a_host_resolves_to_must_be_public | H |
+| A-031 | http://, credentials, localhost, .internal, a private or loopback literal, IPv4 inside IPv6 | Refused when added and at every delivery | Tested | tests/test_webhooks.py::test_an_address_is_refused_saying_why; tests/api/test_events.py::test_a_webhook_goes_only_to_a_public_https_address | H |
+| A-039 | A staff member who isn't an admin adds a webhook | Refused 403, and by the database | Tested | tests/api/test_events.py::test_only_an_admin_keeps_webhooks; tests/test_webhooks.py::test_the_database_takes_a_webhook_from_an_admin_only | H |
+| A-041 | A webhook added today | Gets the company's events from then on, never before, never another company's | Tested | tests/test_webhooks.py::test_a_webhook_gets_its_own_companys_events_from_when_it_was_added_while_it_stands | H |
+| A-043 | Each event's body | Its id, kind, time, company and ids, never a name or an amount; signed with HMAC-SHA256 over the time and the body | Tested | tests/test_webhooks.py::test_each_event_goes_signed_with_ids_only_and_once | H |
+| A-045 | A tool's code raises something unexpected (a KeyError) | A plain 500, nothing of the error's words | Tested | tests/api/test_mcp.py::test_a_tool_that_breaks_tells_the_client_nothing_of_why | H |
+| A-049 | A key taken back between two MCP calls | The next call is 401 | Tested | tests/api/test_mcp.py::test_only_a_standing_key_opens_the_server | H |
+| A-051 | `lease_ledger` naming another company's lease | Refused: no such lease in this company | Tested | tests/api/test_mcp.py::test_reports_ledgers_and_events_read_the_keys_company | H |
+| A-016 | A draft about a tenant who has since left the lease, or a record since archived | Approved as any other: the email goes, the note is written; nothing says the record changed since it was proposed | Open | src/pms/api/drafts.py act | M |
+| A-023 | A writing transaction left open on the server (idle in transaction, or a long one) | Every company's events wait behind it, never skipped; with no idle-in-transaction timeout set, a stuck session holds them back until it ends | Open | src/pms/api/events.py EVENTS | M |
+| A-024 | Events never cleared | trust_events grows for good (how long they are kept is not decided, ADR 0011) | Open | docs/adr/0011-ai-link.md | M |
+| A-034 | A receiver that hangs | Ten seconds an attempt, one after another: 200 hung attempts hold the courier half an hour, every other webhook waiting | Open | src/pms/webhooks.py TIMEOUT | M |
+| A-035 | An event never delivered within seven days | No longer tried; no admin is told, beyond the webhook's row saying it is failing | Open | src/pms/webhooks.py KEPT | M |
+| A-006 | Two staff approve the same draft at the same moment | The second waits for the first (an advisory lock on the draft) and is told it was approved already; the decision's key backs it up | Guarded | src/pms/api/drafts.py waiting_draft; db/migrations/20261105000300_drafts.sql | M |
+| A-018 | A notice draft whose template was removed before approval | The notice's own write path refuses it; the draft waits, saying why | Guarded | src/pms/api/notice_templates.py filled | M |
+| A-027 | Writes of tables the AI never reads (portal messages, notices to move out, notes) | No event tells of them | Guarded | db/migrations/20261105000500_events.sql | M |
+| A-038 | Two API processes deliver at once | One sends each event to each webhook (an advisory lock), the other skips it | Guarded | src/pms/webhooks.py deliver_pending | M |
+| A-008 | An email draft where nobody named has an email on file | Refused 422 saying so; the draft waits | Tested | tests/api/test_drafts.py::test_an_email_no_one_named_can_get_is_refused_and_the_draft_waits | M |
+| A-009 | An email draft where some named have no email | Sent to those who have one; the result names who had none, as staff saw before approving | Tested | tests/api/test_drafts.py::test_staff_see_who_a_proposed_email_goes_to_and_approving_it_writes_it_as_them | M |
+| A-010 | Staff edit a draft into another kind before approving | Refused 422: an edit keeps its kind | Tested | tests/api/test_drafts.py::test_an_edit_keeps_the_drafts_kind_and_names_only_the_companys_records | M |
+| A-011 | A visit drafted before any vendor is assigned | The work order's own rules refuse it at approval (409); the draft waits for an assignment | Tested | tests/api/test_drafts.py::test_work_order_drafts_open_assign_and_schedule_by_the_work_orders_own_rules | M |
+| A-012 | An AI in a loop proposes thousands of drafts | At most 500 wait at once; past that, 429 until staff decide some | Tested | tests/api/test_drafts.py::test_drafts_waiting_have_a_limit_so_a_loop_cant_bury_the_inbox | M |
+| A-013 | A decided draft is approved or declined again | 409, saying it was decided already; nothing more is done | Tested | tests/api/test_drafts.py::test_staff_see_who_a_proposed_email_goes_to_and_approving_it_writes_it_as_them | M |
+| A-019 | The decision and the action are audited, naming the staff member; the proposal names its key's role | Audit rows: the draft as trust_ai_agent naming nobody, the decision and the action naming the approver | Tested | tests/api/test_drafts.py::test_a_drafts_proposal_and_decision_are_in_the_audit_log_with_who | M |
+| A-025 | `after` names another company's event, 0, or text | 422 | Tested | tests/api/test_events.py::test_another_companys_events_are_never_read; tests/api/test_events.py::test_a_bad_place_or_page_is_refused | M |
+| A-026 | A payment, a bounce, a late fee, a work order step, a repair request, a bill, a lease, a draft decided | Each its event, in the same transaction, ids only | Tested | tests/test_event_rules.py | M |
+| A-033 | A receiver that answers 500, or refuses the connection | Tried again after 1 and 5 minutes, half an hour, 2 and 12 hours; given up after six | Tested | tests/test_webhooks.py::test_each_wait_is_longer_and_the_next_attempt_goes_once_it_passed; tests/test_webhooks.py::test_an_event_tried_every_time_is_given_up_on | M |
+| A-036 | PMS_DATA_KEY changed, so a webhook's secret won't open | Each attempt fails saying so; nothing is sent unsigned | Tested | tests/test_webhooks.py::test_a_secret_that_wont_open_is_a_failed_attempt | M |
+| A-040 | A webhook taken back | Nothing more is sent to it | Tested | tests/test_webhooks.py::test_a_webhook_gets_its_own_companys_events_from_when_it_was_added_while_it_stands | M |
+| A-044 | A server without PMS_DATA_KEY | Keeps no webhook (409 saying why) and sends none; software still reads events with its key | Tested | tests/api/test_events.py::test_a_server_without_a_data_key_keeps_no_webhook | M |
+| A-046 | A report given an argument it can't read, through MCP | A fixed sentence, never the database's message | Tested | tests/api/test_mcp.py::test_a_refusal_says_only_the_pmss_own_words | M |
+| A-050 | `find` with % or _ in the name | Read as themselves | Tested | tests/api/test_mcp.py::test_find_gives_each_record_its_id_of_this_company_only | M |
+| A-052 | An MCP client sends a body of hundreds of MB | 413 at 10 MB, as any request | Tested | tests/api/test_body_limit.py | M |
+| A-056 | A proposal through MCP missing a field or with an extra one | The tool's result says which, in pydantic's words, nothing is proposed | Tested | tests/api/test_mcp.py::test_a_proposal_carries_what_its_kind_takes_and_nothing_else | M |
+| A-017 | A draft no one decides | Waits for good, on the Dashboard until decided; nothing expires it | Open | src/pms/api/drafts.py | L |
+| A-037 | A webhook's secret leaks | No rotation: take it back and add a new one (rotation is not decided, ADR 0011) | Open | docs/adr/0011-ai-link.md | L |
+| A-042 | A receiver answering with a huge body | At most 64 KB is read and thrown away | Guarded | src/pms/webhooks.py post | L |
+| A-054 | An MCP tool's day left out | The key's company's day, read before the role changes (the AI's role reads no time zone) | Guarded | src/pms/api/ai_keys.py with_key | L |
+| A-055 | MCP calls and REST calls with one key | Share the key's 120 a minute | Guarded | src/pms/api/ai_keys.py too_soon | L |
+| A-057 | `find` for leases | Those in effect or to come; an ended lease isn't found (its ledger still is, by its id) | Guarded | src/pms/api/mcp.py FIND | L |
+| A-047 | A JSON-RPC batch, a message that isn't JSON-RPC, an unknown method or tool | 400 or the JSON-RPC error that says so | Tested | tests/api/test_mcp.py::test_a_message_it_doesnt_know_is_answered_as_json_rpc | L |
+| A-048 | A GET to /mcp (an event stream asked for) | 405: the server holds no stream; with the portal served, NOT VERIFIED that a GET doesn't get the portal's page instead | Tested | tests/api/test_mcp.py::test_a_message_it_doesnt_know_is_answered_as_json_rpc | L |
+| A-053 | An MCP client asks a protocol version the server doesn't speak | It answers with its own (2025-06-18) | Tested | tests/api/test_mcp.py::test_a_client_initializes_and_lists_the_tools | L |

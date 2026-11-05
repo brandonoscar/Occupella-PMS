@@ -31,6 +31,12 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   second person for month-end, email sending, then the optional portals and rent paid online),
   each done or not by the company's own records and linking to where it is done
   (`GET /api/go-live`).
+- **Fixed, from the edge-case catalog:** a decimal comma in a file ("1234,56") is refused instead
+  of read as $123,456.00; the uncleared checks and deposits file sent twice no longer carries them
+  over twice; two identical charges in one switching file both come in; a tenant's emergency
+  request goes through after the day's ten ordinary ones (five emergencies a day); no request may
+  send more than 10 MB; only a login's newest invite or reset link works; and disabling an
+  owner's or tenant's login takes the "who can sign in" area, as inviting them does.
 - **Fixed: rent charged twice in a month.** Run rent now with Rent due on set to a day other than
   the first (the 15th, say) charged every lease due on the first a second month's rent and each
   monthly charge a second time, and a rent the old system's unpaid charges carried over on another

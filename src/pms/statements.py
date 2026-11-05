@@ -58,11 +58,24 @@ REFERENCE_HEADERS = (
 )
 
 
+# A comma only as US thousands separators: one to three digits, then groups of three.
+GROUPED = re.compile(r"[-+]?\d{1,3}(,\d{3})+(\.\d*)?")
+
+
 def read_amount(text: str, where: str) -> Decimal:
-    cleaned = text.strip().replace("$", "").replace(",", "").replace(" ", "")
+    cleaned = text.strip().replace("$", "").replace(" ", "")
     negative = cleaned.startswith("(") and cleaned.endswith(")")
     if negative:
         cleaned = cleaned[1:-1]
+    if "," in cleaned:
+        # A decimal comma ("1234,56", as a European spreadsheet writes it) read with its comma
+        # dropped would be 100 times the amount (docs/edge-cases.md F-064).
+        if not GROUPED.fullmatch(cleaned):
+            raise StatementError(
+                f"{where}: {text.strip()!r} is not an amount: a comma only separates thousands"
+                " (1,234.56); write a decimal comma as a point (1234.56)"
+            )
+        cleaned = cleaned.replace(",", "")
     try:
         amount = Decimal(cleaned)
     except InvalidOperation:

@@ -265,13 +265,17 @@ def request_reset(conn: psycopg.Connection[Any], pmc_id: UUID, email: str) -> Re
 
 
 def _open_invite(conn: psycopg.Connection[Any], token: str, lock: bool) -> Any:
-    """The invite's row if it can still be used: not accepted, not expired, login enabled."""
+    """The invite's row if it can still be used: not accepted, not expired, login enabled, and
+    the login's newest (a newer invite or password reset retires it: docs/edge-cases.md U-013)."""
     row = _one(
         conn,
         "SELECT i.id, i.pmc_id, l.id, l.kind, l.email, i.expires_at"  # noqa: S608
         " FROM trust_invites AS i JOIN trust_logins AS l ON l.id = i.login_id"
         " WHERE i.token_hash = %s AND i.accepted_at IS NULL AND i.expires_at > now()"
-        " AND l.disabled_at IS NULL" + (" FOR UPDATE OF i" if lock else ""),
+        " AND l.disabled_at IS NULL"
+        " AND NOT EXISTS (SELECT 1 FROM trust_invites AS n WHERE n.login_id = i.login_id"
+        "   AND n.created_at > i.created_at)"
+        + (" FOR UPDATE OF i" if lock else ""),
         (digest(token),),
     )
     if row is None:

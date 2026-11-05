@@ -8,8 +8,9 @@ from datetime import date
 
 import pytest
 from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
 from helpers import make_pmc
-from people import join_as_staff
+from people import join_as_staff, join_as_tenant
 
 from pms.api.deps import AREA_PATHS, AREAS, area_of, staff_only
 
@@ -18,7 +19,8 @@ from pms.api.deps import AREA_PATHS, AREAS, area_of, staff_only
 NOT_AN_AREA = {
     "/api/staff": "adds a staff member: admin",
     "/api/staff/{staff_id}/roles": "changes a role: admin",
-    "/api/logins/{login_id}/disable": "disables a login: admin",
+    "/api/logins/{login_id}/disable": "disables a login: a staff login takes admin, an owner's"
+    " or a tenant's the area 'people' (checked by the route)",
     "/api/ai/keys": "makes an API key: admin",
     "/api/ai/keys/{key_id}/revoke": "takes an API key back: admin",
     "/api/custom-roles": "makes a custom role: admin",
@@ -132,6 +134,26 @@ def test_every_staff_write_is_in_an_area_or_said_not_to_be(client):
     # Every area guards something, and every prefix is some staff write's.
     assert {area_of(path) for path in writes} - {None} == set(AREAS)
     assert all(any(p.startswith(prefix) for p in writes) for prefix, _ in AREA_PATHS)
+
+
+def test_disabling_an_owners_or_tenants_login_takes_who_can_sign_in(
+    client, other_client, conn, app_conn, pmc, admin, clerk
+):
+    # docs/edge-cases.md U-009: inviting an owner or a tenant took the area, and disabling their
+    # login (for good: nothing turns it back on) took nothing.
+    tenant_client = TestClient(other_client.app)
+    tenant = join_as_tenant(tenant_client, conn, app_conn, pmc)
+    give(client, make_role(client, "Bookkeeping", ["journal"]), clerk)
+    refused(
+        other_client.post(f"/api/logins/{tenant.login_id}/disable", json={}),
+        403,
+        "your roles don't let you change who can sign in",
+    )
+    assert conn.execute(
+        "SELECT disabled_at FROM trust_logins WHERE id = %s", (tenant.login_id,)
+    ).fetchone() == (None,)
+    give(client, make_role(client, "Front desk", ["people"]), clerk)
+    ok(other_client.post(f"/api/logins/{tenant.login_id}/disable", json={}), 204)
 
 
 def test_a_staff_member_with_no_custom_role_works_everywhere(other_client, pmc, clerk):

@@ -45,6 +45,8 @@ from fastapi.staticfiles import StaticFiles
 from psycopg import sql
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
+from starlette.requests import ClientDisconnect
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from pms import (
@@ -74,6 +76,7 @@ from pms.api import (
     custom_roles,
     dashboard,
     deposit_interest,
+    deps,
     directory,
     documents,
     drafts,
@@ -621,6 +624,16 @@ def create_app(settings: Settings) -> FastAPI:
     def disable(login_id: UUID, session: Staff, conn: Conn) -> None:
         if login_id == session.login_id:
             raise HTTPException(422, "you can't disable your own login")
+        # A staff login takes admin (the database checks it); an owner's or a tenant's, the area
+        # their invite takes, "who can sign in" (docs/edge-cases.md U-009).
+        kind = conn.execute(
+            "SELECT kind FROM trust_logins WHERE pmc_id = %s AND id = %s",
+            (session.pmc_id, login_id),
+        ).fetchone()
+        if kind is not None and kind[0] != "staff" and not deps.may(conn, session, "people"):
+            raise HTTPException(
+                403, f"your roles don't let you change {deps.AREAS['people']}: an admin can add it"
+            )
         accounts.disable_login(conn, session.pmc_id, login_id)
 
     @app.get("/api/reports/{name}", response_model=None)
@@ -747,7 +760,63 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(mcp.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
+    # Outermost: no request reads more than MAX_BODY bytes into the process (H-072).
+    app.add_middleware(BodyLimit)
     return app
+
+
+# The most a request may send, in bytes: the largest thing the PMS takes is a 5 MB file as base64
+# in JSON, about 7 MB (docs/edge-cases.md H-072: with no limit, anyone could make the one process
+# read hundreds of megabytes into memory, signed in or not).
+MAX_BODY = 10 * 1024 * 1024
+TOO_BIG = "this request is larger than the PMS takes (10 MB)"
+
+
+class BodyLimit:
+    """Refuses a request whose body is larger than MAX_BODY (413): at once when it says its
+    length, else counted as it streams in, its reading stopped there."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        declared = dict(scope.get("headers") or []).get(b"content-length")
+        if declared is not None and (not declared.isdigit() or int(declared) > MAX_BODY):
+            await JSONResponse({"detail": TOO_BIG}, 413)(scope, receive, send)
+            return
+        read = 0
+        too_big = False
+        started = False
+
+        async def counted() -> Message:
+            nonlocal read, too_big
+            message = await receive()
+            if message["type"] == "http.request":
+                read += len(message.get("body", b""))
+                if read > MAX_BODY:
+                    too_big = True
+                    # The app reads no more: to it, the client went away.
+                    return {"type": "http.disconnect"}
+            return message
+
+        async def watched(message: Message) -> None:
+            nonlocal started
+            if too_big:
+                return  # the app's answer to a body it never got whole: the 413 goes instead
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, counted, watched)
+        except ClientDisconnect:
+            if not too_big:
+                raise
+        if too_big and not started:
+            await JSONResponse({"detail": TOO_BIG}, 413)(scope, receive, send)
 
 
 # What a browser's Sec-Fetch-Site says of a request from another site, or from another origin

@@ -4,6 +4,7 @@ owner; a write undone writes none; a reader that takes events of finished transa
 order they finished, never skips one written by a transaction that began earlier and finished
 later. Every name here is synthetic."""
 
+import time
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -189,7 +190,13 @@ def test_a_reader_never_skips_an_event_of_a_transaction_that_finished_later(
         # Neither is read while the slow one runs: the quick one's turn comes after it.
         assert read(start) == [] if start else read() == []
         slow.commit()
+        # Both are read now, once no other writer on the server began before them (one beside
+        # this test, say) is still running.
+        deadline = time.monotonic() + 60
         found = read(start) if start else read()
+        while len(found) < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+            found = read(start) if start else read()
         assert [k for _, k in found] == ["work_order.opened", "work_order.opened"]
         assert read(found[0][0]) == found[1:]
         assert read(found[-1][0]) == []

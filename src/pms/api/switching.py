@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -123,6 +124,9 @@ class Names:
     def __init__(self, conn: psycopg.Connection[Any], pmc_id: UUID) -> None:
         self.conn, self.pmc = conn, pmc_id
         self.added = self.kept = 0
+        # How many of the file's lines so far were matched to each charge alike that is there
+        # already: each line to one, so two alike in one file are two charges (F-076).
+        self.matched: Counter[tuple[Any, ...]] = Counter()
 
     def counted(self, found: Any, add: Callable[[], Any]) -> Any:
         if found is not None:
@@ -328,11 +332,20 @@ DETAIL_COLUMNS = {
 }
 
 
+def plain_number(row: Row, column: str) -> str | None:
+    """A column's number with its $ and US thousands separators taken out; a decimal comma
+    ("1450,50") refused rather than read as 100 times it (docs/edge-cases.md F-064)."""
+    text = row.get(column, required=False).replace("$", "").strip()
+    if "," in text and not statements.GROUPED.fullmatch(text):
+        raise Bad(
+            f"line {row.line}: the {column} {text!r} has a comma that separates no thousands;"
+            " write a decimal comma as a point (1234.56)"
+        )
+    return text.replace(",", "") or None
+
+
 def import_unit_details(names: Names, unit_id: UUID, row: Row) -> None:
-    given = {
-        field: row.get(column, required=False).replace(",", "").replace("$", "") or None
-        for column, field in DETAIL_COLUMNS.items()
-    }
+    given = {field: plain_number(row, column) for column, field in DETAIL_COLUMNS.items()}
     if not any(given.values()):
         return
     try:
@@ -447,15 +460,17 @@ def import_charge(names: Names, row: Row) -> None:
     if lease is None:
         raise Bad(f"line {row.line}: no lease of that unit had started by {due}")
     memo = row.get("memo", required=False) or None
-    if (
-        one(
-            conn,
-            "SELECT 1 FROM trust_charges WHERE lease_id = %s AND due_on = %s AND kind = %s"
-            " AND amount = %s AND memo IS NOT DISTINCT FROM %s",
-            (lease, due, kind, amount, memo),
-        )
-        is not None
-    ):
+    alike = (lease, due, kind, amount, memo)
+    there = one(
+        conn,
+        "SELECT count(*) FROM trust_charges WHERE lease_id = %s AND due_on = %s AND kind = %s"
+        " AND amount = %s AND memo IS NOT DISTINCT FROM %s",
+        alike,
+    )
+    # This line is one of the charges alike that came over already, unless the file's earlier
+    # lines matched them all: then it is one more (F-076).
+    if names.matched[alike] < there:
+        names.matched[alike] += 1
         names.kept += 1
         return
     try:
@@ -467,6 +482,7 @@ def import_charge(names: Names, row: Row) -> None:
             )
     except (psycopg.errors.UniqueViolation, psycopg.errors.CheckViolation) as refused:
         raise Bad(f"line {row.line}: {refusal(refused)}") from None
+    names.matched[alike] += 1
     names.added += 1
 
 
@@ -851,12 +867,36 @@ def carry_items(session: Staff, conn: Conn, new: Items) -> Counted:
     """The old system's checks (negative) and deposits the bank had not cleared at the cutover:
     a CSV file with date, amount, description and an optional reference."""
     bank_of(conn, session.pmc_id, new.bank_account_id)
-    added = 0
+    # The file's lines are matched to the items carried over already, each once (F-083): sent
+    # again, it carries nothing over twice; two alike in one file both come in. One import at a
+    # time for the account, so two sent at once can't both add.
+    conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended('trust_cutover_items:' || %s, 0))",
+        (str(new.bank_account_id),),
+    )
+    already = Counter(
+        conn.execute(
+            "SELECT issued_on, amount, description, reference FROM trust_cutover_items"
+            " WHERE pmc_id = %s AND bank_account_id = %s",
+            (session.pmc_id, new.bank_account_id),
+        ).fetchall()
+    )
+    added = kept = 0
     try:
         for row in rows(new.content, ("date", "amount", "description")):
             amount = row.money("amount")
             if amount == 0:
                 raise Bad(f"line {row.line}: an item moved some money")
+            item = (
+                row.day("date"),
+                amount,
+                row.get("description"),
+                row.get("reference", required=False) or None,
+            )
+            if already[item] > 0:
+                already[item] -= 1
+                kept += 1
+                continue
             try:
                 with conn.transaction():
                     conn.execute(
@@ -878,7 +918,7 @@ def carry_items(session: Staff, conn: Conn, new: Items) -> Counted:
             added += 1
     except Bad as bad:
         raise HTTPException(422, str(bad)) from None
-    return Counted(added=added, kept=0)
+    return Counted(added=added, kept=kept)
 
 
 class SignOff(BaseModel):

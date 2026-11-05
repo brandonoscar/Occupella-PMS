@@ -452,6 +452,26 @@ def test_ten_requests_a_day_per_lease(client, conn, app_conn, home):
     assert [a.status_code for a in answers] == [201] * 10 + [429]
 
 
+def test_an_emergency_goes_through_past_the_days_requests_up_to_its_own_limit(
+    client, conn, app_conn, home
+):
+    # docs/edge-cases.md U-109: the 11th request of a day was refused even when it was an
+    # emergency (water pouring through the ceiling), with "call your manager" and no number.
+    # An emergency has a limit of its own, so the day's ordinary ones never stop it.
+    join_as_tenant(client, conn, app_conn, home.pmc)
+    for _ in range(10):
+        assert client.post("/api/tenant/requests", json=new_request(home)).status_code == 201
+    assert client.post("/api/tenant/requests", json=new_request(home)).status_code == 429
+
+    emergency = new_request(home, summary="Water through the ceiling", emergency=True)
+    answers = [client.post("/api/tenant/requests", json=emergency) for _ in range(6)]
+    assert [a.status_code for a in answers] == [201] * 5 + [429]
+    assert answers[-1].json()["detail"] == (
+        "You sent 5 emergencies today. If it can't wait, call your manager; for gas, fire or"
+        " flooding, get out and call 911 first."
+    )
+
+
 @pytest.mark.parametrize(
     "changes",
     [

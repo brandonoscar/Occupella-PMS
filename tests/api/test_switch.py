@@ -356,6 +356,33 @@ def test_a_rent_charged_twice_is_refused_with_its_line(client, staff, pmc):
     )
 
 
+def test_two_alike_charges_in_one_file_both_come_in_and_once(client, conn, staff, pmc):
+    # docs/edge-cases.md F-076: the second of two alike ($25.00 fees due the same day, the same
+    # memo) counted as "kept" and was dropped, understating what the tenant owes. Each line is
+    # matched to a charge that came over already, each once.
+    roster(client)
+    ok(
+        imported(
+            client,
+            "leases",
+            "Property,Unit,Tenants,Starts On,Monthly Rent",
+            "Property A,Unit 1,Tenant A,2025-06-01,1500.00",
+        )
+    )
+    lines = (
+        "Property,Unit,Due On,Amount,Kind,Memo",
+        "Property A,Unit 1,2025-12-05,25.00,fee,Key copy",
+        "Property A,Unit 1,2025-12-05,25.00,fee,Key copy",
+    )
+    assert ok(imported(client, "charges", *lines)) == {"added": 2, "kept": 0}
+    assert ok(imported(client, "charges", *lines)) == {"added": 0, "kept": 2}
+    assert conn.execute(
+        "SELECT count(*), sum(c.amount) FROM trust_charges AS c JOIN trust_leases AS l"
+        " ON l.id = c.lease_id WHERE l.pmc_id = %s AND c.memo = 'Key copy'",
+        (pmc.pmc_id,),
+    ).fetchone() == (2, Decimal("50.00"))
+
+
 def test_properties_name_their_trust_bank_account_when_there_are_several(client, conn, staff, pmc):
     ok(imported(client, "owners", "Name", "Owner A"))
     conn.execute(
@@ -698,6 +725,32 @@ def test_a_trust_bank_account_with_postings_cant_open(client, conn, staff, pmc):
     post(conn, pmc.pmc_id, "rent-1", [(pmc.operating_cash, pmc.owners[0].account, "5.00")])
     assert cutover(client)["Synthetic operating trust account"]["can_open"] is False
     refused(open_balances(client, pmc), 409, "opening balances come first")
+
+
+def test_an_items_file_sent_again_carries_nothing_over_twice(client, conn, staff, pmc):
+    # docs/edge-cases.md F-083: sent again, every check and deposit was carried over again, off
+    # by the whole file until someone saw it. Now the file's lines are matched to what came over
+    # already, each once: two alike in one file (two $75.00 deposits that day) both come in.
+    ok(open_balances(client, pmc), 201)
+    content = csv(
+        "Date,Amount,Description,Reference",
+        "2025-12-30,(200.00),Check to Vendor 1,1041",
+        "12/31/2025,75.00,Deposit,",
+        "12/31/2025,75.00,Deposit,",
+    )
+    body = {"bank_account_id": pmc.operating_bank_id, "content": content}
+    assert ok(call(client, "items", **body), 201) == {"added": 3, "kept": 0}
+    assert ok(call(client, "items", **body), 201) == {"added": 0, "kept": 3}
+    # One more line, with the file again: only it comes in.
+    more = content + "12/30/2025,(40.00),Check to Vendor 2,1042\n"
+    assert ok(call(client, "items", bank_account_id=pmc.operating_bank_id, content=more), 201) == {
+        "added": 1,
+        "kept": 3,
+    }
+    assert conn.execute(
+        "SELECT count(*), sum(amount) FROM trust_cutover_items WHERE bank_account_id = %s",
+        (pmc.operating_bank_id,),
+    ).fetchone() == (4, Decimal("-90.00"))
 
 
 def test_items_come_after_the_opening_and_by_the_cutover(client, staff, pmc):
