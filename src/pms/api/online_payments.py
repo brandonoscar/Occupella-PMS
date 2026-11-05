@@ -262,13 +262,20 @@ def why_not(
     day = rent.today(conn, pmc_id)
     if conn.execute(rent.IN_FORCE, {"pmc": pmc_id, "lease": lease_id, "day": day}).fetchone():
         return "paused"
-    # A property with several owner accounts and no ownership shares: whose a payment is waits
-    # for staff to choose, so it takes none online (docs/edge-cases.md P-040).
+    if not placed(conn, pmc_id, lease_id, day):
+        return "off"
+    return None
+
+
+def placed(conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID, day: date) -> bool:
+    """Whether the books know whose the lease's payment is on the day: false at a property with
+    several owner accounts and no ownership shares, where staff choose (docs/edge-cases.md P-040,
+    P-162), so neither Pay online nor autopay starts one."""
     try:
         rent.owners_of(conn, pmc_id, rent.lease_of(conn, pmc_id, lease_id).property_id, day, None)
     except HTTPException:
-        return "off"
-    return None
+        return False
+    return True
 
 
 def online_payments(conn: psycopg.Connection[Any], lease_id: UUID) -> list[OnlinePayment]:

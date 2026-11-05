@@ -15,6 +15,7 @@ from helpers import (
     end_lease,
     hold_payments,
     make_pmc,
+    open_account,
     open_lease,
 )
 
@@ -232,6 +233,31 @@ def test_an_autopay_records_why_it_started_no_payment(conn, app_conn, pmc, tenan
     done = run(app_conn, pmc)
     assert (done.payments, done.skipped) == (0, 1)
     assert runs(conn, mine) == [(MONTH, None, why)]
+
+
+def test_no_autopay_at_a_property_whose_payments_staff_must_place(
+    conn, app_conn, pmc, lease, tenant
+):
+    """docs/edge-cases.md P-162: a second owner account at the property and no ownership shares,
+    so the books can't tell whose a payment is. Pay online says off there; autopay started its
+    payment anyway, to wait on Banking each month for staff to choose. It starts none, as when
+    payments online are off."""
+    online(conn, pmc)
+    open_account(
+        conn,
+        pmc.pmc_id,
+        pmc.operating_bank_id,
+        "owner_property",
+        conn.execute(
+            "INSERT INTO trust_owners (pmc_id, display_name) VALUES (%s, 'Owner 2') RETURNING id",
+            (pmc.pmc_id,),
+        ).fetchone()[0],
+        pmc.owners[0].property_id,
+    )
+    mine = set_up(conn, pmc, lease, tenant)
+    done = run(app_conn, pmc)
+    assert (done.payments, done.skipped) == (0, 1)
+    assert runs(conn, mine) == [(MONTH, None, "online payments off")]
 
 
 def test_no_partner_starts_and_records_nothing(conn, app_conn, pmc, lease, tenant):

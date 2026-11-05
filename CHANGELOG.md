@@ -70,8 +70,8 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   online for a property with more than one owner account and no ownership shares made the whole
   list fail, so Banking showed nothing waiting, and it couldn't be recorded. It is now listed with
   the owners to choose among (Record it, naming whose), a lease at such a property takes no
-  payment online (the tenant sees the company's How to pay us), and the card says when the list
-  couldn't load instead of showing nothing.
+  payment online (the tenant sees the company's How to pay us) nor by autopay (its month reads as
+  online payments off), and the card says when the list couldn't load instead of showing nothing.
 - **The Dashboard says when rent stopped posting.** When no rent run (the nightly one, or an
   admin's Run rent now) ran in two days while the company has leases, because the nightly run
   failed every night, its thread died or it was off, Needs attention says so first, with the last

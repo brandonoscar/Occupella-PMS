@@ -28,12 +28,12 @@ answer in the portal for everything that can fail.
 | [Money and the ledger](#money-and-the-ledger) | 150 | 110 | 7 | 33 | 7 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 159 | 81 | 15 | 63 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 63 | 30 | 49 | 2 |
-| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 162 | 61 | 8 | 93 | 27 |
+| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 162 | 62 | 8 | 92 | 27 |
 | [Bad files and imports](#bad-files-and-imports) | 145 | 60 | 16 | 69 | 6 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 166 | 68 | 14 | 84 | 9 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1137** | **570** | **110** | **457** | **72** |
+| **All** | **1137** | **571** | **110** | **456** | **72** |
 
 ## Open, high risk: the work list
 
@@ -724,11 +724,11 @@ its ten most pressing, each with the test that would close it.
 | P-159 | The prepared draws fail to load on Pay owners | Hidden, as if none were prepared | Open | frontend/src/pages/PayOwnersPage.tsx:73 | M |
 | P-160 | The company's fees in trust fail to load on Banking | Hidden, so fees past their day to take out don't show | Open | frontend/src/pages/ReconcilePage.tsx:71 | M |
 | P-161 | A return reported before paid, and paid never lands (its report keeps failing on the fee lookup, 502) | The return answers 409 until the partner gives up (about three days, NOT VERIFIED), then it is lost as before | Open | src/pms/api/online_payments.py refuse_too_soon | M |
-| P-162 | A second owner account added to a property whose tenants pay by autopay | Pay online now says off there, but autopay may still start payments (NOT VERIFIED that it asks why_not); each would wait on Banking for staff to choose whose | Open | src/pms/autopay.py; src/pms/api/online_payments.py why_not | M |
 | P-119 | The same ACH file downloaded and uploaded twice | The same file each time, logged "Taken N times"; the bank's duplicate check is all that stops a second upload | Guarded | src/pms/api/payouts.py:621-624; tests/api/test_payouts_api.py::test_an_ach_file_taken_again_is_the_one_made_when_the_run_was_paid | M |
 | P-025 | A paid ACH payment comes back (charge.dispute.created) | Undone as a bounce with the NSF fee, the tenant's fee back out of the company's account | Tested | tests/api/test_online_payments_api.py::test_a_return_is_a_bounce_and_the_tenants_fee_goes_back_out; tests/test_payments.py::test_stripe_reports_a_failure_a_return_and_nothing_else | M |
 | P-050 | PMS_DATA_KEY lost or changed, so the company's keys don't open | Never falls back to the server's account; tenants see How to pay; admins see "Your keys can't be read on this server. Enter them again." | Tested | tests/api/test_payment_keys_api.py::test_keys_that_dont_open_here_take_no_payment_and_never_fall_back; frontend/src/pages/PaymentKeysCard.test.tsx > says keys that can't be read here need entering again | M |
 | P-151 | A 5xx with no JSON body (proxy 502, 500) | "the server answered 502", with no retry offered | Tested | frontend/src/api.test.ts > names the status when the answer has no reason | M |
+| P-162 | A second owner account added to a property whose tenants pay by autopay | Autopay starts no payment there either (online_payments.placed), its month recorded as online payments off | Tested | tests/test_autopay.py::test_no_autopay_at_a_property_whose_payments_staff_must_place | M |
 | P-008 | PMS_PUBLIC_URL wrong (http, old host) so Stripe refuses success_url or sends the tenant to a dead page | Stripe's refusal reads as "couldn't reach"; after paying, the tenant may land on an unreachable page though the payment still lands by webhook; nothing checks the URL | Open | src/pms/api/online_payments.py:333 | L |
 | P-017 | Stripe sends thin (v2) event notifications instead of snapshot events | The body lacks data.object: 400 every time | Open | src/pms/payments.py:292-300 | L |
 | P-045 | The lease's trust bank account has no company fee account | company_account raises 409 outside the savepoint, so the whole webhook answers 409 and Stripe keeps resending | Open | src/pms/api/online_payments.py:384-393, 479-489, 524-536 | L |
