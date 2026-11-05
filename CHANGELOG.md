@@ -42,6 +42,12 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   recorded as tried, stayed first in the queue so every email behind it waited, and the nightly
   run failed with it. The statement now says that photo is with the lease's files, and any error
   making an email's file is recorded as that email's failed attempt.
+- **Events and webhooks (ADR 0011):** what happens in the books (a payment recorded or returned,
+  a late fee, a lease opened or its end changed, a bill waiting for its owner, a work order's
+  steps, a repair requested, a draft decided) is written as an event, kinds and ids only. Software
+  with an API key reads them in order (`GET /api/events?after=`), and an admin adds webhooks in
+  Settings, AI that each event is sent to, signed and retried. Webhooks need `PMS_DATA_KEY`;
+  `PMS_WEBHOOKS=off` stops sending. Migration `20261105000500`.
 - **Drafts (ADR 0011):** software with an API key, such as an AI assistant, proposes an email,
   a notice, a work order opened, assigned or scheduled, or a note, by the ids of the company's
   records; nothing is done until a staff member approves it at Drafts (or from the Dashboard),

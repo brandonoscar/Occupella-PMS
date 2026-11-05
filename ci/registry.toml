@@ -192,6 +192,26 @@ tests = [
 ]
 
 [[invariant]]
+id = "events-in-order-never-skipped"
+statement = "An event (ADR 0011, migration 20261105000500) is written by the database alone (trust_record_event, as the owner; neither the app nor the AI's role may write one) in the same transaction as the write it tells of, its kind and ids only, and none for a write undone; append-only. A reader with a key reads its company's events after the last it got, in the order their transactions began writing, each only once every transaction that began writing before it has finished, so it gets every committed event exactly once and never a rolled-back one, and never another company's. A webhook goes only to an https address whose every resolved address is public, signed with its sealed secret, retried after each wait up to its last attempt, from when it was added and while it stands; only an admin adds or takes one back."
+tests = [
+  "tests/properties/test_event_properties.py::test_a_reader_gets_every_committed_event_once_never_skipping_a_slower_transaction",
+  "tests/test_event_rules.py::test_a_reader_never_skips_an_event_of_a_transaction_that_finished_later",
+  "tests/test_event_rules.py::test_an_undone_write_writes_no_event",
+  "tests/test_event_rules.py::test_neither_the_app_nor_the_ai_writes_an_event",
+  "tests/test_event_rules.py::test_a_lease_its_payment_and_its_bounce_are_events",
+  "tests/test_event_rules.py::test_a_work_order_its_steps_and_a_request_are_events",
+  "tests/test_webhooks.py::test_each_event_goes_signed_with_ids_only_and_once",
+  "tests/test_webhooks.py::test_an_address_that_leads_inside_is_never_sent_to",
+  "tests/test_webhooks.py::test_a_webhook_gets_its_own_companys_events_from_when_it_was_added_while_it_stands",
+  "tests/test_webhooks.py::test_an_event_tried_every_time_is_given_up_on",
+  "tests/test_webhooks.py::test_the_database_takes_a_webhook_from_an_admin_only",
+  "tests/api/test_events.py::test_software_reads_its_companys_events_in_order_after_the_last_it_read",
+  "tests/api/test_events.py::test_another_companys_events_are_never_read",
+  "tests/api/test_events.py::test_only_a_key_reads_events",
+]
+
+[[invariant]]
 id = "concurrent-postings-all-finish"
 statement = "Concurrent transfers across the same accounts all finish, and the balances still add up: accounts are locked in one global order, and unrelated transfers never wait for each other."
 tests = [

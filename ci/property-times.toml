@@ -48,6 +48,7 @@ nightly_factor = 60
 "tests/properties/test_deposit_return_properties.py::test_a_deposit_return_keeps_what_is_owed_and_gives_back_the_rest" = 15.9
 "tests/properties/test_document_properties.py::test_documents_are_their_files_and_their_bytes_stay_out_of_the_log" = 42.8
 "tests/properties/test_draft_properties.py::test_a_draft_is_decided_once_done_exactly_when_approved_by_staff_who_may" = 20.3
+"tests/properties/test_event_properties.py::test_a_reader_gets_every_committed_event_once_never_skipping_a_slower_transaction" = 10.6
 "tests/properties/test_export_properties.py::test_csv_holds_every_cell" = 1.9
 "tests/properties/test_export_properties.py::test_excel_holds_every_value_and_no_formula" = 2.5
 "tests/properties/test_export_properties.py::test_the_pdf_always_builds" = 2.0

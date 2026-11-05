@@ -30,6 +30,8 @@ const SECRET = "occ_made-up-secret-for-the-test-0123456789abcdefgh";
 function server(keys: Key[] = [], refuse = "") {
   let held = [...keys];
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+    // The page's Webhooks card asks for its own list (WebhooksCard.test.tsx tests it).
+    if (path === "/api/ai/webhooks") return new Response(JSON.stringify([]), { status: 200 });
     if (init?.method !== "POST") return new Response(JSON.stringify(held), { status: 200 });
     if (refuse) return new Response(JSON.stringify({ detail: refuse }), { status: 409 });
     if (path.endsWith("/revoke")) {

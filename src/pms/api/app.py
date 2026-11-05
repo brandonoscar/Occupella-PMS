@@ -47,7 +47,18 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from pms import accounts, days, deployment, email, exports, geocoding, nightly, payments, phones
+from pms import (
+    accounts,
+    days,
+    deployment,
+    email,
+    exports,
+    geocoding,
+    nightly,
+    payments,
+    phones,
+    webhooks,
+)
 from pms.api import (
     addresses,
     ai_keys,
@@ -67,6 +78,7 @@ from pms.api import (
     documents,
     drafts,
     emails,
+    events,
     general_ledger,
     go_live,
     groups,
@@ -149,6 +161,9 @@ class Settings:
     # The nightly run (pms.nightly): rent, late fees and recurring bills post by themselves at
     # start and every day at 06:00 UTC. On unless PMS_NIGHTLY is "off".
     nightly: bool = False
+    # Webhooks (pms.webhooks): each event goes to the company's webhooks every 30 seconds. On
+    # unless PMS_WEBHOOKS is "off"; a server without PMS_DATA_KEY keeps and sends none.
+    webhooks: bool = False
     # "allow" lets a server at an https address run fake partners: a public demo of a synthetic
     # company, and nothing else (pms.deployment). Empty refuses them there.
     fake_partners: str = ""
@@ -173,6 +188,7 @@ class Settings:
             geocoder=os.environ.get("PMS_GEOCODER", ""),
             payments=os.environ.get("PMS_PAYMENTS", ""),
             nightly=os.environ.get("PMS_NIGHTLY", "on").lower() != "off",
+            webhooks=os.environ.get("PMS_WEBHOOKS", "on").lower() != "off",
             fake_partners=os.environ.get("PMS_FAKE_PARTNERS", ""),
             trusted_proxies=os.environ.get("PMS_TRUSTED_PROXIES", "").strip(),
         )
@@ -324,9 +340,15 @@ def create_app(settings: Settings) -> FastAPI:
                 payments=app.state.payments,
             )
             runs.start()
+        courier = None
+        if settings.webhooks:
+            courier = webhooks.Courier(settings.database_url, settings.db_role)
+            courier.start()
         try:
             yield
         finally:
+            if courier is not None:
+                courier.stop()
             if runs is not None:
                 runs.stop()
             pool.close()
@@ -720,6 +742,7 @@ def create_app(settings: Settings) -> FastAPI:
     # Software with an API key (ADR 0011): its own header, never a session's cookie.
     app.include_router(ai_keys.router)
     app.include_router(drafts.router)
+    app.include_router(events.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
     return app

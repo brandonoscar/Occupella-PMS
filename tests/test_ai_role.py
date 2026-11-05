@@ -1,7 +1,8 @@
 """trust_ai_agent, the role behind the API key Occupella will hold (migration 20261010000015).
 
 The AI never moves money: it reads the books and runs the reports, and the database refuses
-every write it tries. tests/test_privileges.py pins the grants; these act as the role.
+every write it tries but proposing a draft (ADR 0011), which moves nothing until a staff member
+approves it. tests/test_privileges.py pins the grants; these act as the role.
 """
 
 from datetime import UTC, date, datetime
@@ -35,7 +36,7 @@ from helpers import (
     transfer_batch,
 )
 from psycopg import sql
-from test_privileges import TABLES
+from test_privileges import AI_WRITES, TABLES
 
 JAN = datetime(2026, 1, 1, tzinfo=UTC)
 JAN_3 = datetime(2026, 1, 3, tzinfo=UTC)
@@ -335,6 +336,10 @@ def test_the_ai_role_writes_no_table(conn, ai_conn, table, statement):
         if kind == "read-only view"
         else psycopg.errors.InsufficientPrivilege
     )
+    if statement in AI_WRITES.get(table, set()):
+        # The role's one write (ADR 0011, AI_WRITES): proposing a draft. Its grant lets the INSERT
+        # through, and the draft's own rules refuse an empty one, so nothing is written.
+        refused = psycopg.errors.NotNullViolation
 
     with pytest.raises(refused):
         ai_conn.execute(sql.SQL(query).format(t=sql.Identifier(table), c=sql.Identifier(column)))

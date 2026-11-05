@@ -98,7 +98,7 @@ The work, in this order, each piece a PR with its tests:
 
 1. Keys (built: migration 20261031000201).
 2. Drafts (built: migration 20261105000300, `src/pms/api/drafts.py`).
-3. Events.
+3. Events (built: migration 20261105000500, `src/pms/api/events.py`, `src/pms/webhooks.py`).
 4. The MCP server.
 5. Enable AI and its screens.
 6. Then, in `occupella-ai`, the connector to this API. AgenticHelixis is added to a session

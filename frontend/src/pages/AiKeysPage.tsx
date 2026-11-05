@@ -16,6 +16,7 @@ import { Wide } from "../components/Wide";
 import { usDate } from "../money";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { WebhooksCard } from "./WebhooksCard";
 
 // An API key as the list shows it (src/pms/api/ai_keys.py): never its secret.
 type ApiKey = {
@@ -109,6 +110,7 @@ export function AiKeysPage({ me }: { me: Me }) {
           </table>
         </Wide>
       )}
+      {admin && <WebhooksCard />}
       {making && (
         <MakeKeyPanel onClose={() => setMaking(false)}
           onMade={(key) => { setSaid(`Made the key ${key.name}.`); refresh(); }} />

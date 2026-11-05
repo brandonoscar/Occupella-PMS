@@ -359,6 +359,14 @@ TABLES = {
     "trust_drafts": {"SELECT"},
     "trust_draft_decisions": {"SELECT", "INSERT"},
     "trust_draft_actions": {"SELECT", "INSERT"},
+    # Events (ADR 0011, migration 20261105000500): written by trust_record_event alone, as the
+    # owner; the webhooks an admin adds and takes back, and each attempt to deliver to one.
+    "trust_events": {"SELECT"},
+    "trust_events_id_seq": set(),
+    "trust_event_subscriptions": {"SELECT", "INSERT"},
+    "trust_event_subscription_revocations": {"SELECT", "INSERT"},
+    "trust_event_deliveries": {"SELECT", "INSERT"},
+    "trust_event_deliveries_id_seq": set(),
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -479,6 +487,11 @@ AI_NEVER_READS = {
     # What the PMS did for an approved draft: staff's words in it, as the emails and notes they
     # write, which the AI never reads either. It reads each draft's decision, never this.
     "trust_draft_actions",
+    # Webhooks: an address and a sealed secret, as an API key is a credential; and what each
+    # receiver answered.
+    "trust_event_subscriptions",
+    "trust_event_subscription_revocations",
+    "trust_event_deliveries",
 }
 # The AI role's one write (ADR 0011): proposing a draft, a plain INSERT, which moves nothing until
 # a staff member approves it and the app does it through its own write paths as them.
@@ -665,6 +678,9 @@ FUNCTIONS = {
     # A draft's key stands and its company is active; its decision and what was done agree.
     "trust_check_draft()": set(),
     "trust_check_draft_action()": set(),
+    # Events are written by the database alone; only an admin adds or takes back a webhook.
+    "trust_record_event()": set(),
+    "trust_check_webhook_admin()": set(),
     "trust_check_tenant_applicant()": set(),
     "trust_check_decision_override()": set(),
     "trust_fill_bill_markup()": set(),
@@ -861,6 +877,7 @@ SECURITY_DEFINER = {
     "trust_decline_journal_entry(uuid,uuid,text)",
     "trust_audit()",  # writes the audit log, which no other role may write
     "trust_check_draft()",  # reads the draft's API key, which the AI's role never reads
+    "trust_record_event()",  # writes events, which neither the app nor the AI's role may write
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
     "trust_check_bill_decision()",  # locks the bill's owner account, which the app can't
     "trust_check_charge_waiver()",  # locks the waived charge, which the app can't

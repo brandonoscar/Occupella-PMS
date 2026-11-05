@@ -214,6 +214,8 @@ RECORDS = {
     # Made by fill_in: an API key (ADR 0011), and a draft software proposed with it.
     "api key": _ONLY.format("trust_api_keys"),
     "draft": _ONLY.format("trust_drafts"),
+    # Made by fill_in: a webhook its events go to.
+    "webhook": _ONLY.format("trust_event_subscriptions"),
 }
 
 # A path parameter's record, by its name; then where one name means another record on a route.
@@ -260,6 +262,7 @@ PATH_IDS = {
     "tax_id": "tax id",
     "key_id": "api key",
     "draft_id": "draft",
+    "subscription_id": "webhook",
     "pmc_id": "company",
     "announcement_id": "announcement",
 }
@@ -405,6 +408,8 @@ EXEMPT = {
     " and each record it names must be that company's (tests/api/test_drafts.py)",
     "GET /api/ai/drafts": "software reads its own drafts with an API key: those its key proposed"
     " (tests/api/test_drafts.py)",
+    "GET /api/events": "software reads its company's events with an API key: the key's company's"
+    " alone, and an id of another's is refused (tests/api/test_events.py)",
 }
 # Where a route refuses another company's record in its path otherwise than as not found, and
 # why (none does today).
@@ -1012,6 +1017,7 @@ def fill_in(client: TestClient, company: Company, conn: psycopg.Connection[Any])
     tenant("POST", f"/api/payments/leases/{lease}/autopay", {"rule": "fixed", "amount": "10.00"})
     company.vendor_token = staff("POST", f"/api/vendors/{vendor}/link")["url"].split("#", 1)[1]
     staff("POST", f"/api/tax-ids/vendors/{vendor}", {"kind": "EIN", "number": "00-7654321"})
+    staff("POST", "/api/ai/webhooks", {"url": "https://hooks.example.com/isolation"})
     secret = staff("POST", "/api/ai/keys", {"name": "Isolation key"})["secret"]
     client.cookies.clear()
     ok(

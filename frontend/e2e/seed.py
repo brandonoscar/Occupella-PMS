@@ -670,6 +670,7 @@ FEATURES = (
     "tax-ids",
     "ai-keys",
     "drafts",
+    "events",
     "reminders",
     "owner-portal-two",
     "portal-messages",

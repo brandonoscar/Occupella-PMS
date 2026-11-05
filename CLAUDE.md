@@ -451,8 +451,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   never inherits it), naming no staff member. A key unknown, taken back or malformed is one 401;
   a key opens no cookie endpoint and a session no key endpoint; a key makes at most
   `ai_keys.PER_MINUTE` (120) requests a minute in a process (429, Retry-After). The everything
-  export leaves its hash out, and the AI role reads neither table. Events, the MCP server and
-  Enable AI come later, each its own piece.
+  export leaves its hash out, and the AI role reads neither table. The MCP server and Enable AI
+  come later, each its own piece.
 - Drafts (ADR 0011's second piece, migration 20261105000300, `src/pms/api/drafts.py`): software
   with a key proposes (`POST /api/ai/drafts`, as `trust_ai_agent`, whose one write is that INSERT
   into `trust_drafts`) an email to tenants, owners or vendors, a notice from a notice template for
@@ -468,6 +468,26 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`trust_draft_actions`, checked against the decision at commit; the AI never reads it). The
   software reads what became of its own drafts (`GET /api/ai/drafts`: waiting, approved, edited
   or not, declined and why). All append-only, audited.
+- Events (ADR 0011's third piece, migration 20261105000500, `src/pms/api/events.py`,
+  `src/pms/webhooks.py`): what happened, written by the database alone (`trust_record_event`, as
+  the owner, on the tables that tell of it) in the same transaction, a kind and ids only
+  (`trust_events`: payment recorded or returned, late fee, lease opened or end changed, bill
+  entered or waiting for its owner, work order opened, assigned, scheduled, completed or
+  cancelled, repair requested, draft approved or declined; none for a write undone). Software
+  reads them with a key (`GET /api/events?after=&limit=`, as the AI's role): its company's, in
+  the order their transactions began writing, each only once every transaction that began
+  writing before it has finished (`xact`, `pg_snapshot_xmin`), so asking after the last it got
+  never skips one; an event waits for the longest writing transaction on the server. An admin
+  adds a webhook at Settings, AI (`pages/WebhooksCard.tsx`; `trust_event_subscriptions`, an https
+  address and a secret sealed under `PMS_DATA_KEY`, shown once, its last four kept; taken back
+  once, `trust_event_subscription_revocations`); each event from then on goes to it signed
+  (`Occupella-Signature: t=,v1=` HMAC-SHA256, `Occupella-Event-Id`), its address checked each
+  time (https, no credentials, every resolved address public, the request sent to the address
+  checked, no redirect), retried after 1 and 5 minutes, half an hour, 2 and 12 hours, six attempts
+  in all and seven days at most (`trust_event_deliveries`), by the API's own thread every 30
+  seconds (`PMS_WEBHOOKS`, on unless "off") or `python -m pms.webhooks deliver`. Events and
+  deliveries are not audited (each repeats an audited write); the AI role reads the events, never
+  a webhook or a delivery.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`

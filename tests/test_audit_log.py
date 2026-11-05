@@ -42,6 +42,10 @@ NOT_AUDITED = {
     # When each session was last used (migration 20261105000200): moved forward every few minutes
     # while someone works, it would bury the log; the session's start and end stay audited.
     "trust_session_activity",
+    # Events and their deliveries (ADR 0011, migration 20261105000500): each event repeats a
+    # write the log already keeps, and each delivery attempt is the courier's, as an email's is.
+    "trust_events",
+    "trust_event_deliveries",
     "trust_document_files",
     "trust_emails",
     "trust_email_deliveries",

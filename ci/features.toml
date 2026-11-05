@@ -1240,6 +1240,19 @@ browser = [
 ]
 
 [[feature]]
+id = "events"
+statement = "Software with an API key (ADR 0011) reads its company's events a page at a time after the last it read: a payment recorded or returned, a late fee, a lease opened or its end changed, a bill entered or waiting for its owner, a work order opened, assigned, scheduled, completed or cancelled, a repair requested and a draft approved or declined, each its kind and ids only, written by the database in the same transaction, in the order their transactions began writing, never one skipped. An admin adds a webhook in Settings, AI (an https address on the public internet), sees its signing secret once, each event signed and sent to it, retried, and takes it back from its row's menu."
+operations = [
+  "GET /api/events",
+  "GET /api/ai/webhooks",
+  "POST /api/ai/webhooks",
+  "POST /api/ai/webhooks/{subscription_id}/revoke",
+]
+browser = [
+  "features.spec.ts › an admin adds a webhook and sees its secret once; software reads the company's events with its key, proposes from one and sees its draft decided; the webhook is taken back",
+]
+
+[[feature]]
 id = "tax-ids"
 statement = "Staff keep an owner's or a vendor's tax ID (an EIN or an SSN), sealed by the server and shown by its last four; an admin reveals one whole and takes the year's 1099 export from the 1099 summary with each payee's tax ID, each time recorded with their name; staff who aren't admins see the last four only (ADR 0010, part F)."
 operations = [

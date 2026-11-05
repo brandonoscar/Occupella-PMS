@@ -31,6 +31,8 @@ NOT_AN_AREA = {
     # maintenance), checked by the approval itself; declining one does nothing.
     "/api/drafts/{draft_id}/approve": "does a draft: the area of its kind",
     "/api/drafts/{draft_id}/decline": "declines a draft: nothing is done",
+    "/api/ai/webhooks": "adds a webhook: admin",
+    "/api/ai/webhooks/{subscription_id}/revoke": "takes a webhook back: admin",
 }
 
 

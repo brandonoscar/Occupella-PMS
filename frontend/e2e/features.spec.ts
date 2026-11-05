@@ -5739,6 +5739,78 @@ test("software proposes drafts with an API key; staff see who an email goes to a
   await expect(page.getByRole("main")).toContainText("Front gate sticks");
 });
 
+test("an admin adds a webhook and sees its secret once; software reads the company's events with its key, proposes from one and sees its draft decided; the webhook is taken back", async ({
+  page,
+  request,
+}) => {
+  const people = seed.features.events!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "AI");
+  await page.getByRole("button", { name: "Make a key" }).click();
+  const made = page.getByRole("dialog", { name: "Make a key" });
+  await made.getByLabel("Name").fill("Events reader");
+  await made.getByRole("button", { name: "Make key" }).click();
+  const key = { Authorization: `Bearer ${await made.getByLabel("Secret key").inputValue()}` };
+  await made.getByRole("button", { name: "Done" }).click();
+
+  // A webhook: an https address on the public internet; its signing secret shown this once.
+  const hook = "https://hooks.example.com/occupella";
+  await page.getByRole("button", { name: "Add webhook" }).click();
+  const adding = page.getByRole("dialog", { name: "Add webhook" });
+  await adding.getByLabel("Address").fill(hook);
+  await adding.getByRole("button", { name: "Add webhook" }).click();
+  const secret = await adding.getByLabel("Signing secret").inputValue();
+  expect(secret).toMatch(/^whsec_[A-Za-z0-9_-]{43}$/);
+  await expectAccessible(page, "Settings, AI, a webhook's secret shown once");
+  await adding.getByRole("button", { name: "Done" }).click();
+  const row = page.getByRole("row", { name: hook });
+  await expect(row).toContainText(`…${secret.slice(-4)}`);
+  await expect(row).toContainText("Active");
+  expect(await page.content()).not.toContain(secret);
+
+  // Software reads the company's events a page at a time: kinds and ids, never a word more.
+  type Event = { id: number; kind: string; subject: Record<string, string> };
+  const all: Event[] = [];
+  let after: number | null = null;
+  for (;;) {
+    const answer = await request.get(`/api/events?limit=500${after ? `&after=${after}` : ""}`, { headers: key });
+    expect(answer.status()).toBe(200);
+    const page_ = (await answer.json()) as { events: Event[]; next: number | null };
+    if (page_.events.length === 0) break;
+    all.push(...page_.events);
+    after = page_.next;
+  }
+  expect(all.map((e) => e.kind)).toEqual(
+    expect.arrayContaining(["lease.opened", "payment.recorded", "bill.waiting_for_owner"]));
+  expect(JSON.stringify(all)).not.toContain("Cedar House");
+  const leased = all.find((e) => e.kind === "lease.opened")!;
+
+  // It proposes a note about that lease's unit; staff decline it, and that is an event too.
+  const proposed = await request.post("/api/ai/drafts", {
+    headers: key,
+    data: { proposal: { kind: "note", about: "unit", about_id: leased.subject.unit_id, body: "Gutters due." } },
+  });
+  expect(proposed.status()).toBe(201);
+  const draft = ((await proposed.json()) as { id: string }).id;
+  await section(page, "Drafts");
+  await page.getByRole("table", { name: "Drafts" }).getByRole("link", { name: /^Note about unit / }).click();
+  await page.getByRole("button", { name: "Decline" }).click();
+  const decline = page.getByRole("dialog", { name: "Decline draft" });
+  await decline.getByLabel("Why").fill("Done already.");
+  await decline.getByRole("button", { name: "Decline" }).click();
+  await expect(page.getByRole("main")).toContainText("Declined by");
+  const later = await request.get(`/api/events?after=${after}`, { headers: key });
+  expect(((await later.json()) as { events: Event[] }).events.map((e) => [e.kind, e.subject])).toEqual([
+    ["draft.declined", { draft_id: draft }],
+  ]);
+
+  // Taken back from its row's menu: no event goes to it from then on.
+  await settings(page, "AI");
+  await chooseAction(page, hook, "Take back");
+  await expect(page.getByText(`Took back the webhook to ${hook}.`)).toBeVisible();
+  await expect(page.getByRole("row", { name: hook })).toContainText("Taken back");
+});
+
 test("staff send a reminder of rent past due from the Dashboard, seeing who gets it first, once a day", async ({
   page,
 }) => {
