@@ -27,13 +27,13 @@ answer in the portal for everything that can fail.
 |---|---|---|---|---|---|
 | [Money and the ledger](#money-and-the-ledger) | 151 | 113 | 7 | 31 | 4 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 160 | 82 | 15 | 63 | 14 |
-| [Concurrency and retries](#concurrency-and-retries) | 142 | 63 | 30 | 49 | 2 |
+| [Concurrency and retries](#concurrency-and-retries) | 142 | 64 | 30 | 48 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 65 | 8 | 92 | 26 |
 | [Bad files and imports](#bad-files-and-imports) | 149 | 63 | 16 | 70 | 4 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 167 | 69 | 14 | 84 | 9 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1147** | **582** | **110** | **455** | **65** |
+| **All** | **1147** | **583** | **110** | **454** | **64** |
 
 ## Open, high risk: the work list
 
@@ -66,7 +66,6 @@ its ten most pressing, each with the test that would close it.
 
 **Concurrency and retries**
 
-- C-055: A payout run's ACH file taken twice and uploaded to the bank twice
 - C-090: Stripe gives up on a webhook after days of failed deliveries
 
 **Partners and outside services down, slow or wrong**
@@ -477,7 +476,6 @@ its ten most pressing, each with the test that would close it.
 
 | ID | Edge case | What the PMS does | Status | Evidence | Risk |
 |---|---|---|---|---|---|
-| C-055 | A payout run's ACH file taken twice and uploaded to the bank twice | Each download is logged and the page says Taken N times, but nothing asks before a second take and the file is the same (NOT VERIFIED whether a bank refuses it) | Open | src/pms/api/payouts.py:601 (take_file) | H |
 | C-090 | Stripe gives up on a webhook after days of failed deliveries | Nothing polls for it; the payment never reaches the books, and if staff record it by hand a later resend records it twice | Open | src/pms/api/online_payments.py:622 (receive only; no event poll in src/pms/payments.py) | H |
 | C-041 | Staff void a bill while another staff member pays it | The decision trigger locks the owner's account; a void after money was taken is refused | Guarded | db/schema.sql:2496 (trust_check_bill_decision) | H |
 | C-050 | Two staff pay the night's prepared draws under different request ids | One approval; the second gets 409 paid already | Guarded | src/pms/api/payables.py:2208 | H |
@@ -511,6 +509,7 @@ its ten most pressing, each with the test that would close it.
 | C-052 | One management fee taken twice at once | Posted once | Tested | `tests/test_owner_money.py::test_the_same_fee_taken_twice_at_once_posts_once` | H |
 | C-053 | An owner fee resent | Taken once; another amount under its id is refused | Tested | `tests/api/test_owner_fees_api.py::test_staff_take_a_fee_from_an_owner_once_per_request` | H |
 | C-054 | Two withdrawals of the company's fees at once | Never more than the fee account holds | Tested | `tests/test_company_fees.py::test_two_withdrawals_at_once_cannot_take_more_than_is_there` | H |
+| C-055 | A payout run's ACH file taken twice and uploaded to the bank twice | A run's ACH file taken already comes again only when asked again (?again=true, else 409 saying a bank pays a file uploaded twice twice); Payout files shows Download again, which asks first, and counts a take at once; checks print again freely | Tested | tests/api/test_payouts_api.py::test_an_ach_file_taken_already_is_given_again_only_when_asked_for_again; frontend/src/pages/PayoutFiles.test.tsx | H |
 | C-056 | A posting while an approval is in progress | Waits, then refused | Tested | `tests/test_reconciliation.py::test_a_posting_waits_for_an_approval_in_progress_and_is_then_refused` | H |
 | C-057 | An approval while a posting is in flight | Waits and counts it | Tested | `tests/test_reconciliation.py::test_an_approval_waits_for_a_posting_in_flight_and_counts_it` | H |
 | C-059 | Approve after the books moved or the period was prepared again | 409 in words | Tested | `tests/api/test_reconcile.py::test_approving_takes_the_role_and_the_figures_as_prepared` | H |

@@ -659,7 +659,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   Pay owners and Pay bills may write their payouts' files (`trust_payout_runs`, per trust bank
   account and way paid): a NACHA file (PPD to owners, CCD to vendors) and checks to print on
   pre-printed stock, numbered on; a download takes disburse and is logged
-  (`trust_payout_file_downloads`). The PMS moves no money: the company's bank does. All
+  (`trust_payout_file_downloads`), and an ACH file taken already comes again only when asked
+  again (`?again=true`; the page's Download again asks first: a bank pays a file uploaded twice). The PMS moves no money: the company's bank does. All
   append-only; the AI role reads no bank account, ACH detail or download.
 - Receive payment and the lease money rules (migration 0154, `docs/adr/0010-design-pass.md` phase
   1c): one panel (`pages/ReceivePayment.tsx`) from the rent roll, a lease's page and a housing

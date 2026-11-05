@@ -598,10 +598,23 @@ def items_of(conn: psycopg.Connection[Any], run: UUID) -> list[Item]:
     ]
 
 
+# docs/edge-cases.md C-055: the bank pays every ACH file it is given, so one uploaded twice pays
+# everyone in it twice. Checks print again as often as needed (a jam, a lost page).
+TAKEN = (
+    "this ACH file was taken already: uploading it to the bank again pays everyone in it twice,"
+    " so ask for it again only to replace a file the bank never took"
+)
+
+
 def take_file(
-    conn: psycopg.Connection[Any], session: Any, run_id: UUID, method: PayoutMethod
+    conn: psycopg.Connection[Any],
+    session: Any,
+    run_id: UUID,
+    method: PayoutMethod,
+    again: bool = True,
 ) -> RunShown:
-    """The run, once staff who may pay out money ask for its file; logs who took it."""
+    """The run, once staff who may pay out money ask for its file; logs who took it. A file
+    taken before is given again only when asked for `again`."""
     found = runs_of(conn, session.pmc_id, run=run_id)
     if not found:
         raise HTTPException(404, "no such payout run")
@@ -620,6 +633,8 @@ def take_file(
         raise HTTPException(
             403, "only staff who may pay out money (the disburse role) take a payout file"
         )
+    if run.downloads and not again:
+        raise HTTPException(409, TAKEN)
     conn.execute(
         "INSERT INTO trust_payout_file_downloads (pmc_id, run_id, file) VALUES (%s, %s, %s)",
         (session.pmc_id, run_id, "ach" if method == "EFT" else "checks"),
@@ -628,10 +643,11 @@ def take_file(
 
 
 @router.get("/runs/{run_id}/ach")
-def ach_file(session: Staff, conn: Conn, run_id: UUID) -> Response:
+def ach_file(session: Staff, conn: Conn, run_id: UUID, again: bool = False) -> Response:
     """The run's ACH file (NACHA) for the company to upload to its bank: one credit to each
-    payee's bank account, their payouts in the run summed."""
-    run = take_file(conn, session, run_id, "EFT")
+    payee's bank account, their payouts in the run summed. Taken before, it comes again only
+    with `again` (the portal asks first)."""
+    run = take_file(conn, session, run_id, "EFT", again)
     try:
         key = sealed.key_from()
     except sealed.NoKey as missing:

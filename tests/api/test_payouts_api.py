@@ -388,10 +388,33 @@ def test_an_ach_file_taken_again_is_the_one_made_when_the_run_was_paid(client, c
         )
     )
     owner_bank(client, pmc, number="99999999")
-    again = client.get(f"/api/payouts/runs/{run}/ach").content
+    again = client.get(f"/api/payouts/runs/{run}/ach?again=true").content
     # Byte for byte: the bank details, the account and the time are the run's.
     assert again == first
     assert first.decode("ascii").splitlines()[0][63:86].strip() == "GOLDEN PMC"
+
+
+def test_an_ach_file_taken_already_is_given_again_only_when_asked_for_again(
+    client, conn, staff, pmc
+):
+    """docs/edge-cases.md C-055: a second take of a run's ACH file asked nothing, and uploading
+    it to the bank twice pays everyone in it twice. Checks print again as often as needed."""
+    fund(conn, pmc, "500.00")
+    ach_details(client, pmc)
+    owner_bank(client, pmc)
+    run = ok(pay_owners(client, pmc, "EFT", amount="125.50"), 201)[0]["run_id"]
+    first = client.get(f"/api/payouts/runs/{run}/ach")
+    assert first.status_code == 200, first.text
+
+    refused(
+        client.get(f"/api/payouts/runs/{run}/ach"),
+        409,
+        "this ACH file was taken already: uploading it to the bank again pays everyone in it"
+        " twice, so ask for it again only to replace a file the bank never took",
+    )
+    refused(client.get(f"/api/payouts/runs/{run}/ach?again=maybe"), 422)
+    assert client.get(f"/api/payouts/runs/{run}/ach?again=true").content == first.content
+    assert ok(client.get("/api/payouts/runs?kind=owners"))[0]["downloads"] == 2
 
 
 def test_owners_paid_by_check_get_their_checks_numbered_on(client, conn, staff, pmc):

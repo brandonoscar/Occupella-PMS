@@ -45,10 +45,39 @@ describe("PayoutFiles", () => {
       ["10/24/2026", "Owners", "ACH", "Operating", "2", "$650.00", "Staff 1"],
       ["10/24/2026", "Bills", "Check", "Operating", "1", "$40.00", "Staff 1"],
     ]);
-    expect(within(rows[0]!).getByRole("link", { name: "Download the ACH file" }).getAttribute("href")).toBe("/api/payouts/runs/r1/ach");
+    // An ACH file taken already asks before it comes again (docs/edge-cases.md C-055).
+    expect(within(rows[0]!).queryByRole("link", { name: "Download the ACH file" })).toBeNull();
+    expect(within(rows[0]!).getByRole("button", { name: "Download again" })).toBeTruthy();
     expect(within(rows[0]!).getByText("Taken 1 time")).toBeTruthy();
     expect(within(rows[1]!).getByRole("link", { name: "Print the checks" }).getAttribute("href")).toBe("/api/payouts/runs/r2/checks");
     expect(fetch.mock.calls[0]?.[0]).toBe("/api/payouts/runs?kind=owners");
+  });
+
+  it("asks before an ACH file is taken a second time, and counts a take at once", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    server(BARE, [{ ...RUN, downloads: 0 }, { ...RUN, id: "r2", method: "check", downloads: 3 }]);
+    render(<PayoutFiles query={{}} />);
+    const table = await screen.findByRole("table", { name: "Payout files" });
+    const [ach, checks] = within(table).getAllByRole("row").slice(1);
+
+    // The first take is a plain link; once clicked, the next asks.
+    fireEvent.click(within(ach!).getByRole("link", { name: "Download the ACH file" }));
+    expect(within(ach!).getByText("Taken 1 time")).toBeTruthy();
+    fireEvent.click(within(ach!).getByRole("button", { name: "Download again" }));
+    const asked = screen.getByRole("alertdialog");
+    expect(asked.textContent).toContain(
+      "This ACH file was taken 1 time already. Uploading it to the bank again pays everyone in it twice.",
+    );
+    fireEvent.click(within(asked).getByRole("button", { name: "Cancel" }));
+    expect(assign).not.toHaveBeenCalled();
+    fireEvent.click(within(ach!).getByRole("button", { name: "Download again" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Download again" }));
+    expect(assign).toHaveBeenCalledWith("/api/payouts/runs/r1/ach?again=true");
+    expect(within(ach!).getByText("Taken 2 times")).toBeTruthy();
+    // Checks print again as often as needed.
+    expect(within(checks!).getByRole("link", { name: "Print the checks" })).toBeTruthy();
+    expect(within(checks!).getByText("Taken 3 times")).toBeTruthy();
   });
 
   it("says when no file was made yet", async () => {

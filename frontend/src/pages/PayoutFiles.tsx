@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { Button } from "../components/Button";
+import { AskFirst } from "../components/Confirm";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { Notice } from "../components/Notice";
@@ -17,9 +18,10 @@ import { useRecord } from "./useRecord";
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
 // The payout files Pay owners and Pay bills made (ADR 0010 phase 1b): each run's ACH file to
-// upload to the bank, or its checks to print on the account's check stock, newest first. A file
-// downloads again as often as needed; each download is logged, and only staff who may pay out
-// money (the disburse role) take one.
+// upload to the bank, or its checks to print on the account's check stock, newest first. Checks
+// print again as often as needed; an ACH file taken before asks first, as the bank pays a file
+// uploaded twice twice (docs/edge-cases.md C-055). Each download is logged, and only staff who
+// may pay out money (the disburse role) take one.
 export function PayoutFiles({ query, runs = 0, title = "Payout files" }: { query: Record<string, string>; runs?: number; title?: string }) {
   const [found, setFound] = useState<PayoutRun[] | null>(null);
   const [error, setError] = useState("");
@@ -54,34 +56,55 @@ export function PayoutFiles({ query, runs = 0, title = "Payout files" }: { query
               </tr>
             </thead>
             <tbody>
-              {found.map((run) => {
-                const file = runFile(run);
-                return (
-                  <tr key={run.id}>
-                    <td className="whitespace-nowrap">{usDate(run.paid_on)}</td>
-                    <td>{run.kind === "owners" ? "Owners" : "Bills"}</td>
-                    <td>{methodWord(run.method)}</td>
-                    <td>{run.bank_account}</td>
-                    <td className="text-right">{run.payouts}</td>
-                    <td className="text-right">{money(run.total)}</td>
-                    <td className="text-ink-muted">{run.recorded_by ?? "The PMS"}</td>
-                    <td className="text-right whitespace-nowrap">
-                      <a href={file.href} className={LINK}>{file.label}</a>
-                      {run.downloads > 0 && (
-                        <span className="block text-sm text-ink-muted">
-                          Taken {run.downloads} time{run.downloads === 1 ? "" : "s"}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+              {found.map((run) => (
+                <tr key={run.id}>
+                  <td className="whitespace-nowrap">{usDate(run.paid_on)}</td>
+                  <td>{run.kind === "owners" ? "Owners" : "Bills"}</td>
+                  <td>{methodWord(run.method)}</td>
+                  <td>{run.bank_account}</td>
+                  <td className="text-right">{run.payouts}</td>
+                  <td className="text-right">{money(run.total)}</td>
+                  <td className="text-ink-muted">{run.recorded_by ?? "The PMS"}</td>
+                  <td className="text-right whitespace-nowrap">
+                    <RunFile run={run} />
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </Wide>
       )}
     </Card>
   );
+}
+
+// A run's file: its link, or for an ACH file taken already Download again, asked first. A take
+// on this page counts at once, so a second click asks too.
+function RunFile({ run }: { run: PayoutRun }) {
+  const file = runFile(run);
+  const [seen, setSeen] = useState(0);
+  const taken = Math.max(run.downloads, seen);
+  return (
+    <>
+      {run.method === "EFT" && taken > 0 ? (
+        <AskFirst variant="secondary"
+          question={`This ACH file was taken ${times(taken)} already. Uploading it to the bank again pays everyone in it twice. Download it again only to replace a file the bank never took.`}
+          onConfirm={() => {
+            setSeen(taken + 1);
+            window.location.assign(`${file.href}?again=true`);
+          }}>
+          Download again
+        </AskFirst>
+      ) : (
+        <a href={file.href} className={LINK} onClick={() => setSeen(taken + 1)}>{file.label}</a>
+      )}
+      {taken > 0 && <span className="block text-sm text-ink-muted">Taken {times(taken)}</span>}
+    </>
+  );
+}
+
+function times(n: number): string {
+  return n === 1 ? "1 time" : `${n} times`;
 }
 
 // "Synthetic Bank, routing 001234561; origin 1000000000 Golden PMC; company 1000000000 Golden":
