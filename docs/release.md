@@ -9,8 +9,8 @@ What the repo does today: every change reaches `main` through a PR whose checks 
 (docs/CI.md); `Dockerfile` and `compose.yaml` build the self-host image from the source; the
 image's default command applies the migrations (`dbmate --wait up`); `compose.selfhost.yaml` and
 docs/install.md run it for a real company. The first release, `v2026.11.0`, started the tags and
-`CHANGELOG.md`. Not yet: no image is published to a registry, and branch protection on `main` is
-off (below).
+`CHANGELOG.md`. Each tag also publishes a signed image (below). Not yet: branch protection on
+`main` is off (below).
 
 ## A release
 
@@ -29,12 +29,29 @@ off (below).
 
 ## The self-host image
 
-Each company builds its image from the tag, on its own machine, with the pinned base images the
-`Dockerfile` names: `git checkout v2026.11.0 && docker compose build`. The repo publishes no
-image: publishing one needs a registry and a signing key, a secret, and Phase 0 has none
-(CLAUDE.md, rule 5). selfhost.yml builds the same image every night and on every PR that
-touches it, lists what it holds (Syft) and fails on a known high or critical vulnerability with
-a fix (Grype); the daily scan does the same for `main` every morning.
+A company builds its image from the tag, on its own machine, with the pinned base images the
+`Dockerfile` names: `git checkout v2026.11.0 && docker compose build`. selfhost.yml builds the
+same image every night and on every PR that touches it, lists what it holds (Syft) and fails on
+a known high or critical vulnerability with a fix (Grype); the daily scan does the same for
+`main` every morning.
+
+Pushing a tag also publishes the image (release-image.yml), for a company or a host that would
+rather pull it than build it: built from the tag, scanned the same way, pushed to
+`ghcr.io/brandonoscar/occupella-pms:<tag>`, then signed with Sigstore's keyless signing and its
+SBOM attached. It holds no secret (CLAUDE.md, rule 5): the registry takes the run's own
+`GITHUB_TOKEN`, and the signature rests on the run's identity, not on a key anyone keeps; a pull
+request can't start it. The first push makes the package private on GitHub: its owner sets it
+public once (the package's settings, Change visibility). Check an image's signature before
+running it:
+
+```sh
+cosign verify ghcr.io/brandonoscar/occupella-pms:v2026.11.0 \
+  --certificate-identity-regexp '^https://github.com/brandonoscar/Occupella-PMS/.github/workflows/release-image.yml@refs/tags/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The run's summary prints the same command with the image's digest. Tags pushed before
+release-image.yml existed (`v2026.11.0`) have no published image.
 
 ## Migrations
 

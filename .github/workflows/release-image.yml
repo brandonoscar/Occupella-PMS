@@ -1,0 +1,80 @@
+name: release-image
+
+# On each release tag (docs/release.md: vYYYY.MM.N), publish the self-host image: build it from
+# the tag, list what it holds (Syft) and fail on a known high or critical vulnerability with a fix
+# (Grype), as selfhost.yml does every night; push it to GitHub's registry as
+# ghcr.io/<owner>/occupella-pms:<tag>; then sign it and attach its SBOM with Sigstore's keyless
+# signing, which proves the image was built by this workflow from this repo's tag.
+#
+# It holds no secret (CLAUDE.md, rule 5): the registry takes the run's own GITHUB_TOKEN, and
+# Sigstore takes the run's OIDC identity, so there is no signing key to keep. A pull request can't
+# trigger it: only pushing a tag can, which only a maintainer does.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io with the run's own token
+      id-token: write # Sigstore's keyless signing: the run's identity, never a stored key
+    env:
+      GOTOOLCHAIN: auto
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the image from the tag
+        run: docker compose build
+      - name: What the image holds (Syft) and its fixable vulnerabilities (Grype)
+        run: |
+          go install github.com/anchore/syft/cmd/syft@v1.54.1
+          go install github.com/anchore/grype/cmd/grype@v0.120.1
+          "$(go env GOPATH)/bin/syft" occupella-pms:local -o cyclonedx-json="$RUNNER_TEMP/sbom.json"
+          "$(go env GOPATH)/bin/grype" "sbom:$RUNNER_TEMP/sbom.json" --only-fixed --fail-on high
+      - name: Push it to ghcr.io
+        id: push
+        env:
+          # The run's own token, read from the environment and handed to docker on stdin, never
+          # on a command line.
+          REGISTRY_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/occupella-pms"
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag occupella-pms:local "$image:$TAG"
+          docker push "$image:$TAG"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$image:$TAG")
+          echo "ref=$digest" >> "$GITHUB_OUTPUT"
+          echo "Pushed $digest"
+      - name: Sign it and attach its SBOM (Sigstore, keyless)
+        env:
+          IMAGE_REF: ${{ steps.push.outputs.ref }}
+        run: |
+          go install github.com/sigstore/cosign/v2/cmd/cosign@v2.4.1
+          cosign="$(go env GOPATH)/bin/cosign"
+          "$cosign" sign --yes "$IMAGE_REF"
+          "$cosign" attest --yes --type cyclonedx --predicate "$RUNNER_TEMP/sbom.json" "$IMAGE_REF"
+      - name: Say how to check it
+        env:
+          IMAGE_REF: ${{ steps.push.outputs.ref }}
+        run: |
+          {
+            echo "### Published $IMAGE_REF"
+            echo
+            echo "Check its signature before running it (docs/release.md, \"The self-host image\"):"
+            echo
+            echo '```'
+            echo "cosign verify $IMAGE_REF \\"
+            echo "  --certificate-identity-regexp '^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-image.yml@refs/tags/' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
