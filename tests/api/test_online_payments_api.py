@@ -376,12 +376,30 @@ def test_the_company_covers_the_partners_fee_its_account_cant(
     assert balance(conn, pmc.pmc_income) == Decimal("0.00")
 
 
+def test_a_return_for_a_payment_that_failed_is_acknowledged_and_changes_nothing(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    """A failed payment is never paid, so a return about it can't wait for one: it is
+    acknowledged (the partner stops) and changes nothing."""
+    turn_on(client, "tenant")
+    payment = pay(tenant_client, lease, "1000.00")["id"]
+    bank_says(tenant_client, payment, "failed")
+    owner_before = balance(conn, pmc.owners[0].account)
+    assert bank_says(tenant_client, payment, "returned") == {"recorded": True}
+    assert balance(conn, pmc.owners[0].account) == owner_before
+    assert f"bounce/payment/{payment}" not in keys(conn, pmc)
+
+
 def test_a_return_is_a_bounce_and_the_tenants_fee_goes_back_out(
     client, tenant_client, conn, staff, tenant, lease, pmc
 ):
     turn_on(client, "tenant")
     payment = pay(tenant_client, lease, "1000.00")["id"]
-    bank_says(tenant_client, payment, "returned")  # not paid yet: nothing came back
+    # A return reported before the payment is paid in the books (docs/edge-cases.md C-087,
+    # P-024): refused for now, so the partner sends it again later, never acknowledged and lost.
+    early = tenant_client.post(f"/api/payments/fake/{payment}", json={"outcome": "returned"})
+    assert early.status_code == 409
+    assert early.json() == {"detail": op.SEND_AGAIN}
     assert f"bounce/payment/{payment}" not in keys(conn, pmc)
     owner_before = balance(conn, pmc.owners[0].account)
     bank_says(tenant_client, payment, "paid")

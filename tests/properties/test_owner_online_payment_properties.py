@@ -140,6 +140,13 @@ class OwnerPaymentsMachine(RuleBasedStateMachine):
             fee if kind == "paid" else None,
         )
         done, refused = self.call(owners.apply, self.conn, event_, "fake")
+        if kind == "returned" and not {"paid", "failed"} & p.reported.keys():
+            # Before paid (docs/edge-cases.md C-087, C-088): refused for now, so the partner
+            # sends it again, never acknowledged and lost; it changes nothing yet.
+            assert refused is not None and refused.status_code == 409
+            assert refused.detail == op.SEND_AGAIN
+            event("a return before paid, sent again later")
+            return
         assert refused is None and done is True
         # A report about it is no tenant's payment.
         assert op.row_of(self.conn, p.id) is None

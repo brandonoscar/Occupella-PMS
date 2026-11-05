@@ -58,6 +58,12 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   "the server answered 500"; New York's renewal notice counts a 12-month lease as a year (60 days,
   not 30) and two years to the day as two (90, not 60); and a server started with the nightly run
   off says so in its log, with what to run instead.
+- **Fixed: a bank return reported before its payment was lost.** When the payments partner's
+  report that the bank took a payment back arrived before its report that the bank paid it (paid
+  retried after a hiccup, say), the PMS acknowledged it and dropped it, so the books kept rent or
+  an owner's money the bank had taken back. It now answers 409 until the payment is paid in the
+  books, and the partner's next try takes it back out. A return about a payment that failed is
+  still acknowledged and changes nothing.
 - **Fixed: rent charged twice in a month.** Run rent now with Rent due on set to a day other than
   the first (the 15th, say) charged every lease due on the first a second month's rent and each
   monthly charge a second time, and a rent the old system's unpaid charges carried over on another

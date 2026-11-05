@@ -551,6 +551,30 @@ def settle(conn: psycopg.Connection[Any], row: Row, on: date | None = None) -> N
             )
 
 
+# A return reported before its payment's paid report: refused for now (409), so the partner sends
+# it again once paid is in (Stripe retries a webhook for days), never acknowledged and lost, which
+# left the books holding money the bank took back (docs/edge-cases.md C-087, C-088, P-024).
+SEND_AGAIN = (
+    "this payment isn't paid in the books yet, so it can't come back: send this again later"
+)
+
+
+def refuse_too_soon(
+    conn: psycopg.Connection[Any], events: str, payment_id: UUID, kind: str
+) -> None:
+    """Raise 409 for a return out of order that a paid report may still come before: neither
+    paid nor failed is recorded. A return after a failure is acknowledged, as no paid will come."""
+    if kind != "returned":
+        return
+    reached = conn.execute(
+        f"SELECT EXISTS (SELECT 1 FROM {events} WHERE payment_id = %s"  # noqa: S608
+        " AND kind IN ('paid', 'failed'))",
+        (payment_id,),
+    ).fetchone()
+    if reached is not None and not reached[0]:
+        raise HTTPException(409, SEND_AGAIN)
+
+
 def apply(conn: psycopg.Connection[Any], event: payments.Event, partner: str) -> bool:
     """Records the partner's report about a payment it took (once per payment and kind) and
     settles what it calls for. False when the payment isn't one this partner took for the PMS."""
@@ -567,6 +591,7 @@ def apply(conn: psycopg.Connection[Any], event: payments.Event, partner: str) ->
                 (row.pmc_id, row.id, event.kind, event.event_id, event.fee, event.happened_at),
             )
     except psycopg.errors.CheckViolation:
+        refuse_too_soon(conn, "trust_online_payment_events", row.id, event.kind)
         return True  # out of order (paid after failed, say): kept as it first came
     settle(conn, row)
     return True
