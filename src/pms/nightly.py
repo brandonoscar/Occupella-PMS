@@ -178,7 +178,14 @@ def run_all(
         return []
     try:
         if pmcs is None:
-            pmcs = [row[0] for row in conn.execute("SELECT pmc_id FROM trust_pmcs ORDER BY pmc_id")]
+            # A closed company's books stay as they are; a suspended one's keep posting.
+            pmcs = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT pmc_id FROM trust_pmcs WHERE trust_pmc_status(pmc_id) <> 'closed'"
+                    " ORDER BY pmc_id"
+                )
+            ]
             conn.commit()
         done = []
         for pmc_id in pmcs:

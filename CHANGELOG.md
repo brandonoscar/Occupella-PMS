@@ -26,6 +26,11 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   starts it. Copying the dumps off the server is still yours to set up (docs/backup.md).
 - **Fixed:** the Dashboard asked for a day at the calendar's very ends (year 1 or 9999) answered
   with a server error; it now says which days it shows (1900 to 9999).
+- **A company's status**, set by whoever runs the server with `python -m pms.admin status <company
+  id> {active,suspended,closed} <reason>`. Suspended: nobody signs in, open sessions and API keys
+  stop and no password reset is sent, while the nightly run keeps posting. Closed: the same, and
+  the nightly run stops. Nothing is deleted. Migration `20261105000100` (a new table, no change to
+  trust tables' money).
 - **A starting chart of accounts:** `python -m pms.admin setup` gives a new company twelve
   expense accounts on their Schedule E lines (advertising, cleaning and maintenance, landscaping,
   pest control, insurance, legal and professional fees, repairs, supplies, property taxes,

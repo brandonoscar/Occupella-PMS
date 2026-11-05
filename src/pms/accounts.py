@@ -94,6 +94,23 @@ class CodeNeeded(Refused):
     """Staff: the password was right, and the authenticator code is missing or wrong."""
 
 
+class CompanyNotActive(Refused):
+    """The company is suspended or closed (`python -m pms.admin status`, migration
+    20261105000100): nobody signs in to it, whoever they are."""
+
+
+# What a person signing in to a company that isn't active is told.
+NOT_ACTIVE = {
+    "suspended": "this company's account is suspended: ask whoever runs this server",
+    "closed": "this company's account is closed",
+}
+
+
+def company_status(conn: psycopg.Connection[Any], pmc_id: UUID) -> str:
+    """The company's status: active, suspended or closed (trust_pmc_status)."""
+    return str(_one(conn, "SELECT trust_pmc_status(%s)", (pmc_id,))[0])
+
+
 @dataclass(frozen=True)
 class Session:
     login_id: UUID
@@ -217,7 +234,10 @@ def request_reset(conn: psycopg.Connection[Any], pmc_id: UUID, email: str) -> Re
     that can sign in and asked fewer than RESETS_PER_HOUR times in the last hour; None
     otherwise. The caller answers the same either way, so it doesn't tell who has a login. A
     staff member resets through an admin's new invite instead: an emailed link must not get past
-    their authenticator. Accepting it sets the new password, so until then the old one works."""
+    their authenticator. Accepting it sets the new password, so until then the old one works.
+    A company that isn't active sends none."""
+    if company_status(conn, pmc_id) != "active":
+        return None
     found = _one(
         conn,
         "SELECT kind, coalesce(owner_id, tenant_id) FROM trust_logins"
@@ -337,7 +357,11 @@ def sign_in(
     conn: psycopg.Connection[Any], pmc_id: UUID, email: str, password: str, code: str | None
 ) -> Signed:
     """A new session, or SignInRefused (the same for every reason) or CodeNeeded (staff whose
-    password was right). A failure is committed before it is raised, so it counts."""
+    password was right). A failure is committed before it is raised, so it counts. A company
+    that isn't active refuses everyone the same way, before any login is looked at."""
+    status = company_status(conn, pmc_id)
+    if status != "active":
+        raise CompanyNotActive(NOT_ACTIVE[status])
     row = _one(
         conn,
         "SELECT l.id, l.kind, s.password_hash, s.totp_secret, s.totp_confirmed_at,"
@@ -430,7 +454,7 @@ def session_for(conn: psycopg.Connection[Any], token: str) -> Session | None:
         "SELECT l.id, l.pmc_id, l.kind, coalesce(l.staff_id, l.owner_id, l.tenant_id), l.email"
         " FROM trust_sessions AS s JOIN trust_logins AS l ON l.id = s.login_id"
         " WHERE s.token_hash = %s AND s.ended_at IS NULL AND s.expires_at > now()"
-        " AND l.disabled_at IS NULL",
+        " AND l.disabled_at IS NULL AND trust_pmc_status(l.pmc_id) = 'active'",
         (digest(token),),
     )
     return None if row is None else Session(*row)

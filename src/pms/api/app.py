@@ -402,6 +402,7 @@ def create_app(settings: Settings) -> FastAPI:
             accounts.Conflict: 409,
             accounts.SignInRefused: 401,
             accounts.CodeNeeded: 401,
+            accounts.CompanyNotActive: 403,
         }.get(type(error), 422)
         return JSONResponse({"detail": str(error)}, status)
 

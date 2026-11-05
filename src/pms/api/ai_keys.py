@@ -181,7 +181,9 @@ def with_key(request: Request, conn: Conn) -> Key:
     row = conn.execute(
         "SELECT k.id, k.pmc_id, k.name, p.display_name FROM trust_api_keys AS k"
         " JOIN trust_pmcs AS p ON p.pmc_id = k.pmc_id WHERE k.secret_sha256 = %s"
-        " AND NOT EXISTS (SELECT 1 FROM trust_api_key_revocations AS r WHERE r.key_id = k.id)",
+        " AND NOT EXISTS (SELECT 1 FROM trust_api_key_revocations AS r WHERE r.key_id = k.id)"
+        # A suspended or closed company's keys stop with its sign-ins.
+        " AND trust_pmc_status(k.pmc_id) = 'active'",
         (accounts.digest(secret),),
     ).fetchone()
     if row is None:

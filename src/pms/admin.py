@@ -8,11 +8,15 @@ usage:
   python -m pms.admin make-admin <pmc_id> <staff_id>
   python -m pms.admin invite <pmc_id> {staff,owner,tenant} <person_id> <email>
   python -m pms.admin starting-chart <pmc_id>
+  python -m pms.admin status <pmc_id> {active,suspended,closed} <reason>
 
 setup does the first install's steps in one: it adds the company (its PMC), its first staff
 member, makes them its admin, gives the company its starting expense accounts (the Schedule E
 chart in pms.api.setup.STARTING_CHART) and prints their invite link, all or nothing.
 starting-chart adds those accounts to a company made before setup did, skipping any it has.
+status sets a company's status (migration 20261105000100): suspended, nobody signs in and its
+sessions and API keys stop, while its nightly run goes on; closed, the same and its nightly run
+stops too; active again undoes either. Nothing is deleted.
 
 make-admin names nobody, so the database grants it only to a PMC that has no admin yet.
 
@@ -55,6 +59,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "starting-chart", help="add the starting expense accounts a company lacks"
     )
     chart.add_argument("pmc_id", type=UUID)
+    status = commands.add_parser("status", help="set a company's status, with the reason")
+    status.add_argument("pmc_id", type=UUID)
+    status.add_argument("status", choices=["active", "suspended", "closed"])
+    status.add_argument("reason")
     invite = commands.add_parser("invite", help="print an invite link for a person")
     invite.add_argument("pmc_id", type=UUID)
     invite.add_argument("kind", choices=sorted(accounts.KINDS))
@@ -111,6 +119,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                     return 2
                 added = books.add_starting_chart(conn, options.pmc_id)
                 print(f"added {added} expense accounts")
+            elif options.command == "status":
+                if (
+                    conn.execute(
+                        "SELECT 1 FROM trust_pmcs WHERE pmc_id = %s", (options.pmc_id,)
+                    ).fetchone()
+                    is None
+                ):
+                    print("refused: no company has that id", file=sys.stderr)
+                    return 2
+                conn.execute(
+                    "INSERT INTO trust_company_statuses (pmc_id, status, reason)"
+                    " VALUES (%s, %s, %s)",
+                    (options.pmc_id, options.status, options.reason.strip()),
+                )
+                print(f"{options.pmc_id} is {options.status}")
             elif options.command == "make-admin":
                 conn.execute(
                     "INSERT INTO trust_staff_roles (pmc_id, staff_id, role, granted)"

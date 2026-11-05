@@ -6805,6 +6805,23 @@ $$;
 
 
 --
+-- Name: trust_pmc_status(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_pmc_status(p_pmc_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT coalesce(
+        (SELECT s.status FROM trust_company_statuses AS s
+         WHERE s.pmc_id = p_pmc_id
+         ORDER BY s.created_at DESC, s.id DESC LIMIT 1),
+        'active'
+    )
+$$;
+
+
+--
 -- Name: trust_pmc_time_zone(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15197,6 +15214,21 @@ CREATE TABLE public.trust_company_profiles (
 
 
 --
+-- Name: trust_company_statuses; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_company_statuses (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    status text NOT NULL,
+    reason text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_company_statuses_reason_check CHECK (((reason ~ '\S'::text) AND (length(reason) <= 500))),
+    CONSTRAINT trust_company_statuses_status_check CHECK ((status = ANY (ARRAY['active'::text, 'suspended'::text, 'closed'::text])))
+);
+
+
+--
 -- Name: trust_contacts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19022,6 +19054,14 @@ ALTER TABLE ONLY public.trust_company_profiles
 
 
 --
+-- Name: trust_company_statuses trust_company_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_company_statuses
+    ADD CONSTRAINT trust_company_statuses_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_contacts trust_contacts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22137,6 +22177,13 @@ CREATE INDEX trust_company_profiles_recorded_by ON public.trust_company_profiles
 
 
 --
+-- Name: trust_company_statuses_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_company_statuses_pmc ON public.trust_company_statuses USING btree (pmc_id, created_at);
+
+
+--
 -- Name: trust_contacts_by_owner; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -24580,6 +24627,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_company_statuses trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_company_statuses FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_contacts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26194,6 +26248,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_char
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_company_profiles FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_company_statuses trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_company_statuses FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -30290,6 +30351,14 @@ ALTER TABLE ONLY public.trust_company_profiles
 
 ALTER TABLE ONLY public.trust_company_profiles
     ADD CONSTRAINT trust_company_profiles_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_company_statuses trust_company_statuses_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_company_statuses
+    ADD CONSTRAINT trust_company_statuses_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
 
 
 --
@@ -34810,4 +34879,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261104000600'),
     ('20261104000700'),
     ('20261104000800'),
-    ('20261104000900');
+    ('20261104000900'),
+    ('20261105000100');

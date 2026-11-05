@@ -56,6 +56,8 @@ TABLES = {
     "trust_email_settings": {"SELECT", "INSERT"},
     "trust_owner_approval_settings": {"SELECT", "INSERT"},
     "trust_payment_instructions": {"SELECT", "INSERT"},
+    # A company's status, set by the server's operator with pms.admin (migration 20261105000100).
+    "trust_company_statuses": {"SELECT", "INSERT"},
     "trust_bill_payments": {"SELECT"},  # written only by trust_set_aside_bill, trust_pay_bill
     "trust_work_orders": {"SELECT", "INSERT"},
     "trust_work_order_steps": {"SELECT", "INSERT"},
@@ -515,6 +517,7 @@ FUNCTIONS = {
     # A company's time zone and its day (migration 20261104000900): read from its profile, which
     # the AI role never reads.
     "trust_pmc_time_zone(uuid)": {"trust_app"},
+    "trust_pmc_status(uuid)": {"trust_app"},
     "trust_pmc_day(uuid,timestamptz)": {"trust_app"},
     # A property's ownership shares in force on a day, and an amount split by them (0094).
     "trust_ownership_on(uuid,date)": {"trust_app"},

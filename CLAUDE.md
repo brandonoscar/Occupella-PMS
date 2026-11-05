@@ -1189,6 +1189,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   accounts' bills (`OWNER_SEES` in `src/pms/api/documents.py`), each named with what it is about. The company's logo is a document too
   (`company_logo`, migration 0075: a PNG or JPEG about no one record, the latest not removed
   holding), kept by `src/pms/api/company.py` and in no list of files.
+- A company's status (migration 20261105000100, `python -m pms.admin status <pmc> <status> <reason>`):
+  the server's operator, never its staff, sets it (`trust_company_statuses`: append-only, the
+  latest holding, with a reason, naming nobody; `trust_pmc_status`, active by default). Suspended:
+  nobody signs in (`accounts.CompanyNotActive`, 403, the same answer whatever the password),
+  open sessions and API keys stop answering and no password reset is sent, while the nightly run
+  goes on so the books stay whole; closed: the same, and the nightly run stops. Active again
+  undoes either; nothing is deleted. The AI role reads it.
 - The company (migration 0075, ADR 0006): its name is `trust_pmcs.display_name`, which staff
   rename; its mailing address (whole or none) and the late fee and NSF fee terms a property added
   from then on starts with, from its first day, are `trust_company_profiles`
