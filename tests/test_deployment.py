@@ -156,8 +156,8 @@ def test_the_app_refuses_to_start_at_the_example_address(url):
         ("https://rentals.example.com/?from=email", "is served at the root"),
         ("https://rentals.example.com/#top", "is served at the root"),
         # docs/edge-cases.md H-167: every emailed link would carry them.
-        ("https://admin:synthetic@rentals.example.com", "names a user or password"),
-        ("https://admin@rentals.example.com", "names a user or password"),
+        ("https://admin:synthetic@rentals.test", "names a user or password"),
+        ("https://admin@rentals.test", "names a user or password"),
     ],
 )
 def test_the_app_refuses_to_start_at_an_address_no_browser_opens_it_at(url, says):
