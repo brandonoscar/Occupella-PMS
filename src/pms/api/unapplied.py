@@ -21,7 +21,8 @@ import psycopg
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, StringConstraints
 
-from pms.api import rent
+from pms import notices
+from pms.api import outbox, rent
 from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/unapplied")
@@ -212,6 +213,8 @@ class Apply(BaseModel):
     # How much of it; all that is left unless said.
     amount: rent.Amount | None = None
     on: date | None = None
+    # The owner's account, when the lease's property has more than one and no shares.
+    account: Annotated[str, StringConstraints(min_length=1, max_length=100)] | None = None
 
 
 def receipt_row(conn: psycopg.Connection[Any], pmc_id: UUID, receipt_id: UUID) -> Any:
@@ -228,8 +231,9 @@ def receipt_row(conn: psycopg.Connection[Any], pmc_id: UUID, receipt_id: UUID) -
 @router.post("/{receipt_id}/apply", status_code=201)
 def apply(session: Staff, conn: Conn, receipt_id: UUID, new: Apply) -> rent.Payment:
     """Applies unapplied cash to a lease: it pays what the lease owes as Receive payment does,
-    rent first, and holds the rest as the first tenant's prepaid rent. The same request id again
-    returns the payment as it was recorded."""
+    rent first, and holds the rest as the first tenant's prepaid rent; its tenants are emailed
+    its receipt while the server sends email. The same request id again returns the payment as it
+    was recorded."""
     account, bank, method, reference, left = receipt_row(conn, session.pmc_id, receipt_id)
     on = new.on or rent.today(conn, session.pmc_id)
     rent.not_after_today(conn, session.pmc_id, on)
@@ -255,7 +259,7 @@ def apply(session: Staff, conn: Conn, receipt_id: UUID, new: Apply) -> rent.Paym
             amount,
             on,
             reference,
-            None,
+            new.account,
             method,
             source=(account, bank),
             extra={"unapplied_id": str(receipt_id)},
@@ -268,6 +272,11 @@ def apply(session: Staff, conn: Conn, receipt_id: UUID, new: Apply) -> rent.Paym
             )
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
         raise HTTPException(409, refusal(refused)) from None
+    if outbox.SENDING.get():
+        # Its tenants get its receipt as for any payment to the lease (once per payment).
+        notices.write_payment_receipts(
+            conn, session.pmc_id, new.lease_id, recorded.transfers[0], amount, on
+        )
     return rent.answer(recorded)
 
 

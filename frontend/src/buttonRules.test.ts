@@ -122,6 +122,8 @@ const KEEP: [string, string, Why][] = [
   ["pages/TaxIdCard.tsx", "Reveal", "more than said"],
   ["pages/TenantPortalCards.tsx", "Give notice", "more than said"],
   ["pages/TenantPortalCards.tsx", "Send document", "who sees"],
+  ["pages/UnappliedCashCard.tsx", "Apply {money(paying)} to this lease", "sends"],
+  ["pages/UnappliedCashCard.tsx", "Refund {money(paying)}", "money"],
   ["pages/VendorLinkPage.tsx", "The work is done", "for good"],
   ["pages/WorkOrdersPages.tsx", "Stop it", "for good"],
   ["pages/WorkOrdersPages.tsx", "Charge", "more than said"],

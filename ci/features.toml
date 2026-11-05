@@ -910,6 +910,19 @@ browser = [
 ]
 
 [[feature]]
+id = "unapplied-cash"
+statement = "Staff record money that came into an operating trust bank account and can't be matched yet as unapplied cash on Banking (who it seems to be from, how it came, the day and a memo), held in that account's unapplied cash account and listed oldest first with how long it has waited; they apply it, all or part, to a lease they find (it pays what the lease owes as Receive payment does, rent first, the rest prepaid rent, and its tenants get a receipt) or refund it after confirming the amount (a payout: disburse and the account's signers), never past what is left. Month-end isn't approved while any is held, and the three-way reconciliation shows it on a line of its own."
+operations = [
+  "GET /api/unapplied",
+  "POST /api/unapplied",
+  "POST /api/unapplied/{receipt_id}/apply",
+  "POST /api/unapplied/{receipt_id}/refund",
+]
+browser = [
+  "features.spec.ts › staff record money they can't match yet as unapplied cash, month-end waits for it, and they apply part to a lease and refund the rest",
+]
+
+[[feature]]
 id = "charge-types"
 statement = "Staff add the company's own charge types (a name once whatever its case, none of the income statement's own lines) in Settings, Chart of accounts, and give a fee one on Enter charge or a monthly charge (never a credit); the owner's income statement counts what was collected on each type on a line of its own, after the other income, and the budget beside it counts that line as income."
 operations = ["GET /api/setup/charge-types", "POST /api/setup/charge-types"]

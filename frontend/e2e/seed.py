@@ -649,6 +649,7 @@ FEATURES = (
     "own-contact",
     "charge-types",
     "chart-of-accounts",
+    "unapplied-cash",
     "phone",
     "quickbooks",
     "two-homes",

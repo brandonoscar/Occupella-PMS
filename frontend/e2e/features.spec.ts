@@ -4778,6 +4778,70 @@ test("staff read the chart of accounts by section and code, give an account anot
   await expectAccessible(page);
 });
 
+test("staff record money they can't match yet as unapplied cash, month-end waits for it, and they apply part to a lease and refund the rest", async ({
+  page,
+}) => {
+  const people = seed.features["unapplied-cash"]!;
+  const now = new Date();
+  const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0)).toISOString().slice(0, 10);
+  await joinAsStaff(page, people.manager);
+  await section(page, "Banking");
+  const card = page.locator("section", { has: page.getByRole("heading", { level: 2, name: "Unapplied cash", exact: true }) });
+  await expect(card.getByText("None held.")).toBeVisible();
+
+  // A check with no unit on it: recorded as it came, waiting since today.
+  await card.getByRole("button", { name: "Record unapplied cash" }).click();
+  let panel = page.getByRole("dialog", { name: "Record unapplied cash" });
+  await panel.getByLabel("Amount").fill("500.00");
+  await panel.getByLabel("From").fill("J. Sample");
+  await panel.getByLabel("Check or reference number (optional)").fill("4410");
+  await panel.getByLabel("Memo (optional)").fill("No unit written on it");
+  await panel.getByRole("button", { name: "Record unapplied cash" }).click();
+  await expect(page.getByText("Recorded $500.00 from J. Sample as unapplied cash.")).toBeVisible();
+  const held = card.getByRole("row", { name: "J. Sample $500.00", exact: true });
+  await expect(held).toContainText("Check 4410");
+  await expect(held).toContainText("Today");
+
+  // Last month's month-end waits while any is held.
+  await page.getByRole("row", { name: "Demo operating trust account", exact: true }).getByRole("link").click();
+  await page.getByRole("button", { name: `Approve through ${us(last)}` }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: `Approve through ${us(last)}` }).click();
+  await expect(page.getByText(
+    "$500.00 of unapplied cash is held in this trust bank account: apply it to a lease or refund it before approving",
+  )).toBeVisible();
+
+  // $300.00 of it is Drew Sample's: it pays their lease as Receive payment does.
+  await section(page, "Banking");
+  await page.getByRole("button", { name: "Actions for J. Sample $500.00", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Apply to a lease", exact: true }).click();
+  panel = page.getByRole("dialog", { name: "Apply to a lease" });
+  await panel.getByLabel("Lease").fill("Drew");
+  await panel.getByRole("button", { name: "Aspen Row · Unit 1 · Drew Sample" }).click();
+  await expect(panel.getByText(/^Balance due /)).toBeVisible();
+  await panel.getByLabel("Amount (leave empty for all $500.00)").fill("300.00");
+  await panel.getByRole("button", { name: /^Apply \$300\.00 to this lease/ }).click();
+  await expect(page.getByText("Applied $300.00 of unapplied cash to Aspen Row · Unit 1.")).toBeVisible();
+  await expect(card.getByRole("row", { name: "J. Sample $200.00", exact: true })).toBeVisible();
+
+  // The rest goes back to who sent it, once staff confirm the amount.
+  await page.getByRole("button", { name: "Actions for J. Sample $200.00", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Refund", exact: true }).click();
+  panel = page.getByRole("dialog", { name: "Refund unapplied cash" });
+  await expect(panel.getByLabel("Paid to")).toHaveValue("J. Sample");
+  await panel.getByRole("button", { name: /^Refund \$200\.00/ }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("Refund $200.00 of unapplied cash to J. Sample by check");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Refund", exact: true }).click();
+  await expect(page.getByText("Refunded $200.00 to J. Sample.")).toBeVisible();
+  await expect(card.getByText("None held.")).toBeVisible();
+  await expectAccessible(page);
+
+  // Nothing held, last month is approved on its figures.
+  await page.getByRole("row", { name: "Demo operating trust account", exact: true }).getByRole("link").click();
+  await page.getByRole("button", { name: `Approve through ${us(last)}` }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: `Approve through ${us(last)}` }).click();
+  await expect(page.getByText(`Approved through ${us(last)}; the account is closed through it.`)).toBeVisible();
+});
+
 test("staff name the operating trust account's cash for QuickBooks and download two months of journal entries for QuickBooks Desktop and Online", async ({
   page,
 }) => {

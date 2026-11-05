@@ -8,9 +8,10 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import add_unit, bank_sums, make_pmc, open_lease
+from helpers import add_unit, bank_sums, make_pmc, open_account, open_lease
 from people import join_as_owner, join_as_staff, join_as_tenant
 
+from pms import email
 from pms.api import rent
 
 TODAY = datetime.now(UTC).date()
@@ -133,6 +134,51 @@ def test_applied_to_a_lease_it_pays_rent_first_and_the_rest_is_prepaid_rent(
         "this payment is unapplied cash applied to the lease: it came in before, so it can't"
         " bounce here",
     )
+
+
+def test_applied_its_tenants_get_a_receipt_as_for_any_payment(client, conn, staff, pmc, lease):
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_lease_tenants WHERE lease_id = %s", (lease,)
+    ).fetchone()[0]
+    ok(client.post(f"/api/tenants/{tenant}/contact", json={"email": "t@example.com"}), 204)
+    client.app.state.email = email.FakeSender()
+    made = receive(client, amount="300.00")
+
+    paid = ok(
+        send(client, f"/api/unapplied/{made['id']}/apply", request_id=uuid.uuid4(), lease_id=lease)
+    )
+    receipt = client.get(f"/api/rent/payments/{paid['transfers'][0]}/receipt")
+
+    assert (receipt.status_code, receipt.content[:5]) == (200, b"%PDF-")
+    assert conn.execute(
+        "SELECT kind, transfer_id FROM trust_emails WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchall() == [("payment_receipt", paid["transfers"][0])]
+
+
+def test_applied_to_a_property_with_two_owner_accounts_it_needs_one_chosen(
+    client, conn, staff, pmc, lease
+):
+    second = open_account(
+        conn,
+        pmc.pmc_id,
+        pmc.operating_bank_id,
+        "owner_property",
+        pmc.owners[1].owner_id,
+        pmc.owners[0].property_id,
+    )
+    ok(send(client, "/api/rent/run", due_on=START, late_fees_as_of=START), 200)
+    made = receive(client, amount="100.00")
+
+    def apply(**more):
+        path = f"/api/unapplied/{made['id']}/apply"
+        return send(client, path, request_id=uuid.uuid4(), lease_id=lease, **more)
+
+    unchosen = apply()
+    chosen = ok(apply(account=second))
+
+    refused(unchosen, 422, "the property has more than one owner account; choose one")
+    assert chosen["to_owner"] == "100.00"
+    assert balance(conn, second) == Decimal(100)
 
 
 def test_part_of_it_applied_and_the_rest_refunded_never_past_what_is_left(
