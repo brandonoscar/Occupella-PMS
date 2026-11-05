@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1155 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1156 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -26,14 +26,14 @@ answer in the portal for everything that can fail.
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
 | [Money and the ledger](#money-and-the-ledger) | 151 | 113 | 7 | 31 | 4 |
-| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 160 | 82 | 15 | 63 | 14 |
+| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 161 | 82 | 15 | 64 | 14 |
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 69 | 8 | 88 | 22 |
 | [Bad files and imports](#bad-files-and-imports) | 152 | 64 | 16 | 72 | 3 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 171 | 73 | 14 | 84 | 5 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1155** | **593** | **110** | **452** | **55** |
+| **All** | **1156** | **593** | **110** | **453** | **55** |
 
 ## Open, high risk: the work list
 
@@ -436,6 +436,7 @@ its ten most pressing, each with the test that would close it.
 | D-154 | Archiving a unit at 9 pm Eastern on its lease's last day | The check counts UTC's today, so the lease reads as ended and the archive goes through while it is in effect | Open | db/migrations/20261024000152_bill_lifecycle.sql:509 | L |
 | D-158 | New York tenant who left and came back to the same unit years later | Their years count from their first lease there, not from when they came back | Open | src/pms/api/renewals.py LIVED_FROM | L |
 | D-160 | A tenant saves autopay's bank account after 8 pm in New York on a rent due day | trust_check_autopay_run and the run read the save's day in UTC (the next day), so that due day is not paid by autopay though the company's day says it was saved by then; it errs toward not debiting, and the tenant pays it another way | Open | db/schema.sql trust_check_autopay_run (saved_at::date); src/pms/autopay.py (saved_at.astimezone(UTC).date()) | L |
+| D-161 | Something staff do after 8 pm in New York whose day the page shows from its clock time: a year closed, a bill's email sent or asked, a listing's days listed | The day shown is UTC's (astimezone(UTC).date()), the next day for the company; money's own days (event_at, the company's day at 00:00 UTC) are right, these are words on a page | Open | src/pms/api/year_close.py:116,150; src/pms/api/payables.py:651,659; src/pms/api/listings.py:209 | L |
 | D-013 | Daylight saving ends (1 to 2 am repeats) | Midnight happens once; the day is the date in the zone; no test | Guarded | db/migrations/20261104000900_company_time_zone.sql:39 | L |
 | D-040 | A lease ending the day before daylight saving starts | Leases, charges and proration are plain dates; no clock time is involved | Guarded | db/migrations/20261013000045_prorated_rent.sql:33 | L |
 | D-041 | A renewal starting 02/29/2028 with the default one-year term | yearFrom gives 02/28/2029; no test names February 29 | Guarded | frontend/src/offers.ts:167 | L |
