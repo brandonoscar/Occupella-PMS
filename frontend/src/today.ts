@@ -57,7 +57,7 @@ export type Today = {
   // No rent run in two days while the company has leases (docs/edge-cases.md H-021).
   rent_not_posted?: RentNotPosted | null;
 };
-export type RentNotPosted = { last_posted_on: string | null; waiting_since: string };
+type RentNotPosted = { last_posted_on: string | null; waiting_since: string };
 export type DraftWaiting = { id: string; what: string; key: string; made_at: string };
 export type NoticeGiven = {
   lease_id: string;
