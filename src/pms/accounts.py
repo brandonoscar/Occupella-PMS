@@ -274,8 +274,7 @@ def _open_invite(conn: psycopg.Connection[Any], token: str, lock: bool) -> Any:
         " WHERE i.token_hash = %s AND i.accepted_at IS NULL AND i.expires_at > now()"
         " AND l.disabled_at IS NULL"
         " AND NOT EXISTS (SELECT 1 FROM trust_invites AS n WHERE n.login_id = i.login_id"
-        "   AND n.created_at > i.created_at)"
-        + (" FOR UPDATE OF i" if lock else ""),
+        "   AND n.created_at > i.created_at)" + (" FOR UPDATE OF i" if lock else ""),
         (digest(token),),
     )
     if row is None:
