@@ -117,7 +117,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   or loaded into one's page (CORP), the camera and the like, and over https anything but https (HSTS). A refusal from the database
   reaches people in words, without internal ids (`deps.refusal`: an account short of money, a
   draw over what is available, the last admin), and a request that finds every database connection
-  busy for 30 s is told so (503, `deps.BUSY`), never a server error.
+  busy for 30 s is told so (503, `deps.BUSY`), never a server error. An address that failed 20
+  sign-ins in 15 minutes is refused (429, Retry-After) whatever email it tries, and an address asks
+  for at most 10 password resets an hour (`src/pms/api/throttle.py`, counted per process).
 - Logins (`src/pms/accounts.py`, migration 0028): staff invite a staff member, owner or tenant
   by email; the link carries a token kept only as its SHA-256, in the URL fragment. Accepting
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a

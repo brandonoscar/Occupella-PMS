@@ -109,6 +109,7 @@ from pms.api import (
     tax_credit,
     tax_ids,
     tenant,
+    throttle,
     today,
     unit_details,
     utilities,
@@ -343,6 +344,11 @@ def create_app(settings: Settings) -> FastAPI:
     # The SMTP settings come straight from the environment, so a password is never part of
     # Settings (which a log or an error could print).
     app.state.email = email.sender_named(settings.email_sender, os.environ)
+    # What one address may try (pms.api.throttle): failed sign-ins and password resets.
+    app.state.sign_in_failures = throttle.Limiter(
+        throttle.SIGN_IN_FAILURES, throttle.SIGN_IN_WINDOW
+    )
+    app.state.resets_asked = throttle.Limiter(throttle.RESETS, throttle.RESET_WINDOW)
 
     https = urlsplit(settings.public_url).scheme == "https"
 
@@ -475,8 +481,14 @@ def create_app(settings: Settings) -> FastAPI:
         return ServerCompany(pmc_id=rows[0][0], name=rows[0][1])
 
     @app.post("/api/sign-in")
-    def sign_in(body: SignIn, response: Response, conn: Conn) -> Me:
-        signed = accounts.sign_in(conn, body.pmc_id, body.email, body.password, body.code)
+    def sign_in(body: SignIn, request: Request, response: Response, conn: Conn) -> Me:
+        address = throttle.address_of(request)
+        throttle.refuse_if_waiting(app.state.sign_in_failures, address, "failed sign-ins")
+        try:
+            signed = accounts.sign_in(conn, body.pmc_id, body.email, body.password, body.code)
+        except accounts.SignInRefused:
+            app.state.sign_in_failures.hit(address)
+            raise
         return signed_in(response, signed, conn)
 
     @app.post("/api/sign-out", status_code=204)
@@ -519,9 +531,13 @@ def create_app(settings: Settings) -> FastAPI:
         return ResetAvailable(available=app.state.email is not None)
 
     @app.post("/api/password-reset", status_code=202)
-    def ask_reset(body: ResetRequest, conn: Conn) -> ResetAsked:
+    def ask_reset(body: ResetRequest, request: Request, conn: Conn) -> ResetAsked:
         """Emails an owner or a tenant a link to set a new password (ADR 0007). The answer is the
-        same whether or not the email has a login, so it tells no one who does."""
+        same whether or not the email has a login, so it tells no one who does. An address asks
+        at most throttle.RESETS times an hour."""
+        address = throttle.address_of(request)
+        throttle.refuse_if_waiting(app.state.resets_asked, address, "password resets")
+        app.state.resets_asked.hit(address)
         if app.state.email is not None:
             reset = accounts.request_reset(conn, body.pmc_id, body.email)
             if reset is not None:
