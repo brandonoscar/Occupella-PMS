@@ -197,3 +197,20 @@ def test_the_commands_run_with_no_address_set(monkeypatch):
     # Unset, each command keeps its own default (http://localhost:8000), as before.
     monkeypatch.delenv("PMS_PUBLIC_URL", raising=False)
     deployment.refuse_fakes_in({})
+
+
+@pytest.mark.parametrize(
+    ("url", "origin"),
+    [
+        # docs/edge-cases.md H-161: a browser's Origin leaves the default port out.
+        ("https://rentals.example.com:443", "https://rentals.example.com"),
+        ("http://localhost:80", "http://localhost"),
+        # H-162: and writes the scheme and host in lower case.
+        ("HTTPS://Rentals.Example.COM/", "https://rentals.example.com"),
+        ("https://rentals.example.com:8443", "https://rentals.example.com:8443"),
+        ("http://[::1]:8000", "http://[::1]:8000"),
+        ("http://127.0.0.1:8123", "http://127.0.0.1:8123"),
+    ],
+)
+def test_the_origin_is_written_as_a_browser_sends_it(url, origin):
+    assert Settings(database_url="postgresql://unused", public_url=url).origin == origin

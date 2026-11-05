@@ -223,8 +223,16 @@ class Settings:
 
     @property
     def origin(self) -> str:
-        parts = urlsplit(self.public_url)
-        return f"{parts.scheme}://{parts.netloc}"
+        """PMS_PUBLIC_URL's origin as a browser sends it in Origin: the scheme and host in lower
+        case, without the scheme's default port (docs/edge-cases.md H-161, H-162)."""
+        parts = urlsplit(self.public_url.strip())
+        scheme = parts.scheme.lower()
+        host = parts.hostname or ""
+        if ":" in host:  # an IPv6 address
+            host = f"[{host}]"
+        port = parts.port
+        default = {"https": 443, "http": 80}.get(scheme)
+        return f"{scheme}://{host}" + (f":{port}" if port is not None and port != default else "")
 
 
 # --- request and answer shapes ------------------------------------------------------------

@@ -281,6 +281,21 @@ def test_the_log_of_refused_origins_stops_at_its_cap(client, caplog, monkeypatch
     assert [m.split("'")[1] for m in said] == ["https://site0.test", "https://site1.test"]
 
 
+def test_our_own_site_goes_through_however_its_address_was_written(database_url):
+    """docs/edge-cases.md H-161, H-162: PMS_PUBLIC_URL with its default port or capitals still
+    takes the browser's own Origin, which has neither."""
+    written = Settings(
+        database_url=database_url,
+        public_url="https://Rentals.Example.com:443",
+        cookie_secure=True,
+    )
+    with TestClient(create_app(written)) as browser:
+        answer = browser.post(
+            "/api/sign-in", json={}, headers={"Origin": "https://rentals.example.com"}
+        )
+    assert answer.status_code == 422  # past the guard, refused for its empty body
+
+
 def test_a_request_from_our_own_site_goes_through(client):
     answer = client.post("/api/sign-in", json={}, headers={"Origin": "http://testserver"})
 

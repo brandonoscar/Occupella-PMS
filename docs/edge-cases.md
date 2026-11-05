@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1126 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1137 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -26,14 +26,14 @@ answer in the portal for everything that can fail.
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
 | [Money and the ledger](#money-and-the-ledger) | 150 | 110 | 7 | 33 | 7 |
-| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 157 | 81 | 15 | 61 | 15 |
+| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 159 | 81 | 15 | 63 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 63 | 30 | 49 | 2 |
-| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 160 | 61 | 8 | 91 | 27 |
+| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 162 | 61 | 8 | 93 | 27 |
 | [Bad files and imports](#bad-files-and-imports) | 145 | 60 | 16 | 69 | 6 |
-| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 155 | 87 | 10 | 58 | 6 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 160 | 66 | 14 | 80 | 9 |
+| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 166 | 68 | 14 | 84 | 9 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1126** | **568** | **110** | **448** | **72** |
+| **All** | **1137** | **570** | **110** | **457** | **72** |
 
 ## Open, high risk: the work list
 
@@ -396,6 +396,7 @@ its ten most pressing, each with the test that would close it.
 | D-147 | Tests that count days in UTC | make_pmc gives every test company UTC's day, so most money paths never run for a New York company between 00:00 and 05:00 UTC; only the nightly and company-day tests do | Open | tests/helpers.py:109 | M |
 | D-150 | A staff code entered at a 30-second step boundary, or an app clock off by a minute | The step before and after are accepted; the app's own clock is used, so a skew past 30 seconds refuses good codes | Open | src/pms/accounts.py:432 | M |
 | D-153 | A vendor assigned at 9 pm Eastern on the last day of their insurance | The check uses the step's UTC date, so the vendor reads as expired and is refused while still covered that day | Open | db/migrations/20261016000072_work_order_details.sql:80 | M |
+| D-159 | New York tenant who moved to another unit of the same building | Years count only leases at this unit, so a long tenant who moved counts from the move (NOT VERIFIED how 226-c counts a move) | Open | src/pms/api/renewals.py SAME_HOME | M |
 | D-012 | Daylight saving starts (Eastern midnight moves from 05:00 to 04:00 UTC) | The look a minute past every hour still catches the new day; no test runs the scheduler across a DST change | Guarded | src/pms/nightly.py:64 | M |
 | D-064 | A rent change whose notice is dated after today | Refused by the API | Guarded | src/pms/api/rent.py:1504 | M |
 | D-076 | Grace running into the next month or year (due the 28th, 5 days) | Plain date arithmetic; the fee is due the day after grace | Guarded | db/migrations/20261031000200_late_fees_skip_paid_rents.sql:208 | M |
@@ -449,6 +450,7 @@ its ten most pressing, each with the test that would close it.
 | D-145 | A unit added in the evening that never had a lease | The vacancy report's since day is the UTC date it was added | Open | db/migrations/20261022000124_unit_details.sql:88 | L |
 | D-146 | The Dashboard's occupancy the evening a unit is added | Counts units added by the day in UTC, so tonight's unit is left out until the company's tomorrow | Open | src/pms/api/dashboard.py:135 | L |
 | D-154 | Archiving a unit at 9 pm Eastern on its lease's last day | The check counts UTC's today, so the lease reads as ended and the archive goes through while it is in effect | Open | db/migrations/20261024000152_bill_lifecycle.sql:509 | L |
+| D-158 | New York tenant who left and came back to the same unit years later | Their years count from their first lease there, not from when they came back | Open | src/pms/api/renewals.py LIVED_FROM | L |
 | D-013 | Daylight saving ends (1 to 2 am repeats) | Midnight happens once; the day is the date in the zone; no test | Guarded | db/migrations/20261104000900_company_time_zone.sql:39 | L |
 | D-040 | A lease ending the day before daylight saving starts | Leases, charges and proration are plain dates; no clock time is involved | Guarded | db/migrations/20261013000045_prorated_rent.sql:33 | L |
 | D-041 | A renewal starting 02/29/2028 with the default one-year term | yearFrom gives 02/28/2029; no test names February 29 | Guarded | frontend/src/offers.ts:167 | L |
@@ -721,6 +723,8 @@ its ten most pressing, each with the test that would close it.
 | P-158 | The staff lease page's autopay list fails to load | Says "No tenant set up autopay." | Open | frontend/src/pages/AutopayCards.tsx:131 | M |
 | P-159 | The prepared draws fail to load on Pay owners | Hidden, as if none were prepared | Open | frontend/src/pages/PayOwnersPage.tsx:73 | M |
 | P-160 | The company's fees in trust fail to load on Banking | Hidden, so fees past their day to take out don't show | Open | frontend/src/pages/ReconcilePage.tsx:71 | M |
+| P-161 | A return reported before paid, and paid never lands (its report keeps failing on the fee lookup, 502) | The return answers 409 until the partner gives up (about three days, NOT VERIFIED), then it is lost as before | Open | src/pms/api/online_payments.py refuse_too_soon | M |
+| P-162 | A second owner account added to a property whose tenants pay by autopay | Pay online now says off there, but autopay may still start payments (NOT VERIFIED that it asks why_not); each would wait on Banking for staff to choose whose | Open | src/pms/autopay.py; src/pms/api/online_payments.py why_not | M |
 | P-119 | The same ACH file downloaded and uploaded twice | The same file each time, logged "Taken N times"; the bank's duplicate check is all that stops a second upload | Guarded | src/pms/api/payouts.py:621-624; tests/api/test_payouts_api.py::test_an_ach_file_taken_again_is_the_one_made_when_the_run_was_paid | M |
 | P-025 | A paid ACH payment comes back (charge.dispute.created) | Undone as a bounce with the NSF fee, the tenant's fee back out of the company's account | Tested | tests/api/test_online_payments_api.py::test_a_return_is_a_bounce_and_the_tenants_fee_goes_back_out; tests/test_payments.py::test_stripe_reports_a_failure_a_return_and_nothing_else | M |
 | P-050 | PMS_DATA_KEY lost or changed, so the company's keys don't open | Never falls back to the server's account; tenants see How to pay; admins see "Your keys can't be read on this server. Enter them again." | Tested | tests/api/test_payment_keys_api.py::test_keys_that_dont_open_here_take_no_payment_and_never_fall_back; frontend/src/pages/PaymentKeysCard.test.tsx > says keys that can't be read here need entering again | M |
@@ -1059,6 +1063,7 @@ its ten most pressing, each with the test that would close it.
 | U-138 | Two staff enter the same tenant's check from two tabs | Two payments: each panel makes its own request id and nothing warns of a match, as bills and payment files do | Open | src/pms/api/rent.py (no duplicate check); compare src/pms/api/payment_files.py:161 | M |
 | U-144 | A company name of about 180 characters (200 are allowed) | Invite and reset subjects pass the 200-character limit: the database refuses, a server error, and on reset only for an email that has a login (it tells who has one) | Open | src/pms/email.py:258 and :288 (not cut); db/migrations/20261013000042_owner_emails.sql:25; src/pms/api/setup.py:31 | M |
 | U-154 | A screen reader opens a receipt, statement, adverse action notice or lease PDF | The PDFs carry no tags or language (NOT VERIFIED with a screen reader) | Open | no StructTreeRoot or set_lang anywhere in src/pms | M |
+| U-156 | Staff choose the wrong owner when recording an online payment waiting for "whose" | It goes into that owner's account; putting it right takes a journal entry by two staff | Open | src/pms/api/online_payments.py record | M |
 | U-052 | The only admin loses their authenticator | The server's operator prints a new invite with python -m pms.admin invite, which names nobody | Guarded | src/pms/admin.py:66; db/migrations/20261012000034_staff_roles.sql trust_check_staff_invite | M |
 | U-079 | An owner approves a bill staff just voided | 409, a void being a decline row | Guarded | src/pms/api/owner.py:421 decide (UniqueViolation) | M |
 | U-102 | A tenant who left pays online or sets up autopay | Refused | Guarded | src/pms/api/online_payments.py:321 and src/pms/api/autopay.py:181 still_on | M |
@@ -1173,6 +1178,8 @@ its ten most pressing, each with the test that would close it.
 | H-072 | A very large JSON body (hundreds of MB) to /api/apply or /api/sign-in, no sign-in needed | Refused 413 above 10 MB before it is read: at once when it says its length, counted as it streams otherwise; a 5 MB file as base64 still fits | Tested | tests/api/test_body_limit.py | H |
 | H-115 | A session signed out after an hour idle, page still open | Once signed in, a request answering "sign in first" takes the person to sign in, saying they were signed out after a while away; a wrong password or a key's refusal doesn't | Tested | frontend/src/api.test.ts > api > tells the page a session ended, once someone was signed in, and only for that (H-115); frontend/src/pages/SignInPage.test.tsx | H |
 | H-152 | Any error while drawing a page (an answer of an unexpected shape after an upgrade, a status the page doesn't know) | An error boundary around the portal: a page that fails to draw says it couldn't be shown and that nothing saved is lost, with Reload and the way to the start; never the error's words | Tested | frontend/src/components/ErrorBoundary.test.tsx | H |
+| H-161 | PMS_PUBLIC_URL written with its default port (https://rentals.example.com:443) | Settings.origin drops the scheme's default port, as a browser's Origin does | Tested | tests/test_deployment.py::test_the_origin_is_written_as_a_browser_sends_it; tests/api/test_sign_in.py::test_our_own_site_goes_through_however_its_address_was_written | H |
+| H-162 | PMS_PUBLIC_URL with capitals in its host (https://Rentals.Example.com) | Settings.origin writes the scheme and host in lower case, as a browser's Origin does | Tested | tests/test_deployment.py::test_the_origin_is_written_as_a_browser_sends_it; tests/api/test_sign_in.py::test_our_own_site_goes_through_however_its_address_was_written | H |
 | H-003 | The database is down while staff open pages | Each request waits 30 s for a pool connection, then gets 503 "the PMS is busy just now: try again in a moment": it says busy, not down, and every click takes 30 s | Open | src/pms/api/deps.py:121-132 (PoolTimeout always read as busy); no test of a page with the database down | M |
 | H-004 | The database is down when the portal first loads | Home renders nothing while /api/me waits 30 s (a white page), then shows one error line with no menu, no retry button and no word of what to do | Open | frontend/src/App.tsx:96-109 | M |
 | H-005 | The database restarts in the middle of the day | The pool has no connection check, so each idle pooled connection fails once after the restart: those requests answer 500 and the portal says "the server answered 500" | Open | src/pms/api/app.py:310-311 (ConnectionPool with no check=) | M |
@@ -1231,6 +1238,10 @@ its ten most pressing, each with the test that would close it.
 | H-146 | The tenant's lease card can't read their autopays | Shown as none: the tenant doesn't see an autopay that is on | Open | frontend/src/pages/TenantLeaseCard.tsx:67-68 | M |
 | H-149 | An applicant's answer lost after it committed | A retry makes a second application and the first status link is lost; network errors read raw; the form is lost on reload | Open | frontend/src/pages/ApplyPage.tsx:44-61 (no request id) | M |
 | H-159 | Ending a lease when the break fee can't be read | No break fee is offered, silently, and the lease ends without it | Open | frontend/src/pages/LeasePeople.tsx:80-82 | M |
+| H-163 | Two proxies in front (a CDN, then nginx on the server) with PMS_TRUSTED_PROXIES "*" | The last X-Forwarded-For address is the CDN edge's, so visitors share its few addresses: 20 failed sign-ins through one edge lock out everyone behind it for 15 minutes, and signatures keep the edge's address | Open | src/pms/api/app.py NearestProxy | M |
+| H-164 | A writing transaction left open anywhere on the Postgres server (idle in transaction, a long import, another database on a shared server) | Every company's events and webhooks wait until it ends: GET /api/events and recent_events return nothing new and the courier sends nothing, with no log line | Open | src/pms/api/events.py EVENTS (pg_snapshot_xmin) | M |
+| H-165 | The disk fills while the courier or the nightly run writes | Only requests answer it in words; the courier and the nightly run log an exception and try again later (after two days the Dashboard says rent isn't posting) | Open | src/pms/webhooks.py Courier; src/pms/nightly.py | M |
+| H-166 | The nightly run off while an admin presses Run rent now every day | The Dashboard counts a hand run as rent posting and says nothing, while recurring bills, monthly management fees, recurring work orders and draws, which only the nightly run does, stop | Open | src/pms/api/today.py rent_not_posted | M |
 | H-026 | A company's run fails at 00:01 (the database restarting) | That company waits for its next day unless an admin uses Run rent now; support.md says so | Guarded | src/pms/nightly.py:200-206; docs/support.md "What to do" | M |
 | H-043 | A migration fails halfway through an upgrade | dbmate rolls that one back, the ones before stay; migrate exits 1 and the new app doesn't start | Guarded | compose.selfhost.yaml:62-64; docs/release.md "Migrations" | M |
 | H-053 | PMS_DATA_KEY changed, then a tax ID is revealed or the 1099 export taken | 409 "that tax ID doesn't open under this server's key" | Guarded | src/pms/api/tax_ids.py:115-119 | M |
