@@ -57,6 +57,13 @@ def refuse_public_url(public_url: str) -> None:
             " coming from another site, and emailed links go to example.com."
         )
     parts = urlsplit(url)
+    if parts.username is not None or parts.password is not None:
+        # Every emailed link would carry them (docs/edge-cases.md H-167); never repeated here.
+        raise PublicUrlRefused(
+            "PMS_PUBLIC_URL names a user or password: every emailed link would carry them. Set"
+            " it to the origin people open the PMS at, like https://rentals.example.com"
+            " (docs/install.md, step 2)."
+        )
     if parts.scheme.lower() not in ("https", "http"):
         why = "starts with https:// or http://"
     elif not parts.hostname:

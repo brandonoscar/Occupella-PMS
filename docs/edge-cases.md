@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1139 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1140 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -31,9 +31,9 @@ answer in the portal for everything that can fail.
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 163 | 63 | 8 | 92 | 27 |
 | [Bad files and imports](#bad-files-and-imports) | 145 | 60 | 16 | 69 | 6 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 166 | 68 | 14 | 84 | 9 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 167 | 69 | 14 | 84 | 9 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1139** | **573** | **110** | **456** | **71** |
+| **All** | **1140** | **574** | **110** | **456** | **71** |
 
 ## Open, high risk: the work list
 
@@ -316,7 +316,7 @@ its ten most pressing, each with the test that would close it.
 | D-079 | A lockbox file line dated within grace brought in after the fee | Same: the fee stays until staff waive it | Open | src/pms/api/payment_files.py:109 | H |
 | D-080 | Rent paid online by bank on the due day that settles after the grace | Dated when the partner reports it paid (the event's created time), so a short grace charges a late fee though the tenant paid in time | Open | src/pms/api/online_payments.py:533; src/pms/payments.py:292 | H |
 | D-081 | Autopay started on the due day, settled 2 to 4 business days later | Same as online: every autopay tenant whose grace is shorter than settlement is charged a late fee | Open | src/pms/autopay.py:371; src/pms/api/online_payments.py:533 | H |
-| D-082 | Late fee terms added with a start day in the past | The next night charges a fee on every old open rent back to that day; one dated in a closed year is refused and the company's whole run fails every night, and append-only terms can't be undone | Open | src/pms/api/setup.py:751; db/migrations/20261021000106_year_close.sql (trust_refuse_closed_year) | H |
+| D-082 | Late fee terms added with a start day in the past | The next night charges a fee on every old open rent back to that day (one that would fall in a closed year is passed over since migration 20261105000700, M-050), and append-only terms can't be undone | Open | src/pms/api/setup.py:751; db/migrations/20261021000106_year_close.sql (trust_refuse_closed_year) | H |
 | D-083 | Rent first charged after its own grace ran out (lease entered late, an admin's catch-up) | Charged a late fee the same night, before the tenant could see the rent | Open | db/migrations/20261031000200_late_fees_skip_paid_rents.sql:208 | H |
 | D-128 | A fee charged after the 10-day deadline passed | The deadline moves to 14 days, hiding that the 10-day one was missed (the test pins the move) | Open | src/pms/api/moveout.py:134; tests/api/test_deposit_statements_api.py::test_a_lease_shows_when_its_deposit_is_due_back_and_its_fees_with_their_receipts | H |
 | D-129 | Tenants who moved out before the lease's last day | The deadline still counts from the lease's last day; New York counts from vacating (docs/law.md) | Open | src/pms/api/moveout.py:129 | H |
@@ -1181,6 +1181,7 @@ its ten most pressing, each with the test that would close it.
 | H-152 | Any error while drawing a page (an answer of an unexpected shape after an upgrade, a status the page doesn't know) | An error boundary around the portal: a page that fails to draw says it couldn't be shown and that nothing saved is lost, with Reload and the way to the start; never the error's words | Tested | frontend/src/components/ErrorBoundary.test.tsx | H |
 | H-161 | PMS_PUBLIC_URL written with its default port (https://rentals.example.com:443) | Settings.origin drops the scheme's default port, as a browser's Origin does | Tested | tests/test_deployment.py::test_the_origin_is_written_as_a_browser_sends_it; tests/api/test_sign_in.py::test_our_own_site_goes_through_however_its_address_was_written | H |
 | H-162 | PMS_PUBLIC_URL with capitals in its host (https://Rentals.Example.com) | Settings.origin writes the scheme and host in lower case, as a browser's Origin does | Tested | tests/test_deployment.py::test_the_origin_is_written_as_a_browser_sends_it; tests/api/test_sign_in.py::test_our_own_site_goes_through_however_its_address_was_written | H |
+| H-167 | PMS_PUBLIC_URL with a user or password in it (https://admin:secret@rentals.example.com) | The origin check ignores it, so it started, and every emailed link (invites, resets, statements) carried the credentials | Tested | tests/test_deployment.py::test_the_app_refuses_to_start_at_an_address_no_browser_opens_it_at (refused at start, never repeating them) | H |
 | H-003 | The database is down while staff open pages | Each request waits 30 s for a pool connection, then gets 503 "the PMS is busy just now: try again in a moment": it says busy, not down, and every click takes 30 s | Open | src/pms/api/deps.py:121-132 (PoolTimeout always read as busy); no test of a page with the database down | M |
 | H-004 | The database is down when the portal first loads | Home renders nothing while /api/me waits 30 s (a white page), then shows one error line with no menu, no retry button and no word of what to do | Open | frontend/src/App.tsx:96-109 | M |
 | H-005 | The database restarts in the middle of the day | The pool has no connection check, so each idle pooled connection fails once after the restart: those requests answer 500 and the portal says "the server answered 500" | Open | src/pms/api/app.py:310-311 (ConnectionPool with no check=) | M |

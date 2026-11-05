@@ -49,7 +49,8 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   A change refused because it came from another origin is logged once per origin with the one
   `PMS_PUBLIC_URL` gives, so a server reached at `www.` or another domain shows which to fix.
   One written with its default port (`:443`) or capitals in its host is read as a browser sends
-  it, no longer refusing every sign-in.
+  it, no longer refusing every sign-in; one naming a user or password is refused, as every
+  emailed link would carry them (the refusal never repeats them).
 - **Security: a visitor can't name their own address behind the proxy.** Trusting whoever
   connects (`PMS_TRUSTED_PROXIES="*"`, as `compose.selfhost.yaml` sets it), the app took the first
   address of `X-Forwarded-For`, which a visitor may send themselves and nginx keeps: a new made-up

@@ -155,13 +155,19 @@ def test_the_app_refuses_to_start_at_the_example_address(url):
         ("https://rentals.example.com/pms", "is served at the root"),
         ("https://rentals.example.com/?from=email", "is served at the root"),
         ("https://rentals.example.com/#top", "is served at the root"),
+        # docs/edge-cases.md H-167: every emailed link would carry them.
+        ("https://admin:synthetic@rentals.example.com", "names a user or password"),
+        ("https://admin@rentals.example.com", "names a user or password"),
     ],
 )
 def test_the_app_refuses_to_start_at_an_address_no_browser_opens_it_at(url, says):
     with pytest.raises(deployment.PublicUrlRefused) as refused:
         create_app(Settings(database_url="postgresql://unused", public_url=url))
     assert says in str(refused.value)
-    assert str(refused.value).startswith(f"PMS_PUBLIC_URL {url!r}")
+    if "@" in url:  # never repeated: it carries a user and maybe a password
+        assert "admin" not in str(refused.value) and "synthetic" not in str(refused.value)
+    else:
+        assert str(refused.value).startswith(f"PMS_PUBLIC_URL {url!r}")
 
 
 @pytest.mark.parametrize(
