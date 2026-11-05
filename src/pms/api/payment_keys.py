@@ -45,8 +45,9 @@ class KeysView(BaseModel):
     mode: Literal["test", "live"] | None
     # The secret key's last four characters: all that is ever shown of it.
     ends_in: str | None
-    # Where the company's own Stripe webhook sends its reports.
+    # Where the company's own Stripe webhook sends its reports, and the events it must send.
     webhook_url: str
+    webhook_events: list[str]
     changed_at: datetime | None
     changed_by: str | None
     # Whether this server can keep keys at all (it has a PMS_DATA_KEY), and whether the staff
@@ -101,6 +102,7 @@ def view(conn: psycopg.Connection[Any], request: Request, session: Any) -> KeysV
         mode=row[1] if has else None,
         ends_in=row[2] if has else None,
         webhook_url=f"{outbox.PUBLIC_URL.get()}/api/payments/webhook/stripe/{session.pmc_id}",
+        webhook_events=list(payments.STRIPE_EVENTS),
         changed_at=None if row is None else row[3],
         changed_by=None if row is None else row[4],
         can_keep=can_keep,

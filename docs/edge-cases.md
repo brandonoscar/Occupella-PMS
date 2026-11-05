@@ -28,12 +28,12 @@ answer in the portal for everything that can fail.
 | [Money and the ledger](#money-and-the-ledger) | 151 | 113 | 7 | 31 | 4 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 160 | 82 | 15 | 63 | 14 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 64 | 30 | 48 | 1 |
-| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 67 | 8 | 90 | 24 |
+| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 69 | 8 | 88 | 22 |
 | [Bad files and imports](#bad-files-and-imports) | 151 | 64 | 16 | 71 | 3 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 170 | 73 | 14 | 83 | 5 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1152** | **590** | **110** | **452** | **57** |
+| **All** | **1152** | **592** | **110** | **450** | **55** |
 
 ## Open, high risk: the work list
 
@@ -74,9 +74,7 @@ its ten most pressing, each with the test that would close it.
 - P-007: Keys saved that only look right: a typo'd key, or a secret key and a webhook secret from different Stripe accounts or modes
 - P-010: The server's clock drifts more than 5 minutes
 - P-011: The webhook signing secret changed in Stripe (endpoint recreated) but not in the PMS
-- P-012: The Stripe endpoint isn't subscribed to the events the PMS reads (async_payment_succeeded, payment_intent.*, checkout.session.expired, charge.dispute.created)
 - P-013: No report ever arrives for a started payment (webhook broken, PMS down past Stripe's retry window)
-- P-014: Stripe's account API version is older than the shapes the PMS reads (it sends no Stripe-Version header)
 - P-026: A late return Stripe reports by another event than a dispute (charge.failed after success; NOT VERIFIED which Stripe sends)
 - P-027: A dispute the company won, funds reinstated (charge.dispute.closed, charge.dispute.funds_reinstated)
 - P-028: Staff refund a tenant, all or part, from Stripe's dashboard (charge.refunded)
@@ -633,9 +631,7 @@ its ten most pressing, each with the test that would close it.
 | P-007 | Keys saved that only look right: a typo'd key, or a secret key and a webhook secret from different Stripe accounts or modes | check_keys checks only their shape; payments start on one account and its reports fail the signature, so paid payments never reach the books | Open | src/pms/payments.py:477-487; src/pms/api/payment_keys.py:117-142 | H |
 | P-010 | The server's clock drifts more than 5 minutes | Every Stripe report is refused 400 as "signed too long ago"; Stripe retries then stops; payments stay "Waiting for your bank"; no alert | Open | src/pms/payments.py:429-447 (tolerance 300) | H |
 | P-011 | The webhook signing secret changed in Stripe (endpoint recreated) but not in the PMS | Every report answers 400 "the report's signature isn't this company's"; after Stripe's retries (about 3 days, NOT VERIFIED) they are gone; nobody is told | Open | src/pms/api/online_payments.py:686-693 | H |
-| P-012 | The Stripe endpoint isn't subscribed to the events the PMS reads (async_payment_succeeded, payment_intent.*, checkout.session.expired, charge.dispute.created) | Settings says only "In Stripe, add this as a webhook endpoint." with no list of events; paid bank payments never reach the books | Open | frontend/src/pages/PaymentKeysCard.tsx:90; src/pms/payments.py:337-351 | H |
 | P-013 | No report ever arrives for a started payment (webhook broken, PMS down past Stripe's retry window) | Nothing asks Stripe; the tenant's line says "Waiting for your bank" forever; staff have no list of old started payments, since Waiting lists only paid ones | Open | src/pms/api/online_payments.py:781-790; src/pms/nightly.py (no sweep) | H |
-| P-014 | Stripe's account API version is older than the shapes the PMS reads (it sends no Stripe-Version header) | latest_charge or its balance transaction missing: every paid report answers 502 and is never recorded | Open | src/pms/payments.py:191-200 (no Stripe-Version), 324-335 | H |
 | P-026 | A late return Stripe reports by another event than a dispute (charge.failed after success; NOT VERIFIED which Stripe sends) | Not in STRIPE_KINDS: ignored, the payment stays in the books | Open | src/pms/payments.py:337-351 | H |
 | P-027 | A dispute the company won, funds reinstated (charge.dispute.closed, charge.dispute.funds_reinstated) | Not read: the payment stays bounced, the tenant owes it again plus an NSF fee though the money came back | Open | src/pms/payments.py:337-351 | H |
 | P-028 | Staff refund a tenant, all or part, from Stripe's dashboard (charge.refunded) | Not read: the books keep the whole payment; trust cash at the bank is short of the books | Open | src/pms/payments.py:337-351 (no refund kind) | H |
@@ -653,6 +649,8 @@ its ten most pressing, each with the test that would close it.
 | P-116 | The bank returns a vendor's ACH payment | The bill stays Paid and can't be voided once money was taken | Open | src/pms/api/payables.py:1309-1328 (void refused once money was taken) | H |
 | P-121 | A printed check is lost, misprinted or voided | Reprinting gives the same numbers again; there is no void and reissue, and the money stays recorded as gone | Open | src/pms/api/payouts.py:699-728 | H |
 | P-130 | The wrong statement imported (another account's, wrong days, wrong signs) | Permanent: statements are append-only and there is no undo; its lines the books lack block month-end; Import statement asks nothing first | Open | tests/test_bank_statements.py::test_statements_and_lines_are_append_only pins it; frontend/src/pages/ReconcilePage.tsx:370-371 | H |
+| P-012 | The Stripe endpoint isn't subscribed to the events the PMS reads (async_payment_succeeded, payment_intent.*, checkout.session.expired, charge.dispute.created) | Company setup lists the eight events the endpoint must be sent (payments.STRIPE_EVENTS, the API's webhook_events), saying a bank payment never shows as paid without them | Tested | tests/api/test_payment_keys_api.py; frontend/src/pages/PaymentKeysCard.test.tsx | H |
+| P-014 | Stripe's account API version is older than the shapes the PMS reads (it sends no Stripe-Version header) | Every call to Stripe names Stripe-Version 2024-06-20 (payments.STRIPE_VERSION), whose PaymentIntent has latest_charge; a webhook's payload is read only for ids, statuses and metadata. Not tried against Stripe (NOT VERIFIED) | Tested | tests/test_payments.py::test_stripe_is_called_over_https_with_the_companys_key_and_a_retry_key | H |
 | P-024 | A return (dispute) arrives before the paid report lands (paid kept failing on its fee, or isn't subscribed) | As C-087: refused for now so Stripe retries; a return after a failure is still acknowledged | Tested | tests/api/test_online_payments_api.py::test_a_return_for_a_payment_that_failed_is_acknowledged_and_changes_nothing | H |
 | P-040 | Paid online for a property with two owner accounts and no ownership shares | Checkout says off for such a lease; the waiting list names the owners to choose among (choose_account), Record takes account; the card says when the list couldn't load | Tested | tests/api/test_online_payments_api.py::test_a_property_with_two_owner_accounts_and_no_shares_takes_no_payment_online, ::test_a_payment_paid_after_a_second_owner_account_waits_for_staff_to_choose_one; frontend/src/pages/OnlinePaymentsCards.test.tsx (asks whose a payment is..., says so when the list couldn't load) | H |
 | P-075 | SMTP server hangs | Delivery after a write, and autopay's submissions, run one at a time in a process (outbox.OneAtATime): a write while one runs returns at once and makes it run once more after, so a hung mail server or partner holds one pooled connection, never the pool | Tested | tests/api/test_outbox.py::test_many_writes_at_once_lend_the_slow_partner_one_connection | H |

@@ -173,6 +173,16 @@ def fake_saved(autopay_id: UUID, happened_at: datetime) -> Saved:
     )
 
 
+# The Stripe API version every call names (docs/edge-cases.md P-014): without it Stripe answers in
+# the account's own default version, and one older than 2022-11-15 has no PaymentIntent
+# latest_charge, so every paid report would fail on its fee. This one has every shape the PMS
+# reads (latest_charge, Checkout's us_bank_account, SetupIntents). A webhook's own payload keeps
+# the endpoint's version; the PMS reads only ids, statuses and metadata from it, and fetches the
+# fee with this version. Not tried against Stripe from here (NOT VERIFIED); tests/test_payments.py
+# pins that it is sent.
+STRIPE_VERSION = "2024-06-20"
+
+
 class StripePartner:
     """The company's own Stripe account (Stripe, Inc.'s API over HTTPS, no SDK): a Checkout Session
     takes the payment on Stripe's page, and Stripe's signed webhook reports what the bank did."""
@@ -194,6 +204,7 @@ class StripePartner:
         url = f"{self.api}{path}" + ("" if data else "?" + urllib.parse.urlencode(form))
         request = urllib.request.Request(url, data=data, method=method)  # noqa: S310 (fixed https)
         request.add_header("Authorization", f"Bearer {self._key}")
+        request.add_header("Stripe-Version", STRIPE_VERSION)
         if key:
             # Stripe's own retry key: the same payment asked twice is one session.
             request.add_header("Idempotency-Key", key)
@@ -350,6 +361,12 @@ STRIPE_KINDS: dict[str, Kind] = {
     # The tenant left Stripe's page without paying; it expires a day later.
     "checkout.session.expired": "expired",
 }
+
+
+# Every event the PMS reads from Stripe, which the company's webhook endpoint must be sent
+# (docs/edge-cases.md P-012): one not subscribed to the bank's async reports never sees a bank
+# payment paid. Settings, Company setup lists them.
+STRIPE_EVENTS = tuple(sorted({*STRIPE_KINDS, "setup_intent.succeeded"}))
 
 
 def checkout_form(

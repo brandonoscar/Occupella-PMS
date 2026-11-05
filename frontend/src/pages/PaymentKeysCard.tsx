@@ -20,6 +20,8 @@ export type PaymentKeys = {
   mode: "test" | "live" | null;
   ends_in: string | null;
   webhook_url: string;
+  // The events the endpoint must be sent (docs/edge-cases.md P-012).
+  webhook_events: string[];
   changed_at: string | null;
   changed_by: string | null;
   can_keep: boolean;
@@ -87,7 +89,13 @@ export function PaymentKeysCard() {
             <dt className="text-ink-muted">Webhook URL</dt>
             <dd className="break-all font-mono text-ink" data-testid="webhook-url">{keys.webhook_url}</dd>
           </dl>
-          <p className="mt-1 text-sm text-ink-muted">In Stripe, add this as a webhook endpoint.</p>
+          <p className="mt-1 text-sm text-ink-muted">
+            In Stripe, add this as a webhook endpoint, sent these events. Without them a bank payment
+            never shows as paid.
+          </p>
+          <ul className="mt-1 text-sm" aria-label="Webhook events">
+            {keys.webhook_events.map((event) => <li key={event} className="text-ink">{event}</li>)}
+          </ul>
           {!keys.can_keep && <Notice tone="info">This server can't keep keys. Ask whoever runs it to set PMS_DATA_KEY.</Notice>}
           {keys.may_change && keys.can_keep && (
             <div className="mt-3">

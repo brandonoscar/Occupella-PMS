@@ -14,6 +14,7 @@ const NONE: PaymentKeys = {
   mode: null,
   ends_in: null,
   webhook_url: WEBHOOK,
+  webhook_events: ["checkout.session.async_payment_succeeded", "setup_intent.succeeded"],
   changed_at: null,
   changed_by: null,
   can_keep: true,
@@ -53,6 +54,8 @@ describe("PaymentKeysCard", () => {
     render(<PaymentKeysCard />);
     expect((await screen.findByTestId("payment-keys")).textContent).toBe("Using the test payments partner.");
     expect(screen.getByTestId("webhook-url").textContent).toBe(WEBHOOK);
+    expect(within(screen.getByRole("list", { name: "Webhook events" })).getAllByRole("listitem").map((li) => li.textContent))
+      .toEqual(["checkout.session.async_payment_succeeded", "setup_intent.succeeded"]);
 
     fireEvent.click(screen.getByRole("button", { name: "Enter keys" }));
     const panel = screen.getByRole("dialog", { name: "Stripe keys" });

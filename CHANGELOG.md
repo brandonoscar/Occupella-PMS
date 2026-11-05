@@ -77,6 +77,11 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   are all positive, with a column saying Debit or Credit (Type, Transaction type, Dr/Cr), went in
   with every check and fee as a deposit. Each line's way now comes from that column; a type saying
   neither is refused with its line, and a bank that signs its amounts keeps its signs.
+- **Fixed: Stripe's answers in an old API version, and a webhook missing its events.** Every
+  call to Stripe now names the API version whose shapes the PMS reads (`2024-06-20`), so an
+  account whose default is older than `latest_charge` no longer fails every paid report; and
+  Company setup lists the eight events the company's Stripe webhook endpoint must be sent,
+  without which a bank payment never shows as paid.
 - **Fixed: a disk the backups filled never freed itself.** A daily dump that failed left its
   half-written file, and dumps past keeping were removed only after a dump succeeded. A failed
   dump now removes both first. And the backup service reads unhealthy in `docker compose ps`
