@@ -50,7 +50,7 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
-from pms import days, email_html
+from pms import days, deployment, email_html
 
 log = logging.getLogger("pms.email")
 
@@ -699,6 +699,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args != ["deliver"]:
         print("usage: python -m pms.email deliver", file=sys.stderr)
         return 2
+    deployment.refuse_fakes_in(os.environ)
     sender = sender_named(os.environ.get("PMS_EMAIL_SENDER", ""), os.environ)
     if sender is None:
         print("PMS_EMAIL_SENDER is unset: nothing is sent", file=sys.stderr)

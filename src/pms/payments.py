@@ -505,11 +505,23 @@ def seal_keys(row: UUID, secret_key: str, webhook_secret: str, key: bytes) -> tu
     )
 
 
+def many_companies(conn: psycopg.Connection[Any]) -> bool:
+    """Whether the database holds more than one company."""
+    row = conn.execute("SELECT count(*) FROM (SELECT 1 FROM trust_pmcs LIMIT 2) AS two").fetchone()
+    return row is not None and row[0] > 1
+
+
 class Resolver:
     """Which partner takes a company's payments: its own Stripe account once an admin entered its
     keys, else the server's partner (PMS_PAYMENTS), else none. A company with keys of its own that
     don't open here (the server lost its PMS_DATA_KEY, or another server's) takes no payment
-    online: it never falls back to the server's account, which isn't where its money goes."""
+    online: it never falls back to the server's account, which isn't where its money goes.
+
+    The server's own keys are one Stripe account, paying out to one company's trust account, so a
+    real partner of the server's serves only a server holding one company (`server_for`): on a
+    server with more, a company without keys of its own would take its tenants' rent into another
+    company's account, so it takes none online until it enters its own. The fake partner, which
+    moves no money, serves any."""
 
     def __init__(self, server: Partner | None, environ: Mapping[str, str] = os.environ) -> None:
         self.server = server
@@ -544,11 +556,18 @@ class Resolver:
             return None
         return StripePartner(secret, webhook)
 
+    def server_for(self, conn: psycopg.Connection[Any]) -> Partner | None:
+        """The server's partner, where it may take a company's payments: the fake one always, a
+        real one only on a server holding one company."""
+        if self.server is None or self.server.name == "fake":
+            return self.server
+        return None if many_companies(conn) else self.server
+
     def for_pmc(self, conn: psycopg.Connection[Any], pmc_id: UUID) -> Partner | None:
         own = self.own(conn, pmc_id)
         if own is False:
             return None
-        return own if own is not None else self.server
+        return own if own is not None else self.server_for(conn)
 
     def name_for(self, conn: psycopg.Connection[Any], pmc_id: UUID) -> str | None:
         partner = self.for_pmc(conn, pmc_id)

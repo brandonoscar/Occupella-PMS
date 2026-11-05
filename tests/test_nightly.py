@@ -342,6 +342,8 @@ def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     )
     assert nightly.main(["now"]) == 2
     # A server that sends email writes the automatic emails too; `pms.email deliver` sends them.
+    # The fake partners run at an https address only on a public demo (pms.deployment).
+    monkeypatch.setenv("PMS_FAKE_PARTNERS", "allow")
     monkeypatch.setenv("PMS_EMAIL_SENDER", "fake")
     assert nightly.main([]) == 0
     assert seen[-1][2] is True

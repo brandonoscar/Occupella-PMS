@@ -26,6 +26,20 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   starts it. Copying the dumps off the server is still yours to set up (docs/backup.md).
 - **Fixed:** the Dashboard asked for a day at the calendar's very ends (year 1 or 9999) answered
   with a server error; it now says which days it shows (1900 to 9999).
+- **A signed image for each release:** pushing a release tag now publishes the self-host image to
+  `ghcr.io/brandonoscar/occupella-pms:<tag>`, scanned, signed with Sigstore and with its SBOM
+  attached (docs/release.md, "The self-host image"). Building from the tag still works as
+  before.
+- **Security: a real server refuses the test partners.** A server whose `PMS_PUBLIC_URL` is https
+  no longer starts (nor do `python -m pms.nightly` and `python -m pms.email deliver`) with
+  `PMS_PAYMENTS`, `PMS_SCREENING_PARTNER`, `PMS_GEOCODER` or `PMS_EMAIL_SENDER` set to `fake`:
+  the fake payments partner lists every company's pending payments without a sign-in and records
+  one paid at a button's press. `PMS_FAKE_PARTNERS=allow` lets a public demo of a synthetic
+  company run them. Nothing to do unless your `.env` names a fake partner.
+- **The server's own Stripe keys serve only a server holding one company.** They are one Stripe
+  account paying out to one trust account, so on a server with more companies a company without
+  keys of its own takes no payment online until an admin enters its own in Company setup
+  (docs/install.md, "Payments online"). A server with one company is unchanged.
 
 ## v2026.11.0 (first release)
 

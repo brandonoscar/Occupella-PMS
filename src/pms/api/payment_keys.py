@@ -79,7 +79,7 @@ def view(conn: psycopg.Connection[Any], request: Request, session: Any) -> KeysV
     resolver = resolver_of(request)
     row = latest(conn, session.pmc_id)
     own = resolver.own(conn, session.pmc_id)
-    server = resolver.server
+    server = resolver.server_for(conn)
     using: Literal["own", "server", "none", "unreadable"] = (
         "unreadable"
         if own is False

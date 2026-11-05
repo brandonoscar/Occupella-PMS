@@ -396,6 +396,9 @@ def test_a_partner_that_does_not_answer_starts_no_payment(
 
 @pytest.fixture
 def stripe_app(database_url, monkeypatch):
+    # The server's own Stripe keys serve only a server holding one company (payments.Resolver);
+    # the test database holds many, so it answers as a server with one.
+    monkeypatch.setattr(payments, "many_companies", lambda conn: False)
     monkeypatch.setenv("PMS_STRIPE_SECRET_KEY", "sk_test_not_real")
     monkeypatch.setenv("PMS_STRIPE_WEBHOOK_SECRET", SECRET)
     answers = {}

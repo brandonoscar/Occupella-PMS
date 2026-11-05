@@ -31,6 +31,9 @@ four are needed to start; add the others when you turn those parts on.
 | `PMS_PAYMENTS=stripe`, `PMS_STRIPE_SECRET_KEY`, `PMS_STRIPE_WEBHOOK_SECRET` | Tenants pay rent online by bank, with autopay; owners pay into their accounts | Easier: leave these out and enter your Stripe keys in Company setup (below). These are the fallback for a company that enters none | Optional |
 | `PMS_GEOCODER=census` | Puts each property on a map from its address | Nothing: the U.S. Census Bureau's geocoder is free and needs no key | Optional |
 
+Never set any of these to `fake`. The fake partners are for development and the demo, and a
+server whose `PMS_PUBLIC_URL` starts with `https://` refuses to start with one.
+
 Your bank's ACH details (its routing number and the IDs it gives your company, for payout files)
 are not keys: you enter them in the PMS, on each trust bank account's Payouts tab.
 
@@ -140,7 +143,9 @@ events for the webhook:
 Or, for a server that runs one company, put the keys in `.env` instead (`PMS_PAYMENTS=stripe`,
 `PMS_STRIPE_SECRET_KEY`, `PMS_STRIPE_WEBHOOK_SECRET`) with the webhook at
 `https://pms.example.com/api/payments/webhook/stripe`; keys entered in Company setup take over
-from them. A tenant's autopay bank account stays with the Stripe account it was saved at: after
+from them. The PMS uses keys in `.env` only while the server holds one company: they are one
+Stripe account paying out to one trust account, so on a server with more, each company enters
+its own. A tenant's autopay bank account stays with the Stripe account it was saved at: after
 changing accounts, tenants set autopay up again.
 
 Then turn it on in Company setup, Online payments. Payments are by bank (ACH) for now. They were

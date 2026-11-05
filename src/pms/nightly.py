@@ -51,7 +51,7 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
-from pms import autopay, days, email, notices, payments
+from pms import autopay, days, deployment, email, notices, payments
 from pms.api import payables, rent
 
 log = logging.getLogger("pms.nightly")
@@ -321,6 +321,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args:
         print("usage: python -m pms.nightly", file=sys.stderr)
         return 2
+    deployment.refuse_fakes_in(os.environ)
     public_url = os.environ.get("PMS_PUBLIC_URL", "http://localhost:8000")
     with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
         conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier("trust_app")))

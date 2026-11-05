@@ -907,8 +907,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   only its payments and takes every secret it used, so a payment started before a change still
   lands; keys that don't open on this server take no payment and never fall back), else the
   server's (`PMS_PAYMENTS`: "stripe" with keys from the environment, `PMS_STRIPE_SECRET_KEY` and
-  `PMS_STRIPE_WEBHOOK_SECRET`; "fake" for development and CI, whose own page `/pay/fake#<id>`
-  says what the bank did; none by default; `pms.payments.Resolver` picks per company),
+  `PMS_STRIPE_WEBHOOK_SECRET`, serving only a server that holds one company, as they are one
+  account paying out to one trust account; "fake" for development and CI, whose own page
+  `/pay/fake#<id>` says what the bank did; none by default; `pms.payments.Resolver` picks per
+  company),
   by bank (ACH) only for now; the PMS never sees an account number. A company turns it on in
   Company setup and chooses who pays the partner's fee on a bank payment
   (`trust_payment_settings`: append-only, the latest holding, naming who; the company, from its

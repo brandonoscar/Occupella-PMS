@@ -47,7 +47,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from pms import accounts, days, email, exports, geocoding, nightly, payments, phones
+from pms import accounts, days, deployment, email, exports, geocoding, nightly, payments, phones
 from pms.api import (
     addresses,
     ai_keys,
@@ -146,6 +146,9 @@ class Settings:
     # The nightly run (pms.nightly): rent, late fees and recurring bills post by themselves at
     # start and every day at 06:00 UTC. On unless PMS_NIGHTLY is "off".
     nightly: bool = False
+    # "allow" lets a server at an https address run fake partners: a public demo of a synthetic
+    # company, and nothing else (pms.deployment). Empty refuses them there.
+    fake_partners: str = ""
     # The HTTPS proxy in front of the app (docs/install.md, step 4), whose X-Forwarded-For names
     # the visitor: its address, a comma list of them, or "*" (compose.selfhost.yaml, where only
     # the server itself reaches the app). Then a signature's evidence keeps the signer's address,
@@ -167,6 +170,7 @@ class Settings:
             geocoder=os.environ.get("PMS_GEOCODER", ""),
             payments=os.environ.get("PMS_PAYMENTS", ""),
             nightly=os.environ.get("PMS_NIGHTLY", "on").lower() != "off",
+            fake_partners=os.environ.get("PMS_FAKE_PARTNERS", ""),
             trusted_proxies=os.environ.get("PMS_TRUSTED_PROXIES", "").strip(),
         )
 
@@ -272,6 +276,18 @@ class Enroll(BaseModel):
 
 
 def create_app(settings: Settings) -> FastAPI:
+    # A server at an https address is one real people use: it refuses the test partners.
+    deployment.refuse_fakes(
+        settings.public_url,
+        {
+            "PMS_PAYMENTS": settings.payments,
+            "PMS_SCREENING_PARTNER": settings.screening_partner,
+            "PMS_GEOCODER": settings.geocoder,
+            "PMS_EMAIL_SENDER": settings.email_sender,
+        },
+        settings.fake_partners,
+    )
+
     def configure(conn: psycopg.Connection[Any]) -> None:
         conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(settings.db_role)))
         # The planner's JIT compiling costs more than it saves on the app's queries: on a
