@@ -1366,9 +1366,10 @@ class RentRollMachine(RuleBasedStateMachine):
 
     def charge_recurring_on(self, role, due_on):
         """The rent run's recurring charges: each in force on due_on whose lease is in effect
-        then, for the days of the month the lease is in effect, due that day; then each in force
-        on the first day of a lease starting later that month, with nothing charged for it in
-        the month yet, its first part month, due on that day."""
+        then, with nothing of it charged in the month yet (once a month, migration
+        20261105000400), for the days of the month the lease is in effect, due that day; then each
+        in force on the first day of a lease starting later that month, with nothing charged for
+        it in the month yet, its first part month, due on that day."""
         month = (due_on.year, due_on.month)
         due = [
             (recurring_id, due_on)
@@ -1376,7 +1377,10 @@ class RentRollMachine(RuleBasedStateMachine):
             if recurring.in_force(due_on)
             and self.leases[recurring.lease_id].covers(due_on)
             and self.recurring_for_month(recurring_id, due_on)[0] > 0
-            and (recurring_id, due_on) not in self.recurring_charged
+            and not any(
+                charged == recurring_id and (day.year, day.month) == month
+                for charged, day in self.recurring_charged
+            )
         ]
         first = [
             (recurring_id, starts_on)
@@ -1457,9 +1461,10 @@ class RentRollMachine(RuleBasedStateMachine):
             recurring.ends_on = ends_on
 
     def charge_rent_on(self, role, due_on):
-        """The rent run: each lease in effect on due_on its rent for the days of the month it is
-        in effect, due that day; then each lease starting later that month, with no rent charged
-        in the month yet, its first part month, due on its first day."""
+        """The rent run: each lease in effect on due_on, with no rent of it due in the month yet
+        (once a month, migration 20261105000400), its rent for the days of the month it is in
+        effect, due that day; then each lease starting later that month, with no rent charged in
+        the month yet, its first part month, due on its first day."""
         month = (due_on.year, due_on.month)
         due = [
             (lease_id, due_on)
@@ -1467,7 +1472,9 @@ class RentRollMachine(RuleBasedStateMachine):
             if lease.covers(due_on)
             and rent_for_month(lease, due_on)[0] > 0
             and not any(
-                c.lease_id == lease_id and c.due_on == due_on and c.kind == "rent"
+                c.lease_id == lease_id
+                and c.kind == "rent"
+                and (c.due_on.year, c.due_on.month) == month
                 for c in self.charges.values()
             )
         ]
