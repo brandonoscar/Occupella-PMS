@@ -252,3 +252,38 @@ def test_only_a_standing_key_opens_the_server(client, software, key):
     assert client.post(f"/api/ai/keys/{listed['id']}/revoke", json={}).status_code == 204
     refused = software.post("/mcp", json=ping, headers=key)
     assert (refused.status_code, refused.json()["detail"]) == (401, NOT_VALID)
+
+
+def test_a_refusal_says_only_the_pmss_own_words(software, key):
+    # A report given an argument it can't read: never the database's own message.
+    refused = tool(software, key, "run_report", name="rent_roll", args=["not a day"])
+    assert refused["isError"] is True
+    assert refused["content"][0]["text"] == (
+        "an argument of the rent_roll report isn't what it takes: list_reports says its types"
+    )
+    wrong = tool(software, key, "run_report", name="rent_roll", args=[])
+    assert wrong["content"][0]["text"] == (
+        "the rent_roll report takes other arguments: list_reports names them"
+    )
+
+
+def test_a_tool_that_breaks_tells_the_client_nothing_of_why(settings, key, monkeypatch):
+    from pms.api import mcp
+
+    def breaks(conn, key, args):
+        raise KeyError("an internal detail")
+
+    monkeypatch.setitem(mcp.BY_NAME, "find", mcp.Tool("find", "", {}, breaks))
+    with TestClient(create_app(settings), raise_server_exceptions=False) as client:
+        answer = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "find", "arguments": {}},
+            },
+            headers=key,
+        )
+    assert answer.status_code == 500
+    assert "internal detail" not in answer.text

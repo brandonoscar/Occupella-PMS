@@ -51,7 +51,20 @@ INVALID_REQUEST, NO_METHOD, INVALID_PARAMS = -32600, -32601, -32602
 
 
 class ToolError(Exception):
-    """A tool that could not do what it was asked: told to the client as the tool's result."""
+    """A tool that could not do what it was asked: told to the client as the tool's result, in
+    the words given here (never an exception's own message)."""
+
+    def __init__(self, said: str) -> None:
+        super().__init__(said)
+        self.said = said
+
+
+class Unknown(Exception):
+    """A call naming no tool, or arguments that are no object: a JSON-RPC error, in these words."""
+
+    def __init__(self, said: str) -> None:
+        super().__init__(said)
+        self.said = said
 
 
 @dataclass(frozen=True)
@@ -108,12 +121,18 @@ def report(conn: psycopg.Connection[Any], key: Key, name: str, *args: Any) -> di
     """A report of the key's company, its company always the key's first argument."""
     try:
         table = exports.run_report(conn, f"trust_report_{name}", [key.pmc_id, *args])
-    except exports.ExportError as wrong:
-        raise ToolError(str(wrong)) from None
+    except exports.UnknownReport:
+        raise ToolError(f"no report named {name}: list_reports names them") from None
+    except exports.ExportError:
+        raise ToolError(
+            f"the {name} report takes other arguments: list_reports names them"
+        ) from None
     except psycopg.errors.InsufficientPrivilege:
         raise ToolError(f"this key may not run the {name} report") from None
-    except (psycopg.errors.DataError, psycopg.errors.InvalidParameterValue) as bad:
-        raise ToolError(str(bad).splitlines()[0].removeprefix("trust: ")) from None
+    except (psycopg.errors.DataError, psycopg.errors.InvalidParameterValue):
+        raise ToolError(
+            f"an argument of the {name} report isn't what it takes: list_reports says its types"
+        ) from None
     return {
         "columns": list(table.columns),
         "rows": [[None if v is None else exports.text(v) for v in row] for row in table.rows],
@@ -473,16 +492,21 @@ def call(conn: psycopg.Connection[Any], key: Key, params: dict[str, Any]) -> dic
     """A tool's result: what it found or did as text and as structured content, or why not."""
     tool = BY_NAME.get(str(params.get("name")))
     if tool is None:
-        raise LookupError(f"no tool named {params.get('name')}")
+        raise Unknown(f"no tool named {str(params.get('name'))[:100]}")
     args = params.get("arguments") or {}
     if not isinstance(args, dict):
-        raise LookupError("arguments are an object")
+        raise Unknown("arguments are an object")
+    said = None
     try:
         with conn.transaction():  # a savepoint: a tool refused leaves the request usable
             found = tool.run(conn, key, dict(args))
-    except (ToolError, HTTPException) as refused:
-        said = refused.detail if isinstance(refused, HTTPException) else str(refused)
-        return {"content": [{"type": "text", "text": str(said)}], "isError": True}
+    except ToolError as refused:
+        said = refused.said
+    except HTTPException as refused:
+        # The API's own refusal, in the words it gives any caller (a 4xx's detail).
+        said = refused.detail if isinstance(refused.detail, str) else "refused"
+    if said is not None:
+        return {"content": [{"type": "text", "text": said}], "isError": True}
     return {
         "content": [{"type": "text", "text": json.dumps(found, sort_keys=True)}],
         "structuredContent": found,
@@ -524,6 +548,6 @@ def mcp(key: WithKey, conn: Conn, message: Annotated[Any, Body()]) -> Response:
     if method == "tools/call":
         try:
             return JSONResponse(answer(message_id, call(conn, key, params)))
-        except LookupError as unknown:
-            return JSONResponse(error(message_id, INVALID_PARAMS, str(unknown)))
+        except Unknown as unknown:
+            return JSONResponse(error(message_id, INVALID_PARAMS, unknown.said))
     return JSONResponse(error(message_id, NO_METHOD, f"no method {method}"))
