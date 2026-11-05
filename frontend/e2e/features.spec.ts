@@ -2294,12 +2294,12 @@ test("staff budget a property's year in one grid, save it at once, see it agains
   const grid = page.getByRole("table", { name: "Budget" });
   await expect(grid.getByLabel("Income: rent, total")).toHaveValue("0.00");
 
-  // A year's rent typed as its total spreads over the months; repairs month by month.
+  // A year's rent typed as its total spreads over the months; general repairs month by month.
   await grid.getByLabel("Income: rent, total").fill("24000");
   await grid.getByLabel("Income: rent, total").press("Enter");
   await expect(grid.getByLabel("Income: rent, June")).toHaveValue("2000.00");
-  await grid.getByLabel("Expense: Repairs, March").fill("400");
-  await grid.getByLabel("Expense: Repairs, September").fill("600");
+  await grid.getByLabel("Expense: General repairs, March").fill("400");
+  await grid.getByLabel("Expense: General repairs, September").fill("600");
   await expect(grid.getByRole("row", { name: "Net income" })).toContainText("$23,000.00");
   await page.getByRole("button", { name: "Save budget" }).click();
   await expect(page.getByText(`Saved Aspen Row's ${year} budget: 14 months changed.`)).toBeVisible();
@@ -2310,7 +2310,7 @@ test("staff budget a property's year in one grid, save it at once, see it agains
   await page.getByRole("tab", { name: "Budget vs actual" }).click();
   const versus = page.getByRole("table", { name: "Budget vs actual" });
   await expect(versus.getByRole("row", { name: "Income: rent" })).toContainText("$24,000.00");
-  await expect(versus.getByRole("row", { name: "Expense: Repairs" })).toContainText("$1,000.00");
+  await expect(versus.getByRole("row", { name: "Expense: General repairs" })).toContainText("$1,000.00");
 
   await downloads(page, "Export", XLSX);
   const href = (await page.getByRole("link", { name: "Export", exact: true }).getAttribute("href")) ?? "";
