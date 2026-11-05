@@ -211,8 +211,9 @@ RECORDS = {
     "payout run": _ONLY.format("trust_payout_runs"),
     # Made by fill_in: the vendor's EIN, sealed.
     "tax id": _ONLY.format("trust_tax_ids"),
-    # Made by fill_in: an API key (ADR 0011).
+    # Made by fill_in: an API key (ADR 0011), and a draft software proposed with it.
     "api key": _ONLY.format("trust_api_keys"),
+    "draft": _ONLY.format("trust_drafts"),
 }
 
 # A path parameter's record, by its name; then where one name means another record on a route.
@@ -258,6 +259,7 @@ PATH_IDS = {
     "run_id": "payout run",
     "tax_id": "tax id",
     "key_id": "api key",
+    "draft_id": "draft",
     "pmc_id": "company",
     "announcement_id": "announcement",
 }
@@ -399,6 +401,10 @@ EXEMPT = {
     " credential and names the company (tests/api/test_ai_keys.py)",
     "GET /api/ai/reports/{name}": "software calls it with an API key: the report's company is"
     " always the key's, its first argument (tests/api/test_ai_keys.py)",
+    "POST /api/ai/drafts": "software proposes with an API key: the draft's company is the key's,"
+    " and each record it names must be that company's (tests/api/test_drafts.py)",
+    "GET /api/ai/drafts": "software reads its own drafts with an API key: those its key proposed"
+    " (tests/api/test_drafts.py)",
 }
 # Where a route refuses another company's record in its path otherwise than as not found, and
 # why (none does today).
@@ -1006,7 +1012,23 @@ def fill_in(client: TestClient, company: Company, conn: psycopg.Connection[Any])
     tenant("POST", f"/api/payments/leases/{lease}/autopay", {"rule": "fixed", "amount": "10.00"})
     company.vendor_token = staff("POST", f"/api/vendors/{vendor}/link")["url"].split("#", 1)[1]
     staff("POST", f"/api/tax-ids/vendors/{vendor}", {"kind": "EIN", "number": "00-7654321"})
-    staff("POST", "/api/ai/keys", {"name": "Isolation key"})
+    secret = staff("POST", "/api/ai/keys", {"name": "Isolation key"})["secret"]
+    client.cookies.clear()
+    ok(
+        client.post(
+            "/api/ai/drafts",
+            json={
+                "proposal": {
+                    "kind": "note",
+                    "about": "property",
+                    "about_id": str(prop),
+                    "body": "Hi",
+                }
+            },
+            headers={"Authorization": f"Bearer {secret}"},
+        ),
+        201,
+    )
     printed = staff(
         "POST",
         "/api/payables/bills",

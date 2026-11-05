@@ -5,8 +5,9 @@ pins them down completely: any grant added, dropped or widened by a migration fa
 `pms_nobody` stands in for any other role on the server (PUBLIC), such as a Supabase `anon`.
 
 trust_ai_agent, the role behind the API key Occupella will hold, reads what trust_app reads and
-runs the reports: it can't write a row or call a function that writes (the AI never moves money).
-The one exception is AI_NEVER_READS: who can sign in, sessions and credentials, rental
+runs the reports: it can't call a function that writes (the AI never moves money), and its one
+write is AI_WRITES, a draft proposed for staff to decide (ADR 0011). The one exception to what it
+reads is AI_NEVER_READS: who can sign in, sessions and credentials, rental
 applicants with their screenings, and the files of documents. Their copies in the audit log are
 hidden from it too, by the log's row-level security.
 
@@ -353,6 +354,11 @@ TABLES = {
     # kept as its SHA-256.
     "trust_api_keys": {"SELECT", "INSERT"},
     "trust_api_key_revocations": {"SELECT", "INSERT"},
+    # Drafts (ADR 0011, migration 20261105000300): the AI's role proposes them, the app reads
+    # them; a staff member's decision and what the PMS did for an approved one are the app's.
+    "trust_drafts": {"SELECT"},
+    "trust_draft_decisions": {"SELECT", "INSERT"},
+    "trust_draft_actions": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -470,7 +476,13 @@ AI_NEVER_READS = {
     # API keys (ADR 0011): credentials, as logins are. A key's request reads as this role.
     "trust_api_keys",
     "trust_api_key_revocations",
+    # What the PMS did for an approved draft: staff's words in it, as the emails and notes they
+    # write, which the AI never reads either. It reads each draft's decision, never this.
+    "trust_draft_actions",
 }
+# The AI role's one write (ADR 0011): proposing a draft, a plain INSERT, which moves nothing until
+# a staff member approves it and the app does it through its own write paths as them.
+AI_WRITES = {"trust_drafts": {"INSERT"}}
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [
     "trust_pmcs",
@@ -650,6 +662,9 @@ FUNCTIONS = {
     "trust_check_tax_id_reveal()": set(),
     # Only an admin makes an API key or takes one back (migration 0201).
     "trust_check_api_key_admin()": set(),
+    # A draft's key stands and its company is active; its decision and what was done agree.
+    "trust_check_draft()": set(),
+    "trust_check_draft_action()": set(),
     "trust_check_tenant_applicant()": set(),
     "trust_check_decision_override()": set(),
     "trust_fill_bill_markup()": set(),
@@ -845,6 +860,7 @@ SECURITY_DEFINER = {
     "trust_post_journal_entry(uuid,uuid)",
     "trust_decline_journal_entry(uuid,uuid,text)",
     "trust_audit()",  # writes the audit log, which no other role may write
+    "trust_check_draft()",  # reads the draft's API key, which the AI's role never reads
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
     "trust_check_bill_decision()",  # locks the bill's owner account, which the app can't
     "trust_check_charge_waiver()",  # locks the waived charge, which the app can't
@@ -1018,7 +1034,19 @@ def test_no_role_but_the_owner_may_delete_or_truncate(conn):
 @pytest.mark.parametrize("table", TABLES)
 def test_ai_role_reads_only_what_the_app_reads(conn, table):
     expected = set() if table in AI_NEVER_READS else TABLES[table] & {"SELECT"}
-    assert granted(conn, "trust_ai_agent", table) == expected
+    assert granted(conn, "trust_ai_agent", table) == expected | AI_WRITES.get(table, set())
+
+
+def test_the_ai_roles_one_write_is_proposing_a_draft(conn):
+    # Every table the AI role may change, by any grant: exactly the drafts, by INSERT, and the app
+    # may not write them (only the AI proposes; staff decide).
+    writes = {
+        table: privileges
+        for table in TABLES
+        if (privileges := granted(conn, "trust_ai_agent", table) - {"SELECT"})
+    }
+    assert writes == AI_WRITES == {"trust_drafts": {"INSERT"}}
+    assert "INSERT" not in TABLES["trust_drafts"]
 
 
 def test_ai_role_holds_no_column_grant(conn):

@@ -53,7 +53,7 @@ export function AiKeysPage({ me }: { me: Me }) {
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="AI"
-        description="A key lets software, such as an AI assistant, read the company's books through the PMS's API. It reads only: it never moves money or changes a record."
+        description="A key lets software, such as an AI assistant, read the company's books through the PMS's API and propose drafts for staff to approve (Drafts). By itself it never moves money or changes a record."
         actions={admin && <Button onClick={() => setMaking(true)}>Make a key</Button>} />
       <Said>{said}</Said>
       <Notice tone="error">{refused || error}</Notice>

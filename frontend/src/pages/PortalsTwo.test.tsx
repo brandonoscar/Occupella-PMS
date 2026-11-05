@@ -241,4 +241,18 @@ describe("staff's side of the portals", () => {
         { kind: "go", label: "Open lease", href: "/leases/l1" }],
     ]);
   });
+
+  it("puts the drafts software proposed in Needs attention, each opening its page (ADR 0011)", () => {
+    const today = {
+      on: "2026-11-05", late_rent: [], bills_due: [], unreconciled: [], applications: [], unsigned_offers: [],
+      journal_waiting: [], vendor_insurance: [], company_fees: [], signers: [], renters_insurance: [],
+      deposits_to_receive: [], deposits_to_return: [],
+      drafts_waiting: [{ id: "d1", what: "Email to Tenant 1: Water shutoff", key: "Assistant",
+        made_at: "2026-11-05T15:00:00Z" }],
+    } as unknown as Today;
+    expect(attentionRows(today).map((r) => [r.what, r.line, r.action])).toEqual([
+      ["Draft", "Email to Tenant 1: Water shutoff (from Assistant)",
+        { kind: "go", label: "Review draft", href: "/drafts/d1" }],
+    ]);
+  });
 });

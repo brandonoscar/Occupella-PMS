@@ -266,12 +266,18 @@ def test_the_rent_run_charges_a_recurring_charge_with_the_rent_until_it_stops(cl
         ("fee", f"Pet rent due {TODAY}", "35.00"),
     ]
 
-    ok(call(client, f"recurring-charges/{pet_rent}/stop", ends_on=TODAY + DAY))
+    # Stopped from next month's first day: next month's run charges the rent and the concession,
+    # not the pet rent. (A run for another day of this month charges nothing more: each month
+    # once, tests/test_rent_once_a_month.py.)
+    next_month = (TODAY.replace(day=1) + 32 * DAY).replace(day=1)
+    ok(call(client, f"recurring-charges/{pet_rent}/stop", ends_on=next_month))
     assert [r["ends_on"] for r in lease_row(client, home)["recurring"]] == [
         None,
-        str(TODAY + DAY),
+        str(next_month),
     ]
-    assert ok(run(client, TODAY + DAY), 200) == {
+    another_day = TODAY.replace(day=27 if TODAY.day == 28 else 28)
+    assert ok(run(client, another_day, TODAY), 200)["rents"] == 0
+    assert ok(run(client, next_month, TODAY), 200) == {
         "rents": 1,
         "recurring": 1,
         "late_fees": 0,

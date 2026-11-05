@@ -31,6 +31,23 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   second person for month-end, email sending, then the optional portals and rent paid online),
   each done or not by the company's own records and linking to where it is done
   (`GET /api/go-live`).
+- **Fixed: rent charged twice in a month.** Run rent now with Rent due on set to a day other than
+  the first (the 15th, say) charged every lease due on the first a second month's rent and each
+  monthly charge a second time, and a rent the old system's unpaid charges carried over on another
+  day of the month was charged again on the first. The run now charges each month once.
+  Migration `20261105000400`. A month charged twice before it stays so: look for two rents due in
+  one month on the rent roll and credit the second.
+- **Fixed: one bad photo stopped every email.** A move-out photo that says it is enormous (a PNG
+  of 30000 x 30000 pixels in a few bytes) made its deposit statement fail, and its email, never
+  recorded as tried, stayed first in the queue so every email behind it waited, and the nightly
+  run failed with it. The statement now says that photo is with the lease's files, and any error
+  making an email's file is recorded as that email's failed attempt.
+- **Drafts (ADR 0011):** software with an API key, such as an AI assistant, proposes an email,
+  a notice, a work order opened, assigned or scheduled, or a note, by the ids of the company's
+  records; nothing is done until a staff member approves it at Drafts (or from the Dashboard),
+  maybe after changing it, and then it is done as them, with their roles. Declining says why for
+  the software. No draft moves money. Migration `20261105000300` (three new tables; the AI's
+  role gains its one write, proposing a draft).
 - **Security: an idle session ends.** A session left alone for an hour is signed out, besides
   its twelve hours as before; using it keeps it going. Migration `20261105000200` (a table of
   each session's last use, updated at most every five minutes and left out of the audit log).

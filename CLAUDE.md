@@ -451,8 +451,23 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   never inherits it), naming no staff member. A key unknown, taken back or malformed is one 401;
   a key opens no cookie endpoint and a session no key endpoint; a key makes at most
   `ai_keys.PER_MINUTE` (120) requests a minute in a process (429, Retry-After). The everything
-  export leaves its hash out, and the AI role reads neither table. Drafts, events, the MCP
-  server and Enable AI come later, each its own PR.
+  export leaves its hash out, and the AI role reads neither table. Events, the MCP server and
+  Enable AI come later, each its own piece.
+- Drafts (ADR 0011's second piece, migration 20261105000300, `src/pms/api/drafts.py`): software
+  with a key proposes (`POST /api/ai/drafts`, as `trust_ai_agent`, whose one write is that INSERT
+  into `trust_drafts`) an email to tenants, owners or vendors, a notice from a notice template for
+  leases, a work order opened, assigned or scheduled, or a note, naming records by id (a strict
+  shape: no other field, never a contact detail) with why; never anything that moves money. The
+  key must stand and its company be active (a trigger); 500 waiting at most. Staff see them at
+  `/drafts` (`pages/DraftsPage.tsx`: Waiting, Decided, All) and on the Dashboard, each in words,
+  an email with who gets it at which address today and who has none, and approve one (asked
+  first), change it first, or decline it saying why (`trust_draft_decisions`, once, naming who).
+  Approving does it now through the route staff use by hand (`emails`, `notice_templates`,
+  `work_orders`, `maintenance`, `notes`), as that staff member, with the area of its kind (email,
+  documents or maintenance; declining takes none), all or none, and keeps what was done and made
+  (`trust_draft_actions`, checked against the decision at commit; the AI never reads it). The
+  software reads what became of its own drafts (`GET /api/ai/drafts`: waiting, approved, edited
+  or not, declined and why). All append-only, audited.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`
@@ -488,8 +503,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   retry: the same key returns the original transfers, and a different posting under it is
   refused.
 - `trust_ai_agent`, the role behind Occupella's API key, reads what `trust_app` reads and runs
-  the reports. It holds no other grant: no write on any table, no function that writes. Grant
-  it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
+  the reports. It holds no other grant: no function that writes, and no write on any table but
+  INSERT on `trust_drafts` (ADR 0011: a proposal that moves nothing until a staff member
+  approves it, `AI_WRITES` in `tests/test_privileges.py`). Grant it a new table's SELECT only if
+  `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
   screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes,
   nor notices made for a lease, nor vendors' links, nor leads and showings, nor screening criteria,
@@ -719,7 +736,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   themselves in) are append-only rows of `trust_work_order_details`, the latest holding, naming
   who recorded them; its photos are documents (`work_order_photo`).
 - Rent automation: `trust_charge_rent_due` charges every lease in effect on a due date its rent,
-  once per lease and date: for the days of the month it is in effect (migration 0045: monthly
+  once per lease and date, and once a month whatever day it is run for (a month with any of its
+  rent due already is not charged again, nor a monthly charge; migration 20261105000400): for the
+  days of the month it is in effect (migration 0045: monthly
   rent x days / days in the month, to the cent), and a lease starting later in the month its
   first part month, due on its first day, unless rent was charged in that month already. It
   never reaches back into an earlier month. A lease's end set, moved or cleared after its month

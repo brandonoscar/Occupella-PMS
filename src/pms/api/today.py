@@ -3,7 +3,8 @@ waiting for a decision, lease offers waiting for signatures, journal entries wai
 posted, vendor insurance expired or running out, the company's earned fees still in trust,
 trust bank accounts with no broker on file or a signer's bond running out, security deposits a
 signed lease asked that are not all held yet, the owner draws prepared on the draw day, and the
-fixed-term leases gone month to month with no renewal signed.
+fixed-term leases gone month to month with no renewal signed, and the drafts software proposed
+with an API key waiting for a decision (ADR 0011).
 
 Read only. Each part comes from the route of the page that does that work (rent, bills,
 month-end, leasing, the journal, vendors), so the two never disagree; this only picks out what needs
@@ -22,6 +23,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from pms.api import (
+    drafts,
     journal,
     leasing,
     messages,
@@ -210,6 +212,8 @@ class Today(BaseModel):
     move_out_notices: list[NoticeGiven] = []
     # Conversations whose latest message is a tenant's or an owner's: waiting for an answer.
     messages_waiting: list[messages.Thread] = []
+    # What software proposed with an API key, waiting for a staff member to decide (ADR 0011).
+    drafts_waiting: list[drafts.DraftRow] = []
 
 
 # The leases named as the rent page names them: property, unit and every tenant on it.
@@ -384,6 +388,9 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
         month_to_month=holdovers(conn, session.pmc_id, day),
         move_out_notices=notices_given(conn, session.pmc_id, day),
         messages_waiting=[t for t in messages.threads(conn, session.pmc_id) if t.waiting],
+        drafts_waiting=[
+            drafts.row_of(d) for d in drafts.drafts_of(conn, session.pmc_id, show="waiting")[0]
+        ],
         renters_insurance=[
             Uninsured(
                 lease_id=lease,

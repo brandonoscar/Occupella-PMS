@@ -18,6 +18,8 @@ type People = {
   taylor: string;
   drew: string;
   emails: Record<string, string>;
+  // Records' ids a feature's software names (the drafts feature's).
+  ids?: Record<string, string>;
 };
 const seed: { features: Record<string, People> } = JSON.parse(
   readFileSync(new URL("./.seed.json", import.meta.url), "utf8"),
@@ -5648,6 +5650,93 @@ test("an admin makes an API key, software reads the company's books with it and 
   const after = await request.get("/api/ai/me", { headers: key });
   expect(after.status()).toBe(401);
   expect(((await after.json()) as { detail: string }).detail).toBe("this key was taken back or doesn't exist");
+});
+
+test("software proposes drafts with an API key; staff see who an email goes to and approve it, change a work order before approving it and decline a note, and the software reads what became of each", async ({
+  page,
+  request,
+}) => {
+  const people = seed.features.drafts!;
+  const ids = people.ids!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "AI");
+  await page.getByRole("button", { name: "Make a key" }).click();
+  const made = page.getByRole("dialog", { name: "Make a key" });
+  await made.getByLabel("Name").fill("Assistant");
+  await made.getByRole("button", { name: "Make key" }).click();
+  const key = { Authorization: `Bearer ${await made.getByLabel("Secret key").inputValue()}` };
+  await made.getByRole("button", { name: "Done" }).click();
+
+  // The software proposes, naming records by id and never an address; nothing is done yet.
+  const propose = async (proposal: object, why: string) => {
+    const answer = await request.post("/api/ai/drafts", { headers: key, data: { proposal, why } });
+    expect(answer.status()).toBe(201);
+    return ((await answer.json()) as { id: string }).id;
+  };
+  const email = await propose({
+    kind: "email", to: [{ about: "tenant", id: ids.drew }],
+    subject: "Water shutoff Tuesday", body: "The water is off on Tuesday from 9 to noon.",
+  }, "The water company posted a shutoff.");
+  const repair = await propose(
+    { kind: "work_order_open", property_id: ids.aspen_row, summary: "Gate sticks" },
+    "A tenant wrote that the gate sticks.",
+  );
+  const note = await propose(
+    { kind: "note", about: "tenant", about_id: ids.drew, body: "Prefers email." },
+    "From the tenant's last message.",
+  );
+
+  // Waiting on the Dashboard and in Drafts.
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Dashboard", exact: true }).click();
+  await expect(attention(page, "Draft").filter({ hasText: "Email to Drew Sample: Water shutoff Tuesday (from Assistant)" }))
+    .toBeVisible();
+  await section(page, "Drafts");
+  const list = page.getByRole("table", { name: "Drafts" });
+  await expect(list.getByRole("row", { name: "Open a work order at Aspen Row: Gate sticks" }))
+    .toContainText("A tenant wrote that the gate sticks.");
+  await expect(list.getByRole("row", { name: "Note about tenant Drew Sample" })).toContainText("Waiting");
+
+  // The email: to whom and at which address, before it goes; asked first, then done as the manager.
+  await list.getByRole("link", { name: "Email to Drew Sample: Water shutoff Tuesday" }).click();
+  await expect(page.getByRole("list", { name: "Recipients" })).toContainText("drew.sample.drafts@example.com");
+  await expectAccessible(page, "A draft email, who gets it shown first");
+  await page.getByRole("button", { name: "Approve", exact: true }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByRole("main")).toContainText("Approved by");
+
+  // The repair: its summary changed first, then the work order opened as changed.
+  await page.getByRole("link", { name: "All drafts" }).click();
+  await list.getByRole("link", { name: "Open a work order at Aspen Row: Gate sticks" }).click();
+  await page.getByRole("button", { name: "Change and approve" }).click();
+  const change = page.getByRole("dialog", { name: "Change and approve" });
+  await change.getByLabel("Summary").fill("Front gate sticks");
+  await change.getByRole("button", { name: "Approve with changes" }).click();
+  await expect(page.getByRole("main")).toContainText("after changes");
+  await expect(page.getByLabel("As done")).toContainText("Front gate sticks");
+
+  // The note: declined, saying why; nothing is written.
+  await page.getByRole("link", { name: "All drafts" }).click();
+  await list.getByRole("link", { name: "Note about tenant Drew Sample" }).click();
+  await page.getByRole("button", { name: "Decline" }).click();
+  const decline = page.getByRole("dialog", { name: "Decline draft" });
+  await decline.getByLabel("Why").fill("Already on file.");
+  await decline.getByRole("button", { name: "Decline" }).click();
+  await expect(page.getByRole("main")).toContainText("Declined by");
+  await page.getByRole("link", { name: "All drafts" }).click();
+  await expect(page.getByTestId("empty-state")).toContainText("No drafts waiting.");
+
+  // The software reads what became of each: approved, changed or not, or declined and why.
+  const mine = await request.get("/api/ai/drafts", { headers: key });
+  expect(mine.status()).toBe(200);
+  const items = ((await mine.json()) as { items: { id: string; status: string; edited: boolean | null; reason: string | null }[] }).items;
+  expect(Object.fromEntries(items.map((d) => [d.id, [d.status, d.edited, d.reason]]))).toEqual({
+    [email]: ["approved", false, null],
+    [repair]: ["approved", true, null],
+    [note]: ["declined", null, "Already on file."],
+  });
+  // The work order is opened, as the manager changed it.
+  await page.goto("/work-orders");
+  await expect(page.getByRole("main")).toContainText("Front gate sticks");
 });
 
 test("staff send a reminder of rent past due from the Dashboard, seeing who gets it first, once a day", async ({

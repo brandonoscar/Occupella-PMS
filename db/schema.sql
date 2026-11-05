@@ -1541,6 +1541,13 @@ BEGIN
       AND l.starts_on <= p_due_on AND (l.ends_on IS NULL OR p_due_on <= l.ends_on)
       AND trust_rent_due_day(l.id, p_due_on) = 1
       AND p.amount > 0  -- a day of a few cents rounds to nothing
+      -- Once a month: nothing of this monthly charge is due in the month already.
+      AND NOT EXISTS (
+          SELECT c.id FROM trust_charges AS c
+          WHERE c.recurring_charge_id = r.id
+            AND c.due_on >= date_trunc('month', p_due_on::timestamp)::date
+            AND c.due_on < (date_trunc('month', p_due_on::timestamp) + interval '1 month')::date
+      )
     ORDER BY r.id
     ON CONFLICT (recurring_charge_id, due_on) WHERE recurring_charge_id IS NOT NULL DO NOTHING;
     GET DIAGNOSTICS v_charged = ROW_COUNT;
@@ -1651,6 +1658,14 @@ BEGIN
       AND (l.ends_on IS NULL OR p_due_on <= l.ends_on)
       AND trust_rent_due_day(l.id, p_due_on) = 1
       AND r.amount > 0  -- a day of a few cents' rent rounds to nothing
+      -- Once a month: none of this lease's rent is due in the month already (a run for another
+      -- day of it, or a rent carried over from the old system), so no day charges it twice.
+      AND NOT EXISTS (
+          SELECT c.id FROM trust_charges AS c
+          WHERE c.lease_id = l.id AND c.kind = 'rent'
+            AND c.due_on >= date_trunc('month', p_due_on::timestamp)::date
+            AND c.due_on < (date_trunc('month', p_due_on::timestamp) + interval '1 month')::date
+      )
     ORDER BY l.id
     ON CONFLICT (lease_id, due_on) WHERE kind = 'rent' DO NOTHING;
     GET DIAGNOSTICS v_charged = ROW_COUNT;
@@ -2902,6 +2917,55 @@ BEGIN
     IF NOT EXISTS (SELECT f.document_id FROM trust_document_files AS f
                    WHERE f.document_id = NEW.id) THEN
         RAISE EXCEPTION 'trust: document % has no file', NEW.id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: trust_check_draft(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_draft() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM trust_api_key_revocations AS r WHERE r.key_id = NEW.api_key_id) THEN
+        RAISE EXCEPTION 'trust: API key % was taken back; it proposes nothing', NEW.api_key_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF trust_pmc_status(NEW.pmc_id) <> 'active' THEN
+        RAISE EXCEPTION 'trust: company % is not active; nothing is proposed to it', NEW.pmc_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    NEW.created_at := clock_timestamp();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_draft_action(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_draft_action() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_approved boolean;
+    v_acted boolean;
+BEGIN
+    SELECT d.decision = 'approved' INTO v_approved
+    FROM trust_draft_decisions AS d WHERE d.draft_id = NEW.draft_id;
+    v_acted := EXISTS (SELECT 1 FROM trust_draft_actions AS a WHERE a.draft_id = NEW.draft_id);
+    IF coalesce(v_approved, false) <> v_acted THEN
+        RAISE EXCEPTION 'trust: draft % % approved but % done', NEW.draft_id,
+            CASE WHEN v_approved THEN 'was' ELSE 'was not' END,
+            CASE WHEN v_acted THEN 'was' ELSE 'nothing was' END
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NULL;
@@ -15509,6 +15573,61 @@ CREATE TABLE public.trust_documents (
 
 
 --
+-- Name: trust_draft_actions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_draft_actions (
+    draft_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    acted jsonb NOT NULL,
+    result jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_draft_actions_acted_check CHECK (((jsonb_typeof(acted) = 'object'::text) AND (octet_length((acted)::text) <= 65536))),
+    CONSTRAINT trust_draft_actions_result_check CHECK ((jsonb_typeof(result) = 'object'::text))
+);
+
+
+--
+-- Name: trust_draft_decisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_draft_decisions (
+    draft_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    decision text NOT NULL,
+    edited boolean,
+    reason text,
+    recorded_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_draft_decisions_check CHECK (
+CASE decision
+    WHEN 'approved'::text THEN ((edited IS NOT NULL) AND (reason IS NULL))
+    ELSE ((edited IS NULL) AND (reason IS NOT NULL))
+END),
+    CONSTRAINT trust_draft_decisions_decision_check CHECK ((decision = ANY (ARRAY['approved'::text, 'declined'::text]))),
+    CONSTRAINT trust_draft_decisions_reason_check CHECK (((reason = btrim(reason)) AND ((char_length(reason) >= 1) AND (char_length(reason) <= 2000))))
+);
+
+
+--
+-- Name: trust_drafts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_drafts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    api_key_id uuid NOT NULL,
+    kind text NOT NULL,
+    proposal jsonb NOT NULL,
+    why text,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_drafts_check CHECK (((jsonb_typeof(proposal) = 'object'::text) AND ((proposal ->> 'kind'::text) = kind) AND (octet_length((proposal)::text) <= 65536))),
+    CONSTRAINT trust_drafts_kind_check CHECK ((kind = ANY (ARRAY['email'::text, 'notice'::text, 'work_order_open'::text, 'work_order_assign'::text, 'work_order_schedule'::text, 'note'::text]))),
+    CONSTRAINT trust_drafts_why_check CHECK (((why = btrim(why)) AND ((char_length(why) >= 1) AND (char_length(why) <= 2000))))
+);
+
+
+--
 -- Name: trust_draw_run_approvals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19369,6 +19488,38 @@ ALTER TABLE public.trust_documents
 
 
 --
+-- Name: trust_draft_actions trust_draft_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draft_actions
+    ADD CONSTRAINT trust_draft_actions_pkey PRIMARY KEY (draft_id);
+
+
+--
+-- Name: trust_draft_decisions trust_draft_decisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draft_decisions
+    ADD CONSTRAINT trust_draft_decisions_pkey PRIMARY KEY (draft_id);
+
+
+--
+-- Name: trust_drafts trust_drafts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_drafts
+    ADD CONSTRAINT trust_drafts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_drafts trust_drafts_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_drafts
+    ADD CONSTRAINT trust_drafts_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_draw_run_approvals trust_draw_run_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22392,6 +22543,27 @@ CREATE INDEX trust_documents_work_order_id ON public.trust_documents USING btree
 
 
 --
+-- Name: trust_draft_decisions_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_draft_decisions_recorded_by ON public.trust_draft_decisions USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_drafts_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_drafts_key ON public.trust_drafts USING btree (pmc_id, api_key_id, created_at);
+
+
+--
+-- Name: trust_drafts_made; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_drafts_made ON public.trust_drafts USING btree (pmc_id, created_at);
+
+
+--
 -- Name: trust_draw_run_approvals_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -24751,6 +24923,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_draft_actions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_draft_actions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_draft_decisions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_draft_decisions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_drafts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_drafts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_draw_run_approvals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26368,6 +26561,27 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_docu
 
 
 --
+-- Name: trust_draft_actions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_draft_actions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_draft_decisions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_draft_decisions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_drafts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_drafts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_draw_run_approvals trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27621,6 +27835,13 @@ CREATE TRIGGER trust_check_autopay_run BEFORE INSERT ON public.trust_autopay_run
 
 
 --
+-- Name: trust_drafts trust_check_draft; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_draft BEFORE INSERT ON public.trust_drafts FOR EACH ROW EXECUTE FUNCTION public.trust_check_draft();
+
+
+--
 -- Name: trust_history_lines trust_check_history_line; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27870,6 +28091,20 @@ CREATE TRIGGER trust_document_staff BEFORE INSERT ON public.trust_document_remov
 --
 
 CREATE TRIGGER trust_document_staff BEFORE INSERT ON public.trust_documents FOR EACH ROW EXECUTE FUNCTION public.trust_name_document_uploader();
+
+
+--
+-- Name: trust_draft_actions trust_draft_done; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_draft_done AFTER INSERT ON public.trust_draft_actions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_draft_action();
+
+
+--
+-- Name: trust_draft_decisions trust_draft_done; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_draft_done AFTER INSERT ON public.trust_draft_decisions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_draft_action();
 
 
 --
@@ -28234,6 +28469,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_deduction_receipt
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_deposit_interest_terms FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_draft_decisions trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_draft_decisions FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -30834,6 +31076,46 @@ ALTER TABLE ONLY public.trust_documents
 
 ALTER TABLE ONLY public.trust_documents
     ADD CONSTRAINT trust_documents_uploaded_by_tenant_fkey FOREIGN KEY (lease_id, uploaded_by_tenant) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_draft_actions trust_draft_actions_pmc_id_draft_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draft_actions
+    ADD CONSTRAINT trust_draft_actions_pmc_id_draft_id_fkey FOREIGN KEY (pmc_id, draft_id) REFERENCES public.trust_drafts(pmc_id, id);
+
+
+--
+-- Name: trust_draft_decisions trust_draft_decisions_pmc_id_draft_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draft_decisions
+    ADD CONSTRAINT trust_draft_decisions_pmc_id_draft_id_fkey FOREIGN KEY (pmc_id, draft_id) REFERENCES public.trust_drafts(pmc_id, id);
+
+
+--
+-- Name: trust_draft_decisions trust_draft_decisions_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_draft_decisions
+    ADD CONSTRAINT trust_draft_decisions_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_drafts trust_drafts_pmc_id_api_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_drafts
+    ADD CONSTRAINT trust_drafts_pmc_id_api_key_id_fkey FOREIGN KEY (pmc_id, api_key_id) REFERENCES public.trust_api_keys(pmc_id, id);
+
+
+--
+-- Name: trust_drafts trust_drafts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_drafts
+    ADD CONSTRAINT trust_drafts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
 
 
 --
@@ -34916,4 +35198,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261104000800'),
     ('20261104000900'),
     ('20261105000100'),
-    ('20261105000200');
+    ('20261105000200'),
+    ('20261105000300'),
+    ('20261105000400');

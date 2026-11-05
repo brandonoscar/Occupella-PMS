@@ -65,6 +65,7 @@ from pms.api import (
     deposit_interest,
     directory,
     documents,
+    drafts,
     emails,
     general_ledger,
     go_live,
@@ -718,6 +719,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(applicant_details.router)
     # Software with an API key (ADR 0011): its own header, never a session's cookie.
     app.include_router(ai_keys.router)
+    app.include_router(drafts.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
     return app

@@ -52,7 +52,10 @@ export type Today = {
   // conversations whose latest message is a tenant's or an owner's (the portals' second version).
   move_out_notices?: NoticeGiven[];
   messages_waiting?: MessageWaiting[];
+  // What software proposed with an API key, waiting for a staff member to decide (ADR 0011).
+  drafts_waiting?: DraftWaiting[];
 };
+export type DraftWaiting = { id: string; what: string; key: string; made_at: string };
 export type NoticeGiven = {
   lease_id: string;
   property: string;
@@ -323,6 +326,11 @@ export function attentionRows(today: Today): AttentionRow[] {
       line: `${thread.name} (${thread.about}): ${thread.preview}`,
       due: thread.last_at.slice(0, 10),
       action: go("Answer", `/messages/${thread.about}/${thread.person_id}`),
+    })),
+    ...(today.drafts_waiting ?? []).map((draft) => ({
+      key: `draft:${draft.id}`, what: "Draft", line: `${draft.what} (from ${draft.key})`,
+      due: draft.made_at.slice(0, 10),
+      action: go("Review draft", `/drafts/${draft.id}`),
     })),
   ];
   // A stable sort: rows due the same day keep the order above.

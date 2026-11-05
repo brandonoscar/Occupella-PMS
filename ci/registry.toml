@@ -135,7 +135,7 @@ tests = [
 
 [[invariant]]
 id = "an-api-key-reads-and-never-moves-money"
-statement = "An API key (ADR 0011) is made and taken back, once, only by an admin (the database refuses anyone else and a key names who made it); its secret is shown once and kept only as its SHA-256, in no list, audit row or export. A request with a standing key runs its whole transaction as trust_ai_agent, which holds no grant that writes: it reads what that role reads, its report is always of the key's own company, and it names no staff member. trust_app may become that role and never inherits its grants. A key that doesn't exist, was taken back or is malformed is refused alike; a key is no session and a session is no key; each key is rate-limited."
+statement = "An API key (ADR 0011) is made and taken back, once, only by an admin (the database refuses anyone else and a key names who made it); its secret is shown once and kept only as its SHA-256, in no list, audit row or export. A request with a standing key runs its whole transaction as trust_ai_agent, which holds no grant that writes but proposing a draft: it reads what that role reads, its report is always of the key's own company, and it names no staff member. trust_app may become that role and never inherits its grants. A key that doesn't exist, was taken back or is malformed is refused alike; a key is no session and a session is no key; each key is rate-limited."
 tests = [
   "tests/properties/test_api_key_properties.py::test_a_key_reads_as_the_ai_only_while_it_stands_and_only_its_company",
   "tests/properties/test_api_key_properties.py::test_a_key_makes_at_most_its_limit_in_any_window",
@@ -157,6 +157,38 @@ tests = [
   "tests/test_privileges.py::test_ai_role_has_no_powers_beyond_its_grants",
   "tests/test_ai_role.py::test_the_ai_role_cannot_move_money_or_change_a_record",
   "tests/test_records_export.py::test_no_credential_comes_out",
+]
+
+[[invariant]]
+id = "a-draft-is-done-only-once-a-person-approves-it"
+statement = "A draft (ADR 0011, migration 20261105000300) is proposed by software with a standing API key of an active company, as the AI's role, whose one write is that INSERT; it names the company's records by id, never a contact detail, and its kind moves no money (an email, a notice, a work order opened, assigned or scheduled, a note). A staff member decides it once: declined, with why, nothing is done; approved, as proposed or edited, the PMS does it through the write path staff use by hand, as that staff member and with the area of what it does, all of it or none, and records what it made, checked at commit. The software reads what became of its own drafts, never what staff made of one. Append-only and audited."
+tests = [
+  "tests/properties/test_draft_properties.py::test_a_draft_is_decided_once_done_exactly_when_approved_by_staff_who_may",
+  "tests/test_draft_rules.py::test_the_ai_role_proposes_a_draft_and_nothing_else",
+  "tests/test_draft_rules.py::test_the_app_never_proposes_a_draft",
+  "tests/test_draft_rules.py::test_a_draft_needs_a_standing_key_of_an_active_company",
+  "tests/test_draft_rules.py::test_a_drafts_kind_is_one_that_moves_no_money_and_its_proposal_says_it",
+  "tests/test_draft_rules.py::test_a_draft_is_decided_once_by_a_named_staff_member_and_approved_means_done",
+  "tests/test_draft_rules.py::test_drafts_and_their_decisions_never_change",
+  "tests/test_privileges.py::test_the_ai_roles_one_write_is_proposing_a_draft",
+  "tests/api/test_drafts.py::test_staff_see_who_a_proposed_email_goes_to_and_approving_it_writes_it_as_them",
+  "tests/api/test_drafts.py::test_staff_change_a_draft_before_approving_it_and_it_is_done_as_changed",
+  "tests/api/test_drafts.py::test_a_declined_draft_does_nothing_and_the_software_reads_why",
+  "tests/api/test_drafts.py::test_approving_takes_the_area_of_what_the_draft_does_and_declining_takes_none",
+  "tests/api/test_drafts.py::test_a_draft_names_only_the_companys_own_records_each_once",
+  "tests/api/test_drafts.py::test_only_a_standing_key_proposes_and_a_key_opens_no_staff_page",
+]
+
+[[invariant]]
+id = "rent-once-a-month"
+statement = "The rent run charges a lease due on the first its rent at most once in a month, and each monthly charge at most once in a month, whatever day it is run for (Run rent now's Rent due on may be any day): a month with any of the lease's rent due already, from a run for another day or carried over from the old system, is not charged again (migration 20261105000400). No month is missed: a lease in effect on a day the run was run for has its rent in that month. Run again, it charges nothing new."
+tests = [
+  "tests/properties/test_rent_once_a_month_properties.py::test_rent_and_monthly_charges_are_charged_once_a_month_whatever_day_the_run_is_for",
+  "tests/test_rent_once_a_month.py::test_a_mid_month_run_charges_no_month_twice",
+  "tests/test_rent_once_a_month.py::test_a_month_whose_rent_came_over_on_another_day_is_not_charged_again",
+  "tests/test_rent_once_a_month.py::test_a_mid_month_run_still_charges_a_month_not_charged_yet",
+  "tests/test_rent_once_a_month.py::test_each_lease_is_counted_on_its_own",
+  "tests/test_rent_once_a_month.py::test_another_company_is_not_counted",
 ]
 
 [[invariant]]

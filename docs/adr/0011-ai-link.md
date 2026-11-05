@@ -27,7 +27,8 @@ Two written rules forbade even that link:
 - **This repository's hard rule 4** forbids any hosted service.
 
 The AI's role here, `trust_ai_agent`, already reads only what the app reads, never contact
-details, notes, applicants or files (`AI_NEVER_READS`), and holds no grant that writes. That
+details, notes, applicants or files (`AI_NEVER_READS`), and holds no grant that writes (since
+drafts, below, but proposing one). That
 stays true whatever the AI is sold as.
 
 ## Decisions (the founder, 2026-10-31)
@@ -95,8 +96,8 @@ stays true whatever the AI is sold as.
 
 The work, in this order, each piece a PR with its tests:
 
-1. Keys.
-2. Drafts.
+1. Keys (built: migration 20261031000201).
+2. Drafts (built: migration 20261105000300, `src/pms/api/drafts.py`).
 3. Events.
 4. The MCP server.
 5. Enable AI and its screens.

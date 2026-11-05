@@ -208,6 +208,7 @@ def test_a_quiet_day_shows_nothing(client, conn, staff, pmc):
         "month_to_month": [],
         "move_out_notices": [],
         "messages_waiting": [],
+        "drafts_waiting": [],
     }
 
 

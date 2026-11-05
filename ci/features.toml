@@ -1225,6 +1225,21 @@ browser = [
 ]
 
 [[feature]]
+id = "drafts"
+statement = "Software with an API key (ADR 0011) proposes drafts as the AI's role, naming the company's records by id and never a contact detail: an email to tenants, owners or vendors, a notice from a notice template for leases, a work order opened, assigned or scheduled, or a note; none moves money. Staff see the drafts waiting on the Dashboard and in Drafts, each in words with why it was proposed and by which key, an email with who gets it at which address today and who has none. A staff member approves one (asked first), changes it first, or declines it saying why; an approved one is done then through the write path staff use by hand, as them and with the area of what it does, and decided once. The software reads what became of each of its drafts, never what staff made of one."
+operations = [
+  "POST /api/ai/drafts",
+  "GET /api/ai/drafts",
+  "GET /api/drafts",
+  "GET /api/drafts/{draft_id}",
+  "POST /api/drafts/{draft_id}/approve",
+  "POST /api/drafts/{draft_id}/decline",
+]
+browser = [
+  "features.spec.ts › software proposes drafts with an API key; staff see who an email goes to and approve it, change a work order before approving it and decline a note, and the software reads what became of each",
+]
+
+[[feature]]
 id = "tax-ids"
 statement = "Staff keep an owner's or a vendor's tax ID (an EIN or an SSN), sealed by the server and shown by its last four; an admin reveals one whole and takes the year's 1099 export from the 1099 summary with each payee's tax ID, each time recorded with their name; staff who aren't admins see the last four only (ADR 0010, part F)."
 operations = [

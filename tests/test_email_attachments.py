@@ -142,6 +142,53 @@ def test_a_receipt_whose_file_cant_be_made_is_a_failed_delivery_saying_why(
     )
 
 
+def test_an_attachment_that_fails_in_any_way_is_a_failed_delivery_and_stops_nothing_behind_it(
+    conn, app_conn, pmc, tag, monkeypatch
+):
+    # docs/edge-cases.md F-016: an error making a file that is none of those the delivery knew
+    # (an image library's own, say) was left unrecorded, so the email stayed first in the queue
+    # and every email behind it waited, night after night.
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, name="Unit 4")
+    tenant = tenant_of(conn, pmc)
+    lease = open_lease(conn, pmc.pmc_id, unit, SEPTEMBER, None, "900.00", [tenant])
+    (paid,) = transfer_batch(conn, [(pmc.operating_cash, pmc.owners[0].account, "5.00")])
+    write(
+        conn,
+        pmc,
+        "payment_receipt",
+        f"{tag} receipt",
+        tenant_id=tenant,
+        lease_id=lease,
+        transfer_id=paid,
+    )
+    writer = add_staff(conn, pmc.pmc_id, "Writer 1")
+    write(conn, pmc, "message", f"{tag} message", tenant_id=tenant, sent_by=writer)
+
+    class Strange(Exception):
+        pass
+
+    def fails(conn, pmc_id, kind, *about):
+        if kind == "payment_receipt":
+            raise Strange("the image says it is 30000 x 30000 pixels")
+        return ()
+
+    from pms import attachments  # imported where deliver_pending imports it
+
+    monkeypatch.setattr(attachments, "for_email", fails)
+    keeping = Keeping()
+    email.deliver_pending(app_conn, keeping)
+
+    assert set(mine(keeping, tag)) == {"message"}
+    assert conn.execute(
+        "SELECT e.kind, d.error FROM trust_email_deliveries AS d JOIN trust_emails AS e"
+        " ON e.id = d.email_id WHERE e.pmc_id = %s ORDER BY e.kind",
+        (pmc.pmc_id,),
+    ).fetchall() == [
+        ("message", None),
+        ("payment_receipt", "Strange: the image says it is 30000 x 30000 pixels"),
+    ]
+
+
 def test_smtp_sends_the_attachment_beside_the_text_and_html(monkeypatch):
     seen = []
 

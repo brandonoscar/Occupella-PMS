@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from fpdf.errors import FPDFException
 from pypdf import PdfReader, PdfWriter
 from pypdf.errors import PyPdfError
 
@@ -188,10 +187,13 @@ def render(statement: Statement, generated: datetime) -> bytes:
                 part = _unreadable_page(file, generated)
         else:
             # A photo whose first bytes are an image's but whose rest is not (cut short, say)
-            # passes the upload's check; the image library refuses it here.
+            # passes the upload's check; the image library refuses it here. So does one that says
+            # it is huge (a PNG of 30000 x 30000 pixels in a few bytes), with an error of its own
+            # that is no OSError (docs/edge-cases.md F-015): whatever an image does, the letter
+            # still goes, saying where the image is.
             try:
                 part = _image_page(file, generated)
-            except (OSError, ValueError, FPDFException):
+            except Exception:  # noqa: BLE001 - an image that can't be placed still leaves the letter
                 part = _unreadable_page(file, generated)
         writer.append(PdfReader(io.BytesIO(part)))
     out = io.BytesIO()

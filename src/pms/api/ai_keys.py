@@ -8,7 +8,8 @@ opens nothing.
 
 Software sends the key as `Authorization: Bearer occ_...`. The app looks it up as trust_app, then
 runs the rest of the request's transaction as trust_ai_agent (SET LOCAL ROLE): what that role
-reads, the reports, and no grant that writes. The database holds that line, not this module. A
+reads, the reports, and no grant that writes but proposing a draft (src/pms/api/drafts.py), which
+moves nothing until a staff member approves it. The database holds that line, not this module. A
 key names no staff member, and its company is always the key's: no request names one. A key is
 not a session and a session is not a key: the cookie endpoints read only the cookie, these only
 the header. Each key may make PER_MINUTE requests a minute in this process (429 past it, with
@@ -199,7 +200,7 @@ def with_key(request: Request, conn: Conn) -> Key:
             headers={"Retry-After": str(seconds)},
         )
     # Until the transaction ends: whatever the request reads, it reads as the AI's role, which
-    # holds no grant that writes (tests/test_privileges.py).
+    # holds no grant that writes but proposing a draft (tests/test_privileges.py).
     conn.execute("SET LOCAL ROLE trust_ai_agent")
     return key
 

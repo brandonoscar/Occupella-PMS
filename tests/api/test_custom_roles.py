@@ -27,6 +27,10 @@ NOT_AN_AREA = {
     "/api/signers": "names a trust bank account's broker (admin) or its signers (the broker)",
     "/api/calendar/mine": "makes the staff member's own calendar link: theirs alone",
     "/api/calendar/mine/revoke": "takes the staff member's own calendar link back",
+    # ADR 0011: approving a draft takes the area of what it does (email, documents or
+    # maintenance), checked by the approval itself; declining one does nothing.
+    "/api/drafts/{draft_id}/approve": "does a draft: the area of its kind",
+    "/api/drafts/{draft_id}/decline": "declines a draft: nothing is done",
 }
 
 
