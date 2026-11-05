@@ -894,6 +894,22 @@ browser = [
 ]
 
 [[feature]]
+id = "chart-of-accounts"
+statement = "Staff read the company's chart of accounts in Settings, Chart of accounts: every account by section (Assets, Liabilities, Income, Expenses) and code (our own numbering: 1000s assets, 2000s what the trust holds, 4000s income, 5000-6999 expenses by Schedule E line), with its type, Schedule E line, who keeps an income line's money and whether it is archived. They give any account another code (four digits in its section's range, no other account's, never one kept for later), rename and archive a charge type or an expense account (archiving asks first and is refused while an open bill or a running monthly charge uses it) and bring one back, say whether the company or the owner keeps a charge type's fees from now on, and download the chart as CSV."
+operations = [
+  "GET /api/setup/chart-of-accounts",
+  "POST /api/setup/codes",
+  "POST /api/setup/expense-accounts/{account_id}/name",
+  "POST /api/setup/expense-accounts/{account_id}/archive",
+  "POST /api/setup/charge-types/{type_id}/name",
+  "POST /api/setup/charge-types/{type_id}/archive",
+  "POST /api/setup/charge-types/{type_id}/payee",
+]
+browser = [
+  "features.spec.ts › staff read the chart of accounts by section and code, give an account another code, rename and archive accounts, say the company keeps a fee and download the chart",
+]
+
+[[feature]]
 id = "charge-types"
 statement = "Staff add the company's own charge types (a name once whatever its case, none of the income statement's own lines) in Settings, Chart of accounts, and give a fee one on Enter charge or a monthly charge (never a credit); the owner's income statement counts what was collected on each type on a line of its own, after the other income, and the budget beside it counts that line as income."
 operations = ["GET /api/setup/charge-types", "POST /api/setup/charge-types"]

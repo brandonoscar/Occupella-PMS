@@ -2123,47 +2123,47 @@ test("staff put bills in expense accounts on Schedule E lines, and the owner rea
   const people = seed.features.expenses!;
   await joinAsStaff(page, people.manager);
 
-  // The demo's expense accounts in Settings, Chart of accounts, and one more.
+  // The demo's expense accounts (the starting chart) in Settings, Chart of accounts, and one more.
   await settings(page, "Chart of accounts");
-  const accounts = page.getByRole("table", { name: "Chart of accounts" });
-  await expect(accounts.getByRole("row", { name: "Repairs" })).toContainText("14: Repairs");
-  const account = await setupPanel(page, "Add account");
+  const accounts = page.getByRole("table", { name: "Expenses" });
+  await expect(accounts.getByRole("row", { name: "General repairs", exact: true })).toContainText("6401General repairsExpense account14: Repairs");
+  const account = await setupPanel(page, "Add expense account");
   await account.getByLabel("Expense account").fill("Insurance");
   await account.getByRole("combobox", { name: "Schedule E line" }).selectOption({ label: "9: Insurance" });
-  await account.getByRole("button", { name: "Add account" }).click();
-  await expect(accounts.getByRole("row", { name: "Insurance" })).toContainText("9: Insurance");
+  await account.getByRole("button", { name: "Add expense account" }).click();
+  await expect(accounts.getByRole("row", { name: "Insurance", exact: true })).toContainText("9: Insurance");
 
-  // A water bill entered in Water; a hose in none, then put in Water; a repair split across
-  // Repairs and Water. All paid.
+  // A water bill entered in Water and sewer; a hose in none, then put in Water and sewer; a repair
+  // split across General repairs and Water and sewer. All paid.
   await section(page, "Bills");
   const aspenRow = "Demo Owner B, Aspen Row";
   await recordBill(page, "Demo Plumbing Co", aspenRow, "WTR-1", "45.00", "Water, last month", async (panel) => {
     await panel.getByRole("combobox", { name: "Expense account", exact: true })
-      .selectOption({ label: "Water (Schedule E line 17: Utilities)" });
+      .selectOption({ label: "Water and sewer (Schedule E line 17: Utilities)" });
   });
   await recordBill(page, "Demo Plumbing Co", aspenRow, "HOSE-1", "12.00", "Garden hose");
   await recordBill(page, "Demo Plumbing Co", aspenRow, "FIX-1", "30.00", "Valve and its water", async (panel) => {
     await panel.getByLabel("Split across expense accounts").check();
-    await panel.getByLabel("Expense account, line 1").selectOption({ label: "Repairs (Schedule E line 14: Repairs)" });
+    await panel.getByLabel("Expense account, line 1").selectOption({ label: "General repairs (Schedule E line 14: Repairs)" });
     await panel.getByLabel("Amount, line 1").fill("20.00");
-    await panel.getByLabel("Expense account, line 2").selectOption({ label: "Water (Schedule E line 17: Utilities)" });
+    await panel.getByLabel("Expense account, line 2").selectOption({ label: "Water and sewer (Schedule E line 17: Utilities)" });
     await panel.getByLabel("Amount, line 2").fill("10.00");
     await expect(panel.getByTestId("lines-total")).toHaveText("Lines come to $30.00 of $30.00.");
   });
   const bill = (reference: string) => billRow(page, "Demo Plumbing Co", reference);
   await bill("FIX-1").getByRole("cell").first().click();
   await expect(page.getByRole("table", { name: "Lines" }).getByRole("row")).toHaveText([
-    "Expense accountAmount", "Repairs$20.00", "Water$10.00",
+    "Expense accountAmount", "General repairs$20.00", "Water and sewer$10.00",
   ]);
   await section(page, "Bills");
   await bill("HOSE-1").getByRole("cell").first().click();
   await expect(page.getByRole("table", { name: "Lines" })).toContainText("None yet");
   await page.getByRole("button", { name: "Change" }).click();
   const moving = page.getByRole("dialog", { name: "Expense accounts" });
-  await moving.getByRole("combobox", { name: "Expense account" }).selectOption({ label: "Water (Schedule E line 17: Utilities)" });
+  await moving.getByRole("combobox", { name: "Expense account" }).selectOption({ label: "Water and sewer (Schedule E line 17: Utilities)" });
   await moving.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("HOSE-1 is in one expense account.")).toBeVisible();
-  await expect(page.getByRole("table", { name: "Lines" })).toContainText("Water$12.00");
+  await expect(page.getByRole("table", { name: "Lines" })).toContainText("Water and sewer$12.00");
   // Aspen Row holds only its reserve, which stays in the account: the owner sends the $87.00.
   await section(page, "Bills");
   await expect(bill("WTR-1")).toContainText("Short");
@@ -2177,7 +2177,7 @@ test("staff put bills in expense accounts on Schedule E lines, and the owner rea
     await expect(bill(reference)).toHaveCount(0); // paid bills leave the Unpaid tab
   }
 
-  // A lawn service every month, in Landscaping, then moved to Repairs.
+  // A lawn service every month, in Landscaping, then moved to General repairs.
   await page.getByRole("tab", { name: "Recurring" }).click();
   await page.getByRole("button", { name: "Add recurring bill" }).click();
   const adding = page.getByRole("dialog", { name: "Add recurring bill" });
@@ -2194,9 +2194,9 @@ test("staff put bills in expense accounts on Schedule E lines, and the owner rea
   await lawn.getByRole("button", { name: "Actions for Demo Roofing Co LAWN" }).click();
   await page.getByRole("menuitem", { name: "Change expense account" }).click();
   const recurringAccount = page.getByRole("dialog", { name: "Expense account" });
-  await recurringAccount.getByRole("combobox", { name: "Expense account" }).selectOption({ label: "Repairs (Schedule E line 14: Repairs)" });
+  await recurringAccount.getByRole("combobox", { name: "Expense account" }).selectOption({ label: "General repairs (Schedule E line 14: Repairs)" });
   await recurringAccount.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByText("LAWN is entered in Repairs from now on.")).toBeVisible();
+  await expect(page.getByText("LAWN is entered in General repairs from now on.")).toBeVisible();
 
   // Staff can download any owner's income statement from the owner's Statements tab.
   await openOwner(page, "Demo Owner B");
@@ -2214,13 +2214,13 @@ test("staff put bills in expense accounts on Schedule E lines, and the owner rea
   await card.getByLabel("Year").fill(today().slice(0, 4));
   await card.getByRole("button", { name: "Show" }).click();
   const aspen = card.getByRole("table", { name: "Aspen Row" });
-  // The split repair's water is Water too: 45.00 + 12.00 + 10.00.
-  await expect(aspen.getByRole("row", { name: "Water $67.00" })).toBeVisible();
+  // The split repair's water is Water and sewer too: 45.00 + 12.00 + 10.00.
+  await expect(aspen.getByRole("row", { name: "Water and sewer $67.00" })).toBeVisible();
   await expect(card.getByRole("list", { name: "Schedule E, Aspen Row" })).toContainText(
     "Schedule E line 17: Utilities$67.00",
   );
   const csv = await owner.request.get((await card.getByRole("link", { name: "CSV" }).getAttribute("href")) ?? "");
-  expect(await csv.text()).toContain("expense: Water");
+  expect(await csv.text()).toContain("expense: Water and sewer");
 });
 
 test("a bookkeeper proposes journal entries; the manager posts one, the ledger refuses one that is too much, and the manager declines it", async ({
@@ -4669,7 +4669,7 @@ test("staff add charge types and give a lease's fee and monthly charge one; the 
     const adding = page.getByRole("dialog", { name: "Add charge type" });
     await adding.getByLabel("Charge type").fill(name);
     await adding.getByRole("button", { name: "Add charge type" }).click();
-    await expect(page.getByRole("list", { name: "Charge types" })).toContainText(name);
+    await expect(page.getByRole("table", { name: "Income" }).getByRole("row", { name, exact: true })).toBeVisible();
   }
 
   // A lost key charged as a Key replacement fee and paid; a dog's monthly fee as Pet fees.
@@ -4705,6 +4705,77 @@ test("staff add charge types and give a lease's fee and monthly charge one; the 
   await card.getByRole("button", { name: "Show" }).click();
   await expect(card.getByRole("table", { name: "Birch Flats" }).getByRole("row", { name: "Key replacement $75.00" })).toBeVisible();
   await owner.close();
+});
+
+test("staff read the chart of accounts by section and code, give an account another code, rename and archive accounts, say the company keeps a fee and download the chart", async ({
+  page,
+}) => {
+  const people = seed.features["chart-of-accounts"]!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Chart of accounts");
+  const table = (name: string) => page.getByRole("table", { name, exact: true });
+  const row = (section: string, name: string) => table(section).getByRole("row", { name, exact: true });
+  const menu = async (name: string, action: string) => {
+    await page.getByRole("button", { name: `Actions for ${name}`, exact: true }).click();
+    await page.getByRole("menuitem", { name: action, exact: true }).click();
+  };
+
+  // Every section of the company's chart, each account with its code.
+  await expect(row("Assets", "Trust bank cash")).toContainText("1000");
+  await expect(row("Liabilities", "Owner funds")).toContainText("2000");
+  await expect(row("Income", "Admin fee")).toContainText("Company");
+  await expect(row("Expenses", "Management fees")).toContainText("6100");
+
+  // Rent numbered 4001; another account can't take that code.
+  await menu("Rent", "Change code");
+  let panel = page.getByRole("dialog", { name: "Change code" });
+  await panel.getByLabel("Code").fill("4001");
+  await panel.getByRole("button", { name: "Save code" }).click();
+  await expect(page.getByText("Rent is 4001.")).toBeVisible();
+  await expect(row("Income", "Rent")).toContainText("4001");
+  await menu("Late fees", "Change code");
+  panel = page.getByRole("dialog", { name: "Change code" });
+  await panel.getByLabel("Code").fill("4001");
+  await panel.getByRole("button", { name: "Save code" }).click();
+  await expect(panel.getByText("code 4001 is Rent's already")).toBeVisible();
+  await panel.getByRole("button", { name: "Close" }).click();
+  await expect(panel).toHaveCount(0);
+
+  // An expense account renamed, then archived after asking.
+  await menu("Gutter cleaning", "Rename");
+  panel = page.getByRole("dialog", { name: "Rename" });
+  await panel.getByLabel("Name").fill("Gutters and downspouts");
+  await panel.getByRole("button", { name: "Save name" }).click();
+  await expect(page.getByText("Renamed to Gutters and downspouts.")).toBeVisible();
+  await menu("Gutters and downspouts", "Archive");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Archive" }).click();
+  await expect(page.getByText("Gutters and downspouts is archived.")).toBeVisible();
+  await expect(row("Expenses", "Gutters and downspouts")).toContainText("archived");
+
+  // A charge type renamed and one archived; pet rent the company's from now on.
+  await menu("Parking and storage", "Rename");
+  panel = page.getByRole("dialog", { name: "Rename" });
+  await panel.getByLabel("Name").fill("Parking");
+  await panel.getByRole("button", { name: "Save name" }).click();
+  await expect(page.getByText("Renamed to Parking.")).toBeVisible();
+  await menu("Lease change fee", "Archive");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Archive" }).click();
+  await expect(page.getByText("Lease change fee is archived.")).toBeVisible();
+  await menu("Pet rent", "Change who keeps it");
+  panel = page.getByRole("dialog", { name: "Who keeps its fees" });
+  await panel.getByLabel("Who keeps its fees").selectOption({ label: "The company" });
+  await panel.getByRole("button", { name: /Save who keeps it/ }).click();
+  await expect(page.getByText("Pet rent's fees go to the company from now on.")).toBeVisible();
+  await expect(row("Income", "Pet rent")).toContainText("Company");
+
+  // The chart as CSV, with the same columns.
+  const csv = await page.request.get((await page.getByRole("link", { name: "Download CSV" }).getAttribute("href")) ?? "");
+  expect(csv.status()).toBe(200);
+  const text = await csv.text();
+  expect(text.split("\r\n")[0]).toBe("Line,Section,Code,Name,Account type,Schedule E,Kept by,Status");
+  expect(text).toContain(",Income,4001,Rent,Income line,,owner,active");
+  expect(text).toContain("Gutters and downspouts,Expense account,7,,archived");
+  await expectAccessible(page);
 });
 
 test("staff name the operating trust account's cash for QuickBooks and download two months of journal entries for QuickBooks Desktop and Online", async ({

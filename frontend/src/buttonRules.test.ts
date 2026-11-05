@@ -75,7 +75,7 @@ const KEEP: [string, string, Why][] = [
   ["pages/BillForms.tsx", "Void", "for good"],
   ["pages/BillsPage.tsx", "Stop it", "for good"],
   ["pages/CalendarCard.tsx", '{standing ? "Make a new link"', "shown once"],
-  ["pages/ChartOfAccountsPage.tsx", "Add account", "for good"],
+  ["pages/ChartOfAccountsPage.tsx", "Save who keeps it", "money"],
   ["pages/CompanyFeesForm.tsx", "Take out company fees", "money"],
   ["pages/DepositInterestForm.tsx", "Pay interest", "money"],
   ["pages/DocumentsPage.tsx", "Upload", "who sees"],

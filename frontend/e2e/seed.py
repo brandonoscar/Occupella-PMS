@@ -648,6 +648,7 @@ FEATURES = (
     "calendar",
     "own-contact",
     "charge-types",
+    "chart-of-accounts",
     "phone",
     "quickbooks",
     "two-homes",
