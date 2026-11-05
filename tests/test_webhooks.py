@@ -404,12 +404,14 @@ def receiver(tmp_path, monkeypatch):
 
     server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
     serving = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    serving.minimum_version = ssl.TLSVersion.TLSv1_2  # never TLS 1.0 or 1.1, even in a test
     serving.load_cert_chain(files["server.pem"], files["server.key"])
     server.socket = serving.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
     trusting = ssl.create_default_context(cafile=files["ca.pem"])
+    trusting.minimum_version = ssl.TLSVersion.TLSv1_2
     monkeypatch.setattr(webhooks.ssl, "create_default_context", lambda: trusting)
     monkeypatch.setattr(webhooks, "public", lambda address: True)
     port = server.server_address[1]
