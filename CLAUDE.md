@@ -126,7 +126,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   for at most 10 password resets an hour (`src/pms/api/throttle.py`, counted per process). No
   request sends more than 10 MB (`app.MAX_BODY`, 413, counted as it streams too): a 5 MB file as
   base64 fits. A comma in an amount from a file only separates thousands (`statements.read_amount`:
-  "1234,56" is refused, never 123,456.00), and a switching file's lines are matched to what came
+  "1234,56" is refused, never 123,456.00; a bank CSV whose amounts are all positive reads each
+  line's way from its Type column, Debit or Credit), and a switching file's lines are matched to what came
   over already one to one (two alike in one file are two; the file again adds nothing).
 - Logins (`src/pms/accounts.py`, migration 0028): staff invite a staff member, owner or tenant
   by email; the link carries a token kept only as its SHA-256, in the URL fragment. A session

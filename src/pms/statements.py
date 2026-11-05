@@ -3,7 +3,9 @@
 A CSV statement has a header row. It needs a date column and either an amount column (money
 in positive) or a pair of columns for money out and money in; a description and a reference
 column are read when there is one. Dates are YYYY-MM-DD or MM/DD/YYYY; amounts may carry a
-dollar sign, thousands commas, a leading minus or parentheses for money out.
+dollar sign, thousands commas, a leading minus or parentheses for money out. A bank whose amounts
+are all positive says each line's way in a type column (Debit or Credit, Dr or Cr, ACH_DEBIT...),
+which is then read; a type that says neither is refused.
 
 An OFX statement (1.x SGML or 2.x XML) gives its own days (DTSTART, DTEND), its closing balance
 (LEDGERBAL) and each transaction (STMTTRN: DTPOSTED, TRNAMT, FITID, NAME, MEMO, CHECKNUM). It is
@@ -47,6 +49,10 @@ AMOUNT_HEADERS = ("amount", "transaction amount")
 OUT_HEADERS = ("debit", "debits", "withdrawal", "withdrawals", "money out", "paid out")
 IN_HEADERS = ("credit", "credits", "deposit", "deposits", "money in", "paid in")
 DESCRIPTION_HEADERS = ("description", "memo", "payee", "details", "name", "narrative")
+# A column saying which way each line went, for a bank whose amounts are all positive.
+TYPE_HEADERS = ("type", "transaction type", "debit/credit", "credit/debit", "dr/cr", "cr/dr")
+OUT_WORDS = frozenset({"debit", "dr", "withdrawal", "withdrawals"})
+IN_WORDS = frozenset({"credit", "cr", "deposit", "deposits"})
 REFERENCE_HEADERS = (
     "reference",
     "ref",
@@ -95,6 +101,23 @@ def read_date(text: str, where: str) -> date:
     raise StatementError(f"{where}: {text!r} is not a date (YYYY-MM-DD or MM/DD/YYYY)")
 
 
+def signed(text: str) -> bool:
+    """Whether an amount says money out by itself: a minus or parentheses."""
+    return text.strip().replace("$", "").replace(" ", "").startswith(("-", "("))
+
+
+def way_of(text: str, where: str) -> int:
+    """-1 for a type that says debit, 1 for one that says credit (ACH_DEBIT, Dr, Credit...)."""
+    words = set(re.split(r"[^a-z]+", text.strip().lower()))
+    out, into = bool(words & OUT_WORDS), bool(words & IN_WORDS)
+    if out == into:
+        raise StatementError(
+            f"{where}: the type {text.strip()!r} says neither debit nor credit; with every amount"
+            " positive, the PMS reads each line's way from its type"
+        )
+    return -1 if out else 1
+
+
 def column(headers: list[str], names: tuple[str, ...]) -> int | None:
     for i, header in enumerate(headers):
         if header in names:
@@ -128,6 +151,11 @@ def read_csv(content: str) -> Statement:
     referenced = column(headers, REFERENCE_HEADERS)
     if len(rows) - 1 > MAX_LINES:
         raise StatementError(f"a statement has at most {MAX_LINES} lines")
+    typed = None
+    if amount is not None and not any(signed(r[amount]) for r in rows[1:] if amount < len(r)):
+        # Every amount positive: a type column, if there is one, says each line's way. A bank
+        # that signs its amounts keeps its signs, whatever its type column says.
+        typed = column(headers, TYPE_HEADERS)
     lines = []
     for n, row in enumerate(rows[1:], start=2):
         where = f"line {n}"
@@ -137,6 +165,8 @@ def read_csv(content: str) -> Statement:
 
         if amount is not None:
             value = read_amount(cell(amount), where) if cell(amount) else Decimal(0)
+            if typed is not None and value:
+                value = way_of(cell(typed), where) * abs(value)
         else:
             paid_out = read_amount(cell(out), where) if cell(out) else Decimal(0)
             paid_in = read_amount(cell(into), where) if cell(into) else Decimal(0)

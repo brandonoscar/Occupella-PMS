@@ -73,6 +73,10 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   the owners to choose among (Record it, naming whose), a lease at such a property takes no
   payment online (the tenant sees the company's How to pay us) nor by autopay (its month reads as
   online payments off), and the card says when the list couldn't load instead of showing nothing.
+- **Fixed: a bank statement of positive amounts read as all money in.** A bank CSV whose amounts
+  are all positive, with a column saying Debit or Credit (Type, Transaction type, Dr/Cr), went in
+  with every check and fee as a deposit. Each line's way now comes from that column; a type saying
+  neither is refused with its line, and a bank that signs its amounts keeps its signs.
 - **Fixed: deposit interest paid twice for the same days.** A tenant's deposit is one account, and
   each lease's interest counted all of it: a tenant on two leases at once, or a renewal and the
   lease it renewed (the old one paid through a day after its end), were paid each day twice. Each

@@ -28,12 +28,12 @@ answer in the portal for everything that can fail.
 | [Money and the ledger](#money-and-the-ledger) | 151 | 113 | 7 | 31 | 4 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 159 | 81 | 15 | 63 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 63 | 30 | 49 | 2 |
-| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 163 | 63 | 8 | 92 | 27 |
+| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 163 | 64 | 8 | 91 | 26 |
 | [Bad files and imports](#bad-files-and-imports) | 145 | 60 | 16 | 69 | 6 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 167 | 69 | 14 | 84 | 9 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1140** | **576** | **110** | **454** | **69** |
+| **All** | **1140** | **577** | **110** | **453** | **68** |
 
 ## Open, high risk: the work list
 
@@ -97,7 +97,6 @@ its ten most pressing, each with the test that would close it.
 - P-115: The bank returns an owner's ACH draw (account closed, no account)
 - P-116: The bank returns a vendor's ACH payment
 - P-121: A printed check is lost, misprinted or voided
-- P-129: Every amount positive with a separate Type (Debit or Credit) column
 - P-130: The wrong statement imported (another account's, wrong days, wrong signs)
 
 **Bad files and imports**
@@ -665,10 +664,10 @@ its ten most pressing, each with the test that would close it.
 | P-115 | The bank returns an owner's ACH draw (account closed, no account) | No way to record it: the draw stays paid and the owner's balance wrong until two staff post a journal entry | Open | src/pms/api/payouts.py (no return path); src/pms/api/journal.py | H |
 | P-116 | The bank returns a vendor's ACH payment | The bill stays Paid and can't be voided once money was taken | Open | src/pms/api/payables.py:1309-1328 (void refused once money was taken) | H |
 | P-121 | A printed check is lost, misprinted or voided | Reprinting gives the same numbers again; there is no void and reissue, and the money stays recorded as gone | Open | src/pms/api/payouts.py:699-728 | H |
-| P-129 | Every amount positive with a separate Type (Debit or Credit) column | Read as all money in; a CSV needs no closing balance, so it goes in silently | Open | src/pms/statements.py:92-140 | H |
 | P-130 | The wrong statement imported (another account's, wrong days, wrong signs) | Permanent: statements are append-only and there is no undo; its lines the books lack block month-end; Import statement asks nothing first | Open | tests/test_bank_statements.py::test_statements_and_lines_are_append_only pins it; frontend/src/pages/ReconcilePage.tsx:370-371 | H |
 | P-024 | A return (dispute) arrives before the paid report lands (paid kept failing on its fee, or isn't subscribed) | As C-087: refused for now so Stripe retries; a return after a failure is still acknowledged | Tested | tests/api/test_online_payments_api.py::test_a_return_for_a_payment_that_failed_is_acknowledged_and_changes_nothing | H |
 | P-040 | Paid online for a property with two owner accounts and no ownership shares | Checkout says off for such a lease; the waiting list names the owners to choose among (choose_account), Record takes account; the card says when the list couldn't load | Tested | tests/api/test_online_payments_api.py::test_a_property_with_two_owner_accounts_and_no_shares_takes_no_payment_online, ::test_a_payment_paid_after_a_second_owner_account_waits_for_staff_to_choose_one; frontend/src/pages/OnlinePaymentsCards.test.tsx (asks whose a payment is..., says so when the list couldn't load) | H |
+| P-129 | Every amount positive with a separate Type (Debit or Credit) column | Each line's way is read from the type column (Debit, Credit, Dr, Cr, ACH_DEBIT...) when every amount is positive; a type saying neither is refused with its line; signed amounts keep their signs | Tested | tests/test_statement_files.py::test_a_csv_of_positive_amounts_reads_each_ones_way_from_its_type | H |
 | P-004 | Stripe slow (up to 20 s a call) while many tenants pay at once | Each checkout holds one of the pool's 10 connections and an open transaction for the whole Stripe call; staff pages then get 503 busy | Open | src/pms/payments.py:183; src/pms/api/app.py:311 (max_size=10); src/pms/api/online_payments.py:334-337 | M |
 | P-005 | Stripe refuses an amount over the account's ACH limit, or another 4xx about the payment itself | Any HTTP refusal reads to the tenant as "We couldn't reach our payments partner"; the real reason is lost and the PMS lets a tenant start up to 100,000.00 | Open | src/pms/payments.py:203-204; src/pms/api/online_payments.py:46, 336-337 | M |
 | P-029 | A dispute whose charge has no payment_intent, or the lookup of it fails | Asks Stripe for /payment_intents/None, fails as PartnerFailed and answers 502 on every retry | Open | src/pms/payments.py:309-311 | M |

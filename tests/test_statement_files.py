@@ -96,6 +96,56 @@ def test_a_csv_with_columns_for_money_out_and_in_is_read():
     ]
 
 
+@pytest.mark.parametrize("header", ["Type", "Transaction Type", "Debit/Credit", "Dr/Cr"])
+def test_a_csv_of_positive_amounts_reads_each_ones_way_from_its_type(header):
+    """docs/edge-cases.md P-129: every amount positive and a column saying debit or credit read
+    as all money in, and a CSV needs no closing balance, so it went in silently."""
+    read = statements.read(
+        f"Date,Description,Amount,{header}\n"
+        "2026-01-05,Deposit,1500.00,Credit\n"
+        "2026-01-23,Check 101,240.00,DEBIT\n"
+        "2026-01-24,Service fee,15.00,dr\n"
+        "2026-01-25,Interest,0.42,CR\n",
+        "csv",
+    )
+    assert [line.amount for line in read.lines] == [
+        Decimal("1500.00"),
+        Decimal("-240.00"),
+        Decimal("-15.00"),
+        Decimal("0.42"),
+    ]
+
+
+def test_a_type_naming_its_kind_and_its_way_is_read_by_its_way():
+    read = statements.read(
+        "Date,Amount,Type\n2026-01-05,1500.00,ACH_CREDIT\n2026-01-23,240.00,ACH_DEBIT\n", "csv"
+    )
+    assert [line.amount for line in read.lines] == [Decimal("1500.00"), Decimal("-240.00")]
+
+
+def test_a_type_that_says_neither_way_is_refused_when_no_amount_carries_a_sign():
+    with pytest.raises(
+        StatementError, match="line 3: the type 'ACH' says neither debit nor credit"
+    ):
+        statements.read(
+            "Date,Description,Amount,Type\n"
+            "2026-01-05,Deposit,1500.00,Credit\n"
+            "2026-01-23,Vendor 1,240.00,ACH\n",
+            "csv",
+        )
+
+
+def test_signed_amounts_keep_their_sign_whatever_the_type_column_says():
+    # A bank that signs its amounts and names each line's kind: the sign holds.
+    read = statements.read(
+        "Date,Description,Amount,Type\n"
+        "2026-01-05,Deposit,1500.00,ACH\n"
+        "2026-01-23,Check 101,-240.00,Check\n",
+        "csv",
+    )
+    assert [line.amount for line in read.lines] == [Decimal("1500.00"), Decimal("-240.00")]
+
+
 def test_a_csv_keeps_descriptions_and_references_short():
     read = statements.read(
         f"Date,Amount,Memo,Ref\n2026-01-05,1.00,{'x' * 600},{'r' * 300}\n", "csv"
