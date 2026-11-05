@@ -18,8 +18,9 @@
 
 [[feature]]
 id = "logins"
-statement = "Staff invite a staff member (from the staff page), owner or tenant (from their own page) by email; the invite sets a password (and for staff an authenticator); people sign in and out; a wrong email or password is refused without saying which; Logins lists everyone's login by status, and an admin disables one for good from its row's menu, which signs it out. A tenant or an owner gives a phone as they set their password (kept as E.164, and as their contact phone) and says whether the company may text them, the box unchecked unless they check it; each answer is kept with the words shown and when. Staff are asked neither."
+statement = "Staff invite a staff member (from the staff page), owner or tenant (from their own page) by email; the invite sets a password (and for staff an authenticator); people sign in and out; a wrong email or password is refused without saying which; Logins lists everyone's login by status, and an admin disables one for good from its row's menu, which signs it out. A tenant or an owner gives a phone as they set their password (kept as E.164, and as their contact phone) and says whether the company may text them, the box unchecked unless they check it; each answer is kept with the words shown and when. Staff are asked neither. On a server that holds one company, the sign-in page needs no link: it signs in to that company and names it; on a server with more, it names none and asks for the company's link."
 operations = [
+  "GET /api/sign-in",
   "POST /api/invites",
   "POST /api/invites/view",
   "POST /api/invites/accept",

@@ -51,7 +51,7 @@ def test_it_scans_with_selfhost_ymls_tools_before_it_pushes():
     scanners = [tool for tool in go_installs(text) if "cosign" not in tool]
     assert scanners == go_installs(selfhost)
     assert "--only-fixed --fail-on high" in text
-    assert text.index("grype\" \"sbom:") < text.index("docker push")
+    assert text.index('grype" "sbom:') < text.index("docker push")
 
 
 def test_it_signs_and_attests_what_it_pushed_keyless():

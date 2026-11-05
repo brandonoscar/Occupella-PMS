@@ -10,13 +10,25 @@ import { Form } from "../components/Form";
 
 export const PMC_KEY = "pms.pmc";
 
-// The PMC to sign in to: from the link (?pmc=), or the one this browser signed in to last.
-export function pmcToSignIn(search: string, stored: string | null): string {
-  return new URLSearchParams(search).get("pmc") ?? stored ?? "";
+// The PMC to sign in to: from the link (?pmc=), or the one this browser signed in to last, else
+// the server's only company (GET /api/sign-in), so a company's own server needs no link.
+export function pmcToSignIn(search: string, stored: string | null, server: string | null = null): string {
+  return new URLSearchParams(search).get("pmc") ?? stored ?? server ?? "";
 }
 
+// The company the server signs in to, when it holds exactly one; both empty otherwise.
+type ServerCompany = { pmc_id: string | null; name: string | null };
+
 export function SignInPage() {
-  const pmcId = pmcToSignIn(window.location.search, localStorage.getItem(PMC_KEY));
+  const [server, setServer] = useState<ServerCompany | null>(null);
+  const [asked, setAsked] = useState(false);
+  useEffect(() => {
+    api.get<ServerCompany>("/api/sign-in").then(setServer).catch(() => setServer(null))
+      .finally(() => setAsked(true));
+  }, []);
+  const pmcId = pmcToSignIn(window.location.search, localStorage.getItem(PMC_KEY), server?.pmc_id ?? null);
+  // The company's name, when the server holds only it and that's the one signed in to.
+  const companyName = server?.pmc_id && server.pmc_id === pmcId ? server.name : null;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -56,7 +68,10 @@ export function SignInPage() {
   return (
     <div className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-6 px-6">
       <Wordmark />
-      <h1 className="font-display text-lg font-semibold">Sign in</h1>
+      <div>
+        <h1 className="font-display text-lg font-semibold">Sign in</h1>
+        {companyName && <p className="text-sm text-ink-muted">{companyName}</p>}
+      </div>
       {pmcId ? (
         <Form className="flex flex-col gap-4" onSubmit={submit}>
           <Field label="Email" id="email" type="email" autoComplete="username" value={email}
@@ -76,7 +91,7 @@ export function SignInPage() {
             <a href={`/forgot-password?pmc=${pmcId}`} className="text-sm text-iris underline hover:text-iris-hover">Forgot your password?</a>
           )}
         </Form>
-      ) : (
+      ) : asked && (
         <Notice tone="info">
           Open the sign-in link your property manager sent you, or the invite link to set your
           password.

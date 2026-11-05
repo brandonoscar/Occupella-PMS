@@ -205,6 +205,14 @@ class InviteToken(BaseModel):
     token: Token
 
 
+class ServerCompany(BaseModel):
+    # The company this server signs in to, when it holds exactly one (a company's own server, or
+    # its own stack when hosted), so its sign-in page needs no ?pmc= link. Both empty on a server
+    # with more companies, which names none of them.
+    pmc_id: UUID | None
+    name: str | None
+
+
 class ResetRequest(BaseModel):
     pmc_id: UUID
     email: Email
@@ -455,6 +463,15 @@ def create_app(settings: Settings) -> FastAPI:
         except Exception:  # any failure to reach the database is "unavailable"
             return JSONResponse({"status": "database unavailable"}, 503)
         return JSONResponse({"status": "ok"})
+
+    @app.get("/api/sign-in")
+    def server_company(conn: Conn) -> ServerCompany:
+        rows = conn.execute(
+            "SELECT pmc_id, display_name FROM trust_pmcs ORDER BY pmc_id LIMIT 2"
+        ).fetchall()
+        if len(rows) != 1:
+            return ServerCompany(pmc_id=None, name=None)
+        return ServerCompany(pmc_id=rows[0][0], name=rows[0][1])
 
     @app.post("/api/sign-in")
     def sign_in(body: SignIn, response: Response, conn: Conn) -> Me:
