@@ -1183,9 +1183,10 @@ tests = [
 
 [[invariant]]
 id = "roles-decide-who-pays-and-who-approves"
-statement = "A staff member the app names pays out money (a bill, an owner draw) only holding the disburse role, approves a reconciliation or signs off a cutover only holding approve, and invites or disables a staff login only holding admin. Only an admin changes a role, a change changes something, and a PMC keeps one admin. Month-end is approved by a staff member other than the one who prepared it, on the figures prepared."
+statement = "A staff member the app names pays out money (a bill, an owner draw) only holding the disburse role, approves a reconciliation or signs off a cutover only holding approve, and invites or disables a staff login only holding admin. Only an admin changes a role, a change changes something, and a PMC keeps one admin, one whose login isn't disabled (migration 20261105000600): the last of those can't drop admin, and with none, the server's operator makes one naming nobody. Month-end is approved by a staff member other than the one who prepared it, on the figures prepared."
 tests = [
   "tests/properties/test_staff_roles_properties.py::test_roles_decide_who_pays_out_and_who_approves",
+  "tests/test_staff_roles.py::test_an_admin_whose_login_is_disabled_doesnt_keep_the_pmc_its_admin",
   "tests/test_staff_roles.py::test_paying_a_bill_takes_a_staff_member_who_may_disburse",
   "tests/test_staff_roles.py::test_whoever_prepared_it_does_not_approve_it",
   "tests/test_staff_roles.py::test_a_pmc_keeps_an_admin",

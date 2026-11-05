@@ -1115,7 +1115,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (pays a bill, an owner draw). The database refuses those writes to a named staff member
   without the role; one that names nobody is not held to them. Roles are append-only grants and
   revocations (`trust_staff_roles`): only an admin changes one, a change changes something, and
-  a PMC keeps an admin. One staff member prepares month-end and another who holds approve approves it
+  a PMC keeps an admin, one whose login isn't disabled (migration 20261105000600; with none left,
+  `make-admin` names a new one). One staff member prepares month-end and another who holds approve approves it
   (`trust_approve_bank_reconciliation` takes the preparation), on the figures prepared; the app
   can't call `trust_approve_reconciliation` itself. On upgrade every staff member holds every
   role.

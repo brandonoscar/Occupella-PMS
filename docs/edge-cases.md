@@ -30,10 +30,10 @@ answer in the portal for everything that can fail.
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 61 | 30 | 51 | 4 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 160 | 59 | 8 | 93 | 29 |
 | [Bad files and imports](#bad-files-and-imports) | 145 | 60 | 16 | 69 | 6 |
-| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 155 | 85 | 10 | 60 | 8 |
+| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 155 | 86 | 10 | 59 | 7 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 160 | 57 | 14 | 89 | 18 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1126** | **551** | **110** | **465** | **89** |
+| **All** | **1126** | **552** | **110** | **464** | **88** |
 
 ## Open, high risk: the work list
 
@@ -124,7 +124,6 @@ its ten most pressing, each with the test that would close it.
 - U-014: A staff member uses the invite link shown on screen to become an owner or tenant who already has a password
 - U-015: An admin re-invites another staff member (an approver, the trust account's broker) and uses the link
 - U-033: PMS_TRUSTED_PROXIES "*" behind nginx set as the install guide says ($proxy_add_x_forwarded_for)
-- U-051: The only admin with a working login drops admin while another admin's login is disabled
 - U-085: A former owner (the property sold, or its ownership moved to another owner)
 - U-099: Staff mark the wrong person's record as "the same person"
 - U-100: A tenant left a lease others stay on
@@ -1002,7 +1001,6 @@ its ten most pressing, each with the test that would close it.
 | U-014 | A staff member uses the invite link shown on screen to become an owner or tenant who already has a password | Possible: whoever has the area makes an invite, sees its link once, sets a password and acts as the owner (approves bills over the limit by typing the owner's name) | Open | src/pms/api/app.py:508 invite returns the link; src/pms/api/owner.py:433 approve_bill trusts the session | H |
 | U-015 | An admin re-invites another staff member (an approver, the trust account's broker) and uses the link | The admin sets their password and authenticator and acts as them, defeating prepared-by-one-approved-by-another and the signer rules; the audit log shows only who made the invite | Open | src/pms/accounts.py:303 accept_invite replaces the password and TOTP secret; db/migrations/20261012000034_staff_roles.sql trust_check_staff_invite | H |
 | U-033 | PMS_TRUSTED_PROXIES "*" behind nginx set as the install guide says ($proxy_add_x_forwarded_for) | The app takes the leftmost X-Forwarded-For, which the visitor writes: the sign-in limit is bypassed and a signature's evidence keeps a made-up address | Open | src/pms/api/app.py:338; uvicorn 0.54.0 picks the first host when every host is trusted; docs/install.md:94; tests/api/test_signing.py::test_behind_a_trusted_proxy_the_evidence_keeps_the_signers_address sends one value only | H |
-| U-051 | The only admin with a working login drops admin while another admin's login is disabled | Allowed: the disabled admin still counts, so nobody can change roles, and make-admin refuses because an admin "exists" | Open | db/migrations/20261012000034_staff_roles.sql:209-219 (no login check); src/pms/admin.py make-admin names nobody | H |
 | U-085 | A former owner (the property sold, or its ownership moved to another owner) | Still sees the property's units, tenants' names, rents, what each lease owes, repairs and files, as their account there remains | Open | src/pms/api/owner_portal.py:63 owned_properties (any owner_property account, no share or date) | H |
 | U-099 | Staff mark the wrong person's record as "the same person" | Nothing undoes a link: the wrong person signs in to the other's lease, ledger, receipts and files, and may pay or file under it | Open | src/pms/api/directory.py:463 same_person; db/migrations/20261021000105_tenant_records.sql:25 (no removal table) | H |
 | U-100 | A tenant left a lease others stay on | Still reads it: the staying tenant's later payments, rent changes, files and the property's announcements | Open | src/pms/api/tenant.py:268 lease_of ignores departures; tests/api/test_lease_people_api.py::test_a_tenant_who_left_reads_the_lease_and_files_nothing_more; src/pms/api/announcements.py:145 | H |
@@ -1014,6 +1012,7 @@ its ten most pressing, each with the test that would close it.
 | U-039 | Another site posts to the API (CSRF) | Refused when the browser says cross-site or same-site, with or without an Origin | Tested | tests/api/test_sign_in.py::test_a_browser_saying_another_site_is_refused_with_or_without_an_origin | H |
 | U-049 | The last admin takes away their own admin role | Refused "the company keeps an admin: give another staff member admin first" | Tested | tests/api/test_staff.py::test_an_admin_adds_a_staff_member_and_changes_roles; tests/test_staff_roles.py::test_a_pmc_keeps_an_admin | H |
 | U-050 | Two admins take each other's admin role at once | One admin is left | Tested | tests/test_staff_roles.py::test_two_admins_taking_each_others_role_leave_one | H |
+| U-051 | The only admin with a working login drops admin while another admin's login is disabled | Refused: an admin whose login is disabled doesn't count, so the last admin who can sign in keeps admin; with every admin's login disabled, the operator's make-admin names a new one | Tested | tests/test_staff_roles.py::test_an_admin_whose_login_is_disabled_doesnt_keep_the_pmc_its_admin; tests/properties/test_staff_roles_properties.py | H |
 | U-053 | The staff member who prepared month-end approves it | Refused | Tested | tests/test_staff_roles.py::test_whoever_prepared_it_does_not_approve_it | H |
 | U-054 | A journal entry's proposer posts it | Refused | Tested | tests/test_journal_entries.py::test_the_staff_member_who_proposed_it_does_not_post_it | H |
 | U-055 | Staff without disburse pay a bill or a draw | Refused by the database | Tested | tests/api/test_staff.py::test_paying_out_money_takes_the_disburse_role | H |

@@ -6,9 +6,12 @@ random order, as the app (trust_app) naming each one. A model predicts which of 
 what; the database must agree with it on every step, refusing what it refuses with the reason
 it gives.
 
+Staff members' logins are also disabled at random (migration 20261105000600): an admin whose login
+is disabled no longer keeps the PMC its admin.
+
 Invariants checked after every step (ci/registry.toml maps them to this test):
   - who holds which role is exactly the model's, and only an admin changed it;
-  - the PMC keeps an admin;
+  - the PMC keeps an admin, and one who can sign in while one could;
   - money is paid out only by a staff member who held disburse, and nothing else is written;
   - a period is approved only by a staff member who held approve and didn't prepare it.
 
@@ -42,6 +45,8 @@ from hypothesis.stateful import (
     rule,
     run_state_machine_as_test,
 )
+
+from pms import accounts
 
 STAFF = 4
 WHO = st.integers(min_value=0, max_value=STAFF - 1)
@@ -81,6 +86,7 @@ class RolesMachine(RuleBasedStateMachine):
         )
         # Model
         self.roles: list[set[str]] = [{"admin"}, {"approve"}, {"disburse"}, set()]
+        self.disabled: set[int] = set()  # staff whose login is disabled
         self.draws = 0
         self.attempts = 0
         self.next_start = FIRST_DAY
@@ -109,13 +115,34 @@ class RolesMachine(RuleBasedStateMachine):
         elif (role in self.roles[whom]) == granted:
             event("role change refused: changes nothing")
             assert "already" in self.refused(psycopg.errors.CheckViolation, work)
-        elif role == "admin" and not granted and admins == [whom]:
-            event("role change refused: the last admin")
+        elif (
+            role == "admin"
+            and not granted
+            and not [n for n in admins if n != whom and n not in self.disabled]
+        ):
+            event("role change refused: the last admin who can sign in")
             assert "last admin" in self.refused(psycopg.errors.CheckViolation, work)
         else:
             event("role changed")
             work()
             (self.roles[whom].add if granted else self.roles[whom].discard)(role)
+
+    @rule(whom=WHO)
+    def disable(self, whom):
+        """A staff member's login disabled, for good (made first if they have none)."""
+        if whom in self.disabled:
+            return
+        event("a login disabled")
+        login = accounts.create_invite(
+            self.conn,
+            self.pmc,
+            "staff",
+            self.staff[whom],
+            f"s{whom}.{self.pmc.hex[:8]}@example.com",
+            None,
+        ).login_id
+        self.conn.execute("UPDATE trust_logins SET disabled_at = now() WHERE id = %s", (login,))
+        self.disabled.add(whom)
 
     @rule(by=WHO)
     def draw(self, by):

@@ -36,7 +36,10 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   over twice; two identical charges in one switching file both come in; a tenant's emergency
   request goes through after the day's ten ordinary ones (five emergencies a day); no request may
   send more than 10 MB; only a login's newest invite or reset link works; and disabling an
-  owner's or tenant's login takes the "who can sign in" area, as inviting them does.
+  owner's or tenant's login takes the "who can sign in" area, as inviting them does. A company
+  keeps an admin who can sign in: an admin whose login is disabled no longer counts, so the last
+  working admin can't drop admin, and `make-admin` rescues a company whose admins are all
+  disabled. Migration `20261105000600`.
 - **Fixed: rent charged twice in a month.** Run rent now with Rent due on set to a day other than
   the first (the 15th, say) charged every lease due on the first a second month's rent and each
   monthly charge a second time, and a rent the old system's unpaid charges carried over on another

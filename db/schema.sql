@@ -4338,9 +4338,13 @@ BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('staff roles of ' || NEW.pmc_id, 0));
     NEW.changed_by := nullif(current_setting('trust.staff_id', true), '')::uuid;
     NEW.created_at := clock_timestamp();
+    -- An admin counts while their login isn't disabled (one not invited yet still counts: the
+    -- server's operator can invite them); docs/edge-cases.md U-051.
     v_has_admin := EXISTS (
         SELECT s.id FROM trust_staff AS s
         WHERE s.pmc_id = NEW.pmc_id AND trust_staff_holds(NEW.pmc_id, s.id, 'admin')
+          AND NOT EXISTS (SELECT 1 FROM trust_logins AS l
+                          WHERE l.staff_id = s.id AND l.disabled_at IS NOT NULL)
     );
     IF NEW.changed_by IS NULL THEN
         IF v_has_admin OR NEW.role <> 'admin' OR NOT NEW.granted THEN
@@ -4360,6 +4364,8 @@ BEGIN
         SELECT s.id FROM trust_staff AS s
         WHERE s.pmc_id = NEW.pmc_id AND s.id <> NEW.staff_id
           AND trust_staff_holds(NEW.pmc_id, s.id, 'admin')
+          AND NOT EXISTS (SELECT 1 FROM trust_logins AS l
+                          WHERE l.staff_id = s.id AND l.disabled_at IS NOT NULL)
     ) THEN
         RAISE EXCEPTION 'trust: staff member % is the PMC''s last admin', NEW.staff_id
             USING ERRCODE = 'check_violation',
@@ -35650,4 +35656,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261105000200'),
     ('20261105000300'),
     ('20261105000400'),
-    ('20261105000500');
+    ('20261105000500'),
+    ('20261105000600');
