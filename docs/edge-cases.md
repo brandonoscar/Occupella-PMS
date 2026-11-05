@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1147 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1149 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -29,11 +29,11 @@ answer in the portal for everything that can fail.
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 160 | 82 | 15 | 63 | 14 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 64 | 30 | 48 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 66 | 8 | 91 | 25 |
-| [Bad files and imports](#bad-files-and-imports) | 149 | 63 | 16 | 70 | 4 |
+| [Bad files and imports](#bad-files-and-imports) | 151 | 64 | 16 | 71 | 3 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 167 | 69 | 14 | 84 | 9 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 167 | 70 | 14 | 83 | 8 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1147** | **584** | **110** | **453** | **63** |
+| **All** | **1149** | **586** | **110** | **453** | **61** |
 
 ## Open, high risk: the work list
 
@@ -101,7 +101,6 @@ its ten most pressing, each with the test that would close it.
 - F-010: A PDF with JavaScript (OpenAction, /JS), uploaded by a tenant as their own lease document or by an anonymous applicant as proof of income
 - F-061: Day-first dates from a UK or European file ("05/01/2026" meaning 5 January)
 - F-077: A charge dated after a new lease started at the unit (the old tenant's move-out fee dated after the next move-in)
-- F-126: The everything export (records.zip) of a company with GBs of files
 
 **People doing the unexpected, permissions and security**
 
@@ -122,7 +121,6 @@ its ten most pressing, each with the test that would close it.
 - H-055: PMS_DATA_KEY changed while bank payments are on their way
 - H-067: PMS_TRUSTED_PROXIES empty behind a proxy on another host or network
 - H-089: The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st)
-- H-097: The everything export of a large company
 
 ## Money and the ledger
 
@@ -821,7 +819,6 @@ its ten most pressing, each with the test that would close it.
 | F-010 | A PDF with JavaScript (OpenAction, /JS), uploaded by a tenant as their own lease document or by an anonymous applicant as proof of income | Kept and served byte for byte. It goes out as an attachment with nosniff and a CSP sandbox, which only protects the browser, so a desktop reader opening it may run its script. Staff and co-tenants receive it | Open | src/pms/api/documents.py:452-469; src/pms/api/tenant.py:535-548; src/pms/api/applicant_details.py:141-150 | H |
 | F-061 | Day-first dates from a UK or European file ("05/01/2026" meaning 5 January) | Read as May 1 with no warning; "13/01/2026" is refused. A payment file records a payment in the wrong month, and charges get wrong due days | Open | src/pms/statements.py:77 | H |
 | F-077 | A charge dated after a new lease started at the unit (the old tenant's move-out fee dated after the next move-in) | Goes to the newest lease started by its due day, so the new tenant owes the old tenant's charge. The file has no tenant or lease column to say otherwise | Open | src/pms/api/switching.py:441-447 | H |
-| F-126 | The everything export (records.zip) of a company with GBs of files | Built whole in memory: each table fetched in full, every document's bytes, the zip in a BytesIO, one response. Each table is sorted by row_to_json(r)::text, which turns every 5 MB file into 10 MB of hex to sort. May exhaust memory or never finish; not timed | Open | src/pms/exports.py:433-491 | H |
 | F-088 | The same payments again under other bytes (renamed, re-exported, a trailing newline) | Another SHA, but each line looks recorded already (same lease, day and amount) and waits for staff | Guarded | src/pms/api/payment_files.py:160-214 (the nearest test is tests/api/test_payment_files_api.py::test_a_payment_that_looks_recorded_already_waits) | H |
 | F-015 | A PNG bomb: a 5 MB PNG declaring 30000 x 30000 pixels, kept as a move-out photo or a receipt | The statement still goes: the photo's page says it could not be added here and is with the lease's files, whatever error the image library raises | Tested | tests/test_deposit_statement.py::test_a_photo_that_says_it_is_huge_leaves_the_letter_whole | H |
 | F-016 | That same statement emailed (deposit_statement) | Any error making an email's file is that attempt's failed delivery, with the error; the emails behind it go out in the same run | Tested | tests/test_email_attachments.py::test_an_attachment_that_fails_in_any_way_is_a_failed_delivery_and_stops_nothing_behind_it | H |
@@ -836,6 +833,7 @@ its ten most pressing, each with the test that would close it.
 | F-109 | A report cell starting =, +, -, @, a tab or a carriage return, or one already starting "'=" | CSV puts one apostrophe before it and reads back as it was | Tested | tests/properties/test_export_properties.py::test_csv_holds_every_cell | H |
 | F-110 | The same cells in an Excel download | Never a formula: stored as text | Tested | tests/properties/test_export_properties.py::test_excel_holds_every_value_and_no_formula | H |
 | F-122 | An audit log report over a day a lease offer or a drawn signature was saved | The audit report reads a binary field as its size, "(N bytes)", before and after an update; a PDF export cuts a cell at 48 lines and wraps only what could fill them, an Excel cell at 32,767 characters, each ending in "…"; the CSV keeps it whole | Tested | tests/test_audit_log.py::test_a_files_bytes_read_as_their_size_never_as_millions_of_characters; tests/test_exports.py::test_a_cell_of_millions_of_characters_is_cut_where_a_file_cant_hold_it | H |
+| F-126 | The everything export (records.zip) of a company with GBs of files | Rows come two at a time from a cursor on the server, in their primary key's order (no sort by row text), each table's CSV through a spool and each file as its own entry, into a zip written to a temporary file the answer is sent from a megabyte at a time; 24 MB of files export holding about 5 MB | Tested | tests/test_records_export.py::test_a_company_with_many_files_is_written_without_holding_them_all | H |
 | F-128 | Logins' secrets, sessions and token hashes in records.zip, in a table or in the audit log's copies | Left out | Tested | tests/test_records_export.py::test_no_credential_comes_out | H |
 | F-129 | Two tenants of the same name at different properties, in the QuickBooks export | No two accounts share a PMS-made name: the oldest keeps the plain name, each after it adds its tenant's property, then a number; a name once given never changes | Tested | tests/properties/test_quickbooks_properties.py::test_no_two_accounts_share_a_pms_made_name_and_none_ever_changes; tests/test_quickbooks.py::test_two_people_of_one_name_never_share_a_quickbooks_account | H |
 | F-138 | An ACH file downloaded again | Byte for byte the file made when the run was paid; each download is logged. The bank pays twice if it is uploaded twice | Tested | tests/api/test_payouts_api.py::test_an_ach_file_taken_again_is_the_one_made_when_the_run_was_paid | H |
@@ -884,6 +882,7 @@ its ten most pressing, each with the test that would close it.
 | F-141 | A long payee name or memo on a printed check | fpdf's cell doesn't clip, so the name runs past its 130 mm box into the amount figure | Open | src/pms/payouts/checks.py:124-127,135 | M |
 | F-146 | A PMS-made QuickBooks name longer than QuickBooks Desktop takes (a long tenant and property name, 31 characters a name part in Desktop) | The IIF line carries the whole name; whether Desktop refuses the file, cuts the name (two cut alike would share an account again) or takes it is NOT VERIFIED; nothing shortens it | Open | src/pms/quickbooks.py (accounts, part) | M |
 | F-148 | The audit log itself holds each lease offer's PDF and each drawn signature as hex in its row, and the everything export (records.zip) writes the log as CSV | Every offer adds up to 10 MB of text to the log forever, and records.zip carries it whole; the report reads it as a size now, the log and the export still hold it (whether to keep a file's hash instead is the founder's: the log keeps every row as written) | Open | db/schema.sql trust_audit (to_jsonb(NEW)); src/pms/exports.py records_zip | M |
+| F-150 | The ledger download (ledger.zip) of a company with a million transfers | Each of its three CSVs is fetched whole and the zip built in memory, as records.zip was; smaller than records.zip (no files), so not measured; NOT VERIFIED at that size | Open | src/pms/exports.py (ledger_zip) | M |
 | F-096 | A line dated in a period month-end has closed | The books refuse it; it waits with their reason | Guarded | src/pms/api/payment_files.py:398-405 | M |
 | F-035 | A CSV Excel on Windows saved as Windows-1252, with "José O’Brien" | Read as Windows-1252; the letters survive | Tested | frontend/src/fileText.test.ts "reads a file Excel on Windows saved as CSV (Windows-1252) without losing its letters" | M |
 | F-036 | A file whose letters arrive as the replacement character | Refused whole with its line: "save the file as CSV UTF-8" | Tested | tests/api/test_switch.py::test_a_file_whose_letters_didnt_read_is_refused_with_its_line | M |
@@ -928,6 +927,7 @@ its ten most pressing, each with the test that would close it.
 | F-142 | One check paying more than 12 bills | Its stubs list only the first 12; the rest go unnamed (the total is right) | Open | src/pms/payouts/checks.py:103 | L |
 | F-145 | A year of general ledger or audit log as a PDF for a 1,000-unit company | Built in memory in the request. tools/speed.py times a month's PDFs only (10 s p95 ceiling), never a year's. NOT VERIFIED | Open | src/pms/exports.py:197-231; ci/thresholds.toml [speed] | L |
 | F-147 | Staff give an account exactly the name the PMS made for another account | Both post to one QuickBooks account; a company that keeps one account for both does this on purpose, so nothing refuses it or warns | Open | src/pms/quickbooks.py (accounts: defaults avoid each other, not staff's names) | L |
+| F-151 | The everything export of a company with gigabytes of files, on a server whose temporary directory is small | The zip is written to a temporary file before it is sent: a full disk there fails the download rather than the process running out of memory (what the answer says then is NOT VERIFIED: likely a server error, not deps.DISK_FULL); nothing is kept after | Open | src/pms/api/app.py (records); tempfile.TemporaryFile | L |
 | F-003 | An iPhone HEIC photo renamed .jpg | Its first bytes aren't JPEG's, so it is refused with "the file isn't a JPG", which doesn't say it is HEIC | Guarded | src/pms/api/documents.py:368 | L |
 | F-006 | A file of exactly 5 MiB (5,242,880 bytes) | Accepted: its base64 is 6,990,508 characters, under 7,000,000. Only the over-limit side has a test | Guarded | src/pms/api/documents.py:58,335,366 | L |
 | F-020 | A password-protected receipt PDF | pypdf's FileNotDecryptedError is a PyPdfError, so the statement prints the could-not-be-added page | Guarded | src/pms/deposit_statement.py:184-188 | L |
@@ -1167,7 +1167,6 @@ its ten most pressing, each with the test that would close it.
 | H-055 | PMS_DATA_KEY changed while bank payments are on their way | The company's webhook answers 404, Stripe retries then stops; rent the bank paid never reaches the books; one log line | Open | src/pms/api/online_payments.py:680-683; src/pms/payments.py:551-556 | H |
 | H-067 | PMS_TRUSTED_PROXIES empty behind a proxy on another host or network | Every visitor has the proxy's address: 20 failed sign-ins by anyone lock the whole company out for 15 minutes, 10 resets an hour for everyone, signatures record the proxy's address | Open | src/pms/api/throttle.py:84-86 | H |
 | H-089 | The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st) | The next run charges only the new month, so that rent is never charged by itself, and nothing says so | Open | src/pms/nightly.py:116-118; db/schema.sql:1688-1720 (only the run's month) | H |
-| H-097 | The everything export of a large company | Every table and every document's bytes are fetched and zipped in memory in one request; it can exhaust the process and take the PMS down for everyone | Open | src/pms/exports.py:433-491 | H |
 | H-020 | The nightly run fails on a server that sends no email (compose sets none by default) | A run failing every night leaves no rent run (one transaction a company), so after two days Needs attention says rent isn't posting; one night's failure that the next night makes up is still only in the log | Tested | tests/api/test_today.py::test_rent_not_posted_for_two_days_is_noted_with_the_last_day_it_did | H |
 | H-021 | The nightly hasn't run for days (its thread died, it fails every night, or it is off) | Needs attention says first, with the last day rent posted, when no rent run ran in two days while the company has leases (today.rent_not_posted) | Tested | tests/api/test_today.py::test_rent_not_posted_for_two_days_is_noted_with_the_last_day_it_did; frontend/src/pages/PortalsTwo.test.tsx (says in Needs attention when rent stopped posting) | H |
 | H-022 | PMS_NIGHTLY=off with no cron running python -m pms.nightly | The server's log says at start that the run is off and what to run instead; the Dashboard saying when rent last posted is H-021 | Tested | tests/api/test_server.py::test_a_server_with_the_nightly_run_off_says_so_at_start | H |
@@ -1176,6 +1175,7 @@ its ten most pressing, each with the test that would close it.
 | H-060 | PMS_PUBLIC_URL left as .env.example's https://pms.example.com | The server and its commands refuse to start at .env.example's PMS_PUBLIC_URL, naming what to set | Tested | tests/test_deployment.py::test_the_app_refuses_to_start_at_the_example_address, ::test_the_commands_refuse_the_example_address_before_they_connect, ::test_env_example_still_offers_the_placeholder_the_server_refuses | H |
 | H-068 | "*" trusted, with nginx's $proxy_add_x_forwarded_for as install.md says | Same fix as U-033: the last X-Forwarded-For address, which nginx's $proxy_add_x_forwarded_for appends | Tested | tests/api/test_throttle.py::test_behind_the_proxy_a_visitor_cant_dodge_the_limit_by_naming_another_address | H |
 | H-072 | A very large JSON body (hundreds of MB) to /api/apply or /api/sign-in, no sign-in needed | Refused 413 above 10 MB before it is read: at once when it says its length, counted as it streams otherwise; a 5 MB file as base64 still fits | Tested | tests/api/test_body_limit.py | H |
+| H-097 | The everything export of a large company | Rows come two at a time from a cursor on the server, in their primary key's order (no sort by row text), each table's CSV through a spool and each file as its own entry, into a zip written to a temporary file the answer is sent from a megabyte at a time; 24 MB of files export holding about 5 MB | Tested | tests/test_records_export.py::test_a_company_with_many_files_is_written_without_holding_them_all | H |
 | H-115 | A session signed out after an hour idle, page still open | Once signed in, a request answering "sign in first" takes the person to sign in, saying they were signed out after a while away; a wrong password or a key's refusal doesn't | Tested | frontend/src/api.test.ts > api > tells the page a session ended, once someone was signed in, and only for that (H-115); frontend/src/pages/SignInPage.test.tsx | H |
 | H-152 | Any error while drawing a page (an answer of an unexpected shape after an upgrade, a status the page doesn't know) | An error boundary around the portal: a page that fails to draw says it couldn't be shown and that nothing saved is lost, with Reload and the way to the start; never the error's words | Tested | frontend/src/components/ErrorBoundary.test.tsx | H |
 | H-161 | PMS_PUBLIC_URL written with its default port (https://rentals.example.com:443) | Settings.origin drops the scheme's default port, as a browser's Origin does | Tested | tests/test_deployment.py::test_the_origin_is_written_as_a_browser_sends_it; tests/api/test_sign_in.py::test_our_own_site_goes_through_however_its_address_was_written | H |

@@ -342,8 +342,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   invited from their own page (`pages/PortalCard.tsx`). Bringing a PMC over from another system at `/settings/import`
   (`src/pms/api/switching.py`; an import that adds rows, and opening balances, end by analyzing the tables a switch
   fills, `trust_analyze_after_import`, migration 20261103000200, so the next page isn't planned blind), and the whole ledger at `/settings/data-export`, with, for an admin, everything
-  (`/api/records.zip`, `exports.records_zip`, q132: each record table as CSV, its documents,
-  leases and signatures as files, and the ledger; never logins' secrets, sessions or a token's
+  (`/api/records.zip`, `exports.write_records_zip`, q132: each record table as CSV, its
+  documents, leases and signatures as files, and the ledger, its rows a few at a time in their
+  key's order into a temporary file the answer is sent from, never whole in memory; never logins' secrets, sessions or a token's
   hash, in a table or the audit log), and QuickBooks at `/settings/quickbooks`
   (`src/pms/quickbooks.py`, `src/pms/api/quickbooks.py`, migration 0102, q117: each ledger
   account's name in QuickBooks, the PMS's until staff give it the company's own (two never

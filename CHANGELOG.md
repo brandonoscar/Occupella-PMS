@@ -77,6 +77,11 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   are all positive, with a column saying Debit or Credit (Type, Transaction type, Dr/Cr), went in
   with every check and fee as a deposit. Each line's way now comes from that column; a type saying
   neither is refused with its line, and a bank that signs its amounts keeps its signs.
+- **Fixed: the everything export could take the PMS down for a large company.** Settings, Data
+  export's records.zip fetched every table and every document's bytes at once and zipped them in
+  memory, sorting each table by its rows as text (a 5 MB file as 10 MB of hex). Rows now come two
+  at a time in their key's order into a zip written to a temporary file, which the answer is
+  sent from: 24 MB of files export holding about 5 MB.
 - **Fixed: payouts recorded as paid by ACH under the wrong data key.** With `PMS_DATA_KEY` set
   to another key than the one that sealed the payees' bank account numbers, Pay owners and Pay
   bills recorded the payouts and only then found the ACH file couldn't be made. Each payee's

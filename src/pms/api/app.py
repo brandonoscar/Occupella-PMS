@@ -23,11 +23,13 @@ refusal is answered 403.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import secrets
-from collections.abc import AsyncIterator, Awaitable, Callable
+import tempfile
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -40,7 +42,7 @@ import psycopg
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg import sql
 from psycopg_pool import ConnectionPool
@@ -751,7 +753,24 @@ def create_app(settings: Settings) -> FastAPI:
         ).fetchone()
         if row is None or not row[0]:
             raise HTTPException(403, "only an admin downloads everything")
-        return download(exports.records_zip(conn, session.pmc_id), "records", "zip")
+        # Written to a file as its rows come and sent from it a block at a time, never whole in
+        # memory: a company may hold gigabytes of files (docs/edge-cases.md H-097, F-126).
+        with contextlib.ExitStack() as stack:
+            spool = stack.enter_context(tempfile.TemporaryFile())
+            exports.write_records_zip(conn, session.pmc_id, spool)
+            spool.seek(0)
+            sent = stack.pop_all()  # the file stays open until it is sent
+
+        def blocks() -> Iterator[bytes]:
+            with sent:
+                while block := spool.read(1024 * 1024):
+                    yield block
+
+        return StreamingResponse(
+            blocks(),
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="records.zip"'},
+        )
 
     app.include_router(owner.router)
     app.include_router(tenant.router)

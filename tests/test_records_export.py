@@ -7,11 +7,13 @@ rows. Only the company's own rows, the same bytes for the same books."""
 import csv
 import hashlib
 import io
+import os
+import tracemalloc
 import uuid
 import zipfile
 
 import pytest
-from helpers import make_pmc
+from helpers import add_document, make_pmc
 
 from pms import demo, exports
 
@@ -110,6 +112,35 @@ def test_only_the_companys_rows_and_the_same_bytes_for_the_same_books(everything
     assert {row["pmc_id"] for row in table(archive, "records/trust_properties.csv")} == {
         str(built.pmc_id)
     }
+
+
+def test_a_company_with_many_files_is_written_without_holding_them_all(conn, app_conn, tmp_path):
+    """docs/edge-cases.md H-097, F-126: every table and every document's bytes were fetched at
+    once and zipped in memory in one request, and each table was sorted by its rows as text
+    (each 5 MB file as 10 MB of hex). Rows now come a few at a time, in their key's order, into
+    a zip written to a file, so the process holds a few files at most, whatever the company's."""
+    pmc = make_pmc(conn)
+    files = [b"%PDF-1.4 " + os.urandom(1_000_000) for _ in range(24)]
+    for n, content in enumerate(files):
+        add_document(conn, pmc.pmc_id, "w9", pmc.vendor_id, content, title=f"W-9 {n}")
+    path = tmp_path / "records.zip"
+
+    tracemalloc.start()
+    try:
+        with path.open("wb") as out:
+            exports.write_records_zip(app_conn, pmc.pmc_id, out)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert peak < 8_000_000, f"{peak:,} bytes held at once for 24 MB of files"
+    archive = zipfile.ZipFile(path)
+    kept = {
+        archive.read(row["content"]) for row in table(archive, "records/trust_document_files.csv")
+    }
+    assert kept == set(files)
+    # The same bytes as the whole thing at once.
+    assert path.read_bytes() == exports.records_zip(app_conn, pmc.pmc_id)
 
 
 def test_an_unknown_company_is_refused(app_conn):
