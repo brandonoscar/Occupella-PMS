@@ -24,7 +24,7 @@ const ZONES = [
 ];
 const BARE: Company = {
   name: "Synthetic PMC", address: null, late_fees: null, nsf_fee: null, reply_to: null, terms_url: null, privacy_url: null, logo: null,
-  time_zone: "America/New_York", time_zones: ZONES,
+  time_zone: "America/New_York", time_zones: ZONES, date_order: "month_first",
 };
 const FULL: Company = {
   name: "Synthetic PMC", address: ADDRESS,
@@ -33,7 +33,7 @@ const FULL: Company = {
   terms_url: "https://example.com/terms",
   privacy_url: "https://example.com/privacy",
   logo: { id: "d1", content_type: "image/png", uploaded_at: "2026-10-17T00:00:00Z" },
-  time_zone: "America/Los_Angeles", time_zones: ZONES,
+  time_zone: "America/Los_Angeles", time_zones: ZONES, date_order: "day_first",
 };
 
 // The Stripe keys card's answer (PaymentKeysCard): the server's partner, no keys of its own.
@@ -77,6 +77,8 @@ describe("SetupPage", () => {
     expect(screen.getByTestId("reply-to").textContent).toBe("Replies to its emails go to office@example.com.");
     expect(screen.getByTestId("time-zone").textContent).toBe(
       "Time zone: Pacific (America/Los_Angeles). Payments, bills and statements are dated by its day.");
+    expect(screen.getByTestId("date-order").textContent).toBe(
+      "Dates in files you import: Day first: 05/01/2026 is 5 January, unless a file shows otherwise.");
     expect(screen.getByRole("link", { name: "Settings" }).getAttribute("aria-current")).toBe("page");
   });
 
@@ -106,8 +108,24 @@ describe("SetupPage", () => {
       name: "Synthetic PMC 2", address: { ...ADDRESS, address_line_2: null },
       late_fees: FULL.late_fees, nsf_fee: "35.00", reply_to: "office@example.com",
       terms_url: "https://example.com/terms", privacy_url: "https://example.com/privacy",
-      time_zone: "America/Los_Angeles",
+      time_zone: "America/Los_Angeles", date_order: "day_first",
     }]]);
+  });
+
+  it("picks how the company's files write their dates (docs/edge-cases.md F-061)", async () => {
+    const fetch = server(BARE);
+    render(<SetupPage me={ME} />);
+    expect((await screen.findByTestId("date-order")).textContent).toBe(
+      "Dates in files you import: Month first: 05/01/2026 is May 1, unless a file shows otherwise.");
+    fireEvent.click(screen.getByRole("button", { name: "Edit company" }));
+    const order = within(panel()).getByLabelText("Dates in files you import") as HTMLSelectElement;
+    expect([...order.options].map((o) => o.textContent)).toEqual([
+      "Month first: 05/01/2026 is May 1", "Day first: 05/01/2026 is 5 January",
+    ]);
+    type("Dates in files you import", "day_first");
+    fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(1));
+    expect(posted(fetch)[0]?.[1]).toMatchObject({ date_order: "day_first" });
   });
 
   it("picks the company's time zone in the side panel", async () => {
@@ -199,7 +217,7 @@ describe("SetupPage", () => {
     expect(posted(fetch)).toEqual([["/api/company", {
       name: "Synthetic PMC", address: null,
       late_fees: { grace_days: 3, flat_fee: "25.00", percent: "0", maximum: null }, nsf_fee: "35.00", reply_to: null,
-      terms_url: null, privacy_url: null, time_zone: "America/New_York",
+      terms_url: null, privacy_url: null, time_zone: "America/New_York", date_order: "month_first",
     }]]);
     cleanup();
 

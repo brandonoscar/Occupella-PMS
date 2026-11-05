@@ -129,7 +129,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   request sends more than 10 MB (`app.MAX_BODY`, 413, counted as it streams too): a 5 MB file as
   base64 fits. A comma in an amount from a file only separates thousands (`statements.read_amount`:
   "1234,56" is refused, never 123,456.00; a bank CSV whose amounts are all positive reads each
-  line's way from its Type column, Debit or Credit), and a switching file's lines are matched to what came
+  line's way from its Type column, Debit or Credit), a file's dates read in the order the file
+  proves (13/01/2026 is day first) else the company's (`days.date_order`, Company setup, migration
+  20261105001200: month first until it picks day first; a file mixing both is refused), and a switching file's lines are matched to what came
   over already one to one (two alike in one file are two; the file again adds nothing).
 - Logins (`src/pms/accounts.py`, migration 0028): staff invite a staff member, owner or tenant
   by email; the link carries a token kept only as its SHA-256, in the URL fragment. A session

@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from pms import days, exports, statements
 from pms.api import deps, payables
 from pms.api.deps import Conn, Staff, refusal
+from pms.days import date_order as written_by
 
 router = APIRouter(prefix="/api/reconcile")
 
@@ -248,7 +249,7 @@ def import_statement(session: Staff, conn: Conn, new: NewStatement) -> Imported:
     of its own, so every dollar the bank holds can be matched."""
     bank_of(conn, session.pmc_id, new.bank_account_id)
     try:
-        read = statements.read(new.content, new.format)
+        read = statements.read(new.content, new.format, written_by(conn, session.pmc_id))
     except statements.StatementError as bad:
         raise HTTPException(422, str(bad)) from None
     last = conn.execute(

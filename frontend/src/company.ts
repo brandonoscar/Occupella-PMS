@@ -24,8 +24,17 @@ export type Company = {
   // there. America/New_York until it picks another.
   time_zone: string;
   time_zones: Zone[];
+  // How it writes a day like 05/01/2026 (migration 20261105001200): the order its files' dates
+  // are read in when a file doesn't prove its own. Month first until it picks.
+  date_order: DateOrder;
 };
 export type Zone = { id: string; name: string };
+export type DateOrder = "month_first" | "day_first";
+
+// "Month first: 05/01/2026 is May 1": how the company's files write a day, in words.
+export function dateOrderLine(order: DateOrder): string {
+  return order === "day_first" ? "Day first: 05/01/2026 is 5 January" : "Month first: 05/01/2026 is May 1";
+}
 
 // "Eastern (America/New_York)": the zone as Company setup names it.
 export function zoneLine(company: Pick<Company, "time_zone" | "time_zones">): string {

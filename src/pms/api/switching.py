@@ -31,7 +31,7 @@ from fastapi import APIRouter, HTTPException
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, StringConstraints, ValidationError
 
-from pms import email, exports, statements
+from pms import days, email, exports, statements
 from pms.api import directory, outbox, unit_details
 from pms.api.deps import Conn, Staff, refusal
 
@@ -59,6 +59,8 @@ class Bad(Exception):
 class Row:
     line: int
     cells: dict[str, str]
+    # The order the file's dates are written in: the one they prove, else the company's.
+    order: statements.DateOrder = "month_first"
 
     def get(self, column: str, required: bool = True) -> str:
         value = self.cells.get(column, "").strip()
@@ -73,7 +75,7 @@ class Row:
         if not text:
             return None
         try:
-            return statements.read_date(text, f"line {self.line}")
+            return statements.read_date(text, f"line {self.line}", self.order)
         except statements.StatementError as bad:
             raise Bad(str(bad)) from None
 
@@ -84,8 +86,11 @@ class Row:
             raise Bad(str(bad)) from None
 
 
-def rows(content: str, needs: tuple[str, ...]) -> list[Row]:
-    """A CSV file's rows, by lower-case column name (spaces and underscores alike)."""
+def rows(
+    content: str, needs: tuple[str, ...], preferred: statements.DateOrder = "month_first"
+) -> list[Row]:
+    """A CSV file's rows, by lower-case column name (spaces and underscores alike), with the
+    order its dates are written in: the one they prove, else `preferred`, the company's."""
     # A letter that didn't read as text arrives as the replacement character: refused, rather
     # than a tenant's name coming into the books as "Jos�". The portal reads a file saved as
     # Windows-1252 as such (frontend/src/fileText.ts); what reaches here otherwise is broken.
@@ -109,10 +114,17 @@ def rows(content: str, needs: tuple[str, ...]) -> list[Row]:
         raise Bad(f"line 1: no {', '.join(missing)} column")
     if len(found) - 1 > MAX_ROWS:
         raise Bad(f"a file has at most {MAX_ROWS} rows")
-    return [
-        Row(n, {h: (r[i] if i < len(r) else "") for i, h in enumerate(headers)})
+    cells = [
+        (n, {h: (r[i] if i < len(r) else "") for i, h in enumerate(headers)})
         for n, r in enumerate(found[1:], start=2)
     ]
+    try:
+        order = statements.date_order(
+            ((f"line {n}", value) for n, row in cells for value in row.values()), preferred
+        )
+    except statements.StatementError as bad:
+        raise Bad(str(bad)) from None
+    return [Row(n, row, order) for n, row in cells]
 
 
 # --- finding and adding by name ----------------------------------------------------------------
@@ -615,10 +627,13 @@ def import_file(session: Staff, conn: Conn, new: Import) -> Counted:
     try:
         if new.kind in HISTORY:
             counted = import_history(
-                names, HISTORY[new.kind], new.content, rows(new.content, NEEDS[new.kind])
+                names,
+                HISTORY[new.kind],
+                new.content,
+                rows(new.content, NEEDS[new.kind], days.date_order(conn, session.pmc_id)),
             )
         else:
-            for row in rows(new.content, NEEDS[new.kind]):
+            for row in rows(new.content, NEEDS[new.kind], days.date_order(conn, session.pmc_id)):
                 import_row(names, new.kind, row)
             counted = Counted(added=names.added, kept=names.kept)
     except Bad as bad:
@@ -813,7 +828,7 @@ def open_balances(session: Staff, conn: Conn, new: Opening) -> Opened:
     names = Names(conn, session.pmc_id)
     balances: dict[str, Decimal] = {}
     try:
-        for row in rows(new.content, ("kind", "amount")):
+        for row in rows(new.content, ("kind", "amount"), days.date_order(conn, session.pmc_id)):
             account = ledger_account(names, new.bank_account_id, row)
             if account in balances:
                 raise Bad(f"line {row.line}: that account has a balance on another line already")
@@ -862,7 +877,7 @@ def carry_vendor_payments(session: Staff, conn: Conn, new: VendorPayments) -> Co
     names = Names(conn, session.pmc_id)
     added = kept = 0
     try:
-        for row in rows(new.content, ("vendor", "paid")):
+        for row in rows(new.content, ("vendor", "paid"), days.date_order(conn, session.pmc_id)):
             name = row.get("vendor")
             vendor = names.vendor(name, line=row.line)
             amount = row.money("paid")
@@ -923,7 +938,9 @@ def carry_items(session: Staff, conn: Conn, new: Items) -> Counted:
     )
     added = kept = 0
     try:
-        for row in rows(new.content, ("date", "amount", "description")):
+        for row in rows(
+            new.content, ("date", "amount", "description"), days.date_order(conn, session.pmc_id)
+        ):
             amount = row.money("amount")
             if amount == 0:
                 raise Bad(f"line {row.line}: an item moved some money")

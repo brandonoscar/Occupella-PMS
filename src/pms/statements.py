@@ -2,7 +2,8 @@
 
 A CSV statement has a header row. It needs a date column and either an amount column (money
 in positive) or a pair of columns for money out and money in; a description and a reference
-column are read when there is one. Dates are YYYY-MM-DD or MM/DD/YYYY; amounts may carry a
+column are read when there is one. Dates are YYYY-MM-DD, or MM/DD/YYYY or DD/MM/YYYY (slashes,
+dots or dashes) in the order the file proves or the company writes; amounts may carry a
 dollar sign, thousands commas, a leading minus or parentheses for money out. A bank whose amounts
 are all positive says each line's way in a type column (Debit or Credit, Dr or Cr, ACH_DEBIT...),
 which is then read; a type that says neither is refused.
@@ -16,9 +17,11 @@ expanded.
 import csv
 import io
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from typing import Literal
 
 MAX_LINES = 20000
 CENT = Decimal("0.01")
@@ -91,14 +94,50 @@ def read_amount(text: str, where: str) -> Decimal:
     return -amount if negative else amount
 
 
-def read_date(text: str, where: str) -> date:
-    text = text.strip()
-    for form in ("%Y-%m-%d", "%m/%d/%Y"):
-        try:
-            return datetime.strptime(text, form).date()
-        except ValueError:
+# How a file writes a day like 05/01/2026 (docs/edge-cases.md F-061): month first, as the US
+# does (1 May), or day first, as most of the world does (5 January). A year first is ISO's, read
+# whatever the order.
+DateOrder = Literal["month_first", "day_first"]
+YEAR_FIRST = re.compile(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})")
+YEAR_LAST = re.compile(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})")
+
+
+def date_order(dates: Iterable[tuple[str, str]], preferred: DateOrder = "month_first") -> DateOrder:
+    """The order a file's dates are written in, from (where, text) pairs: the one a date only
+    it can read proves (13/01/2026 is day first, 01/13/2026 month first), else the company's.
+    A file proving both is refused: some of its dates would be wrong either way."""
+    first: dict[DateOrder, tuple[str, str]] = {}
+    for where, text in dates:
+        found = YEAR_LAST.fullmatch(text.strip())
+        if found is None:
             continue
-    raise StatementError(f"{where}: {text!r} is not a date (YYYY-MM-DD or MM/DD/YYYY)")
+        a, b = int(found.group(1)), int(found.group(2))
+        if a > 12 >= b:
+            first.setdefault("day_first", (where, text.strip()))
+        elif b > 12 >= a:
+            first.setdefault("month_first", (where, text.strip()))
+    if len(first) == 2:
+        (day_at, day_text), (month_at, month_text) = first["day_first"], first["month_first"]
+        raise StatementError(
+            f"{day_at} writes {day_text} day first and {month_at} writes {month_text} month"
+            " first: a file's dates go one way, so fix the file and import it again"
+        )
+    return next(iter(first), preferred)
+
+
+def read_date(text: str, where: str, order: DateOrder = "month_first") -> date:
+    text = text.strip()
+    try:
+        if found := YEAR_FIRST.fullmatch(text):
+            return date(int(found.group(1)), int(found.group(2)), int(found.group(3)))
+        if found := YEAR_LAST.fullmatch(text):
+            a, b, year = (int(part) for part in found.groups())
+            month, day = (a, b) if order == "month_first" else (b, a)
+            return date(year, month, day)
+    except ValueError:
+        pass
+    shape = "MM/DD/YYYY" if order == "month_first" else "DD/MM/YYYY"
+    raise StatementError(f"{where}: {text!r} is not a date (YYYY-MM-DD or {shape})")
 
 
 def signed(text: str) -> bool:
@@ -125,7 +164,7 @@ def column(headers: list[str], names: tuple[str, ...]) -> int | None:
     return None
 
 
-def read_csv(content: str) -> Statement:
+def read_csv(content: str, preferred: DateOrder = "month_first") -> Statement:
     # newline="": the csv module itself reads \r\n, \n and a bare \r as the end of a row.
     reader = csv.reader(io.StringIO(content.lstrip("\ufeff"), newline=""))
     try:
@@ -156,6 +195,10 @@ def read_csv(content: str) -> Statement:
         # Every amount positive: a type column, if there is one, says each line's way. A bank
         # that signs its amounts keeps its signs, whatever its type column says.
         typed = column(headers, TYPE_HEADERS)
+    order = date_order(
+        ((f"line {n}", row[when]) for n, row in enumerate(rows[1:], start=2) if when < len(row)),
+        preferred,
+    )
     lines = []
     for n, row in enumerate(rows[1:], start=2):
         where = f"line {n}"
@@ -175,7 +218,7 @@ def read_csv(content: str) -> Statement:
             continue  # a bank's note with no money in it
         lines.append(
             Line(
-                read_date(cell(when), where),
+                read_date(cell(when), where, order),
                 value,
                 cell(described)[:500],
                 cell(referenced)[:255] or None,
@@ -258,6 +301,7 @@ def read_ofx(content: str) -> Statement:
     )
 
 
-def read(content: str, kind: str) -> Statement:
-    """A statement file's lines (and, for OFX, its days and closing balance)."""
-    return read_ofx(content) if kind == "ofx" else read_csv(content)
+def read(content: str, kind: str, preferred: DateOrder = "month_first") -> Statement:
+    """A statement file's lines (and, for OFX, its days and closing balance). A CSV's dates read
+    in the order the file proves, else `preferred`, the company's (OFX writes YYYYMMDD)."""
+    return read_ofx(content) if kind == "ofx" else read_csv(content, preferred)

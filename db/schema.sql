@@ -15420,11 +15420,13 @@ CREATE TABLE public.trust_company_profiles (
     terms_url text,
     privacy_url text,
     time_zone text,
+    date_order text,
     CONSTRAINT trust_company_profiles_address_line_1_check CHECK (((btrim(address_line_1) <> ''::text) AND (char_length(address_line_1) <= 200))),
     CONSTRAINT trust_company_profiles_address_line_2_check CHECK (((btrim(address_line_2) <> ''::text) AND (char_length(address_line_2) <= 200))),
     CONSTRAINT trust_company_profiles_check CHECK (((num_nonnulls(address_line_1, city, state, postal_code) = ANY (ARRAY[0, 4])) AND ((address_line_2 IS NULL) OR (address_line_1 IS NOT NULL)))),
     CONSTRAINT trust_company_profiles_check1 CHECK (((num_nonnulls(late_grace_days, late_flat_fee, late_percent) = ANY (ARRAY[0, 3])) AND ((late_maximum IS NULL) OR (late_grace_days IS NOT NULL)))),
     CONSTRAINT trust_company_profiles_city_check CHECK (((btrim(city) <> ''::text) AND (char_length(city) <= 100))),
+    CONSTRAINT trust_company_profiles_date_order_check CHECK ((date_order = ANY (ARRAY['month_first'::text, 'day_first'::text]))),
     CONSTRAINT trust_company_profiles_late_flat_fee_check CHECK (((late_flat_fee >= (0)::numeric) AND (late_flat_fee = round(late_flat_fee, 2)))),
     CONSTRAINT trust_company_profiles_late_grace_days_check CHECK (((late_grace_days >= 0) AND (late_grace_days <= 365))),
     CONSTRAINT trust_company_profiles_late_maximum_check CHECK (((late_maximum >= (0)::numeric) AND (late_maximum = round(late_maximum, 2)))),
@@ -35717,4 +35719,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261105000800'),
     ('20261105000900'),
     ('20261105001000'),
-    ('20261105001100');
+    ('20261105001100'),
+    ('20261105001200');

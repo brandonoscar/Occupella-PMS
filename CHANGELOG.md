@@ -73,6 +73,12 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   the owners to choose among (Record it, naming whose), a lease at such a property takes no
   payment online (the tenant sees the company's How to pay us) nor by autopay (its month reads as
   online payments off), and the card says when the list couldn't load instead of showing nothing.
+- **Dates in files read as the company writes them.** 05/01/2026 is 1 May in the US and
+  5 January in most of the world; a day-first file went in as May with no word. Every file the
+  PMS reads (bank statements, payment files, the switching tool's) now reads its dates in the
+  order the file proves (13/01/2026 can only be day first), else the company's own: month first
+  until it picks day first in Company setup. A file mixing both is refused with its lines, and
+  dates with dots or dashes read too. Migration `20261105001200`.
 - **Fixed: switching put an old tenant's charge on the new tenant.** A charges file names a unit,
   and every charge went on the newest lease started by its due day, so a move-out fee dated after
   the next tenant moved in became theirs. A charges file may now say whose each charge is (a

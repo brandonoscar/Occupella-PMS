@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1157 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1160 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -26,14 +26,14 @@ answer in the portal for everything that can fail.
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
 | [Money and the ledger](#money-and-the-ledger) | 151 | 113 | 7 | 31 | 4 |
-| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 161 | 82 | 15 | 64 | 14 |
+| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 82 | 15 | 67 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 69 | 8 | 88 | 22 |
-| [Bad files and imports](#bad-files-and-imports) | 152 | 65 | 16 | 71 | 2 |
+| [Bad files and imports](#bad-files-and-imports) | 152 | 66 | 16 | 70 | 1 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 73 | 14 | 85 | 5 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1157** | **594** | **110** | **453** | **54** |
+| **All** | **1160** | **595** | **110** | **455** | **54** |
 
 ## Open, high risk: the work list
 
@@ -63,6 +63,7 @@ its ten most pressing, each with the test that would close it.
 - D-083: Rent first charged after its own grace ran out (lease entered late, an admin's catch-up)
 - D-128: A fee charged after the 10-day deadline passed
 - D-129: Tenants who moved out before the lease's last day
+- D-163: A company ahead of UTC (Europe, Asia, Australia)
 
 **Concurrency and retries**
 
@@ -96,7 +97,6 @@ its ten most pressing, each with the test that would close it.
 **Bad files and imports**
 
 - F-010: A PDF with JavaScript (OpenAction, /JS), uploaded by a tenant as their own lease document or by an anonymous applicant as proof of income
-- F-061: Day-first dates from a UK or European file ("05/01/2026" meaning 5 January)
 
 **People doing the unexpected, permissions and security**
 
@@ -302,6 +302,7 @@ its ten most pressing, each with the test that would close it.
 | D-083 | Rent first charged after its own grace ran out (lease entered late, an admin's catch-up) | Charged a late fee the same night, before the tenant could see the rent | Open | db/migrations/20261031000200_late_fees_skip_paid_rents.sql:208 | H |
 | D-128 | A fee charged after the 10-day deadline passed | The deadline moves to 14 days, hiding that the 10-day one was missed (the test pins the move) | Open | src/pms/api/moveout.py:134; tests/api/test_deposit_statements_api.py::test_a_lease_shows_when_its_deposit_is_due_back_and_its_fees_with_their_receipts | H |
 | D-129 | Tenants who moved out before the lease's last day | The deadline still counts from the lease's last day; New York counts from vacating (docs/law.md) | Open | src/pms/api/moveout.py:129 | H |
+| D-163 | A company ahead of UTC (Europe, Asia, Australia) | Company setup offers only US zones and UTC, and the database's own "not after today" checks count UTC's day, which assumes every company's day is at or behind UTC's; a zone ahead of it would refuse its own today each morning | Open | src/pms/days.py (ZONES); migration 20261104000900 | H |
 | D-054 | A term ending on the last day of the month | Rolled over before that night's rent, so the new month is charged | Guarded | src/pms/nightly.py:112 | H |
 | D-086 | Staff record a payment at 9 pm Eastern dated today (UTC already tomorrow) | Accepted and dated the company's day; the database's UTC checks never refuse it; tests use UTC companies only | Guarded | src/pms/api/rent.py:1720 | H |
 | D-119 | A vendor paid at 9 pm Eastern on 12/31 | Dated 12/31 (the company's day at 00:00 UTC), so in that 1099 year; no test of the evening case | Guarded | src/pms/api/payables.py:56 | H |
@@ -380,6 +381,8 @@ its ten most pressing, each with the test that would close it.
 | D-150 | A staff code entered at a 30-second step boundary, or an app clock off by a minute | The step before and after are accepted; the app's own clock is used, so a skew past 30 seconds refuses good codes | Open | src/pms/accounts.py:432 | M |
 | D-153 | A vendor assigned at 9 pm Eastern on the last day of their insurance | The check uses the step's UTC date, so the vendor reads as expired and is refused while still covered that day | Open | db/migrations/20261016000072_work_order_details.sql:80 | M |
 | D-159 | New York tenant who moved to another unit of the same building | Years count only leases at this unit, so a long tenant who moved counts from the move (NOT VERIFIED how 226-c counts a move) | Open | src/pms/api/renewals.py SAME_HOME | M |
+| D-162 | A company outside the US reads its pages | Every screen shows days as MM/DD/YYYY (the founder's word list of 10/26, `usDate`), whatever the company's date order; only files read in its order | Open | frontend/src/money.ts (usDate); src/pms/wording.py | M |
+| D-164 | A company outside the US uses the rest of the books | Addresses take a state's USPS code and a ZIP, money is dollars, owners and vendors are paid by NACHA file, tax forms are the 1099 and Schedule E, and docs/law.md covers US states only | Open | src/pms/api/addresses.py; src/pms/nacha.py; docs/law.md | M |
 | D-012 | Daylight saving starts (Eastern midnight moves from 05:00 to 04:00 UTC) | The look a minute past every hour still catches the new day; no test runs the scheduler across a DST change | Guarded | src/pms/nightly.py:64 | M |
 | D-064 | A rent change whose notice is dated after today | Refused by the API | Guarded | src/pms/api/rent.py:1504 | M |
 | D-076 | Grace running into the next month or year (due the 28th, 5 days) | Plain date arithmetic; the fee is due the day after grace | Guarded | db/migrations/20261031000200_late_fees_skip_paid_rents.sql:208 | M |
@@ -812,11 +815,11 @@ its ten most pressing, each with the test that would close it.
 | ID | Edge case | What the PMS does | Status | Evidence | Risk |
 |---|---|---|---|---|---|
 | F-010 | A PDF with JavaScript (OpenAction, /JS), uploaded by a tenant as their own lease document or by an anonymous applicant as proof of income | Kept and served byte for byte. It goes out as an attachment with nosniff and a CSP sandbox, which only protects the browser, so a desktop reader opening it may run its script. Staff and co-tenants receive it | Open | src/pms/api/documents.py:452-469; src/pms/api/tenant.py:535-548; src/pms/api/applicant_details.py:141-150 | H |
-| F-061 | Day-first dates from a UK or European file ("05/01/2026" meaning 5 January) | Read as May 1 with no warning; "13/01/2026" is refused. A payment file records a payment in the wrong month, and charges get wrong due days | Open | src/pms/statements.py:77 | H |
 | F-088 | The same payments again under other bytes (renamed, re-exported, a trailing newline) | Another SHA, but each line looks recorded already (same lease, day and amount) and waits for staff | Guarded | src/pms/api/payment_files.py:160-214 (the nearest test is tests/api/test_payment_files_api.py::test_a_payment_that_looks_recorded_already_waits) | H |
 | F-015 | A PNG bomb: a 5 MB PNG declaring 30000 x 30000 pixels, kept as a move-out photo or a receipt | The statement still goes: the photo's page says it could not be added here and is with the lease's files, whatever error the image library raises | Tested | tests/test_deposit_statement.py::test_a_photo_that_says_it_is_huge_leaves_the_letter_whole | H |
 | F-016 | That same statement emailed (deposit_statement) | Any error making an email's file is that attempt's failed delivery, with the error; the emails behind it go out in the same run | Tested | tests/test_email_attachments.py::test_an_attachment_that_fails_in_any_way_is_a_failed_delivery_and_stops_nothing_behind_it | H |
 | F-055 | Formula text in an imported cell ("=HYPERLINK(...)" as a tenant name) | Kept as text and never run by the PMS. Every CSV download puts an apostrophe before it, and Excel downloads hold it as text | Tested | tests/test_exports.py::test_csv_neutralizes_formulas_and_keeps_everything_else | H |
+| F-061 | Day-first dates from a UK or European file ("05/01/2026" meaning 5 January) | Every file's dates read in the order the file proves (13/01/2026 can only be day first), else the company's own (Company setup, month first until it picks day first); a file mixing both is refused naming both lines; ISO and dotted or dashed dates read too | Tested | tests/test_statement_files.py::test_a_files_dates_read_in_the_order_they_prove_else_the_companys; tests/api/test_company_api.py::test_a_company_reads_its_files_dates_in_its_own_order | H |
 | F-064 | A decimal comma ("1234,56" or "1200,50") | Refused saying the line: a comma only separates thousands (1,234.56), so a decimal comma is never read as 100 times the amount; in bank statements, payment files, every switching file and a units file's details | Tested | tests/test_amounts.py; tests/api/test_payment_files_api.py::test_a_file_that_is_not_payments_received_is_refused_whole; tests/api/test_unit_details_api.py::test_a_units_file_brings_their_details | H |
 | F-076 | Two identical charges in one file (two $25.00 fees due the same day with the same memo) | Each line is matched to one charge alike already there: two alike in one file are two charges, and the file sent again adds nothing | Tested | tests/api/test_switch.py::test_two_alike_charges_in_one_file_both_come_in_and_once | H |
 | F-077 | A charge dated after a new lease started at the unit (the old tenant's move-out fee dated after the next move-in) | A charge goes on the lease its file's Tenant column names; without one, rent on the lease in effect on its due day, and a fee only when no earlier lease of the unit holds someone else; otherwise the import stops with the line and the leases it could be on | Tested | tests/api/test_switch.py::test_a_fee_goes_on_the_lease_the_file_names_never_a_guess | H |
