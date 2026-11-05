@@ -94,7 +94,7 @@ def build(conn: psycopg.Connection[Any], units: int, months: int, today: date) -
     leased from the first of the month `months` back, each month's rent charged and paid (a
     tenth of this month's left owing). Through the routes, as the manager; on a connection
     acting as trust_app (autocommit)."""
-    # The company keeps UTC's day, as the run counts its days (a new company's is New York's).
+    # Its day is UTC's, as `today` is (the demo's company is America/New_York's unless asked).
     books = demo.books(conn, today, "UTC")
     b = demo.Builder(conn, books.pmc_id)
     manager = books.manager
