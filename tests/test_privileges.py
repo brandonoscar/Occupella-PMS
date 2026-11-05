@@ -104,6 +104,21 @@ TABLES = {
     # latest row is its account, so a correction is an insert too. The ids order the rows.
     "trust_expense_accounts": {"SELECT", "INSERT"},
     "trust_charge_types": {"SELECT", "INSERT"},
+    # The chart of accounts (migrations 20261106000200 to 20261106000220): an account's code, an
+    # expense account's or charge type's name, whether it is archived, and who keeps a type's
+    # fees, each the latest row holding, so a change is an insert. The ids order the rows.
+    "trust_account_codes": {"SELECT", "INSERT"},
+    "trust_account_codes_id_seq": set(),
+    "trust_expense_account_names": {"SELECT", "INSERT"},
+    "trust_expense_account_names_id_seq": set(),
+    "trust_charge_type_names": {"SELECT", "INSERT"},
+    "trust_charge_type_names_id_seq": set(),
+    "trust_expense_account_archivals": {"SELECT", "INSERT"},
+    "trust_expense_account_archivals_id_seq": set(),
+    "trust_charge_type_archivals": {"SELECT", "INSERT"},
+    "trust_charge_type_archivals_id_seq": set(),
+    "trust_charge_type_payees": {"SELECT", "INSERT"},
+    "trust_charge_type_payees_id_seq": set(),
     # QuickBooks names (migration 0102): staff name a ledger account for QuickBooks; the latest
     # row holds, so a change is an insert. The ids order the rows.
     "trust_quickbooks_accounts": {"SELECT", "INSERT"},
@@ -543,6 +558,27 @@ FUNCTIONS = {
     "trust_open_charges(uuid,uuid,timestamptz)": {"trust_app"},
     # Where a charge comes in the order money pays them: rent first (migration 0093).
     "trust_pay_rank(trust_charges)": {"trust_app"},
+    # The chart of accounts (migrations 20261106000200 to 20261106000220): its fixed lines, each
+    # account's code today, the next free code of a range, names and archivals today, and who
+    # keeps a charge type's or a charge's money. The app's; the AI role reads the chart through
+    # trust_report_chart_of_accounts.
+    "trust_chart_lines()": {"trust_app"},
+    "trust_reserved_account_code(text)": {"trust_app"},
+    "trust_account_codes_of(uuid)": {"trust_app"},
+    "trust_next_account_code(uuid,integer,integer)": {"trust_app"},
+    "trust_starting_account_code(uuid,uuid,uuid)": {"trust_app"},
+    "trust_expense_account_name(uuid)": {"trust_app"},
+    "trust_charge_type_name(uuid)": {"trust_app"},
+    "trust_expense_account_archived(uuid)": {"trust_app"},
+    "trust_charge_type_archived(uuid)": {"trust_app"},
+    "trust_charge_type_payee(uuid)": {"trust_app"},
+    "trust_charge_payee(trust_charges)": {"trust_app"},
+    "trust_check_account_code()": set(),
+    "trust_give_account_code()": set(),
+    "trust_check_chart_name()": set(),
+    "trust_check_chart_archival()": set(),
+    "trust_check_chart_choice()": set(),
+    "trust_check_charge_type_payee()": set(),
     # A company's time zone and its day (migration 20261104000900): read from its profile, which
     # the AI role never reads.
     "trust_pmc_time_zone(uuid)": {"trust_app"},
@@ -756,6 +792,7 @@ FUNCTIONS = {
     "trust_report_tenant_directory(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_owner_directory(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_vendor_directory(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_chart_of_accounts(uuid)": {"trust_app", "trust_ai_agent"},
     # pgledger's posting functions take no idempotency key, so a retried request could post
     # twice: only the owner calls them (trust_post_transfers does, as the owner).
     "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),
@@ -905,6 +942,9 @@ SECURITY_DEFINER = {
     # Reads households' certifications for the AI role, which never reads them, and prints words,
     # limits and rents, never income or household size (migration 0123).
     "trust_report_tax_credit_compliance(uuid,date)",
+    # Reads the chart of accounts for the AI role through the app's helpers (codes, names today,
+    # archivals, payees), returning only the chart (migration 20261106000230).
+    "trust_report_chart_of_accounts(uuid)",
 }
 
 
