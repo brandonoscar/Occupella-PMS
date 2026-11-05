@@ -54,6 +54,42 @@ SCHEDULE_E = {
     19: "Other",
 }
 
+# The expense accounts a new company starts with (`python -m pms.admin setup`), each on its
+# Schedule E line, so its first bill has somewhere to go. Management fees (line 11) come from the
+# ledger, never an expense account. Staff rename, add and leave unused ones as they like.
+STARTING_CHART: tuple[tuple[str, int], ...] = (
+    ("Advertising", 5),
+    ("Cleaning and maintenance", 7),
+    ("Landscaping", 7),
+    ("Pest control", 7),
+    ("Insurance", 9),
+    ("Legal and professional fees", 10),
+    ("Repairs", 14),
+    ("Supplies", 15),
+    ("Property taxes", 16),
+    ("Utilities", 17),
+    ("HOA dues", 19),
+    ("Other expenses", 19),
+)
+
+
+def add_starting_chart(conn: psycopg.Connection[Any], pmc_id: UUID) -> int:
+    """Add the starting chart's accounts the company doesn't have yet, by name whatever its
+    case; the number added. Safe to run again: it adds nothing the second time."""
+    added = 0
+    for name, line in STARTING_CHART:
+        row = conn.execute(
+            "INSERT INTO trust_expense_accounts (pmc_id, name, schedule_e_line)"
+            " SELECT %s, %s, %s WHERE NOT EXISTS ("
+            "   SELECT 1 FROM trust_expense_accounts"
+            "   WHERE pmc_id = %s AND lower(name) = lower(%s))"
+            " RETURNING id",
+            (pmc_id, name, line, pmc_id, name),
+        ).fetchone()
+        added += row is not None
+    return added
+
+
 # The records a request may name, and the table each lives in.
 TABLES = {
     "bank account": "trust_bank_accounts",

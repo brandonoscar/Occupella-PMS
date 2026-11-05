@@ -7,9 +7,12 @@ usage:
   python -m pms.admin add-staff <pmc_id> <name>
   python -m pms.admin make-admin <pmc_id> <staff_id>
   python -m pms.admin invite <pmc_id> {staff,owner,tenant} <person_id> <email>
+  python -m pms.admin starting-chart <pmc_id>
 
 setup does the first install's steps in one: it adds the company (its PMC), its first staff
-member, makes them its admin and prints their invite link, all or nothing.
+member, makes them its admin, gives the company its starting expense accounts (the Schedule E
+chart in pms.api.setup.STARTING_CHART) and prints their invite link, all or nothing.
+starting-chart adds those accounts to a company made before setup did, skipping any it has.
 
 make-admin names nobody, so the database grants it only to a PMC that has no admin yet.
 
@@ -29,6 +32,7 @@ import psycopg
 from psycopg import sql
 
 from pms import accounts
+from pms.api import setup as books
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -47,6 +51,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     admin = commands.add_parser("make-admin", help="make a PMC's first admin")
     admin.add_argument("pmc_id", type=UUID)
     admin.add_argument("staff_id", type=UUID)
+    chart = commands.add_parser(
+        "starting-chart", help="add the starting expense accounts a company lacks"
+    )
+    chart.add_argument("pmc_id", type=UUID)
     invite = commands.add_parser("invite", help="print an invite link for a person")
     invite.add_argument("pmc_id", type=UUID)
     invite.add_argument("kind", choices=sorted(accounts.KINDS))
@@ -80,6 +88,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 made = accounts.create_invite(
                     conn, company[0], "staff", person[0], options.email, None
                 )
+                books.add_starting_chart(conn, company[0])
                 print(f"company {company[0]}")
                 print(f"admin {person[0]}")
                 print(f"{public_url}/invite#{made.token}")
@@ -91,6 +100,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ).fetchone()
                 assert row is not None
                 print(row[0])
+            elif options.command == "starting-chart":
+                if (
+                    conn.execute(
+                        "SELECT 1 FROM trust_pmcs WHERE pmc_id = %s", (options.pmc_id,)
+                    ).fetchone()
+                    is None
+                ):
+                    print("refused: no company has that id", file=sys.stderr)
+                    return 2
+                added = books.add_starting_chart(conn, options.pmc_id)
+                print(f"added {added} expense accounts")
             elif options.command == "make-admin":
                 conn.execute(
                     "INSERT INTO trust_staff_roles (pmc_id, staff_id, role, granted)"

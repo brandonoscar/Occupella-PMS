@@ -110,6 +110,11 @@ It prints your company's id, your staff id and an invite link. Open the link: yo
 and add an authenticator app (any app that shows six-digit codes), which every staff sign-in
 asks for. The link lasts 7 days; `python -m pms.admin invite` makes another.
 
+Your company starts with a chart of expense accounts, each on its Schedule E line (advertising,
+repairs, utilities and the like); rename, add or ignore them under Settings, Chart of accounts. A
+company made before this release gets them with `python -m pms.admin starting-chart <company
+id>`, which skips any it already has.
+
 ## 6. Set up the books
 
 In the PMS, as that admin:

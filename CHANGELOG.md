@@ -26,6 +26,14 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   starts it. Copying the dumps off the server is still yours to set up (docs/backup.md).
 - **Fixed:** the Dashboard asked for a day at the calendar's very ends (year 1 or 9999) answered
   with a server error; it now says which days it shows (1900 to 9999).
+- **A starting chart of accounts:** `python -m pms.admin setup` gives a new company twelve
+  expense accounts on their Schedule E lines (advertising, cleaning and maintenance, landscaping,
+  pest control, insurance, legal and professional fees, repairs, supplies, property taxes,
+  utilities, HOA dues, other expenses). `python -m pms.admin starting-chart <company id>` adds
+  them to a company made earlier, skipping any it has whatever their case.
+- **Sign-in without a link:** on a server that holds one company, the sign-in page signs in to
+  it and shows its name (`GET /api/sign-in`); a server with more companies still asks for the
+  company's link.
 - **A signed image for each release:** pushing a release tag now publishes the self-host image to
   `ghcr.io/brandonoscar/occupella-pms:<tag>`, scanned, signed with Sigstore and with its SBOM
   attached (docs/release.md, "The self-host image"). Building from the tag still works as
