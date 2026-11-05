@@ -13357,6 +13357,18 @@ $$;
 
 
 --
+-- Name: trust_schema_versions(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_schema_versions() RETURNS SETOF text
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT m.version::text FROM schema_migrations AS m ORDER BY m.version
+$$;
+
+
+--
 -- Name: trust_set_aside_bill(uuid, uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -35704,4 +35716,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261105000700'),
     ('20261105000800'),
     ('20261105000900'),
-    ('20261105001000');
+    ('20261105001000'),
+    ('20261105001100');

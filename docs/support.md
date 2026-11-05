@@ -91,6 +91,15 @@ Nothing is lost while it is down: nothing is posted either.
   ends with, then enter again from the bank's records what happened after the backup was taken,
   and reconcile.
 
+**The app answers busy, and its log says the database "was migrated by a newer PMS" or "lacks
+this PMS's migration".** The app, the nightly run and the webhooks check the database's migrations
+against their own and touch nothing on a schema they were never tested on.
+- "Migrated by a newer PMS": an older tag runs on a database a newer one upgraded, or a newer
+  backup was restored under an older tag. Run the tag that migrated it, or restore a backup made
+  by the tag that runs.
+- "Lacks this PMS's migration": the migrations weren't applied. Run them
+  (`docker compose run --rm migrate`, or `dbmate up`), then restart the app.
+
 **An upgrade went wrong.** docs/release.md, "No rollback: a bad release is fixed forward".
 - The only way back is before anything was posted on the new release: restore the backup taken
   just before the upgrade (step 3 there) and run the tag you ran before.

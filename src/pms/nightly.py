@@ -51,7 +51,7 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
-from pms import autopay, days, deployment, email, notices, payments
+from pms import autopay, days, deployment, email, notices, payments, schema
 from pms.api import payables, rent
 
 log = logging.getLogger("pms.nightly")
@@ -288,6 +288,7 @@ class Scheduler:
         at = self.clock()
         with psycopg.connect(self.database_url) as conn:
             conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(self.role)))
+            schema.check(conn)  # never a run on a schema this code doesn't know (H-041)
             conn.commit()
             due = days_at(conn, at, self.pmcs)
             if begun_only:
@@ -337,6 +338,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     public_url = os.environ.get("PMS_PUBLIC_URL", "http://localhost:8000")
     with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
         conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier("trust_app")))
+        schema.check(conn)
         conn.commit()
         # What it writes to the outbox goes out with `python -m pms.email deliver`.
         sending = bool(os.environ.get("PMS_EMAIL_SENDER"))

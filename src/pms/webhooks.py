@@ -46,7 +46,7 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
-from pms import sealed
+from pms import schema, sealed
 
 log = logging.getLogger("pms.webhooks")
 
@@ -297,6 +297,7 @@ class Courier:
             return 0  # no secret can be read, so no webhook is kept or sent
         with psycopg.connect(self.database_url, autocommit=True) as conn:
             conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(self.role)))
+            schema.check(conn)  # never on a schema this code doesn't know (H-041)
             return deliver_pending(conn, key)
 
     def _loop(self) -> None:

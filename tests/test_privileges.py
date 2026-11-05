@@ -548,6 +548,9 @@ FUNCTIONS = {
     "trust_pmc_time_zone(uuid)": {"trust_app"},
     "trust_pmc_status(uuid)": {"trust_app"},
     "trust_pmc_day(uuid,timestamptz)": {"trust_app"},
+    # The migrations applied, for the app to compare with its own (H-041); dbmate's table is
+    # read by no role.
+    "trust_schema_versions()": {"trust_app"},
     # A property's ownership shares in force on a day, and an amount split by them (0094).
     "trust_ownership_on(uuid,date)": {"trust_app"},
     "trust_split_by_ownership(uuid,date,numeric)": {"trust_app"},
@@ -860,6 +863,7 @@ SECURITY_DEFINER = {
     "trust_charge_nsf_fee(uuid,text)",
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",
     "trust_analyze_after_import()",  # ANALYZE needs the tables' owner; it writes no record
+    "trust_schema_versions()",  # reads dbmate's schema_migrations, which no role is granted
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)",
     "trust_complete_lease_offer(uuid,uuid,uuid)",
     "trust_match_bank_lines(uuid,uuid,uuid[],text[],uuid[],uuid)",

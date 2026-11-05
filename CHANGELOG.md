@@ -77,6 +77,11 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   are all positive, with a column saying Debit or Credit (Type, Transaction type, Dr/Cr), went in
   with every check and fee as a deposit. Each line's way now comes from that column; a type saying
   neither is refused with its line, and a bank that signs its amounts keeps its signs.
+- **Fixed: an older PMS ran on a database a newer one had migrated.** Nothing compared the
+  database's migrations to the code's, so an older image tag, or a newer backup restored under
+  one, posted money on a schema it was never tested on. The app's connections, the nightly run
+  and the webhooks now refuse such a database, and one not migrated yet, saying which and what
+  to do (docs/support.md). Migration `20261105001100`.
 - **Fixed: a slow or hung mail server could make the whole PMS answer busy.** After every change
   the API delivered what waited in the outbox on a pooled connection, up to 20 seconds an email
   when the mail server hung, so a handful of changes filled the pool. Delivery, and autopay's

@@ -61,6 +61,7 @@ from pms import (
     nightly,
     payments,
     phones,
+    schema,
     webhooks,
 )
 from pms.api import (
@@ -361,6 +362,9 @@ def create_app(settings: Settings) -> FastAPI:
         # 1,000-unit company it made the trial balance take 1.2 s instead of 0.18 s, and the
         # general ledger 2.1 s instead of 0.5 s (tools/speed.py).
         conn.execute("SET jit = off")
+        # A database a newer PMS migrated, or not migrated yet, gets no request (H-041): the
+        # connection is refused, and the pool says why in the log.
+        schema.check(conn)
         conn.commit()
 
     pool = ConnectionPool(
