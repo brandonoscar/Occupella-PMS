@@ -110,6 +110,7 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/restore.out"
           grep -q "the ledger ties out" "$RUNNER_TEMP/restore.out"
           test "$(docker compose -f compose.selfhost.yaml exec -T backup bash /scripts/backup-daily.sh next)" -gt 0
+          docker compose -f compose.selfhost.yaml exec -T backup bash /scripts/backup-daily.sh healthy
       - name: Logs
         if: failure()
         run: |

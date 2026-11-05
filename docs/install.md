@@ -169,10 +169,12 @@ just after its own midnight; for Pacific, Alaska or Hawaii set `PMS_BACKUP_AT=11
 ```sh
 sudo ls -l backups/                                      # pms-2026-11-03.dump, one a day
 docker compose -f compose.selfhost.yaml logs backup      # each dump, and any that failed
+docker compose -f compose.selfhost.yaml ps backup        # unhealthy: no good dump in 26 hours
 ```
 
 It keeps every daily dump for 35 days and each month's first for good, and a dump that fails is
-tried again an hour later. The files are readable by root only: each holds everything the PMS
+tried again an hour later, its half-written file and the dumps past keeping removed first, so a
+full disk frees what it can. The files are readable by root only: each holds everything the PMS
 keeps. `PMS_BACKUP_AT` and `PMS_BACKUP_DIR` in `.env` change the time (UTC) and the folder.
 
 These protect against a broken database or a mistake, not against losing the server. **Copy

@@ -31,9 +31,9 @@ answer in the portal for everything that can fail.
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 67 | 8 | 90 | 24 |
 | [Bad files and imports](#bad-files-and-imports) | 151 | 64 | 16 | 71 | 3 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 170 | 72 | 14 | 84 | 6 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 170 | 73 | 14 | 83 | 5 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1152** | **589** | **110** | **453** | **58** |
+| **All** | **1152** | **590** | **110** | **452** | **57** |
 
 ## Open, high risk: the work list
 
@@ -113,7 +113,6 @@ its ten most pressing, each with the test that would close it.
 **Hosting, operations and the portal's failure states**
 
 - H-008: A payment's answer is lost, staff close the panel and record it again
-- H-028: The disk fills, and the backups live on it
 - H-031: The daily backup fails (password changed, pg_dump error, disk)
 - H-055: PMS_DATA_KEY changed while bank payments are on their way
 - H-067: PMS_TRUSTED_PROXIES empty behind a proxy on another host or network
@@ -1157,8 +1156,7 @@ its ten most pressing, each with the test that would close it.
 | ID | Edge case | What the PMS does | Status | Evidence | Risk |
 |---|---|---|---|---|---|
 | H-008 | A payment's answer is lost, staff close the panel and record it again | The reopened panel makes a new request id, so the payment is recorded twice; Receive payment has no same lease, day and amount warning (payment files have one) | Open | frontend/src/pages/LeaseForms.tsx:109; src/pms/api/payment_files.py:161 has the check, src/pms/api/rent.py none | H |
-| H-028 | The disk fills, and the backups live on it | The dump fails, its .partial stays, and old dumps are pruned only after a dump succeeds, so the disk never frees itself | Open | scripts/backup-daily.sh:54-56; scripts/backup.sh:51 | H |
-| H-031 | The daily backup fails (password changed, pg_dump error, disk) | "FAIL" goes to the backup container's log only: no admin email, no health status, nothing on the Dashboard | Open | scripts/backup-daily.sh:77,81-84; docs/support.md ("A backup that failed") | H |
+| H-031 | The daily backup fails (password changed, pg_dump error, disk) | "FAIL" in the backup container's log, and since this fix the backup service reads unhealthy in `docker compose ps` once no good dump is less than 26 hours old (tested); still no admin email and nothing on the Dashboard: whom to tell about a server's backup when it holds several companies is the founder's call | Open | tests/tools/test_backup_daily.py::test_healthy_while_a_good_dump_is_less_than_26_hours_old; scripts/backup-daily.sh (healthy); docs/support.md | H |
 | H-055 | PMS_DATA_KEY changed while bank payments are on their way | The company's webhook answers 404, Stripe retries then stops; rent the bank paid never reaches the books; one log line | Open | src/pms/api/online_payments.py:680-683; src/pms/payments.py:551-556 | H |
 | H-067 | PMS_TRUSTED_PROXIES empty behind a proxy on another host or network | Every visitor has the proxy's address: 20 failed sign-ins by anyone lock the whole company out for 15 minutes, 10 resets an hour for everyone, signatures record the proxy's address | Open | src/pms/api/throttle.py:84-86 | H |
 | H-089 | The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st) | The next run charges only the new month, so that rent is never charged by itself, and nothing says so | Open | src/pms/nightly.py:116-118; db/schema.sql:1688-1720 (only the run's month) | H |
@@ -1167,6 +1165,7 @@ its ten most pressing, each with the test that would close it.
 | H-021 | The nightly hasn't run for days (its thread died, it fails every night, or it is off) | Needs attention says first, with the last day rent posted, when no rent run ran in two days while the company has leases (today.rent_not_posted) | Tested | tests/api/test_today.py::test_rent_not_posted_for_two_days_is_noted_with_the_last_day_it_did; frontend/src/pages/PortalsTwo.test.tsx (says in Needs attention when rent stopped posting) | H |
 | H-022 | PMS_NIGHTLY=off with no cron running python -m pms.nightly | The server's log says at start that the run is off and what to run instead; the Dashboard saying when rent last posted is H-021 | Tested | tests/api/test_server.py::test_a_server_with_the_nightly_run_off_says_so_at_start | H |
 | H-027 | The disk fills | DiskFull, at a write or at commit, answers 503 in words (deps.DISK_FULL, Retry-After 60), logged; nothing saved | Tested | tests/api/test_refusals.py::test_a_full_disk_is_told_in_words_not_as_a_server_error[write,commit] | H |
+| H-028 | The disk fills, and the backups live on it | A dump that failed now removes its .partial and the dumps past keeping (the 35 days and each month's first stay), so a disk the backups filled frees itself for the hourly retry | Tested | tests/tools/test_backup_daily.py::test_a_dump_that_fails_frees_its_partial_and_the_dumps_past_keeping | H |
 | H-041 | A newer backup restored under an older tag, or the old tag checked out after migrations ran | The app's pooled connections, the nightly run (and its command) and the webhook courier compare trust_schema_versions() with the code's db/migrations and refuse a database a newer PMS migrated, or one missing a migration, saying which and what to do; code shipped without its migrations checks nothing | Tested | tests/test_schema_version.py | H |
 | H-059 | PMS_PUBLIC_URL isn't the address people use (www or not, http or https, another domain) | Start-up refuses an address that is no http(s) origin (no scheme or host, a path, query or fragment); a change refused for its origin is logged once per origin with PMS_PUBLIC_URL's (a valid but wrong origin can't be told at start-up) | Tested | tests/test_deployment.py::test_the_app_refuses_to_start_at_an_address_no_browser_opens_it_at; tests/api/test_sign_in.py::test_a_refused_origin_is_logged_with_the_one_expected_once, ::test_the_log_of_refused_origins_stops_at_its_cap | H |
 | H-060 | PMS_PUBLIC_URL left as .env.example's https://pms.example.com | The server and its commands refuse to start at .env.example's PMS_PUBLIC_URL, naming what to set | Tested | tests/test_deployment.py::test_the_app_refuses_to_start_at_the_example_address, ::test_the_commands_refuse_the_example_address_before_they_connect, ::test_env_example_still_offers_the_placeholder_the_server_refuses | H |

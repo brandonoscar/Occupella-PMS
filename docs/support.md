@@ -38,7 +38,11 @@ What does **not** reach anyone by itself:
   `GET /health` answers 503 `database unavailable` (200 `ok` otherwise); a monitoring service of
   the company's own can watch it. Nothing in the PMS does.
 - **An error answering a request** (a 500). It is in the log, with its traceback.
-- **A backup that failed.** That shows in the backup job's own output (docs/backup.md).
+- **A backup that failed.** That shows in the backup job's own output (docs/backup.md), and once
+  no good dump is less than 26 hours old the backup service reads unhealthy in
+  `docker compose ps` (a monitoring service of the company's own can watch it). No admin is
+  emailed and the Dashboard says nothing: a server may hold several companies, and whom to tell
+  about the server's backup is not decided (NOT VERIFIED that anyone looks at `ps`).
 
 ## Where the logs are
 

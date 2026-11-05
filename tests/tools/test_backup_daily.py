@@ -102,23 +102,43 @@ def test_once_keeps_35_days_and_every_months_first(tmp_path):
     assert f"removed: {backups}/pms-{past.isoformat()}.dump" in done.stderr
 
 
-def test_a_dump_that_cant_be_read_back_fails_and_removes_nothing(tmp_path):
+def test_a_dump_that_fails_frees_its_partial_and_the_dumps_past_keeping(tmp_path):
+    """docs/edge-cases.md H-028: a dump that failed left its .partial, and dumps past keeping
+    went only after a dump succeeded, so a disk the backups had filled never freed itself. The
+    dumps still kept (the 35 days, each month's first) stay."""
     backups = tmp_path / "backups"
     run(tmp_path, "once")
     today = made_today(backups)
-    ancient = today - timedelta(days=90)
+    ancient, recent = today - timedelta(days=90), today - timedelta(days=3)
     if ancient.day == 1:
         ancient -= timedelta(days=1)
-    (backups / f"pms-{ancient.isoformat()}.dump").write_text("old")
+    for old in (ancient, recent):
+        (backups / f"pms-{old.isoformat()}.dump").write_text("old")
     (backups / f"pms-{today.isoformat()}.dump").unlink()
 
     done = run(tmp_path, "once", FAKE_UNREADABLE="1")
 
     assert done.returncode != 0
-    assert dumps(backups) == [
-        f"pms-{ancient.isoformat()}.dump",
-        f"pms-{today.isoformat()}.dump.partial",
-    ]
+    assert dumps(backups) == [f"pms-{recent.isoformat()}.dump"]
+    assert f"removed: {backups}/pms-{ancient.isoformat()}.dump" in done.stderr
+
+
+def test_healthy_while_a_good_dump_is_less_than_26_hours_old(tmp_path):
+    """docs/edge-cases.md H-031: a failed backup said so in its container's log alone. The
+    backup service is now unhealthy in `docker compose ps` once no good dump is that recent."""
+    backups = tmp_path / "backups"
+    assert run(tmp_path, "healthy").returncode == 1  # none yet
+    run(tmp_path, "once")
+    assert run(tmp_path, "healthy").returncode == 0
+    (dump,) = backups.iterdir()
+    stale = dump.stat().st_mtime - 27 * 60 * 60
+    os.utime(dump, (stale, stale))
+    (backups / "notes.txt").write_text("not a dump")
+
+    done = run(tmp_path, "healthy")
+
+    assert done.returncode == 1
+    assert done.stderr == "unhealthy: no good dump in the last 26 hours\n"
 
 
 def test_the_next_dump_is_within_a_day(tmp_path):
@@ -141,5 +161,6 @@ def test_the_install_runs_it_each_day_into_a_folder_git_ignores():
     compose = (ROOT / "compose.selfhost.yaml").read_text()
 
     assert '["bash", "/scripts/backup-daily.sh"]' in compose
+    assert '["CMD", "bash", "/scripts/backup-daily.sh", "healthy"]' in compose
     assert "./scripts:/scripts:ro" in compose
     assert "/backups/" in (ROOT / ".gitignore").read_text().splitlines()
