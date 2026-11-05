@@ -35,6 +35,7 @@ nightly_factor = 60
 "tests/properties/test_calendar_properties.py::test_only_a_persons_latest_link_answers_and_only_while_they_can_sign_in" = 16.1
 "tests/properties/test_company_day_properties.py::test_a_payment_is_on_the_statement_of_the_companys_own_day" = 4.3
 "tests/properties/test_company_profile_properties.py::test_the_company_is_its_latest_save_and_a_new_property_starts_with_its_defaults" = 10.2
+"tests/properties/test_company_status_properties.py::test_a_companys_status_is_its_latest_and_decides_who_signs_in_and_what_runs" = 63.0
 "tests/properties/test_custom_roles_properties.py::test_custom_roles_decide_what_each_staff_member_may_change" = 60.9
 "tests/properties/test_cutover_bills_properties.py::test_unpaid_bills_carried_over_hold_back_draws_and_wait_for_their_owner" = 11.8
 "tests/properties/test_cutover_matching_properties.py::test_cutover_invariants_hold_under_random_items_statements_matches_and_approvals" = 36.6

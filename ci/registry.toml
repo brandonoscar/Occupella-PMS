@@ -1725,6 +1725,18 @@ tests = [
 ]
 
 [[invariant]]
+id = "company-status-latest-holds"
+statement = "A company's status (migration 20261105000100), set by the server's operator with python -m pms.admin status, is the latest it was set to, active before any. A person signs in only while it is active, refused the same way whatever the password while it is suspended or closed; open sessions and API keys stop answering and no password reset is sent then. The nightly run passes over a company only while it is closed. Another company's status never changes with it."
+tests = [
+  "tests/properties/test_company_status_properties.py::test_a_companys_status_is_its_latest_and_decides_who_signs_in_and_what_runs",
+  "tests/api/test_company_status.py::test_a_company_is_active_until_its_operator_says_otherwise",
+  "tests/api/test_company_status.py::test_nobody_signs_in_to_a_company_that_isnt_active",
+  "tests/api/test_company_status.py::test_a_suspended_company_sends_no_password_reset",
+  "tests/api/test_company_status.py::test_a_suspended_companys_api_keys_stop",
+  "tests/api/test_company_status.py::test_a_closed_companys_nightly_run_stops_and_a_suspended_ones_goes_on",
+]
+
+[[invariant]]
 id = "a-companys-day-dates-its-money"
 statement = "A company's day (migration 20261104000900; the founder's review of 11/03, item 13) is the date in its own time zone, America/New_York until it picks another US zone or UTC in Company setup: never after UTC's day, at most one before it. Money is dated the company's day (a payment staff record, one the payments partner reports paid, a bill, a fee), its pages' today is that day, and its nightly run is for that day, once it has begun: rent paid at 9 pm Eastern on October 31 is on October's owner statement, never November's."
 tests = [

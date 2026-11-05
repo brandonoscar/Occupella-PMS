@@ -158,6 +158,18 @@ def run_pmc(
     )
 
 
+def companies(conn: psycopg.Connection[Any]) -> list[UUID]:
+    """The companies a run of every company runs: all but the closed ones, whose books stay as
+    they are (a suspended company's keep posting; migration 20261105000100)."""
+    return [
+        row[0]
+        for row in conn.execute(
+            "SELECT pmc_id FROM trust_pmcs WHERE trust_pmc_status(pmc_id) <> 'closed'"
+            " ORDER BY pmc_id"
+        )
+    ]
+
+
 def run_all(
     conn: psycopg.Connection[Any],
     day: date | None,
@@ -178,14 +190,7 @@ def run_all(
         return []
     try:
         if pmcs is None:
-            # A closed company's books stay as they are; a suspended one's keep posting.
-            pmcs = [
-                row[0]
-                for row in conn.execute(
-                    "SELECT pmc_id FROM trust_pmcs WHERE trust_pmc_status(pmc_id) <> 'closed'"
-                    " ORDER BY pmc_id"
-                )
-            ]
+            pmcs = companies(conn)
             conn.commit()
         done = []
         for pmc_id in pmcs:

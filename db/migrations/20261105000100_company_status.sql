@@ -54,6 +54,7 @@ BEGIN
     END IF;
 END;
 $$;
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_pmc_status(uuid);
 -- squawk-ignore ban-drop-table
 DROP TABLE trust_company_statuses;
