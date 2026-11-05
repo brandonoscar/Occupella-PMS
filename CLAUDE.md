@@ -121,7 +121,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   sign-ins in 15 minutes is refused (429, Retry-After) whatever email it tries, and an address asks
   for at most 10 password resets an hour (`src/pms/api/throttle.py`, counted per process).
 - Logins (`src/pms/accounts.py`, migration 0028): staff invite a staff member, owner or tenant
-  by email; the link carries a token kept only as its SHA-256, in the URL fragment. Accepting
+  by email; the link carries a token kept only as its SHA-256, in the URL fragment. A session
+  lasts 12 hours, and ends sooner when left alone for an hour (`accounts.IDLE_MINUTES`;
+  `trust_session_activity`, migration 20261105000200: its last use, moved at most every five
+  minutes, updated in place and never audited, like `trust_login_secrets`). Accepting
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
   password. Staff invite from the person's own page (staff from the staff page) and disable a
   login from Settings, Logins, for good: its sessions end and it takes no new invite. `trust_login_secrets` is never audited.

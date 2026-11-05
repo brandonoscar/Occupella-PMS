@@ -39,6 +39,9 @@ FEB = datetime(2026, 2, 1, tzinfo=UTC)
 NOT_AUDITED = {
     "trust_audit_log",
     "trust_login_secrets",
+    # When each session was last used (migration 20261105000200): moved forward every few minutes
+    # while someone works, it would bury the log; the session's start and end stay audited.
+    "trust_session_activity",
     "trust_document_files",
     "trust_emails",
     "trust_email_deliveries",

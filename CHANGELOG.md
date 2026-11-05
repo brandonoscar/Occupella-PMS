@@ -26,6 +26,9 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   starts it. Copying the dumps off the server is still yours to set up (docs/backup.md).
 - **Fixed:** the Dashboard asked for a day at the calendar's very ends (year 1 or 9999) answered
   with a server error; it now says which days it shows (1900 to 9999).
+- **Security: an idle session ends.** A session left alone for an hour is signed out, besides
+  its twelve hours as before; using it keeps it going. Migration `20261105000200` (a table of
+  each session's last use, updated at most every five minutes and left out of the audit log).
 - **Security: sign-in limits by address.** An address that failed 20 sign-ins within 15 minutes is
   refused, whatever email it tries, until the oldest failure is 15 minutes old (429 with
   Retry-After); an address asks for at most 10 password resets an hour. Each login still locks

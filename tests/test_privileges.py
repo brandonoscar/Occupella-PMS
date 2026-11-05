@@ -83,6 +83,8 @@ TABLES = {
     "trust_logins": {"SELECT", "INSERT"},
     "trust_invites": {"SELECT", "INSERT"},
     "trust_sessions": {"SELECT", "INSERT"},
+    # When each session was last used, for the idle timeout (migration 20261105000200).
+    "trust_session_activity": {"SELECT", "INSERT"},
     "trust_login_secrets": {"SELECT", "INSERT"},
     # Maintenance requests: tenants file them through the API, staff link a work order.
     "trust_maintenance_requests": {"SELECT", "INSERT"},
@@ -358,6 +360,7 @@ COLUMN_UPDATES = {
     "trust_logins": {"disabled_at"},
     "trust_invites": {"accepted_at"},
     "trust_sessions": {"ended_at"},
+    "trust_session_activity": {"last_seen_at"},
     "trust_login_secrets": {
         "password_hash",
         "totp_secret",
@@ -404,6 +407,7 @@ AI_NEVER_READS = {
     "trust_logins",
     "trust_invites",
     "trust_sessions",
+    "trust_session_activity",
     "trust_login_secrets",
     "trust_application_links",
     "trust_application_link_closings",

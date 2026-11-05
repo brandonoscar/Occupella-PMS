@@ -12,7 +12,9 @@ password, disabled, locked) gets the same answer, after the same work, so it doe
 attacker which emails have logins. Ten failures in a row lock the login for LOCK_MINUTES.
 
 A session is a random token in an HttpOnly cookie; only its SHA-256 is stored. It lasts
-SESSION_HOURS, and signing out, a new password or disabling the login ends it.
+SESSION_HOURS, or until it is left alone for IDLE_MINUTES (trust_session_activity, moved forward at
+most every TOUCH_MINUTES while it is used), and signing out, a new password or disabling the login
+ends it.
 
 Everything runs on a connection acting as trust_app, inside the caller's transaction.
 """
@@ -38,6 +40,8 @@ from pms import phones
 
 INVITE_DAYS = 7
 SESSION_HOURS = 12
+IDLE_MINUTES = 60
+TOUCH_MINUTES = 5
 MAX_FAILURES = 10
 LOCK_MINUTES = 15
 MIN_PASSWORD = 12
@@ -448,16 +452,29 @@ def _new_session(conn: psycopg.Connection[Any], login_id: UUID) -> Signed:
 
 
 def session_for(conn: psycopg.Connection[Any], token: str) -> Session | None:
-    """The live session behind a cookie's token, if there is one."""
+    """The live session behind a cookie's token, if there is one: not ended, not past its hours,
+    used within IDLE_MINUTES, its login enabled and its company active. Using it moves its last
+    use forward, at most every TOUCH_MINUTES."""
     row = _one(
         conn,
-        "SELECT l.id, l.pmc_id, l.kind, coalesce(l.staff_id, l.owner_id, l.tenant_id), l.email"
+        "SELECT l.id, l.pmc_id, l.kind, coalesce(l.staff_id, l.owner_id, l.tenant_id), l.email,"
+        " s.id"
         " FROM trust_sessions AS s JOIN trust_logins AS l ON l.id = s.login_id"
+        " LEFT JOIN trust_session_activity AS a ON a.session_id = s.id"
         " WHERE s.token_hash = %s AND s.ended_at IS NULL AND s.expires_at > now()"
+        " AND coalesce(a.last_seen_at, s.created_at) > now() - make_interval(mins => %s)"
         " AND l.disabled_at IS NULL AND trust_pmc_status(l.pmc_id) = 'active'",
-        (digest(token),),
+        (digest(token), IDLE_MINUTES),
     )
-    return None if row is None else Session(*row)
+    if row is None:
+        return None
+    conn.execute(
+        "INSERT INTO trust_session_activity (session_id, pmc_id) VALUES (%s, %s)"
+        " ON CONFLICT (session_id) DO UPDATE SET last_seen_at = now()"
+        " WHERE trust_session_activity.last_seen_at < now() - make_interval(mins => %s)",
+        (row[5], row[1], TOUCH_MINUTES),
+    )
+    return Session(*row[:5])
 
 
 def sign_out(conn: psycopg.Connection[Any], token: str) -> None:

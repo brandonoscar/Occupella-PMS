@@ -17590,6 +17590,17 @@ CREATE TABLE public.trust_screenings (
 
 
 --
+-- Name: trust_session_activity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_session_activity (
+    session_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    last_seen_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: trust_sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21093,6 +21104,14 @@ ALTER TABLE ONLY public.trust_screenings
 
 ALTER TABLE ONLY public.trust_screenings
     ADD CONSTRAINT trust_screenings_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_session_activity trust_session_activity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_session_activity
+    ADD CONSTRAINT trust_session_activity_pkey PRIMARY KEY (session_id);
 
 
 --
@@ -33810,6 +33829,22 @@ ALTER TABLE ONLY public.trust_screenings
 
 
 --
+-- Name: trust_session_activity trust_session_activity_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_session_activity
+    ADD CONSTRAINT trust_session_activity_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_session_activity trust_session_activity_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_session_activity
+    ADD CONSTRAINT trust_session_activity_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.trust_sessions(id);
+
+
+--
 -- Name: trust_sessions trust_sessions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34880,4 +34915,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261104000700'),
     ('20261104000800'),
     ('20261104000900'),
-    ('20261105000100');
+    ('20261105000100'),
+    ('20261105000200');
