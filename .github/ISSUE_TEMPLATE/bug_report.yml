@@ -1,0 +1,54 @@
+name: Bug report
+description: Something in the PMS did the wrong thing or failed.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting it. Use synthetic data only: no real person's, company's, bank's or
+        tax details, in the text or in screenshots. A security problem goes to SECURITY.md, never
+        here.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The release tag (for example v2026.11.0) or the commit you run.
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options:
+        - Staff pages
+        - Owner portal
+        - Tenant portal
+        - Applying or signing
+        - Reports or exports
+        - Install, upgrade or backups
+        - API
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps that show it
+      description: From a fresh demo (README, "Try the demo") if you can.
+      placeholder: |
+        1. Sign in as the demo's manager
+        2. Open ...
+        3. Press ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened
+    validations:
+      required: true
+  - type: textarea
+    id: money
+    attributes:
+      label: Does it touch money?
+      description: A wrong balance, a trust account that doesn't tie out, a payment recorded twice or not at all. Say which report shows it.

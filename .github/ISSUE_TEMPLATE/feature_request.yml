@@ -1,0 +1,32 @@
+name: Feature request
+description: Something the PMS should do that it doesn't.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do today
+      description: The work, and how you do it now (another system, a spreadsheet, by hand).
+    validations:
+      required: true
+  - type: textarea
+    id: wanted
+    attributes:
+      label: What the PMS should do instead
+    validations:
+      required: true
+  - type: textarea
+    id: law
+    attributes:
+      label: A law or rule behind it?
+      description: For a state or city rule (a deposit deadline, a notice period, a fee cap), the statute or ordinance and where you read it.
+  - type: dropdown
+    id: size
+    attributes:
+      label: How many units do you manage?
+      options:
+        - Under 100
+        - 100 to 500
+        - 500 to 2,500
+        - Over 2,500
+        - I don't manage property
