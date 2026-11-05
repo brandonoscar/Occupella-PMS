@@ -401,9 +401,33 @@ def owner_choices(conn: psycopg.Connection[Any], row: Row, day: date) -> list[Ow
     return found if len(found) > 1 else []
 
 
-def bank_of(conn: psycopg.Connection[Any], row: Row, day: date) -> UUID:
-    """The trust bank account the lease's rent goes to: the property's owners' (rent.owners_of),
-    or, while staff are still to choose its owner's account, the one all of them are in."""
+# The trust bank account a payment already in the books went into (its postings carry their key,
+# as POSTED reads them).
+PAID_INTO = """
+SELECT a.bank_account_id FROM pgledger_transfers AS t
+JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id
+WHERE a.pmc_id = %s AND t.metadata ->> 'key' = %s
+ORDER BY t.created_at, t.id
+LIMIT 1
+"""
+
+
+def bank_of(conn: psycopg.Connection[Any], row: Row, day: date, account: str | None = None) -> UUID:
+    """The trust bank account the lease's rent goes to: the owner's account staff chose, or the
+    one the payment went into once in the books, or the property's owners' (rent.owners_of), or,
+    while staff are still to choose its owner's account, the one all of them are in."""
+    if account is not None:
+        chosen = conn.execute(
+            "SELECT bank_account_id FROM trust_ledger_accounts"
+            " WHERE pmc_id = %s AND ledger_account_id = %s AND kind = 'owner_property'",
+            (row.pmc_id, account),
+        ).fetchone()
+        if chosen is None:
+            raise HTTPException(404, "no such owner account for this lease's property")
+        return UUID(str(chosen[0]))
+    paid_into = conn.execute(PAID_INTO, (row.pmc_id, payment_key(row.id))).fetchone()
+    if paid_into is not None:
+        return UUID(str(paid_into[0]))
     lease = rent.lease_of(conn, row.pmc_id, row.lease_id)
     try:
         return rent.owners_of(conn, row.pmc_id, lease.property_id, day, None).bank
@@ -419,14 +443,16 @@ def bank_of(conn: psycopg.Connection[Any], row: Row, day: date) -> UUID:
         return found
 
 
-def open_day(conn: psycopg.Connection[Any], row: Row, day: date) -> date:
+def open_day(
+    conn: psycopg.Connection[Any], row: Row, day: date, account: str | None = None
+) -> date:
     """The day, or the first day month-end left open in the lease's trust bank account when it
     already closed that one: what the bank did then and the books take only now (a payment that
     waited for a hold, a return that waited for an owner's money) goes into the next open period,
     as a late correction does."""
     found = conn.execute(
         "SELECT (closed_through AT TIME ZONE 'UTC')::date FROM trust_bank_accounts WHERE id = %s",
-        (bank_of(conn, row, day),),
+        (bank_of(conn, row, day, account),),
     ).fetchone()
     return day if found is None or found[0] is None else max(day, found[0])
 
@@ -481,7 +507,7 @@ def record_payment(
     the hold, whatever it would pay: the books refuse one matched to its charges, and one that
     would all be prepaid rent waits too, since no one chose to take it. A day month-end already
     closed is recorded on the first day it left open."""
-    day = open_day(conn, row, day)
+    day = open_day(conn, row, day, account)
     if (
         past_hold_by is None
         and conn.execute(
@@ -893,10 +919,17 @@ def waiting(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Waiting]:
         if not items:
             continue
         paid_on = day_of(conn, pmc_id, paid_at)
-        bank = bank_of(conn, row, paid_on)
+        choices = owner_choices(conn, row, paid_on) if items == [("payment", None)] else []
+        try:
+            bank = bank_of(conn, row, paid_on)
+        except HTTPException:
+            if not choices:
+                raise
+            # Its owners' accounts in more than one trust bank account (P-163): listed in the
+            # first choice's until staff choose.
+            bank = bank_of(conn, row, paid_on, choices[0].account_id)
         holds = rent.cents(held(conn, company_account(conn, pmc_id, bank)))
         memo = rent.lease_memo(conn, row.lease_id)
-        choices = owner_choices(conn, row, paid_on) if items == [("payment", None)] else []
         found += [
             Waiting(
                 payment_id=row.id,

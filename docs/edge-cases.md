@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1137 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1139 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -25,15 +25,15 @@ answer in the portal for everything that can fail.
 
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
-| [Money and the ledger](#money-and-the-ledger) | 150 | 111 | 7 | 32 | 6 |
+| [Money and the ledger](#money-and-the-ledger) | 151 | 111 | 7 | 33 | 6 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 159 | 81 | 15 | 63 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 63 | 30 | 49 | 2 |
-| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 162 | 62 | 8 | 92 | 27 |
+| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 163 | 63 | 8 | 92 | 27 |
 | [Bad files and imports](#bad-files-and-imports) | 145 | 60 | 16 | 69 | 6 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 166 | 68 | 14 | 84 | 9 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1137** | **572** | **110** | **455** | **71** |
+| **All** | **1139** | **573** | **110** | **456** | **71** |
 
 ## Open, high risk: the work list
 
@@ -270,6 +270,7 @@ its ten most pressing, each with the test that would close it.
 | M-114 | A leasing fee on a renewal or a move to another unit | Can be taken again: each is a new lease | Open | `db/migrations/20261010000016_owner_money.sql:305` | L |
 | M-115 | A management or other fee when the owner's money is held for bills or the reserve | Taken anyway (only the balance is checked); the bill turns Short | Open | `db/migrations/20261010000016_owner_money.sql:183` | L |
 | M-139 | Year end at 7 pm Eastern on Dec 31 (UTC is already Jan 1) | The year under way and the year having ended are read in UTC, not the company's day | Open | `db/migrations/20261021000106_year_close.sql:147` | L |
+| M-151 | A rent of a closed year still open, its late fee never charged because no run reached it before the close (server down over the year's end, the year closed early in January) | It is charged no late fee ever: the lease's own terms go unenforced for it, and nothing says so | Open | db/migrations/20261105000700_late_fees_skip_closed_years.sql | L |
 | M-002 | A negative payment, such as -$5.00 | Refused by the request model (greater than 0); never reaches the ledger | Guarded | `src/pms/api/rent.py:35` | L |
 | M-007 | A CSV amount with a fraction of a cent (switching, statements, payment files) | Refused with its line: not an amount in cents | Guarded | `src/pms/statements.py:70` | L |
 | M-038 | A rent due day of 29, 30 or 31 | Refused (1 to 28) | Guarded | `db/migrations/20261018000081_rent_due_days.sql:30` | L |
@@ -728,6 +729,7 @@ its ten most pressing, each with the test that would close it.
 | P-050 | PMS_DATA_KEY lost or changed, so the company's keys don't open | Never falls back to the server's account; tenants see How to pay; admins see "Your keys can't be read on this server. Enter them again." | Tested | tests/api/test_payment_keys_api.py::test_keys_that_dont_open_here_take_no_payment_and_never_fall_back; frontend/src/pages/PaymentKeysCard.test.tsx > says keys that can't be read here need entering again | M |
 | P-151 | A 5xx with no JSON body (proxy 502, 500) | "the server answered 502", with no retry offered | Tested | frontend/src/api.test.ts > names the status when the answer has no reason | M |
 | P-162 | A second owner account added to a property whose tenants pay by autopay | Autopay starts no payment there either (online_payments.placed), its month recorded as online payments off | Tested | tests/test_autopay.py::test_no_autopay_at_a_property_whose_payments_staff_must_place | M |
+| P-163 | A property whose owners' accounts sit in two different trust bank accounts, no ownership shares, and an online payment paid there | bank_of reads the chosen account's bank, or the bank the payment went into once in the books; the waiting list shows such a payment in the first choice's bank | Tested | tests/api/test_online_payments_api.py::test_owner_accounts_in_two_trust_bank_accounts_still_list_the_payment | M |
 | P-008 | PMS_PUBLIC_URL wrong (http, old host) so Stripe refuses success_url or sends the tenant to a dead page | Stripe's refusal reads as "couldn't reach"; after paying, the tenant may land on an unreachable page though the payment still lands by webhook; nothing checks the URL | Open | src/pms/api/online_payments.py:333 | L |
 | P-017 | Stripe sends thin (v2) event notifications instead of snapshot events | The body lacks data.object: 400 every time | Open | src/pms/payments.py:292-300 | L |
 | P-045 | The lease's trust bank account has no company fee account | company_account raises 409 outside the savepoint, so the whole webhook answers 409 and Stripe keeps resending | Open | src/pms/api/online_payments.py:384-393, 479-489, 524-536 | L |

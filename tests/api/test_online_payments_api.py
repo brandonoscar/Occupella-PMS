@@ -528,6 +528,38 @@ def test_a_payment_paid_after_a_second_owner_account_waits_for_staff_to_choose_o
     assert "payment" not in [w["what"] for w in ok(client.get("/api/payments/waiting"))]
 
 
+def test_owner_accounts_in_two_trust_bank_accounts_still_list_the_payment(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    """docs/edge-cases.md P-163: the property's owners' accounts sit in two trust bank accounts,
+    so no one bank is the property's, and the waiting list failed whole again. The payment is
+    listed in the first choice's bank, and recorded into the account staff choose."""
+    turn_on(client)
+    payment = pay(tenant_client, lease, "300.00")["id"]
+    other_bank = conn.execute(
+        "INSERT INTO trust_bank_accounts (pmc_id, kind, display_name)"
+        " VALUES (%s, 'operating', 'Second operating trust account') RETURNING id",
+        (pmc.pmc_id,),
+    ).fetchone()[0]
+    open_account(conn, pmc.pmc_id, other_bank, "bank_cash")
+    open_account(conn, pmc.pmc_id, other_bank, "pmc_income")
+    second = open_account(
+        conn,
+        pmc.pmc_id,
+        other_bank,
+        "owner_property",
+        pmc.owners[1].owner_id,
+        pmc.owners[0].property_id,
+    )
+    bank_says(tenant_client, payment, "paid")
+
+    (waiting,) = ok(client.get("/api/payments/waiting"))
+    assert [c["account_id"] for c in waiting["choose_account"]] == [pmc.owners[0].account, second]
+    assert waiting["bank_account_id"] == str(pmc.operating_bank_id)
+    ok(client.post(f"/api/payments/{payment}/record", json={"account": second}), 204)
+    assert balance(conn, second) == Decimal("300.00")
+
+
 def test_a_partner_that_does_not_answer_starts_no_payment(
     client, tenant_client, conn, staff, tenant, lease, pmc, monkeypatch
 ):

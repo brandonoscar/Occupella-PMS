@@ -27,6 +27,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 
 import psycopg
+from fastapi import HTTPException
 from helpers import (
     add_tenant,
     add_unit,
@@ -338,6 +339,22 @@ class AutopayMachine(RuleBasedStateMachine):
 
     def report_one(self, p: Paying, kind: str):
         happened = datetime.combine(self.day, time(12), UTC)
+        if kind == "returned" and not {"paid", "failed"} & p.reported:
+            # Before paid (docs/edge-cases.md C-087): refused for now, so the partner sends it
+            # again; nothing changes yet.
+            try:
+                with self.conn.transaction():
+                    op.apply(
+                        self.conn,
+                        payments.Event(p.id, kind, f"evt_{uuid.uuid4().hex}", happened, None),
+                        "fake",
+                    )
+            except HTTPException as refused:
+                assert refused.status_code == 409 and refused.detail == op.SEND_AGAIN
+            else:
+                raise AssertionError("a return before paid was taken")
+            event("a return before paid, sent again later")
+            return
         with self.conn.transaction():
             op.apply(
                 self.conn,
