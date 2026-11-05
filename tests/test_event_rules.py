@@ -89,6 +89,10 @@ def test_a_lease_end_set_or_moved_is_an_event_and_the_same_end_is_none(conn, app
     )
     kinds = [k for k, _ in events(conn, pmc)]
     assert kinds.count("lease.end_changed") == 1
+    # A write to the lease that leaves its end as it was tells of nothing (the trigger's third
+    # way: neither opened nor moved).
+    conn.execute("UPDATE trust_leases SET ends_on = ends_on WHERE id = %s", (lease,))
+    assert [k for k, _ in events(conn, pmc)] == kinds
 
 
 def test_a_late_fee_is_an_event(conn, pmc):
@@ -146,6 +150,22 @@ def test_an_undone_write_writes_no_event(conn, pmc):
         add_work_order(conn, pmc.pmc_id, pmc.owners[0].property_id, None, "Undone", NOW)
         raise RuntimeError("rolled back")
     assert events(conn, pmc) == []
+
+
+def test_a_table_the_trigger_knows_nothing_of_tells_of_nothing(conn, pmc):
+    """trust_record_event tells only of the tables it names; on any other it writes nothing
+    rather than an event of no kind."""
+    before = events(conn, pmc)
+    conn.execute("CREATE TEMP TABLE zz_unknown (pmc_id uuid)")
+    conn.execute(
+        "CREATE TRIGGER zz_unknown_event AFTER INSERT ON zz_unknown"
+        " FOR EACH ROW EXECUTE FUNCTION trust_record_event()"
+    )
+    try:
+        conn.execute("INSERT INTO zz_unknown VALUES (%s)", (pmc.pmc_id,))
+        assert events(conn, pmc) == before
+    finally:
+        conn.execute("DROP TABLE zz_unknown")
 
 
 def test_neither_the_app_nor_the_ai_writes_an_event(app_conn, ai_conn, pmc):
