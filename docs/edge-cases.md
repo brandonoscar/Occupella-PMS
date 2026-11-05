@@ -28,12 +28,12 @@ answer in the portal for everything that can fail.
 | [Money and the ledger](#money-and-the-ledger) | 150 | 110 | 7 | 33 | 7 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 157 | 81 | 15 | 61 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 142 | 63 | 30 | 49 | 2 |
-| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 160 | 60 | 8 | 92 | 28 |
+| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 160 | 61 | 8 | 91 | 27 |
 | [Bad files and imports](#bad-files-and-imports) | 145 | 60 | 16 | 69 | 6 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 155 | 87 | 10 | 58 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 160 | 64 | 14 | 82 | 11 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1126** | **565** | **110** | **451** | **75** |
+| **All** | **1126** | **566** | **110** | **450** | **74** |
 
 ## Open, high risk: the work list
 
@@ -87,7 +87,6 @@ its ten most pressing, each with the test that would close it.
 - P-028: Staff refund a tenant, all or part, from Stripe's dashboard (charge.refunded)
 - P-030: Stripe takes a dispute fee from the balance (amount NOT VERIFIED)
 - P-034: A company with two operating trust bank accounts and one Stripe payout account
-- P-040: Paid online for a property with two owner accounts and no ownership shares
 - P-048: Test-mode keys (sk_test_) on a live https server
 - P-049: A company goes from test keys to live
 - P-051: PMS_DATA_KEY lost while payments are in flight
@@ -655,7 +654,6 @@ its ten most pressing, each with the test that would close it.
 | P-028 | Staff refund a tenant, all or part, from Stripe's dashboard (charge.refunded) | Not read: the books keep the whole payment; trust cash at the bank is short of the books | Open | src/pms/payments.py:337-351 (no refund kind) | H |
 | P-030 | Stripe takes a dispute fee from the balance (amount NOT VERIFIED) | Nothing records it; bank cash falls short of the books by it and month-end can't tie | Open | src/pms/api/online_payments.py:524-546 (settle has no dispute fee) | H |
 | P-034 | A company with two operating trust bank accounts and one Stripe payout account | Books put each payment in its property's trust bank account; Stripe pays everything into the one bank set in Stripe, so cash lands in the wrong account | Open | src/pms/api/online_payments.py:366-369; src/pms/payments.py:517-525 | H |
-| P-040 | Paid online for a property with two owner accounts and no ownership shares | Checkout lets it start; paid, it waits as refused; then GET /api/payments/waiting fails whole (owner_account raises 422) so Banking shows nothing, and Record can't name an account; the tenant sees Paid while the lease still owes and may be charged a late fee | Open | src/pms/api/online_payments.py:813; src/pms/api/rent.py:201-202; frontend/src/pages/OnlinePaymentsCards.tsx:105 | H |
 | P-048 | Test-mode keys (sk_test_) on a live https server | A Test badge in Settings, but test payments go into the trust books as real money; the event's livemode is never checked and https doesn't refuse a test key | Open | src/pms/payments.py:471-487; src/pms/deployment.py:30 (fakes only); no livemode in src | H |
 | P-049 | A company goes from test keys to live | every_own keeps the old test keys, so test-mode reports still land in the real books | Open | src/pms/payments.py:543-548; src/pms/api/online_payments.py:680-693 | H |
 | P-051 | PMS_DATA_KEY lost while payments are in flight | The company webhook answers 404 until keys are entered again; reports past Stripe's retry window are lost and nothing asks for them | Open | src/pms/api/online_payments.py:682-684 | H |
@@ -672,6 +670,7 @@ its ten most pressing, each with the test that would close it.
 | P-129 | Every amount positive with a separate Type (Debit or Credit) column | Read as all money in; a CSV needs no closing balance, so it goes in silently | Open | src/pms/statements.py:92-140 | H |
 | P-130 | The wrong statement imported (another account's, wrong days, wrong signs) | Permanent: statements are append-only and there is no undo; its lines the books lack block month-end; Import statement asks nothing first | Open | tests/test_bank_statements.py::test_statements_and_lines_are_append_only pins it; frontend/src/pages/ReconcilePage.tsx:370-371 | H |
 | P-024 | A return (dispute) arrives before the paid report lands (paid kept failing on its fee, or isn't subscribed) | As C-087: refused for now so Stripe retries; a return after a failure is still acknowledged | Tested | tests/api/test_online_payments_api.py::test_a_return_for_a_payment_that_failed_is_acknowledged_and_changes_nothing | H |
+| P-040 | Paid online for a property with two owner accounts and no ownership shares | Checkout says off for such a lease; the waiting list names the owners to choose among (choose_account), Record takes account; the card says when the list couldn't load | Tested | tests/api/test_online_payments_api.py::test_a_property_with_two_owner_accounts_and_no_shares_takes_no_payment_online, ::test_a_payment_paid_after_a_second_owner_account_waits_for_staff_to_choose_one; frontend/src/pages/OnlinePaymentsCards.test.tsx (asks whose a payment is..., says so when the list couldn't load) | H |
 | P-004 | Stripe slow (up to 20 s a call) while many tenants pay at once | Each checkout holds one of the pool's 10 connections and an open transaction for the whole Stripe call; staff pages then get 503 busy | Open | src/pms/payments.py:183; src/pms/api/app.py:311 (max_size=10); src/pms/api/online_payments.py:334-337 | M |
 | P-005 | Stripe refuses an amount over the account's ACH limit, or another 4xx about the payment itself | Any HTTP refusal reads to the tenant as "We couldn't reach our payments partner"; the real reason is lost and the PMS lets a tenant start up to 100,000.00 | Open | src/pms/payments.py:203-204; src/pms/api/online_payments.py:46, 336-337 | M |
 | P-029 | A dispute whose charge has no payment_intent, or the lookup of it fails | Asks Stripe for /payment_intents/None, fails as PartnerFailed and answers 502 on every retry | Open | src/pms/payments.py:309-311 | M |

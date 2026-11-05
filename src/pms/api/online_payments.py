@@ -262,6 +262,12 @@ def why_not(
     day = rent.today(conn, pmc_id)
     if conn.execute(rent.IN_FORCE, {"pmc": pmc_id, "lease": lease_id, "day": day}).fetchone():
         return "paused"
+    # A property with several owner accounts and no ownership shares: whose a payment is waits
+    # for staff to choose, so it takes none online (docs/edge-cases.md P-040).
+    try:
+        rent.owners_of(conn, pmc_id, rent.lease_of(conn, pmc_id, lease_id).property_id, day, None)
+    except HTTPException:
+        return "off"
     return None
 
 
@@ -363,10 +369,47 @@ def day_of(conn: psycopg.Connection[Any], pmc_id: UUID, moment: datetime) -> dat
     return days.day_at(conn, pmc_id, moment)
 
 
-def bank_of(conn: psycopg.Connection[Any], row: Row, day: date) -> UUID:
-    """The trust bank account the lease's rent goes to: the property's owners' (rent.owners_of)."""
+class OwnerChoice(BaseModel):
+    account_id: str
+    owner: str
+
+
+def owner_choices(conn: psycopg.Connection[Any], row: Row, day: date) -> list[OwnerChoice]:
+    """The owner accounts staff choose among for the payment: those of the lease's property when
+    it has more than one and no ownership shares on the day, else none (docs/edge-cases.md
+    P-040: a payment started before a second owner account came)."""
     lease = rent.lease_of(conn, row.pmc_id, row.lease_id)
-    return rent.owners_of(conn, row.pmc_id, lease.property_id, day, None).bank
+    if conn.execute(rent.OWNERSHIP, (lease.property_id, day)).fetchone():
+        return []
+    found = [
+        OwnerChoice(account_id=account, owner=owner)
+        for account, owner in conn.execute(
+            "SELECT a.ledger_account_id, o.display_name FROM trust_ledger_accounts AS a"
+            " JOIN trust_owners AS o ON o.id = a.owner_id"
+            " WHERE a.pmc_id = %s AND a.kind = 'owner_property' AND a.property_id = %s"
+            ' ORDER BY o.display_name COLLATE "C", a.ledger_account_id',
+            (row.pmc_id, lease.property_id),
+        )
+    ]
+    return found if len(found) > 1 else []
+
+
+def bank_of(conn: psycopg.Connection[Any], row: Row, day: date) -> UUID:
+    """The trust bank account the lease's rent goes to: the property's owners' (rent.owners_of),
+    or, while staff are still to choose its owner's account, the one all of them are in."""
+    lease = rent.lease_of(conn, row.pmc_id, row.lease_id)
+    try:
+        return rent.owners_of(conn, row.pmc_id, lease.property_id, day, None).bank
+    except HTTPException:
+        banks = conn.execute(
+            "SELECT DISTINCT bank_account_id FROM trust_ledger_accounts"
+            " WHERE pmc_id = %s AND kind = 'owner_property' AND property_id = %s",
+            (row.pmc_id, lease.property_id),
+        ).fetchall()
+        if len(banks) != 1:
+            raise
+        found: UUID = banks[0][0]
+        return found
 
 
 def open_day(conn: psycopg.Connection[Any], row: Row, day: date) -> date:
@@ -420,7 +463,11 @@ def attempt(conn: psycopg.Connection[Any], step: Any) -> bool:
 
 
 def record_payment(
-    conn: psycopg.Connection[Any], row: Row, day: date, past_hold_by: str | None = None
+    conn: psycopg.Connection[Any],
+    row: Row,
+    day: date,
+    past_hold_by: str | None = None,
+    account: str | None = None,
 ) -> None:
     """The payment in the books as staff record one, and the tenant's fee into the company's
     account in the same trust bank account. A lease on a payment hold that day takes it only past
@@ -445,6 +492,7 @@ def record_payment(
         reference=row.partner_ref,
         method="online",
         past_hold_by=past_hold_by,
+        account=account,
     )
     # Every payment's receipt, online and autopay ones too (ADR 0010), once per payment.
     if outbox.SENDING.get():
@@ -801,6 +849,8 @@ class Waiting(BaseModel):
     # What the company deposits from its own account to cover all that waits in this trust bank
     # account: what it owes there less what its fee account holds.
     cover_needed: str = "0.00"
+    # The owner accounts staff choose among to record the payment (P-040), or none.
+    choose_account: list[OwnerChoice] = []
 
 
 def waiting(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Waiting]:
@@ -835,9 +885,11 @@ def waiting(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Waiting]:
                 items.append(("fee refund", row.tenant_fee))
         if not items:
             continue
-        bank = bank_of(conn, row, day_of(conn, pmc_id, paid_at))
+        paid_on = day_of(conn, pmc_id, paid_at)
+        bank = bank_of(conn, row, paid_on)
         holds = rent.cents(held(conn, company_account(conn, pmc_id, bank)))
         memo = rent.lease_memo(conn, row.lease_id)
+        choices = owner_choices(conn, row, paid_on) if items == [("payment", None)] else []
         found += [
             Waiting(
                 payment_id=row.id,
@@ -848,6 +900,7 @@ def waiting(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Waiting]:
                 company_owes=None if owes is None else rent.cents(owes),
                 bank_account_id=bank,
                 company_holds=holds,
+                choose_account=choices,
             )
             for what, owes in items
         ]
@@ -871,6 +924,8 @@ def waiting_list(session: Staff, conn: Conn) -> list[Waiting]:
 class Record(BaseModel):
     # Accept a payment that came in while the lease was on a payment hold.
     past_hold: bool = False
+    # The owner's account it goes to, when the lease's property has several and no shares.
+    account: Annotated[str | None, Field(max_length=40)] = None
 
 
 @router.post("/{payment_id}/record", status_code=204)
@@ -897,7 +952,7 @@ def record(session: Staff, conn: Conn, payment_id: UUID, body: Record) -> None:
         past_hold_by = str(session.person_id) if body.past_hold else None
         try:
             with conn.transaction():
-                record_payment(conn, row, day, past_hold_by)
+                record_payment(conn, row, day, past_hold_by, body.account)
         except psycopg.Error as error:
             raise HTTPException(409, refusal(error)) from None
     settle(conn, row, on=rent.today(conn, session.pmc_id))

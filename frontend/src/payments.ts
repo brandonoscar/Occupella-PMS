@@ -51,6 +51,9 @@ export type Waiting = {
   // What the company deposits from its own account to cover all that waits in this trust bank
   // account: what it owes there less what its fee account holds.
   cover_needed: string;
+  // The owner accounts staff choose among to record a payment whose property has several and no
+  // ownership shares (docs/edge-cases.md P-040), or none.
+  choose_account: { account_id: string; owner: string }[];
 };
 
 export const PAYMENT_SETTINGS = "/api/payments/settings";
@@ -90,6 +93,9 @@ export function waitingLine(item: Waiting): string {
   const owners = item.owner_id !== null;
   switch (item.what) {
     case "payment":
+      if (item.choose_account.length > 0) {
+        return "Paid online, not in the books yet: its property has more than one owner and no ownership shares, so choose whose it is";
+      }
       return owners
         ? "Paid online by the owner, not in the books yet: the books refused it"
         : "Paid online, not in the books yet: the lease is on a payment hold, or the books refused it";

@@ -64,6 +64,12 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   an owner's money the bank had taken back. It now answers 409 until the payment is paid in the
   books, and the partner's next try takes it back out. A return about a payment that failed is
   still acknowledged and changes nothing.
+- **Fixed: one payment could empty Banking's list of online payments waiting.** A payment paid
+  online for a property with more than one owner account and no ownership shares made the whole
+  list fail, so Banking showed nothing waiting, and it couldn't be recorded. It is now listed with
+  the owners to choose among (Record it, naming whose), a lease at such a property takes no
+  payment online (the tenant sees the company's How to pay us), and the card says when the list
+  couldn't load instead of showing nothing.
 - **Fixed: rent charged twice in a month.** Run rent now with Rent due on set to a day other than
   the first (the 15th, say) charged every lease due on the first a second month's rent and each
   monthly charge a second time, and a rent the old system's unpaid charges carried over on another

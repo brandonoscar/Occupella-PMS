@@ -63,6 +63,7 @@ const FEE: Waiting = {
   bank_account_id: "b1",
   company_holds: "0.00",
   cover_needed: "4.00",
+  choose_account: [],
 };
 
 describe("OnlinePaymentsWaiting", () => {
@@ -132,6 +133,34 @@ describe("OnlinePaymentsWaiting", () => {
     await vi.waitFor(() => expect(sent()).toHaveLength(1));
     expect(sent()[0]?.[0]).toBe("/api/payments/p4/record");
     expect(JSON.parse(String(sent()[0]?.[1]?.body))).toEqual({});
+  });
+
+  it("asks whose a payment is when its property has several owner accounts and no shares", async () => {
+    // docs/edge-cases.md P-040: Record couldn't name an account, so the payment waited for good.
+    const fetch = server([{
+      ...FEE, payment_id: "p6", what: "payment", company_owes: null, cover_needed: "0.00",
+      choose_account: [{ account_id: "a1", owner: "Owner One" }, { account_id: "a2", owner: "Owner Two" }],
+    }]);
+    render(<OnlinePaymentsWaiting refresh={0} />);
+    expect(await screen.findByText(
+      "Paid online, not in the books yet: its property has more than one owner and no ownership shares, so choose whose it is",
+    )).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Accept past the hold" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Whose payment"), { target: { value: "a2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record it" }));
+    const question = "Record $500.00 paid online for Morgan Demo, Birch Flats Unit A into Owner Two's account? The bank already paid it.";
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "Record it" }));
+    const sent = () => fetch.mock.calls.filter(([, init]) => init?.method === "POST");
+    await vi.waitFor(() => expect(sent()).toHaveLength(1));
+    expect(sent()[0]?.[0]).toBe("/api/payments/p6/record");
+    expect(JSON.parse(String(sent()[0]?.[1]?.body))).toEqual({ account: "a2" });
+  });
+
+  it("says so when the list couldn't load, never an empty card", async () => {
+    // docs/edge-cases.md P-040: a failed load showed nothing, as if nothing waited.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "the server answered 500" }), { status: 500 })));
+    render(<OnlinePaymentsWaiting refresh={0} />);
+    expect((await screen.findByRole("alert")).textContent).toContain("Online payments waiting couldn't load");
   });
 
   it("still says what the deposit did once nothing waits", async () => {

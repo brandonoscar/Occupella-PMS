@@ -987,7 +987,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   account once it holds it (never from an owner's), a return is a bounce and the tenant's fee
   goes back out; one the books take only after month-end closed its day goes in on the first
   day left open. What the books can't take yet waits on Banking (Online payments waiting): a
-  payment paid during a hold (Accept past the hold), a return an owner can't cover (Try again),
+  payment paid during a hold (Accept past the hold), one whose property has several owner accounts
+  and no shares (Record it, naming whose; such a lease takes none online), a return an owner can't cover (Try again),
   and what the company's fee account can't (Record the company's deposit, never more than what
   waits needs, area rent). Each posting has a key of its own (`metadata ->> 'key'`, indexed), so
   a partner reporting twice moves nothing twice. The AI role reads these tables; it moves no money.
