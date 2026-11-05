@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1156 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1157 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -31,9 +31,9 @@ answer in the portal for everything that can fail.
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 69 | 8 | 88 | 22 |
 | [Bad files and imports](#bad-files-and-imports) | 152 | 64 | 16 | 72 | 3 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 171 | 73 | 14 | 84 | 5 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 73 | 14 | 85 | 5 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1156** | **593** | **110** | **453** | **55** |
+| **All** | **1157** | **593** | **110** | **454** | **55** |
 
 ## Open, high risk: the work list
 
@@ -1266,6 +1266,7 @@ its ten most pressing, each with the test that would close it.
 | H-169 | A self-hosted company adds a migration of its own to the database (an index, a view) | The PMS refuses it as "migrated by a newer PMS" and answers busy until the version is removed from schema_migrations or the file ships in db/migrations; nothing lets an operator mark a migration as theirs | Open | src/pms/schema.py (check: any version the code lacks) | L |
 | H-170 | The app starts with the migrations not yet applied (the migrate service failed, or was skipped) | Each pooled connection is refused with "lacks this PMS's migration ...", so every request waits 30 s and answers busy; the log says why, the page does not | Open | src/pms/api/app.py (configure); src/pms/schema.py | L |
 | H-171 | The API runs as several processes (uvicorn workers, or several app containers) | Delivery and autopay's submissions are one at a time per process, so each process may hold one pooled connection on a hung mail server or partner at once; with ten connections a process the pool still answers, but the database's own connection limit is shared by all of them | Open | src/pms/api/outbox.py (OneAtATime, per process) | L |
+| H-172 | A part of a page the demo never reaches (Download again on an ACH file taken already, the Stripe keys card holding a company's own keys, a confirm question) | The WCAG and plain-words walk (e2e/portal.spec.ts) reads each demo page as the demo leaves it, so words in such a state are checked only by that part's own vitest test, which doesn't run axe or the internal-words patterns | Open | frontend/e2e/portal.spec.ts:1040; frontend/e2e/words.ts | L |
 | H-034 | The backup time comes before a Pacific or Hawaii company's night | Docs say to set PMS_BACKUP_AT=11:00; a server with companies in several zones has one time for all | Guarded | docs/install.md "Every day: backups"; compose.selfhost.yaml:79 | L |
 | H-039 | A restore with Postgres 17 client tools | Refused unless pg_dump, pg_restore and psql are 16 | Guarded | scripts/backup.sh:24-33 | L |
 | H-040 | A backup taken on an older release restored under a newer one | Step 5 of the restore applies the newer release's migrations | Guarded | docs/backup.md "Getting the books back" step 5 | L |
