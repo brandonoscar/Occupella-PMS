@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 import psycopg
 import pytest
-from helpers import acting_as, add_work_order, admin_of, make_pmc
+from helpers import acting_as, add_work_order, admin_of, events_seen, make_pmc
 
 from pms import sealed, webhooks
 
@@ -47,9 +47,12 @@ def webhook(conn, pmc, key, url="https://hooks.example.com/occupella", secret=SE
 
 
 def opened(conn, pmc, summary="Leak"):
-    return add_work_order(
+    """A work order opened, committed, and its event past every older writer (events_seen)."""
+    order = add_work_order(
         conn, pmc.pmc_id, pmc.owners[0].property_id, None, summary, datetime.now(UTC)
     )
+    events_seen(conn, pmc.pmc_id)
+    return order
 
 
 class Receiver:

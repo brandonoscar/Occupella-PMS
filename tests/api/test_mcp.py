@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
-from helpers import add_tenant, add_unit, make_pmc, open_lease
+from helpers import add_tenant, add_unit, events_seen, make_pmc, open_lease
 from people import join_as_staff
 
 from pms.api import create_app
@@ -143,6 +143,7 @@ def test_reports_ledgers_and_events_read_the_keys_company(software, key, conn, p
     assert {"name": "rent_roll", "args": [{"name": "as_of", "type": "date"}]} in reports
     ran = tool(software, key, "run_report", name="rent_roll", args=[str(TODAY)])
     assert ran["structuredContent"] == roll
+    events_seen(conn, pmc.pmc_id)
     seen = tool(software, key, "recent_events")["structuredContent"]
     assert ("lease.opened", str(home["lease"])) in {
         (e["kind"], e["subject"].get("lease_id")) for e in seen["events"]

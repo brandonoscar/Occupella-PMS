@@ -7,7 +7,7 @@ import base64
 
 import pytest
 from fastapi.testclient import TestClient
-from helpers import make_pmc
+from helpers import events_seen, make_pmc
 from people import join_as_staff, join_as_tenant
 
 from pms.api import create_app
@@ -65,12 +65,13 @@ def read(software, key, **params):
 
 
 def test_software_reads_its_companys_events_in_order_after_the_last_it_read(
-    client, software, pmc, admin, key
+    client, software, conn, pmc, admin, key
 ):
     first = read(software, key)
     start = first["next"]
     one = open_order(client, pmc, "Leak")
     two = open_order(client, pmc, "Gate")
+    events_seen(conn, pmc.pmc_id)
 
     got = read(software, key, after=start) if start else read(software, key)
     assert [(e["kind"], e["subject"]["work_order_id"]) for e in got["events"]] == [
@@ -108,6 +109,7 @@ def test_a_draft_decided_is_an_event(client, software, conn, pmc, admin, key):
         201,
     )
     ok(client.post(f"/api/drafts/{made['id']}/decline", json={"reason": "Not now"}))
+    events_seen(conn, pmc.pmc_id)
     got = read(software, key, after=start) if start else read(software, key)
     assert [(e["kind"], e["subject"]) for e in got["events"]] == [
         ("draft.declined", {"draft_id": made["id"]})
@@ -120,6 +122,7 @@ def test_another_companys_events_are_never_read(
     elsewhere = make_pmc(conn)
     join_as_staff(other_client, conn, app_conn, elsewhere, name="Other Staff 1")
     open_order(other_client, elsewhere, "Theirs")
+    events_seen(conn, elsewhere.pmc_id)  # theirs readable by now, were it ever
     got = read(software, key)
     assert all(
         e["subject"].get("property_id") != str(elsewhere.owners[0].property_id)
