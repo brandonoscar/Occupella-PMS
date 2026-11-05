@@ -31,8 +31,9 @@ class Mismatch(RuntimeError):
     """The database's migrations aren't this code's; the message says which and what to do."""
 
 
-def shipped(directory: Path = MIGRATIONS) -> frozenset[str] | None:
+def shipped(directory: Path | None = None) -> frozenset[str] | None:
     """The versions of the migrations this code ships; None when it ships none to read."""
+    directory = MIGRATIONS if directory is None else directory
     if not directory.is_dir():
         return None
     return frozenset(

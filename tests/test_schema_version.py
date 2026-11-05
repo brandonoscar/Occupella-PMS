@@ -50,9 +50,11 @@ def test_a_database_not_migrated_yet_is_refused(app_conn):
     )
 
 
-def test_code_shipped_without_its_migrations_checks_nothing(app_conn, tmp_path):
+def test_code_shipped_without_its_migrations_checks_nothing(app_conn, tmp_path, monkeypatch):
     assert schema.shipped(tmp_path / "nowhere") is None
-    schema.check(app_conn, None)
+    monkeypatch.setattr(schema, "MIGRATIONS", tmp_path / "nowhere")
+    assert schema.shipped() is None
+    schema.check(app_conn)  # can't tell, so nothing to say
 
 
 def test_only_the_app_reads_the_versions(conn, ai_conn):
