@@ -17,6 +17,7 @@ from helpers import (
     add_unit,
     make_pmc,
     open_lease,
+    transfer_batch,
 )
 
 from pms import accounts, autopay, email, nightly, payments
@@ -379,6 +380,57 @@ def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url
     assert api_app.Settings.from_env().nightly is True
     monkeypatch.setenv("PMS_NIGHTLY", "off")
     assert api_app.Settings.from_env().nightly is False
+
+
+@pytest.mark.parametrize(
+    ("automatic", "debited", "held"), [(True, "700.00", 0), (False, "1000.00", 300)]
+)
+def test_a_balance_autopay_counts_prepaid_rent_only_once_the_company_uses_it_by_itself(
+    conn, app_conn, pmc, automatic, debited, held
+):
+    """docs/edge-cases.md M-026, a founder's decision: with prepaid rent used by itself (Company
+    setup, migration 0117, q031), the night uses it before autopay starts, so a balance autopay
+    debits the rest; with it off, as a company starts, prepaid rent waits for staff and a balance
+    autopay debits the whole balance."""
+    lease = lease_since(conn, pmc, date(2026, 9, 1))
+    transfer_batch(
+        conn,
+        [(pmc.operating_cash, pmc.prepaid_rent, "300.00")],
+        datetime(2026, 9, 20, tzinfo=UTC),
+    )
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_lease_tenants WHERE lease_id = %s", (lease,)
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO trust_payment_settings (pmc_id, online, ach_fee_payer)"
+        " VALUES (%s, true, 'company')",
+        (pmc.pmc_id,),
+    )
+    conn.execute(
+        "INSERT INTO trust_prepaid_rent_settings (pmc_id, automatic) VALUES (%s, %s)",
+        (pmc.pmc_id, automatic),
+    )
+    autopay_id = conn.execute(
+        "INSERT INTO trust_autopay (pmc_id, lease_id, tenant_id, rule, amount, partner)"
+        " VALUES (%s, %s, %s, 'balance', 5000, 'fake') RETURNING id",
+        (pmc.pmc_id, lease, tenant),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO trust_autopay_accounts (pmc_id, autopay_id, partner_customer, partner_method,"
+        " label, partner_event, saved_at) VALUES (%s, %s, 'fake_cus', 'fake_pm', 'Test bank',"
+        " 'evt_p', '2026-09-15T00:00:00Z')",
+        (pmc.pmc_id, autopay_id),
+    )
+
+    nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL, partner="fake")
+
+    payment = autopay.payment_id_for(autopay_id, date(2026, 10, 1))
+    assert conn.execute(
+        "SELECT amount::text FROM trust_online_payments WHERE id = %s", (payment,)
+    ).fetchone() == (debited,)
+    assert conn.execute(
+        "SELECT balance FROM pgledger_accounts WHERE id = %s", (pmc.prepaid_rent,)
+    ).fetchone() == (held,)
 
 
 def test_a_night_starts_the_autopay_payments_due_and_sends_them_to_the_partner(
