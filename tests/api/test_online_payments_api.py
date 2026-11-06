@@ -341,6 +341,55 @@ def test_a_payment_the_tenant_left_unpaid_reads_not_finished_and_moves_nothing(
     assert kinds == ["failed"]
 
 
+def started(conn, pmc, lease, days_ago, amount="400.00"):
+    """A tenant's payment online started some days ago, nothing reported of it since."""
+    return conn.execute(
+        "INSERT INTO trust_online_payments (pmc_id, lease_id, tenant_id, amount, fee_payer, method,"
+        " partner, partner_ref, created_at)"
+        " VALUES (%s, %s, %s, %s, 'company', 'ach', 'fake', %s, %s) RETURNING id",
+        (
+            pmc.pmc_id,
+            lease,
+            tenant_of(conn, pmc),
+            amount,
+            f"fake_{uuid4().hex}",
+            datetime.now(UTC) - days_ago * DAY,
+        ),
+    ).fetchone()[0]
+
+
+def test_staff_see_a_payment_started_weeks_ago_with_no_word_from_the_partner(
+    client, conn, staff, lease, pmc
+):
+    # docs/edge-cases.md P-013: the webhook broken, or the PMS down past the partner's retries;
+    # Waiting listed only payments reported paid, so staff never saw this one.
+    old = started(conn, pmc, lease, 20)
+    started(conn, pmc, lease, 3)  # a bank payment still clearing
+    reported = started(conn, pmc, lease, 30)
+    conn.execute(
+        "INSERT INTO trust_online_payment_events (pmc_id, payment_id, kind, partner_event,"
+        " happened_at) VALUES (%s, %s, 'failed', %s, now())",
+        (pmc.pmc_id, reported, f"evt_{reported.hex}"),
+    )
+
+    (waiting,) = ok(client.get("/api/payments/waiting"))
+
+    assert (waiting["payment_id"], waiting["what"], waiting["amount"]) == (
+        str(old),
+        "no word",
+        "400.00",
+    )
+    assert waiting["started_on"] == (datetime.now(UTC) - 20 * DAY).date().isoformat()
+    assert (waiting["lease_id"], waiting["company_owes"]) == (str(lease), None)
+    assert waiting["bank_account_id"] == str(pmc.operating_bank_id)
+    # Nothing for staff to record: its report, when it comes, brings it into the books.
+    refused(
+        client.post(f"/api/payments/{old}/record", json={}),
+        409,
+        "the payments partner hasn't said this payment was paid",
+    )
+
+
 def test_the_company_covers_the_partners_fee_its_account_cant(
     client, tenant_client, conn, staff, tenant, lease, pmc
 ):

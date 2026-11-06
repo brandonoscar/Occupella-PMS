@@ -213,6 +213,33 @@ def test_a_payment_left_unpaid_on_the_partners_page_is_not_on_its_way(
     assert runs(conn, mine) == [(MONTH, Decimal("1200.00"), None)]
 
 
+def by_hand(conn, pmc, lease, tenant, amount, started_at, ref):
+    return conn.execute(
+        "INSERT INTO trust_online_payments (pmc_id, lease_id, tenant_id, amount, fee_payer, method,"
+        " partner, partner_ref, created_at)"
+        " VALUES (%s, %s, %s, %s, 'company', 'ach', 'fake', %s, %s) RETURNING id",
+        (pmc.pmc_id, lease, tenant, amount, ref, started_at),
+    ).fetchone()[0]
+
+
+def test_a_payment_no_word_came_of_for_weeks_is_not_on_its_way(conn, app_conn, pmc, lease, tenant):
+    # docs/edge-cases.md P-067, P-068, H-145: a payment left on the partner's page whose expired
+    # report never came, a checkout whose report never arrived, or an autopay payment the
+    # partner left waiting on the tenant. Counted on its way for good, it lowered every balance
+    # autopay after it.
+    online(conn, pmc)
+    due = datetime.combine(MONTH, datetime.min.time(), UTC)
+    by_hand(conn, pmc, lease, tenant, 400, due - (autopay.ON_ITS_WAY_DAYS + 1) * DAY, "fake_old")
+    # One paid but waiting for staff (a payment hold) is still on its way, however old.
+    paid = by_hand(conn, pmc, lease, tenant, 100, due - 60 * DAY, "fake_paid")
+    report(conn, pmc, paid, "paid")
+    # One started within the days a bank payment takes is on its way.
+    by_hand(conn, pmc, lease, tenant, 50, due - (autopay.ON_ITS_WAY_DAYS - 1) * DAY, "fake_new")
+    mine = set_up(conn, pmc, lease, tenant)
+    run(app_conn, pmc)
+    assert runs(conn, mine) == [(MONTH, Decimal("1050.00"), None)]
+
+
 def test_a_fixed_autopay_pays_its_amount(conn, app_conn, pmc, lease, tenant):
     online(conn, pmc)
     mine = set_up(conn, pmc, lease, tenant, rule="fixed", amount="450.00")

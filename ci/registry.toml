@@ -217,6 +217,16 @@ tests = [
 ]
 
 [[invariant]]
+id = "autopay-on-its-way-ages-out"
+statement = "A balance autopay pays what the lease owes by the due date less what is on its way, up to its amount, never below zero; on its way is a payment online not in the books, not failed, come back or expired, that was reported paid (waiting for staff) or started within ON_ITS_WAY_DAYS (14) before the due date (src/pms/autopay.py; docs/edge-cases.md P-067, P-068, H-145): one whose report never came no longer lowers every later month's payment. Staff see each such payment, started that long ago with no word from the partner and not in the books, on Banking's Online payments waiting (online_payments.no_word, P-013); nothing there records it."
+tests = [
+  "tests/properties/test_on_its_way_properties.py::test_a_balance_autopay_counts_on_its_way_only_what_may_still_come",
+  "tests/test_autopay.py::test_a_payment_no_word_came_of_for_weeks_is_not_on_its_way",
+  "tests/test_autopay.py::test_what_is_on_its_way_counts_and_a_failed_payment_does_not",
+  "tests/api/test_online_payments_api.py::test_staff_see_a_payment_started_weeks_ago_with_no_word_from_the_partner",
+]
+
+[[invariant]]
 id = "events-in-order-never-skipped"
 statement = "An event (ADR 0011, migration 20261105000500) is written by the database alone (trust_record_event, as the owner; neither the app nor the AI's role may write one) in the same transaction as the write it tells of, its kind and ids only, and none for a write undone; append-only. A reader with a key reads its company's events after the last it got, in the order their transactions began writing, each only once every transaction that began writing before it has finished, so it gets every committed event exactly once and never a rolled-back one, and never another company's. A webhook goes only to an https address whose every resolved address is public, signed with its sealed secret, retried after each wait up to its last attempt, from when it was added and while it stands; only an admin adds or takes one back."
 tests = [

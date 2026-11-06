@@ -36,7 +36,7 @@ export type PaymentSettings = {
   partner: string | null;
   changed_at: string | null;
 };
-export type WaitingWhat = "payment" | "return" | "partner fee" | "fee refund";
+export type WaitingWhat = "payment" | "return" | "partner fee" | "fee refund" | "no word";
 export type Waiting = {
   payment_id: string;
   // A tenant's payment's lease, or the owner of an owner's payment (src/pms/api/owner_payments.py).
@@ -48,6 +48,8 @@ export type Waiting = {
   company_owes: string | null;
   bank_account_id: string;
   company_holds: string;
+  // The day a payment the partner has said nothing of was started (what "no word", P-013).
+  started_on?: string | null;
   // What the company deposits from its own account to cover all that waits in this trust bank
   // account: what it owes there less what its fee account holds.
   cover_needed: string;
@@ -107,6 +109,9 @@ export function waitingLine(item: Waiting): string {
       return `The processor kept ${money(item.company_owes)}; the company's fee account holds ${money(item.company_holds)}`;
     case "fee refund":
       return `The tenant's ${money(item.company_owes)} fee came back; the company's fee account holds ${money(item.company_holds)}`;
+    case "no word":
+      return `Started online ${usDate(item.started_on ?? null)}, and the payments partner hasn't said since whether the bank paid:`
+        + " look it up there. Its report brings it into the books; don't record it by hand.";
   }
 }
 

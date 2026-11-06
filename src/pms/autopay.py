@@ -49,6 +49,11 @@ log = logging.getLogger("pms.autopay")
 ZERO = Decimal(0)
 # How long a payment the partner couldn't take is tried again.
 RETRY_DAYS = 3
+# How long a payment online with no word from the partner counts as on its way to the lease
+# (docs/edge-cases.md P-067, P-068, H-145; op.NO_WORD_DAYS, after which staff see it waiting).
+# One older, whose report never came, no longer lowers what a balance autopay pays; its report, if
+# it comes, still reaches the books.
+ON_ITS_WAY_DAYS = op.NO_WORD_DAYS
 
 Why = Literal["tenant", "staff", "lease ended", "tenant left", "failed twice", "replaced"]
 # What a stop by itself says to the tenant.
@@ -124,7 +129,8 @@ WHERE o.open > 0 AND c.due_on <= %(due)s
 
 # What is on its way to the lease from payments online not in the books yet: not failed, not come
 # back (one paid during a payment hold may come back before staff recorded it), and not expired
-# (left unpaid on the partner's page, or an autopay payment given up before it reached the partner).
+# (left unpaid on the partner's page, or an autopay payment given up before it reached the partner);
+# reported paid (waiting for staff), or started within ON_ITS_WAY_DAYS of the due date.
 ON_ITS_WAY = """
 SELECT coalesce(sum(p.amount), 0)
 FROM trust_online_payments AS p
@@ -133,15 +139,19 @@ WHERE p.pmc_id = %(pmc)s AND p.lease_id = %(lease)s
                   WHERE e.payment_id = p.id AND e.kind IN ('failed', 'returned', 'expired'))
   AND NOT EXISTS (SELECT 1 FROM pgledger_transfers AS t
                   WHERE t.metadata ->> 'key' = 'payment/' || p.id::text)
+  AND (p.created_at >= %(since)s
+       OR EXISTS (SELECT 1 FROM trust_online_payment_events AS e
+                  WHERE e.payment_id = p.id AND e.kind = 'paid'))
 """
 
 
 def to_pay(conn: psycopg.Connection[Any], pmc_id: UUID, autopay: Active, due_on: date) -> Decimal:
     """What an autopay pays for a due date: a fixed one its amount; a balance one what the lease
-    owes by then less what is on its way, up to its amount (nothing below zero)."""
+    owes by then less what is on its way (ON_ITS_WAY), up to its amount (nothing below zero)."""
     if autopay.rule == "fixed":
         return autopay.amount
-    about = {"pmc": pmc_id, "lease": autopay.lease_id, "due": due_on}
+    since = datetime.combine(due_on, datetime.min.time(), UTC) - timedelta(days=ON_ITS_WAY_DAYS)
+    about = {"pmc": pmc_id, "lease": autopay.lease_id, "due": due_on, "since": since}
     owes = conn.execute(OPEN_BY, about).fetchone()
     coming = conn.execute(ON_ITS_WAY, about).fetchone()
     assert owes is not None and coming is not None

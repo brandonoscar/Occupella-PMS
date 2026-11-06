@@ -28,12 +28,12 @@ answer in the portal for everything that can fail.
 | [Money and the ledger](#money-and-the-ledger) | 152 | 114 | 7 | 31 | 4 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 82 | 15 | 67 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
-| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 69 | 8 | 88 | 22 |
+| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 72 | 8 | 85 | 19 |
 | [Bad files and imports](#bad-files-and-imports) | 152 | 66 | 16 | 70 | 1 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 88 | 10 | 58 | 6 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 74 | 14 | 84 | 4 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 75 | 14 | 83 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1161** | **598** | **110** | **453** | **53** |
+| **All** | **1161** | **602** | **110** | **449** | **50** |
 
 ## Open, high risk: the work list
 
@@ -75,7 +75,6 @@ its ten most pressing, each with the test that would close it.
 - P-007: Keys saved that only look right: a typo'd key, or a secret key and a webhook secret from different Stripe accounts or modes
 - P-010: The server's clock drifts more than 5 minutes
 - P-011: The webhook signing secret changed in Stripe (endpoint recreated) but not in the PMS
-- P-013: No report ever arrives for a started payment (webhook broken, PMS down past Stripe's retry window)
 - P-026: A late return Stripe reports by another event than a dispute (charge.failed after success; NOT VERIFIED which Stripe sends)
 - P-027: A dispute the company won, funds reinstated (charge.dispute.closed, charge.dispute.funds_reinstated)
 - P-028: Staff refund a tenant, all or part, from Stripe's dashboard (charge.refunded)
@@ -86,8 +85,6 @@ its ten most pressing, each with the test that would close it.
 - P-051: PMS_DATA_KEY lost while payments are in flight
 - P-061: An owner's payment refunded in Stripe, or a dispute on it won
 - P-065: The company changes Stripe accounts (server's to own, or new keys) with autopays saved at the old one
-- P-067: Stripe leaves an off-session payment waiting on the tenant (requires_action; NOT VERIFIED for ACH)
-- P-068: A hand payment left on Stripe's page whose expired report never comes
 - P-087: The attachment or HTML fails with something other than a database or lookup error (fpdf, ValueError, HTTPException; NOT VERIFIED that any does today)
 - P-115: The bank returns an owner's ACH draw (account closed, no account)
 - P-116: The bank returns a vendor's ACH payment
@@ -470,7 +467,7 @@ its ten most pressing, each with the test that would close it.
 
 | ID | Edge case | What the PMS does | Status | Evidence | Risk |
 |---|---|---|---|---|---|
-| C-090 | Stripe gives up on a webhook after days of failed deliveries | Nothing polls for it; the payment never reaches the books, and if staff record it by hand a later resend records it twice | Open | src/pms/api/online_payments.py:622 (receive only; no event poll in src/pms/payments.py) | H |
+| C-090 | Stripe gives up on a webhook after days of failed deliveries | Nothing polls for it; the payment never reaches the books; staff see it on Banking's Online payments waiting after 14 days with no word (P-013), told not to record it by hand, but if they do, a later resend records it twice | Open | src/pms/api/online_payments.py:622 (receive only; no event poll in src/pms/payments.py) | H |
 | C-041 | Staff void a bill while another staff member pays it | The decision trigger locks the owner's account; a void after money was taken is refused | Guarded | db/schema.sql:2496 (trust_check_bill_decision) | H |
 | C-050 | Two staff pay the night's prepared draws under different request ids | One approval; the second gets 409 paid already | Guarded | src/pms/api/payables.py:2208 | H |
 | C-063 | A journal entry posted twice at once | Entry lock; the second returns the transfers already posted | Guarded | db/schema.sql:6939 (trust_post_journal_entry) | H |
@@ -635,7 +632,6 @@ its ten most pressing, each with the test that would close it.
 | P-007 | Keys saved that only look right: a typo'd key, or a secret key and a webhook secret from different Stripe accounts or modes | check_keys checks only their shape; payments start on one account and its reports fail the signature, so paid payments never reach the books | Open | src/pms/payments.py:477-487; src/pms/api/payment_keys.py:117-142 | H |
 | P-010 | The server's clock drifts more than 5 minutes | Every Stripe report is refused 400 as "signed too long ago"; Stripe retries then stops; payments stay "Waiting for your bank"; no alert | Open | src/pms/payments.py:429-447 (tolerance 300) | H |
 | P-011 | The webhook signing secret changed in Stripe (endpoint recreated) but not in the PMS | Every report answers 400 "the report's signature isn't this company's"; after Stripe's retries (about 3 days, NOT VERIFIED) they are gone; nobody is told | Open | src/pms/api/online_payments.py:686-693 | H |
-| P-013 | No report ever arrives for a started payment (webhook broken, PMS down past Stripe's retry window) | Nothing asks Stripe; the tenant's line says "Waiting for your bank" forever; staff have no list of old started payments, since Waiting lists only paid ones | Open | src/pms/api/online_payments.py:781-790; src/pms/nightly.py (no sweep) | H |
 | P-026 | A late return Stripe reports by another event than a dispute (charge.failed after success; NOT VERIFIED which Stripe sends) | Not in STRIPE_KINDS: ignored, the payment stays in the books | Open | src/pms/payments.py:337-351 | H |
 | P-027 | A dispute the company won, funds reinstated (charge.dispute.closed, charge.dispute.funds_reinstated) | Not read: the payment stays bounced, the tenant owes it again plus an NSF fee though the money came back | Open | src/pms/payments.py:337-351 | H |
 | P-028 | Staff refund a tenant, all or part, from Stripe's dashboard (charge.refunded) | Not read: the books keep the whole payment; trust cash at the bank is short of the books | Open | src/pms/payments.py:337-351 (no refund kind) | H |
@@ -646,8 +642,6 @@ its ten most pressing, each with the test that would close it.
 | P-051 | PMS_DATA_KEY lost while payments are in flight | The company webhook answers 404 until keys are entered again; reports past Stripe's retry window are lost and nothing asks for them | Open | src/pms/api/online_payments.py:682-684 | H |
 | P-061 | An owner's payment refunded in Stripe, or a dispute on it won | Same gaps as P-027 and P-028: not read, the books keep the contribution or the return | Open | src/pms/payments.py:337-351 | H |
 | P-065 | The company changes Stripe accounts (server's to own, or new keys) with autopays saved at the old one | The partner name is still "stripe", so the new account is asked to charge a customer it doesn't know; fails three days, given up, tenant emailed every month; a give-up never counts toward stopping it and staff aren't told | Open | src/pms/autopay.py:162-165, 476-478 | H |
-| P-067 | Stripe leaves an off-session payment waiting on the tenant (requires_action; NOT VERIFIED for ACH) | Recorded as sent, and no report follows; it stays "on its way", so every later balance autopay pays less and the tenant falls behind into late fees | Open | src/pms/autopay.py:128-137, 484-501 | H |
-| P-068 | A hand payment left on Stripe's page whose expired report never comes | Counted on its way forever, lowering every balance autopay | Open | src/pms/autopay.py:128-137 | H |
 | P-087 | The attachment or HTML fails with something other than a database or lookup error (fpdf, ValueError, HTTPException; NOT VERIFIED that any does today) | Not caught: the pass stops at that email, which is first again next time, so every later email waits behind it unrecorded | Open | src/pms/email.py:662-672 | H |
 | P-115 | The bank returns an owner's ACH draw (account closed, no account) | No way to record it: the draw stays paid and the owner's balance wrong until two staff post a journal entry | Open | src/pms/api/payouts.py (no return path); src/pms/api/journal.py | H |
 | P-116 | The bank returns a vendor's ACH payment | The bill stays Paid and can't be voided once money was taken | Open | src/pms/api/payables.py:1309-1328 (void refused once money was taken) | H |
@@ -660,6 +654,9 @@ its ten most pressing, each with the test that would close it.
 | P-075 | SMTP server hangs | Delivery after a write, and autopay's submissions, run one at a time in a process (outbox.OneAtATime): a write while one runs returns at once and makes it run once more after, so a hung mail server or partner holds one pooled connection, never the pool | Tested | tests/api/test_outbox.py::test_many_writes_at_once_lend_the_slow_partner_one_connection | H |
 | P-111 | PMS_DATA_KEY changed (one is set, but not the one that sealed the numbers) | Before anything is recorded, each ACH payee's bank account number must open under the server's key; one that doesn't is refused (409 naming them: pay by check, or run with the key that sealed it), and checks need no key | Tested | tests/api/test_payouts_api.py::test_a_server_with_another_key_records_no_ach_payout | H |
 | P-129 | Every amount positive with a separate Type (Debit or Credit) column | Each line's way is read from the type column (Debit, Credit, Dr, Cr, ACH_DEBIT...) when every amount is positive; a type saying neither is refused with its line; signed amounts keep their signs | Tested | tests/test_statement_files.py::test_a_csv_of_positive_amounts_reads_each_ones_way_from_its_type | H |
+| P-013 | No report ever arrives for a started payment (webhook broken, PMS down past Stripe's retry window) | Nothing asks Stripe, and the tenant's line still says Waiting for your bank; after 14 days with no word, staff see it on Banking's Online payments waiting (started on, look it up at the partner, don't record it by hand), and a balance autopay no longer counts it as on its way | Tested | tests/api/test_online_payments_api.py::test_staff_see_a_payment_started_weeks_ago_with_no_word_from_the_partner; frontend/src/payments.test.ts ("says a payment started weeks ago with no word from the partner") | H |
+| P-067 | Stripe leaves an off-session payment waiting on the tenant (requires_action; NOT VERIFIED for ACH) | Recorded as sent, and no report follows; after 14 days it no longer counts as on its way, so the next balance autopay pays the whole balance, and staff see it on Banking's Online payments waiting to look up at Stripe. Stripe's requires_action itself is not read (NOT VERIFIED that it happens for ACH) | Tested | tests/test_autopay.py::test_a_payment_no_word_came_of_for_weeks_is_not_on_its_way; tests/api/test_online_payments_api.py::test_staff_see_a_payment_started_weeks_ago_with_no_word_from_the_partner | H |
+| P-068 | A hand payment left on Stripe's page whose expired report never comes | Counted on its way only for 14 days after it started (autopay.ON_ITS_WAY_DAYS); after that it no longer lowers what a balance autopay pays, and staff see it on Banking's Online payments waiting; its report, if it comes, still reaches the books | Tested | tests/test_autopay.py::test_a_payment_no_word_came_of_for_weeks_is_not_on_its_way; tests/properties/test_on_its_way_properties.py::test_a_balance_autopay_counts_on_its_way_only_what_may_still_come | H |
 | P-004 | Stripe slow (up to 20 s a call) while many tenants pay at once | Each checkout holds one of the pool's 10 connections and an open transaction for the whole Stripe call; staff pages then get 503 busy | Open | src/pms/payments.py:183; src/pms/api/app.py:311 (max_size=10); src/pms/api/online_payments.py:334-337 | M |
 | P-005 | Stripe refuses an amount over the account's ACH limit, or another 4xx about the payment itself | Any HTTP refusal reads to the tenant as "We couldn't reach our payments partner"; the real reason is lost and the PMS lets a tenant start up to 100,000.00 | Open | src/pms/payments.py:203-204; src/pms/api/online_payments.py:46, 336-337 | M |
 | P-029 | A dispute whose charge has no payment_intent, or the lookup of it fails | Asks Stripe for /payment_intents/None, fails as PartnerFailed and answers 502 on every retry | Open | src/pms/payments.py:309-311 | M |
@@ -1234,7 +1231,6 @@ its ten most pressing, each with the test that would close it.
 | H-138 | The owner portal's properties can't be read | Overview and Properties say Loading for good; the reason shows only on Statements | Open | frontend/src/pages/OwnerHome.tsx:88,125-127,188 | M |
 | H-141 | A tenant's emergency request when the network drops | Raw browser words; a retry after a lost answer files it twice and emails on-call staff twice (no request id) | Open | frontend/src/pages/TenantHome.tsx:281-311; src/pms/api/tenant.py (no key on new requests) | M |
 | H-142 | Pay online's fee quote can't be read | The fee line is blank and Pay online stays on; a tenant who pays the fee doesn't see it before leaving | Open | frontend/src/pages/PayOnlineCard.tsx:46-51 | M |
-| H-145 | A checkout whose report never arrives (webhook wrong or keys changed) | It counts as on its way for good, so a balance autopay pays less every month | Open | src/pms/autopay.py:125-136 (no age limit) | M |
 | H-146 | The tenant's lease card can't read their autopays | Shown as none: the tenant doesn't see an autopay that is on | Open | frontend/src/pages/TenantLeaseCard.tsx:67-68 | M |
 | H-149 | An applicant's answer lost after it committed | A retry makes a second application and the first status link is lost; network errors read raw; the form is lost on reload | Open | frontend/src/pages/ApplyPage.tsx:44-61 (no request id) | M |
 | H-159 | Ending a lease when the break fee can't be read | No break fee is offered, silently, and the lease ends without it | Open | frontend/src/pages/LeasePeople.tsx:80-82 | M |
@@ -1252,6 +1248,7 @@ its ten most pressing, each with the test that would close it.
 | H-052 | PMS_DATA_KEY changed, then an ACH file is asked for | Refused, naming the payee whose number doesn't open | Tested | tests/api/test_payouts_api.py::test_an_ach_file_opens_its_numbers_only_under_the_key_they_were_sealed_with | M |
 | H-054 | PMS_DATA_KEY changed, and the company entered its own Stripe keys | No payment online; it never falls back to the server's keys | Tested | tests/api/test_payment_keys_api.py::test_keys_that_dont_open_here_take_no_payment_and_never_fall_back | M |
 | H-075 | The PMS restarting behind the proxy | 502 reads "the server answered 502", with no word that it is restarting | Tested | frontend/src/api.test.ts > names the status when the answer has no reason | M |
+| H-145 | A checkout whose report never arrives (webhook wrong or keys changed) | Counted on its way for 14 days after it started, then no longer (a balance autopay pays the whole balance), and staff see it on Banking's Online payments waiting | Tested | tests/test_autopay.py::test_a_payment_no_word_came_of_for_weeks_is_not_on_its_way; tests/properties/test_on_its_way_properties.py::test_a_balance_autopay_counts_on_its_way_only_what_may_still_come | M |
 | H-014 | The portal gets a 503 with Retry-After | Shows the words; never retries by itself, the person clicks again | Open | frontend/src/api.ts:36-50 | L |
 | H-045 | A migration takes a table lock while the app serves | Requests to that table wait with no lock_timeout; pages spin until it finishes | Open | src/pms/api/app.py:298-306 | L |
 | H-082 | The process is killed after an email went out and before its delivery committed | It is sent again later | Open | src/pms/email.py:653-682 | L |

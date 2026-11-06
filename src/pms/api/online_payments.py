@@ -26,7 +26,7 @@ payment, and only the partner's report (or the fake partner's page) says it was 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
@@ -43,6 +43,11 @@ from pms.api.deps import Conn, Staff, Tenant, refusal
 router = APIRouter(prefix="/api/payments")
 
 ZERO = Decimal(0)
+# How long a payment started online may go with no word from the partner before staff see it
+# waiting (docs/edge-cases.md P-013) and a balance autopay stops counting it as on its way
+# (src/pms/autopay.py, P-067, P-068, H-145): a bank payment reports how it went in a few business
+# days and a page left unpaid expires in one (NOT VERIFIED against Stripe from here).
+NO_WORD_DAYS = 14
 Amount = Annotated[Decimal, Field(gt=0, le=Decimal("100000"), decimal_places=2)]
 FeePayer = Literal["company", "tenant"]
 Status = Literal["started", "paid", "failed", "returned", "expired"]
@@ -872,9 +877,12 @@ class Waiting(BaseModel):
     memo: str
     amount: str
     # What waits: the payment itself (a payment hold, or the books refused it), its return (an
-    # owner's account short), or what the company's fee account can't cover yet: the partner's
-    # fee, or a tenant's fee that came back.
-    what: Literal["payment", "return", "partner fee", "fee refund"]
+    # owner's account short), what the company's fee account can't cover yet (the partner's fee,
+    # or a tenant's fee that came back), or a payment the partner has said nothing of for
+    # NO_WORD_DAYS (P-013): staff look it up there; its report, when it comes, brings it in.
+    what: Literal["payment", "return", "partner fee", "fee refund", "no word"]
+    # The day a payment with no word was started (the company's day).
+    started_on: date | None = None
     # What the company covers for it, if anything.
     company_owes: str | None
     bank_account_id: UUID
@@ -939,6 +947,7 @@ def waiting(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Waiting]:
             )
             for what, owes in items
         ]
+    found += no_word(conn, pmc_id)
     from pms.api import owner_payments  # it reads this module's helpers; owners pay in online too
 
     found += owner_payments.waiting(conn, pmc_id)
@@ -948,6 +957,46 @@ def waiting(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Waiting]:
         needed = rent.cents(max(owed - Decimal(here[0].company_holds), ZERO))
         for item in here:
             item.cover_needed = needed
+    return found
+
+
+# A tenant's payment started online that the partner has said nothing of for NO_WORD_DAYS, and that
+# isn't in the books (docs/edge-cases.md P-013).
+NO_WORD = (
+    f"SELECT {COLUMNS} FROM trust_online_payments AS p"  # noqa: S608 (constant text)
+    """
+WHERE p.pmc_id = %s AND p.created_at < %s
+  AND NOT EXISTS (SELECT 1 FROM trust_online_payment_events AS e WHERE e.payment_id = p.id)
+  AND NOT EXISTS (SELECT 1 FROM pgledger_transfers AS t
+                  WHERE t.metadata ->> 'key' = 'payment/' || p.id::text)
+ORDER BY p.created_at, p.id
+"""
+)
+
+
+def no_word(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Waiting]:
+    """The payments started online that the partner has said nothing of for NO_WORD_DAYS: its
+    webhook broken, or the PMS down past its retries. Staff look each up at the partner; nothing
+    here records one."""
+    since = datetime.now(UTC) - timedelta(days=NO_WORD_DAYS)
+    found = []
+    for values in conn.execute(NO_WORD, (pmc_id, since)).fetchall():
+        row = Row(*values)
+        started_on = day_of(conn, pmc_id, row.created_at)
+        bank = bank_of(conn, row, started_on)
+        found.append(
+            Waiting(
+                payment_id=row.id,
+                lease_id=row.lease_id,
+                memo=rent.lease_memo(conn, row.lease_id),
+                amount=rent.cents(row.amount),
+                what="no word",
+                company_owes=None,
+                bank_account_id=bank,
+                company_holds=rent.cents(held(conn, company_account(conn, pmc_id, bank))),
+                started_on=started_on,
+            )
+        )
     return found
 
 
