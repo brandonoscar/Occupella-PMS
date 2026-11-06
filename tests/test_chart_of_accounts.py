@@ -13,10 +13,12 @@ from pathlib import Path
 import psycopg
 import pytest
 from helpers import (
+    add_recurring_bill,
     add_recurring_charge,
     add_unit,
     approve_bill,
     decline_bill,
+    end_recurring_bill,
     enter_bill,
     make_pmc,
     open_lease,
@@ -138,6 +140,30 @@ def test_a_full_block_gives_the_next_free_expense_code(conn):
 
     assert sorted(found[a] for a in accounts) == [str(6401 + n) for n in range(99)]
     assert found[spill] == "5001"
+
+
+def test_a_range_with_no_code_free_refuses_another_account_in_words(conn):
+    pmc = make_pmc(conn).pmc_id
+    # Every income code a charge type may start with is an account's: the fixed lines' and 993
+    # charge types', from 4501 to 4999 and then from 4001 to 4499.
+    conn.execute(
+        "INSERT INTO trust_charge_types (pmc_id, name)"
+        " SELECT %s, 'Fee ' || n FROM generate_series(1, 993) AS n",
+        (pmc,),
+    )
+    taken = set(codes(conn, pmc).values())
+
+    with pytest.raises(
+        psycopg.errors.CheckViolation,
+        match="no code is free in the income range; give an account another code first",
+    ):
+        charge_type(conn, pmc, "One more")
+
+    assert taken == {str(n) for n in range(4000, 5000) if n != 4500} | {
+        "1000", "2000", "2100", "2110", "2120", "2150", "2200", "2250", "2300", "2400",
+        "5000", "5800", "6100", "6900",
+    }  # fmt: skip
+    assert one(conn, "SELECT count(*) FROM trust_charge_types WHERE pmc_id = %s", (pmc,)) == 993
 
 
 def test_codes_are_unique_in_a_company_but_not_across_companies(conn):
@@ -407,6 +433,45 @@ def test_an_expense_account_is_archived_only_once_no_open_bill_is_in_it(conn):
     ] == [False, True, True]
 
 
+def test_an_expense_account_is_archived_only_once_no_recurring_bill_in_it_runs(conn):
+    pmc = make_pmc(conn)
+    lawn = expense_account(conn, pmc.pmc_id, "Lawn care", 7)
+    other = expense_account(conn, pmc.pmc_id, "Other", 19)
+
+    def monthly(prefix, *accounts):
+        bill = add_recurring_bill(
+            conn, pmc.pmc_id, pmc.vendor_id, pmc.owners[0].account, prefix, "80.00", 5, TODAY
+        )
+        for account in accounts:  # the latest is the account it enters in
+            conn.execute(
+                "INSERT INTO trust_recurring_bill_expense_accounts"
+                " (pmc_id, recurring_bill_id, expense_account_id) VALUES (%s, %s, %s)",
+                (pmc.pmc_id, bill, account),
+            )
+        return bill
+
+    first = monthly("LAWN", lawn)
+    with pytest.raises(
+        psycopg.errors.CheckViolation,
+        match="Lawn care has a recurring bill still running in it; stop it or put it in another"
+        " expense account before archiving",
+    ):
+        archive(conn, pmc.pmc_id, expense=lawn)
+    # Stopped before today, it holds nothing back.
+    end_recurring_bill(conn, pmc.pmc_id, first, TODAY - DAY)
+    archive(conn, pmc.pmc_id, expense=lawn)
+    # Moved to another account, one holds that account back, never the one it was in.
+    archive(conn, pmc.pmc_id, expense=lawn, archived=False)
+    monthly("LAWN2", lawn, other)
+    archive(conn, pmc.pmc_id, expense=lawn)
+    with pytest.raises(psycopg.errors.CheckViolation, match="Other has a recurring bill"):
+        archive(conn, pmc.pmc_id, expense=other)
+
+    assert [
+        one(conn, "SELECT trust_expense_account_archived(%s)", (x,)) for x in (lawn, other)
+    ] == [True, False]
+
+
 def test_an_archived_expense_account_takes_no_new_bill_but_keeps_its_past(conn):
     pmc = make_pmc(conn)
     repairs = expense_account(conn, pmc.pmc_id, "Repairs", 14)
@@ -508,6 +573,46 @@ def test_archiving_and_names_are_never_rewritten(conn):
     ):
         with pytest.raises(psycopg.errors.RestrictViolation, match="append-only"):
             conn.execute(f"DELETE FROM {table}")  # noqa: S608
+
+
+# --- who keeps a fee, and the chart's report -------------------------------------------------
+
+
+def test_who_keeps_a_charge_types_fees_changes_each_time_it_is_said(conn):
+    pmc = make_pmc(conn).pmc_id
+    admin = charge_type(conn, pmc, "Admin fee")
+
+    def keeps(payee):
+        conn.execute(
+            "INSERT INTO trust_charge_type_payees (pmc_id, charge_type_id, payee)"
+            " VALUES (%s, %s, %s)",
+            (pmc, admin, payee),
+        )
+
+    # The owner keeps a new type's fees until the company says otherwise.
+    with pytest.raises(psycopg.errors.CheckViolation, match="Admin fee goes to the owner already"):
+        keeps("owner")
+    keeps("company")
+    with pytest.raises(
+        psycopg.errors.CheckViolation, match="Admin fee goes to the company already"
+    ):
+        keeps("company")
+    keeps("owner")
+
+    assert one(conn, "SELECT trust_charge_type_payee(%s)", (admin,)) == "owner"
+    assert (
+        one(
+            conn,
+            "SELECT count(*) FROM trust_charge_type_payees WHERE charge_type_id = %s",
+            (admin,),
+        )
+        == 2
+    )
+
+
+def test_the_chart_report_refuses_an_unknown_pmc(conn):
+    with pytest.raises(psycopg.errors.InvalidParameterValue, match="no PMC"):
+        report(conn, uuid.uuid4())
 
 
 # --- the migration on a database with books in it ---------------------------------------------

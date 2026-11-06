@@ -4,6 +4,7 @@ what the owner returned and kept of it, once. No money moves, so every trust ban
 ties out and no ledger account changes; the tenant ledger shows each as a memo line that changes
 no balance."""
 
+import uuid
 from datetime import date
 from decimal import Decimal
 
@@ -125,6 +126,11 @@ def test_at_move_out_the_owner_returns_or_keeps_it_once_and_nothing_moves(conn, 
         settle(conn, pmc, held, "1000.00", "0.00")
     with pytest.raises(psycopg.errors.CheckViolation, match="before it was held"):
         settle(conn, pmc, held, "1500.00", "0.00", on=date(2025, 12, 31))
+    with pytest.raises(
+        psycopg.errors.CheckViolation,
+        match="what the owner did is recorded on a day not after today, not 2999-01-01",
+    ):
+        settle(conn, pmc, held, "1500.00", "0.00", on=date(2999, 1, 1))
     settle(conn, pmc, held, "1200.00", "300.00", staff=staff)
     with pytest.raises(psycopg.errors.UniqueViolation):
         settle(conn, pmc, held, "1500.00", "0.00")
@@ -135,6 +141,27 @@ def test_at_move_out_the_owner_returns_or_keeps_it_once_and_nothing_moves(conn, 
         (held,),
     ).fetchone() == (Decimal("1200.00"), Decimal("300.00"), JUN_30, staff)
     assert books(conn, pmc) == before
+
+
+def test_what_the_owner_did_is_of_a_deposit_they_hold_in_its_company(conn, home):
+    pmc, lease, tenant = home
+    held = hold(conn, pmc, lease, tenant)
+    end_lease(conn, pmc.pmc_id, lease, JUN_30)
+    other = make_pmc(conn)
+
+    # Another company's deposit, or none: the foreign key refuses it.
+    for company, deposit in ((other, held), (pmc, uuid.uuid4())):
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            settle(conn, company, deposit, "1500.00", "0.00")
+
+    assert (
+        one(
+            conn,
+            "SELECT count(*) FROM trust_owner_held_deposit_outcomes WHERE held_id = %s",
+            (held,),
+        )
+        == 0
+    )
 
 
 def test_the_tenant_ledger_shows_it_as_memo_lines_that_change_no_balance(conn, home):

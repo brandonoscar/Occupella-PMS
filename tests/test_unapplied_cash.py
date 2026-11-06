@@ -148,6 +148,120 @@ def test_a_refund_is_a_payout_never_past_what_is_left_and_safe_to_retry(conn):
     assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
 
 
+def refund_as_asked(conn, pmc, receipt, amount, key):
+    return one(
+        conn,
+        "SELECT trust_refund_unapplied_cash(%s, %s, %s, 'Unknown payer', 'check', %s, now())",
+        (pmc.pmc_id, receipt, None if amount is None else Decimal(amount), key),
+    )
+
+
+def test_a_refund_is_made_at_read_committed(conn):
+    pmc = make_pmc(conn)
+    receipt, _ = receive(conn, pmc, unapplied_account(conn, pmc), "300.00")
+
+    with conn.transaction():
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        with pytest.raises(
+            psycopg.errors.InvalidTransactionState,
+            match="refund unapplied cash at READ COMMITTED, not repeatable read",
+        ):
+            refund(conn, pmc, receipt, "100.00")
+        raise psycopg.Rollback()
+
+    assert one(conn, "SELECT trust_unapplied_left(%s)", (receipt,)) == Decimal("300.00")
+
+
+@pytest.mark.parametrize(
+    ("key", "amount"),
+    [("", "10.00"), (None, "10.00"), ("r-1", None), ("r-1", "0.00"), ("r-1", "-5.00"),
+     ("r-1", "1.005")],
+)  # fmt: skip
+def test_a_refund_takes_a_request_key_and_a_positive_amount_in_cents(conn, key, amount):
+    pmc = make_pmc(conn)
+    receipt, _ = receive(conn, pmc, unapplied_account(conn, pmc), "300.00")
+
+    with pytest.raises(
+        psycopg.errors.InvalidParameterValue,
+        match="a refund of unapplied cash takes a request key and a positive amount in cents",
+    ):
+        refund_as_asked(conn, pmc, receipt, amount, key)
+
+
+def test_a_refund_is_of_unapplied_cash_of_its_own_company(conn):
+    pmc, other = make_pmc(conn), make_pmc(conn)
+    theirs, _ = receive(conn, other, unapplied_account(conn, other), "300.00")
+
+    for receipt in (theirs, uuid.uuid4()):
+        with pytest.raises(psycopg.errors.InvalidParameterValue, match="no unapplied cash"):
+            refund_as_asked(conn, pmc, receipt, "10.00", "r-1")
+
+    assert one(conn, "SELECT trust_unapplied_left(%s)", (theirs,)) == Decimal("300.00")
+
+
+def test_a_request_key_refunds_one_amount_of_one_receipt(conn):
+    pmc = make_pmc(conn)
+    account = unapplied_account(conn, pmc)
+    receipt, _ = receive(conn, pmc, account, "300.00")
+    another, _ = receive(conn, pmc, account, "50.00", payer="Another payer")
+    refund(conn, pmc, receipt, "100.00", key="r-1")
+
+    for other_receipt, amount in ((receipt, "50.00"), (another, "100.00")):
+        with pytest.raises(
+            psycopg.errors.UniqueViolation,
+            match="request key r-1 refunded other unapplied cash already",
+        ):
+            refund(conn, pmc, other_receipt, amount, key="r-1")
+
+    assert [one(conn, "SELECT trust_unapplied_left(%s)", (x,)) for x in (receipt, another)] == [
+        Decimal("200.00"),
+        Decimal("50.00"),
+    ]
+
+
+def test_an_application_never_takes_more_than_is_left_of_its_receipt(conn):
+    pmc = make_pmc(conn)
+    account = unapplied_account(conn, pmc)
+    receipt, _ = receive(conn, pmc, account, "100.00")
+    # Another payer's money in the same account: the account could pay more than this receipt.
+    receive(conn, pmc, account, "500.00", payer="Another payer")
+    refund(conn, pmc, receipt, "60.00")
+    tenant = one(
+        conn,
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (pmc.prepaid_rent,),
+    )
+    lease = open_lease(
+        conn,
+        pmc.pmc_id,
+        add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id),
+        JAN_10,
+        None,
+        "1000.00",
+        [tenant],
+    )
+    key = f"payment/{uuid.uuid4()}"
+    post(
+        conn,
+        pmc.pmc_id,
+        key,
+        [(account, pmc.owners[0].account, Decimal("50.00"))],
+        metadata={"key": key, "kind": "tenant payment"},
+    )
+
+    with pytest.raises(
+        psycopg.errors.CheckViolation,
+        match=r"only \$40.00 of this unapplied cash is left; \$50.00 is more",
+    ):
+        conn.execute(
+            "INSERT INTO trust_unapplied_applications (pmc_id, receipt_id, lease_id, amount,"
+            " payment_key) VALUES (%s, %s, %s, 50.00, %s)",
+            (pmc.pmc_id, receipt, lease, key),
+        )
+
+    assert one(conn, "SELECT trust_unapplied_left(%s)", (receipt,)) == Decimal("40.00")
+
+
 def test_month_end_is_not_approved_while_unapplied_cash_is_held(conn):
     pmc = make_pmc(conn)
     account = unapplied_account(conn, pmc)
