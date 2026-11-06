@@ -290,6 +290,19 @@ describe("LeasePage", () => {
     fireEvent.change(within(charge).getByLabelText("What for"), { target: { value: "Leak repair" } });
     fireEvent.click(within(charge).getByRole("button", { name: "Add" }));
     expect(await screen.findByText("Credit of $25.00 added.")).toBeTruthy();
+    // A credit given as a concession, on its own line in the owner's accrual statement.
+    const concession = await panel("Enter charge");
+    expect(within(concession).queryByLabelText("A concession (a discount on rent, on its own line)")).toBeNull();
+    fireEvent.change(within(concession).getByLabelText("Add a"), { target: { value: "credit" } });
+    fireEvent.change(within(concession).getByLabelText("Amount"), { target: { value: "100.00" } });
+    fireEvent.change(within(concession).getByLabelText("What for"), { target: { value: "Move-in special" } });
+    fireEvent.click(within(concession).getByLabelText("A concession (a discount on rent, on its own line)"));
+    fireEvent.click(within(concession).getByRole("button", { name: "Add" }));
+    expect(await screen.findByText("Concession of $100.00 added.")).toBeTruthy();
+    expect(posted(fetch).filter(([path]) => path === "/api/rent/leases/l1/charges").map(([, body]) => body)).toEqual([
+      expect.not.objectContaining({ concession: true }),
+      expect.objectContaining({ kind: "credit", amount: "100.00", memo: "Move-in special", concession: true }),
+    ]);
     const deposit = await panel("Record deposit", true);
     fireEvent.change(within(deposit).getByLabelText("Deposit from"), { target: { value: "t2" } });
     fireEvent.change(within(deposit).getByLabelText("Deposit received"), { target: { value: "500.00" } });
@@ -306,15 +319,16 @@ describe("LeasePage", () => {
 
     const calls = posted(fetch);
     expect(calls.map(([path]) => path)).toEqual([
-      "/api/rent/leases/l1/use-prepaid", "/api/rent/leases/l1/charges", "/api/rent/deposits", "/api/rent/deposits",
+      "/api/rent/leases/l1/use-prepaid", "/api/rent/leases/l1/charges", "/api/rent/leases/l1/charges",
+      "/api/rent/deposits", "/api/rent/deposits",
     ]);
     // One owner: no account to choose.
     expect(calls[0]?.[1]).not.toHaveProperty("account");
     expect(calls[1]?.[1]).toMatchObject({ kind: "credit", amount: "25.00", memo: "Leak repair" });
-    expect(calls[2]?.[1]).toMatchObject({ tenant_id: "t2", amount: "500.00", kind: "security" });
+    expect(calls[3]?.[1]).toMatchObject({ tenant_id: "t2", amount: "500.00", kind: "security" });
     // No books to read here: no deposit account to choose, so the API takes the only one.
-    expect(calls[2]?.[1]).not.toHaveProperty("bank_account_id");
-    expect(calls[3]?.[1]).toMatchObject({ tenant_id: "t1", amount: "300.00", kind: "pet" });
+    expect(calls[3]?.[1]).not.toHaveProperty("bank_account_id");
+    expect(calls[4]?.[1]).toMatchObject({ tenant_id: "t1", amount: "300.00", kind: "pet" });
   });
 
   it("says what deposit the signed lease asked and records the rest from its card", async () => {
@@ -453,9 +467,19 @@ describe("LeasePage", () => {
     fireEvent.change(within(form).getByLabelText("Monthly, for"), { target: { value: "Parking" } });
     fireEvent.click(within(form).getByRole("button", { name: "Add every month" }));
     expect(await screen.findByText("Parking of $50.00 added every month.")).toBeTruthy();
+    const discount = await panel("Add recurring charge", true);
+    fireEvent.change(within(discount).getByLabelText("Every month, a"), { target: { value: "credit" } });
+    fireEvent.change(within(discount).getByLabelText("Monthly amount"), { target: { value: "25.00" } });
+    fireEvent.change(within(discount).getByLabelText("First due on"), { target: { value: "2026-11-01" } });
+    fireEvent.change(within(discount).getByLabelText("Monthly, for"), { target: { value: "Military discount" } });
+    fireEvent.click(within(discount).getByLabelText("A concession (a discount on rent, on its own line)"));
+    fireEvent.click(within(discount).getByRole("button", { name: "Add every month" }));
+    expect(await screen.findByText("Military discount of $25.00 added every month.")).toBeTruthy();
     expect(posted(fetch)).toEqual([
       ["/api/rent/recurring-charges/r1/stop", { ends_on: "2026-11-01" }],
       ["/api/rent/leases/l1/recurring-charges", { kind: "fee", amount: "50.00", memo: "Parking", starts_on: "2026-11-01" }],
+      ["/api/rent/leases/l1/recurring-charges",
+        { kind: "credit", amount: "25.00", memo: "Military discount", starts_on: "2026-11-01", concession: true }],
     ]);
   });
 

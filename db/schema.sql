@@ -1595,7 +1595,9 @@ CREATE TABLE public.trust_charges (
     recurring_charge_id uuid,
     work_order_id uuid,
     charge_type_id uuid,
+    concession boolean DEFAULT false NOT NULL,
     CONSTRAINT trust_charges_amount_check CHECK ((amount > (0)::numeric)),
+    CONSTRAINT trust_charges_concession_credit CHECK (((NOT concession) OR (kind = 'credit'::text))),
     CONSTRAINT trust_charges_kind_check CHECK ((kind = ANY (ARRAY['rent'::text, 'fee'::text, 'credit'::text])))
 );
 
@@ -10765,11 +10767,14 @@ BEGIN
     -- recurring charge's), as the cash statement has it. A lease end's adjustment of a rent or
     -- recurring charge (migration 0051), and a waiver (migration 0079), are what they change. A
     -- credit given on its own comes off rent, as credits come off a lease's rent first
-    -- (migration 0093).
+    -- (migration 0093). A concession, once or monthly, and a lease end's adjustment of a monthly
+    -- one, is a concession (part 7, migration 20261106000242), on a line of its own.
     classes AS (
         SELECT c.id,
                coalesce(o.charge_type_id, c.charge_type_id, rc.charge_type_id) AS charge_type,
                CASE
+                   WHEN c.concession OR coalesce(o.concession, false)
+                        OR coalesce(rc.concession, false) THEN 7
                    WHEN coalesce(o.kind, c.kind) = 'rent' THEN 1
                    WHEN coalesce(o.recurring_charge_id, c.recurring_charge_id) IS NOT NULL THEN 2
                    WHEN lf.fee_charge_id IS NOT NULL THEN 3
@@ -10918,6 +10923,13 @@ BEGIN
                            AND c.charge_type IS NULL), 0) AS total
         FROM accounts AS a
         CROSS JOIN incomes AS i
+        UNION ALL
+        -- Concessions, a contra to rent right after it, once some was given (Schedule E line 3).
+        SELECT c.account, 1, 1.5, 'income: concessions', 3, sum(c.amount)
+        FROM charged AS c
+        JOIN accounts AS a ON a.account = c.account
+        WHERE c.part = 7
+        GROUP BY c.account
         UNION ALL
         -- Each type by its name today (migration 20261106000210).
         SELECT c.account, 1, 6,
@@ -18867,7 +18879,9 @@ CREATE TABLE public.trust_recurring_charges (
     starts_on date NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     charge_type_id uuid,
+    concession boolean DEFAULT false NOT NULL,
     CONSTRAINT trust_recurring_charges_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_recurring_charges_concession_credit CHECK (((NOT concession) OR (kind = 'credit'::text))),
     CONSTRAINT trust_recurring_charges_kind_check CHECK ((kind = ANY (ARRAY['fee'::text, 'credit'::text]))),
     CONSTRAINT trust_recurring_charges_memo_check CHECK ((memo <> ''::text))
 );
@@ -37921,4 +37935,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261106000225'),
     ('20261106000230'),
     ('20261106000240'),
-    ('20261106000241');
+    ('20261106000241'),
+    ('20261106000242');

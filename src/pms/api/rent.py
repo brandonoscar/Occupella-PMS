@@ -959,6 +959,7 @@ class RecurringCharge(BaseModel):
     starts_on: date
     ends_on: date | None  # the first due date it is no longer charged for
     charge_type: str | None = None  # the company's type of fee it is
+    concession: bool = False  # a monthly credit given as a concession
 
 
 class RentChange(BaseModel):
@@ -1185,7 +1186,7 @@ ORDER BY d.starts_on, d.id
 # Recurring charges not stopped by the day: still charged, or to be.
 RECURRING = """
 SELECT r.lease_id, r.id, r.kind, r.memo, r.amount, r.starts_on, e.ends_on,
-       trust_charge_type_name(t.id)
+       trust_charge_type_name(t.id), r.concession
 FROM trust_recurring_charges AS r
 LEFT JOIN trust_recurring_charge_ends AS e ON e.recurring_charge_id = r.id
 LEFT JOIN trust_charge_types AS t ON t.id = r.charge_type_id
@@ -1324,7 +1325,7 @@ def built(
             )
         )
     recurring: dict[UUID, list[RecurringCharge]] = {}
-    for lease, r, kind, memo, amount, starts, ends, typed in conn.execute(
+    for lease, r, kind, memo, amount, starts, ends, typed, given in conn.execute(
         RECURRING, names
     ).fetchall():
         recurring.setdefault(lease, []).append(
@@ -1336,6 +1337,7 @@ def built(
                 starts_on=starts,
                 ends_on=ends,
                 charge_type=typed,
+                concession=given,
             )
         )
     changes: dict[UUID, list[RentChange]] = {}
@@ -1532,6 +1534,14 @@ class NewCharge(BaseModel):
     work_order_id: UUID | None = None
     # The company's type of fee it is (migration 0100), counted on its own income line.
     charge_type_id: UUID | None = None
+    # A credit given as a concession, a discount on rent (migration 20261106000242), which the
+    # owner's accrual income statement counts on a line of its own.
+    concession: bool = False
+
+
+def check_concession(kind: str, concession: bool) -> None:
+    if concession and kind != "credit":
+        raise HTTPException(422, "only a credit is a concession")
 
 
 class Created(BaseModel):
@@ -1574,11 +1584,12 @@ def add_charge(session: Staff, conn: Conn, lease_id: UUID, new: NewCharge) -> Cr
         ):
             raise HTTPException(404, "no such work order")
     check_charge_type(conn, session.pmc_id, new.kind, new.charge_type_id)
+    check_concession(new.kind, new.concession)
     try:
         row = conn.execute(
-            "INSERT INTO trust_charges"
-            " (pmc_id, lease_id, due_on, kind, amount, memo, work_order_id, charge_type_id)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo,"
+            " work_order_id, charge_type_id, concession)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (
                 session.pmc_id,
                 lease_id,
@@ -1588,6 +1599,7 @@ def add_charge(session: Staff, conn: Conn, lease_id: UUID, new: NewCharge) -> Cr
                 new.memo,
                 new.work_order_id,
                 new.charge_type_id,
+                new.concession,
             ),
         ).fetchone()
     except psycopg.errors.CheckViolation as refused:
@@ -1603,6 +1615,8 @@ class NewRecurringCharge(BaseModel):
     memo: Memo
     starts_on: date
     charge_type_id: UUID | None = None  # its type, as a one-off fee's (migration 0100)
+    # A monthly credit given as a concession, each month's credit one (migration 20261106000242).
+    concession: bool = False
 
 
 @router.post("/leases/{lease_id}/recurring-charges", status_code=201)
@@ -1613,10 +1627,11 @@ def add_recurring_charge(
     gets every month, charged by the rent run from the first due date on or after starts_on."""
     lease_of(conn, session.pmc_id, lease_id)
     check_charge_type(conn, session.pmc_id, new.kind, new.charge_type_id)
+    check_concession(new.kind, new.concession)
     row = conn.execute(
         "INSERT INTO trust_recurring_charges"
-        " (pmc_id, lease_id, kind, amount, memo, starts_on, charge_type_id)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        " (pmc_id, lease_id, kind, amount, memo, starts_on, charge_type_id, concession)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (
             session.pmc_id,
             lease_id,
@@ -1625,6 +1640,7 @@ def add_recurring_charge(
             new.memo,
             new.starts_on,
             new.charge_type_id,
+            new.concession,
         ),
     ).fetchone()
     assert row is not None
