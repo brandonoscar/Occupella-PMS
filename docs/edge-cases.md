@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1168 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1172 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -30,10 +30,10 @@ answer in the portal for everything that can fail.
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 70 | 8 | 87 | 21 |
 | [Bad files and imports](#bad-files-and-imports) | 154 | 68 | 16 | 70 | 1 |
-| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 160 | 91 | 10 | 59 | 6 |
+| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 164 | 95 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 174 | 77 | 14 | 83 | 3 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1168** | **606** | **110** | **452** | **51** |
+| **All** | **1172** | **610** | **110** | **452** | **51** |
 
 ## Open, high risk: the work list
 
@@ -1015,6 +1015,8 @@ its ten most pressing, each with the test that would close it.
 | U-119 | A withdrawal and making the lease at the same moment | One waits and is refused | Tested | tests/test_application_withdrawals.py::test_a_withdrawal_waits_for_a_lease_being_made_and_then_is_refused | H |
 | U-139 | The same payment sent twice (a double click, a retry) | Recorded once | Tested | tests/api/test_rent.py::test_sending_a_payment_again_records_it_once | H |
 | U-157 | An owner declines (or approves) a bill within their approval limit from the portal, as listed while the account is Short | Refused (409, "within your approval limit"), and the database refuses an owner's own portal decision on a bill within the limit of the agreement in force on its date (migration 20261106000100); staff pay it as before, and a decision staff record or the switching tool carries over is left as it was | Tested | tests/api/test_owner.py::test_an_owner_decides_only_the_bills_over_their_limit; tests/test_bill_decisions.py::test_in_the_portal_an_owner_decides_only_a_bill_over_their_limit; ::test_an_approval_carried_over_keeps_whatever_the_old_system_approved | H |
+| U-161 | An owner's or a tenant's password alone, once they turned two-step sign-in on at their Profile | Signing in asks for the authenticator's code; a wrong one, or one used already, is refused and counts as a failed sign-in; turning it on ends every other session of theirs (each opened without a code) | Tested | tests/api/test_two_step_api.py::test_an_owner_or_tenant_turns_two_step_on_and_then_signs_in_with_its_code; frontend/src/pages/TwoStepCard.test.tsx | H |
+| U-162 | Someone holding only an owner's or a tenant's email asks for a password reset while their two-step sign-in is on | The reset link asks for the authenticator's code before the password changes (`trust_invites.asked_for`); without it nothing changes and the old password still signs in; wrong codes count as failed sign-ins and lock the login after ten | Tested | tests/api/test_two_step_api.py::test_a_reset_they_ask_for_keeps_two_step_and_asks_its_code_first; ::test_a_reset_with_the_code_sets_the_password_and_keeps_two_step; frontend/src/pages/InvitePage.test.tsx ("asks a reset with two-step sign-in on for the code") | H |
 | U-006 | Someone types a long repair request, email or journal entry for over an hour without a request | The session ends with no warning; Save gets a "sign in first" toast and the typed work is lost (WCAG 2.2.1 asks for a warning) | Open | src/pms/accounts.py:43 IDLE_MINUTES; frontend/src/api.ts:36 call() has no 401 handling | M |
 | U-007 | A login is disabled while its tab is open | Its next request gets 401; the page keeps showing what it loaded and each click toasts "sign in first" instead of going to sign-in | Open | frontend/src/App.tsx:100 checks 401 only when the page first loads; frontend/src/api.ts:36 | M |
 | U-011 | Staff re-invite a disabled login | The invite is made (201) and, while the server sends email, emailed; the link then reads "can't be used" | Open | src/pms/accounts.py:192 create_invite has no disabled check; :267 _open_invite refuses it | M |
@@ -1091,6 +1093,8 @@ its ten most pressing, each with the test that would close it.
 | U-153 | Every page against WCAG 2.2 AA | axe checks every page the browser tests reach | Tested | frontend/e2e/portal.spec.ts "every page of the demo meets WCAG 2.2 AA as axe checks it, in plain words: staff's, an owner's, a tenant's and the public ones" | M |
 | U-158 | A page on a sibling subdomain (another site of the same domain) loads a GET that writes: an img of the 1099 export, a tax ID's reveal, a payout run's ACH file or checks | Refused (403, "this request came from another site") whenever the browser says another site asked, as every change is; nothing is recorded or taken. The session cookie is SameSite=Strict, which counts a sibling subdomain as the same site, so these four GETs had recorded an admin revealing every tax ID; a test walks the API and fails on any GET that writes without the check | Tested | tests/api/test_tax_ids_api.py::test_a_reveal_another_site_asked_for_is_refused_and_records_nothing; tests/api/test_payouts_api.py::test_a_payout_file_another_site_asked_for_is_refused_and_not_taken; tests/api/test_gets_that_write.py | M |
 | U-159 | An invite or a password reset link made before the company was suspended or closed, opened or accepted after | Refused (403) in the words sign-in uses, nothing set; it works again once the company is active (it set the password, then failed making the session: a server error) | Tested | tests/api/test_company_status.py::test_an_invite_of_a_company_that_isnt_active_is_refused_in_words | M |
+| U-163 | An owner or a tenant who lost the phone their authenticator is on | A new invite from staff, or the operator's `python -m pms.admin invite`, turns two-step off once they set the password from it (someone vouched for them); no backup codes are built | Tested | tests/api/test_two_step_api.py::test_an_invite_from_staff_or_the_operator_turns_two_step_off | M |
+| U-164 | A portal session left open: someone at it turns two-step off by guessing codes | Turning it off takes a code; each wrong one counts as a failed sign-in, and ten lock the login for 15 minutes, turning off included | Tested | tests/api/test_two_step_api.py::test_turning_two_step_off_takes_a_code; ::test_wrong_codes_turning_it_off_lock_the_login | M |
 | U-031 | A server run with several processes | Each process counts alone, so the sign-in limit is that many times larger | Open | src/pms/api/throttle.py docstring (counted per process) | L |
 | U-037 | Sign out on one device while others stay signed in | Only that session ends; there is no list of sessions or "sign out everywhere" short of a new password | Open | src/pms/accounts.py:480 sign_out | L |
 | U-038 | A shared office computer after sign-out | The browser keeps the company id and the last property scope | Open | frontend/src/App.tsx:101 PMC_KEY in localStorage; frontend/src/scope.ts | L |

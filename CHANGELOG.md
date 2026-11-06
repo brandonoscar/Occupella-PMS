@@ -6,6 +6,15 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+Migration `20261106000200` (two-step sign-in for owners and tenants).
+
+- **Two-step sign-in for owners and tenants:** from their Profile, an owner or a tenant sets up an
+  authenticator app (a QR code, or its key to type in) and turns two-step sign-in on with its
+  first code; anywhere else they were signed in, they are signed out. Signing in then asks for a
+  code, and turning it off takes one. A password reset they ask for keeps it and asks for the
+  code before the password changes, so an email alone gets no one in; a new invite from staff
+  turns it off, for someone who lost their phone. It is theirs to turn on: nothing requires it.
+
 Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-two.md`).
 
 - **The owner portal in sections:** Overview, Properties, Statements and reports, Bills, Repairs,

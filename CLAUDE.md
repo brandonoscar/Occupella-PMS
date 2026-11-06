@@ -145,6 +145,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
   password. Staff invite from the person's own page (staff from the staff page) and disable a
   login from Settings, Logins, for good: its sessions end and it takes no new invite. `trust_login_secrets` is never audited.
+  Since migration 20261106000200 (the founder's scope of 2026-10-22) an owner or a tenant turns
+  two-step sign-in on from their Profile (`src/pms/api/two_step.py`, `pages/TwoStepCard.tsx`): an
+  authenticator of their own, on once its first code proves it, which ends their other sessions;
+  then signing in asks for its code and turning it off takes one (a wrong code counts as a failed
+  sign-in). A reset they ask for keeps it (`trust_invites.asked_for`) and takes its code before
+  the password changes; any other invite, staff's or the operator's, turns it off. Opt-in; no
+  backup codes.
   Since migration 20261104000700 (the founder's review of 11/03, item 14) an owner or a tenant
   setting their password gives a phone, kept as E.164 (`src/pms/phones.py`) and as their contact
   phone, and says whether the company may text them, unchecked unless they check it
