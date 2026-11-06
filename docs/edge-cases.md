@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1160 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1164 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -29,11 +29,11 @@ answer in the portal for everything that can fail.
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 82 | 15 | 67 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 70 | 8 | 87 | 21 |
-| [Bad files and imports](#bad-files-and-imports) | 152 | 66 | 16 | 70 | 1 |
-| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 73 | 14 | 85 | 5 |
+| [Bad files and imports](#bad-files-and-imports) | 154 | 68 | 16 | 70 | 1 |
+| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 157 | 88 | 10 | 59 | 6 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 173 | 74 | 14 | 85 | 5 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1160** | **596** | **110** | **454** | **53** |
+| **All** | **1164** | **600** | **110** | **454** | **53** |
 
 ## Open, high risk: the work list
 
@@ -830,6 +830,7 @@ its ten most pressing, each with the test that would close it.
 | F-129 | Two tenants of the same name at different properties, in the QuickBooks export | No two accounts share a PMS-made name: the oldest keeps the plain name, each after it adds its tenant's property, then a number; a name once given never changes | Tested | tests/properties/test_quickbooks_properties.py::test_no_two_accounts_share_a_pms_made_name_and_none_ever_changes; tests/test_quickbooks.py::test_two_people_of_one_name_never_share_a_quickbooks_account | H |
 | F-138 | An ACH file downloaded again | Byte for byte the file made when the run was paid; each download is logged. The bank pays twice if it is uploaded twice | Tested | tests/api/test_payouts_api.py::test_an_ach_file_taken_again_is_the_one_made_when_the_run_was_paid | H |
 | F-139 | A payee routing number whose check digit fails | Refused when the bank account is saved | Tested | tests/api/test_payouts_api.py::test_a_bank_account_that_cant_be_paid_is_refused | H |
+| F-153 | A CSV header of 150,000 column names over thousands of short rows, under the 2 MB a file may send (a payment file preview or any switching file) | Refused before any row is built: a file has at most 1,000,000 cells, its rows times its columns, and the refusal says both (each short row was padded to every column, tens of gigabytes) | Tested | tests/api/test_switch.py::test_a_file_wider_than_its_cells_allow_is_refused_before_it_is_read; ::test_cells_are_counted_before_any_row_is_built | H |
 | F-009 | A POST body of hundreds of MB, to any endpoint including the public apply and sign-in pages | No body size limit. uvicorn and FastAPI read the whole body into memory before the 7,000,000-character field limit refuses it, so a few such requests can exhaust the worker's memory | Open | src/pms/api/__main__.py:11-16; src/pms/api/app.py (no body-size middleware) | M |
 | F-011 | A PDF carrying an embedded file (an .exe or .html attachment inside it) | Kept and served unchanged. The PMS reads nothing out of a file, so nothing flags or strips it | Open | src/pms/api/documents.py:386-409 | M |
 | F-012 | A receipt PDF with link actions or scripts on its pages, attached to a deposit statement | pypdf's append copies its pages, annotations included, into the statement that is emailed to the former tenant. NOT VERIFIED which actions survive | Open | src/pms/deposit_statement.py:183-186 | M |
@@ -897,6 +898,7 @@ its ten most pressing, each with the test that would close it.
 | F-133 | A colon in a holder's name; a tab, quote or line break in a memo | The colon becomes a dash; the others become spaces in IIF | Tested | tests/test_quickbooks.py::test_each_account_has_the_pms_name_until_the_company_names_it; tests/test_quickbooks.py::test_desktop_reads_balanced_general_journal_entries | M |
 | F-143 | A tenant named "{{balance_due}}" in a notice or lease template | Stays as text: blanks are filled in one pass | Tested | tests/test_notice_letters.py::test_each_blank_is_filled_once_with_its_value | M |
 | F-144 | An email attachment that can't be made (no such payment, a deposit not returned yet) | A failed delivery saying why, tried again, and given up on after five | Tested | tests/test_email_attachments.py::test_a_receipt_whose_file_cant_be_made_is_a_failed_delivery_saying_why; tests/api/test_deposit_statements_api.py::test_a_statement_that_cannot_be_made_is_a_failed_delivery | M |
+| F-154 | An amount written 1E30 (or -1E30, 9E999999) in a statement, payment file or switching file | Refused with its line as not an amount in cents (Decimal's quantize raised InvalidOperation, a server error) | Tested | tests/test_statement_files.py::test_an_amount_too_large_or_too_fine_is_refused_with_its_line | M |
 | F-004 | A real PDF that the browser reports as "application/x-pdf", "application/octet-stream" or "" (no extension, an odd OS mapping) | The portal picks the type from the browser, not from the bytes, and refuses a good file with "A file is a PDF, a JPEG or a PNG." | Open | frontend/src/documents.ts:85 | L |
 | F-005 | A 0-byte file | Its base64 is "", so pydantic's min_length=4 refuses it and the portal shows "check what you entered and try again". The API's own message would wrongly say "at most 5 MB" | Open | src/pms/api/documents.py:335,366; frontend/src/api.ts:66 | L |
 | F-008 | A 2 GB video picked in Files or Upload | The page reads the whole file into memory and base64-encodes it before showing "A file is at most 5 MB", so the tab may freeze or crash | Open | frontend/src/pages/DocumentsPage.tsx:162-167; frontend/src/pages/FilesCard.tsx:134 | L |
@@ -1014,6 +1016,7 @@ its ten most pressing, each with the test that would close it.
 | U-118 | A withdrawn application's offer gets every signature | It never becomes a lease | Tested | tests/test_application_withdrawals.py::test_no_offer_of_a_withdrawn_application_becomes_a_lease | H |
 | U-119 | A withdrawal and making the lease at the same moment | One waits and is refused | Tested | tests/test_application_withdrawals.py::test_a_withdrawal_waits_for_a_lease_being_made_and_then_is_refused | H |
 | U-139 | The same payment sent twice (a double click, a retry) | Recorded once | Tested | tests/api/test_rent.py::test_sending_a_payment_again_records_it_once | H |
+| U-157 | An owner declines (or approves) a bill within their approval limit from the portal, as listed while the account is Short | Refused (409, "within your approval limit"), and the database refuses an owner's own portal decision on a bill within the limit of the agreement in force on its date (migration 20261106000100); staff pay it as before, and a decision staff record or the switching tool carries over is left as it was | Tested | tests/api/test_owner.py::test_an_owner_decides_only_the_bills_over_their_limit; tests/test_bill_decisions.py::test_in_the_portal_an_owner_decides_only_a_bill_over_their_limit; ::test_an_approval_carried_over_keeps_whatever_the_old_system_approved | H |
 | U-006 | Someone types a long repair request, email or journal entry for over an hour without a request | The session ends with no warning; Save gets a "sign in first" toast and the typed work is lost (WCAG 2.2.1 asks for a warning) | Open | src/pms/accounts.py:43 IDLE_MINUTES; frontend/src/api.ts:36 call() has no 401 handling | M |
 | U-007 | A login is disabled while its tab is open | Its next request gets 401; the page keeps showing what it loaded and each click toasts "sign in first" instead of going to sign-in | Open | frontend/src/App.tsx:100 checks 401 only when the page first loads; frontend/src/api.ts:36 | M |
 | U-011 | Staff re-invite a disabled login | The invite is made (201) and, while the server sends email, emailed; the link then reads "can't be used" | Open | src/pms/accounts.py:192 create_invite has no disabled check; :267 _open_invite refuses it | M |
@@ -1237,6 +1240,7 @@ its ten most pressing, each with the test that would close it.
 | H-052 | PMS_DATA_KEY changed, then an ACH file is asked for | Refused, naming the payee whose number doesn't open | Tested | tests/api/test_payouts_api.py::test_an_ach_file_opens_its_numbers_only_under_the_key_they_were_sealed_with | M |
 | H-054 | PMS_DATA_KEY changed, and the company entered its own Stripe keys | No payment online; it never falls back to the server's keys | Tested | tests/api/test_payment_keys_api.py::test_keys_that_dont_open_here_take_no_payment_and_never_fall_back | M |
 | H-075 | The PMS restarting behind the proxy | 502 reads "the server answered 502", with no word that it is restarting | Tested | frontend/src/api.test.ts > names the status when the answer has no reason | M |
+| H-173 | A body just under 10 MB that isn't what the route takes, sent to sign-in with no session (a million empty objects) | 422 saying where and why, without the input refused (it was echoed back: about 4 s of the event loop and a 13 MB answer per request) | Tested | tests/api/test_body_limit.py::test_a_refused_body_is_never_echoed_back; tests/api/test_validation_errors_api.py::test_a_lone_surrogate_is_refused_not_a_server_error | M |
 | H-014 | The portal gets a 503 with Retry-After | Shows the words; never retries by itself, the person clicks again | Open | frontend/src/api.ts:36-50 | L |
 | H-045 | A migration takes a table lock while the app serves | Requests to that table wait with no lock_timeout; pages spin until it finishes | Open | src/pms/api/app.py:298-306 | L |
 | H-082 | The process is killed after an email went out and before its delivery committed | It is sent again later | Open | src/pms/email.py:653-682 | L |

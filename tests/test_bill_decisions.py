@@ -163,6 +163,49 @@ def test_a_decision_in_the_portal_is_the_bills_owners(conn, pmc, funded, decisio
     )
 
 
+@pytest.mark.parametrize("decision", ["approve", "decline"])
+@pytest.mark.parametrize("amount", ["80.00", "500.00"])
+def test_in_the_portal_an_owner_decides_only_a_bill_over_their_limit(
+    conn, pmc, funded, decision, amount
+):
+    # The AI pen test of 11/06: an owner declined a bill within their 500.00 limit (listed in the
+    # portal as Short), which stopped it for good and let the next draw pay its money out.
+    small = bill(conn, pmc, funded, amount=amount, reference="LIGHT-1")
+    act = approve_bill if decision == "approve" else decline_bill
+
+    with pytest.raises(psycopg.errors.CheckViolation, match="within its owner.s approval limit"):
+        act(
+            conn,
+            pmc.pmc_id,
+            small,
+            JAN_15,
+            "Owner 1, in the owner portal",
+            owner_id=pmc.owners[0].owner_id,
+        )
+    # It is paid without the owner, as before; one just over the limit is theirs to decide.
+    set_aside_bill(conn, pmc.pmc_id, small, at(JAN_15))
+    over = bill(conn, pmc, funded, amount="500.01", reference="ROOF-2")
+    act(
+        conn,
+        pmc.pmc_id,
+        over,
+        JAN_15,
+        "Owner 1, in the owner portal",
+        owner_id=pmc.owners[0].owner_id,
+    )
+
+
+def test_an_approval_carried_over_keeps_whatever_the_old_system_approved(conn, pmc, funded):
+    # The switching tool keeps the old system's approval as it was, naming how it was made.
+    small = bill(conn, pmc, funded, amount="80.00", reference="LIGHT-1")
+    conn.execute(
+        "INSERT INTO trust_bill_approvals"
+        " (pmc_id, bill_id, approved_on, approved_by, owner_id, method, note)"
+        " VALUES (%s, %s, %s, 'Owner 1', %s, 'carried_over', 'Approved in the old system')",
+        (pmc.pmc_id, small, JAN_15, pmc.owners[0].owner_id),
+    )
+
+
 def test_a_bill_of_another_pmc_is_not_decided(conn, pmc, funded):
     other = make_pmc(conn)
     roof = bill(conn, pmc, funded)

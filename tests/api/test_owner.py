@@ -298,7 +298,33 @@ def test_an_owner_decides_a_bill_once(client, conn, app_conn, pmc):
     assert again.json()["detail"] == "This bill was already approved or declined."
 
 
+def test_an_owner_decides_only_the_bills_over_their_limit(client, conn, app_conn, pmc):
+    # The AI pen test of 11/06: the 80.00 bill under the 500.00 limit, listed while the account
+    # can't cover it, was declined for good from the portal, and its money paid out by the draw.
+    _, light, _ = bills_of(conn, pmc)
+    join_as_owner(client, app_conn, pmc)
+
+    answers = [
+        client.post(f"/api/owner/bills/{light}/decline", json={"reason": "Too much"}),
+        client.post(f"/api/owner/bills/{light}/approval", json={}),
+    ]
+
+    assert [a.status_code for a in answers] == [409, 409]
+    assert {a.json()["detail"] for a in answers} == {
+        "This bill is within your approval limit of $500.00, so your manager pays it without"
+        " asking you."
+    }
+    assert conn.execute(
+        "SELECT (SELECT count(*) FROM trust_bill_approvals WHERE bill_id = %(bill)s),"
+        " (SELECT count(*) FROM trust_bill_declines WHERE bill_id = %(bill)s)",
+        {"bill": light},
+    ).fetchone() == (0, 0)
+
+
 def test_a_bill_whose_money_was_taken_is_not_declined_in_the_portal(client, conn, app_conn, pmc):
+    # Within the limit, it was never the owner's to decline (above); and the database refuses a
+    # decline of any bill whose money was taken, the owner's or staff's
+    # (tests/test_bill_decisions.py).
     _, light, _ = bills_of(conn, pmc)
     set_aside_bill(conn, pmc.pmc_id, light, datetime(2026, 1, 11, tzinfo=UTC))
     join_as_owner(client, app_conn, pmc)
@@ -306,7 +332,9 @@ def test_a_bill_whose_money_was_taken_is_not_declined_in_the_portal(client, conn
     answer = client.post(f"/api/owner/bills/{light}/decline", json={"reason": "Too much"})
 
     assert answer.status_code == 409
-    assert answer.json()["detail"] == "This bill is already being paid, so it can't be declined."
+    assert conn.execute(
+        "SELECT count(*) FROM trust_bill_declines WHERE bill_id = %s", (light,)
+    ).fetchone() == (0,)
 
 
 def test_another_owners_bill_reads_as_not_found(client, conn, app_conn, pmc):

@@ -637,7 +637,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and the staff member from the session (`recorded_by`; migration 20261104000200): the database
   refuses one a named staff member records without them. A bill takes one owner's decision (migration 0041): an approval or a decline
   (`trust_bill_declines`, with a reason), a decline only before it is set aside, and one taken
-  in the owner portal only by the owner of its property account. A declined bill is never set
+  in the owner portal only by the owner of its property account and only for a bill over their
+  limit (migration 20261106000100: one within it is paid without them; a decision staff record or
+  the switching tool carries over keeps its own rules). A declined bill is never set
   aside or paid, and from the day it was declined it holds nothing back from draws and is not
   unpaid in the reports.
 - A bill's life (migration 0152, `docs/adr/0010-design-pass.md`, the founder's design pass):
