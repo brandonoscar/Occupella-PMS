@@ -17,6 +17,7 @@ from helpers import (
     add_unit,
     make_pmc,
     open_lease,
+    transfer_batch,
 )
 
 from pms import accounts, autopay, email, nightly, payments
@@ -280,6 +281,64 @@ def test_the_scheduler_runs_each_company_once_its_day_has_begun(conn, database_u
     assert (date(2026, 11, 1), "rent", "1000.00") in charges(conn, leases[hawaii.pmc_id])
 
 
+def test_a_company_whose_run_failed_is_tried_again_the_next_hour_not_the_next_day(
+    conn, database_url, pmc, monkeypatch
+):
+    """docs/edge-cases.md D-015 and C-071: a run that fails on a passing cause (a deadlock, a lock
+    a staff request held) was marked done for its day, so its rent, late fees, reminders and
+    autopay waited a whole day. The next look, a minute past the next hour, runs it again."""
+    other = make_pmc(conn)
+    leases = {p.pmc_id: lease_since(conn, p, date(2026, 9, 1)) for p in (pmc, other)}
+    real = nightly.run_pmc
+    failing = [pmc.pmc_id]
+
+    def run_pmc(conn, pmc_id, *args):
+        if pmc_id in failing:
+            failing.remove(pmc_id)
+            raise psycopg.errors.DeadlockDetected("deadlock detected")
+        return real(conn, pmc_id, *args)
+
+    monkeypatch.setattr(nightly, "run_pmc", run_pmc)
+    now = [datetime(2026, 11, 1, 5, 1, tzinfo=UTC)]  # a minute past midnight in New York
+    runs = nightly.Scheduler(
+        database_url, "trust_app", URL, None, lambda: now[0], pmcs=[pmc.pmc_id, other.pmc_id]
+    )
+
+    assert [r.pmc_id for r in runs.run_once()] == [other.pmc_id]
+    assert runs.days == {other.pmc_id: date(2026, 11, 1)}  # the failed one's day is not done
+    assert date(2026, 11, 1) not in [day for day, *_ in charges(conn, leases[pmc.pmc_id])]
+
+    now[0] += timedelta(hours=1)
+    (again,) = runs.run_once(begun_only=True)
+    assert (again.pmc_id, again.rents) == (pmc.pmc_id, 1)
+    assert (date(2026, 11, 1), "rent", "1000.00") in charges(conn, leases[pmc.pmc_id])
+    assert runs.days == {pmc.pmc_id: date(2026, 11, 1), other.pmc_id: date(2026, 11, 1)}
+
+    now[0] += timedelta(hours=1)
+    assert runs.run_once(begun_only=True) == []  # each ran once for its day
+
+
+def test_a_scheduler_that_found_the_lock_held_looks_again_the_next_hour(conn, database_url, pmc):
+    """docs/edge-cases.md C-070: a look that found another run holding the lock ran nothing but
+    still marked every company's day as run here, so if the holder ran another day, or died, this
+    server never looked again that day."""
+    lease = lease_since(conn, pmc, date(2026, 9, 1))
+    now = [datetime(2026, 11, 1, 5, 1, tzinfo=UTC)]
+    runs = nightly.Scheduler(
+        database_url, "trust_app", URL, None, lambda: now[0], pmcs=[pmc.pmc_id]
+    )
+    with psycopg.connect(database_url, autocommit=True) as holder:
+        holder.execute("SELECT pg_advisory_lock(hashtextextended(%s, 0))", (nightly.LOCK,))
+        assert runs.run_once() == []
+        holder.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (nightly.LOCK,))
+    assert runs.days == {}
+
+    now[0] += timedelta(hours=1)
+    (ran,) = runs.run_once(begun_only=True)
+    assert (ran.pmc_id, ran.rents) == (pmc.pmc_id, 1)
+    assert (date(2026, 11, 1), "rent", "1000.00") in charges(conn, lease)
+
+
 @pytest.mark.timing
 def test_the_scheduler_runs_at_start_then_waits_for_its_time(conn, database_url, pmc):
     lease = lease_since(conn, pmc, date(2026, 9, 1))
@@ -379,6 +438,57 @@ def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url
     assert api_app.Settings.from_env().nightly is True
     monkeypatch.setenv("PMS_NIGHTLY", "off")
     assert api_app.Settings.from_env().nightly is False
+
+
+@pytest.mark.parametrize(
+    ("automatic", "debited", "held"), [(True, "700.00", 0), (False, "1000.00", 300)]
+)
+def test_a_balance_autopay_counts_prepaid_rent_only_once_the_company_uses_it_by_itself(
+    conn, app_conn, pmc, automatic, debited, held
+):
+    """docs/edge-cases.md M-026, a founder's decision: with prepaid rent used by itself (Company
+    setup, migration 0117, q031), the night uses it before autopay starts, so a balance autopay
+    debits the rest; with it off, as a company starts, prepaid rent waits for staff and a balance
+    autopay debits the whole balance."""
+    lease = lease_since(conn, pmc, date(2026, 9, 1))
+    transfer_batch(
+        conn,
+        [(pmc.operating_cash, pmc.prepaid_rent, "300.00")],
+        datetime(2026, 9, 20, tzinfo=UTC),
+    )
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_lease_tenants WHERE lease_id = %s", (lease,)
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO trust_payment_settings (pmc_id, online, ach_fee_payer)"
+        " VALUES (%s, true, 'company')",
+        (pmc.pmc_id,),
+    )
+    conn.execute(
+        "INSERT INTO trust_prepaid_rent_settings (pmc_id, automatic) VALUES (%s, %s)",
+        (pmc.pmc_id, automatic),
+    )
+    autopay_id = conn.execute(
+        "INSERT INTO trust_autopay (pmc_id, lease_id, tenant_id, rule, amount, partner)"
+        " VALUES (%s, %s, %s, 'balance', 5000, 'fake') RETURNING id",
+        (pmc.pmc_id, lease, tenant),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO trust_autopay_accounts (pmc_id, autopay_id, partner_customer, partner_method,"
+        " label, partner_event, saved_at) VALUES (%s, %s, 'fake_cus', 'fake_pm', 'Test bank',"
+        " 'evt_p', '2026-09-15T00:00:00Z')",
+        (pmc.pmc_id, autopay_id),
+    )
+
+    nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL, partner="fake")
+
+    payment = autopay.payment_id_for(autopay_id, date(2026, 10, 1))
+    assert conn.execute(
+        "SELECT amount::text FROM trust_online_payments WHERE id = %s", (payment,)
+    ).fetchone() == (debited,)
+    assert conn.execute(
+        "SELECT balance FROM pgledger_accounts WHERE id = %s", (pmc.prepaid_rent,)
+    ).fetchone() == (held,)
 
 
 def test_a_night_starts_the_autopay_payments_due_and_sends_them_to_the_partner(

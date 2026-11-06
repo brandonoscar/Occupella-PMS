@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Journal, JournalEntry } from "../journal";
+import { companyDay } from "../money";
 import { JournalPage } from "./JournalPage";
 
 afterEach(() => {
@@ -125,6 +126,7 @@ describe("JournalPage", () => {
       [
         "/api/journal",
         {
+          request_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
           event_on: "2026-03-01",
           memo: "Deposit held in operating",
           lines: [
@@ -136,6 +138,26 @@ describe("JournalPage", () => {
     ]);
     expect((screen.getByLabelText("What it corrects") as HTMLInputElement).value).toBe("");
     expect(screen.queryByLabelText("Line 2 amount")).toBeNull();
+    // No day after today is offered (M-135).
+    expect((screen.getByLabelText("Dated") as HTMLInputElement).max).toBe(companyDay());
+  });
+
+  it("proposes again under the same request id until one is proposed (C-065)", async () => {
+    const fetch = server(JOURNAL, { "/api/journal": "the server answered 502" });
+    render(<JournalPage me={ME} />);
+    await screen.findByLabelText("Line 1 from");
+    fireEvent.change(screen.getByLabelText("What it corrects"), { target: { value: "Wrong owner" } });
+    fireEvent.change(screen.getByLabelText("Line 1 amount"), { target: { value: "5.00" } });
+    const propose = screen.getByRole("button", { name: "Propose entry" }) as HTMLButtonElement;
+    fireEvent.click(propose);
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(1));
+    await vi.waitFor(() => expect(propose.disabled).toBe(false));
+    fireEvent.click(propose);
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(2));
+
+    const [first, again] = posted(fetch).map(([, body]) => (body as { request_id: string }).request_id);
+    expect(first).toMatch(/^[0-9a-f-]{36}$/);
+    expect(again).toBe(first);
   });
 
   it("declines an entry with why, and shows a refusal where it happened", async () => {

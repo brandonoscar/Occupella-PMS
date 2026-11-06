@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { DepositAsked, Hold, OpenCharge, RecurringCharge, RentLease } from "./rent";
+import type { DepositAsked, Hold, OpenCharge, Paid, RecurringCharge, RentLease } from "./rent";
 import {
+  alikePayment,
   balanceDue,
   bounceSummary,
   depositAskedLine,
@@ -202,6 +203,34 @@ describe("rent", () => {
     const one = requestId();
     expect(one).toMatch(/^[0-9a-f-]{36}$/);
     expect(requestId()).not.toBe(one);
+  });
+});
+
+describe("alikePayment", () => {
+  const paid = (amount: string, received_on: string): Paid =>
+    ({ transfer_id: `t-${amount}-${received_on}`, received_on, amount, reference: null, method: "check", bounced: false });
+  const payments = [paid("600.00", "2026-03-05"), paid("45.10", "2026-03-04")];
+
+  it("finds a payment of the amount typed received the same day, however the amount is written", () => {
+    expect(alikePayment(payments, "600", "2026-03-05")?.transfer_id).toBe("t-600.00-2026-03-05");
+    expect(alikePayment(payments, " 600.0 ", "2026-03-05")?.transfer_id).toBe("t-600.00-2026-03-05");
+    expect(alikePayment(payments, "45.1", "2026-03-04")?.transfer_id).toBe("t-45.10-2026-03-04");
+  });
+  it("finds none for another day, another amount or an amount typed half way", () => {
+    expect(alikePayment(payments, "600.00", "2026-03-04")).toBeNull();
+    expect(alikePayment(payments, "600.01", "2026-03-05")).toBeNull();
+    expect(alikePayment(payments, "60", "2026-03-05")).toBeNull();
+    expect(alikePayment(payments, "", "2026-03-05")).toBeNull();
+    expect(alikePayment(payments, "600.", "2026-03-05")).toBeNull();
+    expect(alikePayment(payments, "6,00", "2026-03-05")).toBeNull();
+  });
+  it("finds none paid another way or with another check number, where both say one", () => {
+    const check = { ...paid("600.00", "2026-03-05"), reference: "Check 2101" };
+    expect(alikePayment([check], "600", "2026-03-05", "cash")).toBeNull();
+    expect(alikePayment([check], "600", "2026-03-05", "check", "Check 2102")).toBeNull();
+    expect(alikePayment([check], "600", "2026-03-05", "check", " check 2101 ")).toBe(check);
+    expect(alikePayment([check], "600", "2026-03-05", "check", "")).toBe(check);
+    expect(alikePayment([{ ...check, method: null }], "600", "2026-03-05", "EFT")).not.toBeNull();
   });
 });
 

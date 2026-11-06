@@ -244,6 +244,28 @@ def test_an_early_end_charges_the_lease_break_fee_in_force_on_its_first_day(
     )
 
 
+def test_ending_again_with_the_lease_break_fee_charges_it_once(client, conn, staff, pmc, lease):
+    # End lease with its lease-break fee sent again (two tabs, a resend; docs/edge-cases.md
+    # C-133): the lease is charged one fee, and the resend is answered as the first was.
+    ok(terms(client, pmc, START - timedelta(days=30)), 201)
+    last = TODAY + timedelta(days=30)
+    end = {"ends_on": str(last), "break_fee": True}
+
+    ok(client.post(f"/api/move-out/{lease}/end", json=end), 204)
+    ok(client.post(f"/api/move-out/{lease}/end", json=end), 204)
+    earlier = client.post(
+        f"/api/move-out/{lease}/end",
+        json={"ends_on": str(last - timedelta(days=5)), "break_fee": True},
+    )
+
+    assert earlier.status_code == 409, earlier.text
+    assert earlier.json()["detail"] == "this lease was charged its lease-break fee already"
+    assert charges(conn, lease) == [(last, 2050, "Lease-break fee")]
+    assert conn.execute("SELECT ends_on FROM trust_leases WHERE id = %s", (lease,)).fetchone() == (
+        last,
+    )
+
+
 def test_a_lease_breaks_only_when_it_ends_before_its_end_date_under_terms(
     client, conn, staff, pmc, tenants, lease
 ):

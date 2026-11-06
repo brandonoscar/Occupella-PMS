@@ -68,6 +68,7 @@ def fee(client, lease, amount, memo, charge_type=None, due_on=START):
         send(
             client,
             f"/api/rent/leases/{lease}/charges",
+            request_id=uuid.uuid4(),
             kind="fee",
             amount=amount,
             due_on=due_on,
@@ -277,6 +278,7 @@ def test_the_owners_statements_and_management_fee_leave_the_companys_fees_out(
             send(
                 client,
                 f"/api/rent/leases/{lease}/recurring-charges",
+                request_id=uuid.uuid4(),
                 kind="fee",
                 amount=amount,
                 memo=memo,

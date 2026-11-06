@@ -89,6 +89,29 @@ def test_two_people_of_one_name_never_share_a_quickbooks_account(conn, app_conn)
     assert len(set(shown.values())) == len(shown)
 
 
+def test_two_bank_accounts_of_one_name_and_an_owners_account_in_each_never_share_one(
+    conn, app_conn
+):
+    """docs/edge-cases.md P-142, F-130: two trust bank accounts named alike, and an owner's
+    account for one property in each, made one QuickBooks account of each pair."""
+    pmc = make_pmc(conn)
+    owner = pmc.owners[0]
+    second = conn.execute(
+        "INSERT INTO trust_bank_accounts (pmc_id, kind, display_name)"
+        " VALUES (%s, 'operating', 'Synthetic operating trust account') RETURNING id",
+        (pmc.pmc_id,),
+    ).fetchone()[0]
+    cash = open_account(conn, pmc.pmc_id, second, "bank_cash")
+    there = open_account(
+        conn, pmc.pmc_id, second, "owner_property", owner.owner_id, owner.property_id
+    )
+    shown = names(app_conn, pmc)
+
+    assert shown[pmc.operating_cash] != shown[cash]
+    assert shown[owner.account] != shown[there]
+    assert len(set(shown.values())) == len(shown)
+
+
 @pytest.mark.parametrize("bad", ["Trust:", ":Trust", "Trust::Cash", "Trust :Cash", "a\tb", " x"])
 def test_a_name_quickbooks_cant_read_is_refused(conn, bad):
     pmc = make_pmc(conn)

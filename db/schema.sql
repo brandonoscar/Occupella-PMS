@@ -1431,32 +1431,35 @@ $$;
 
 
 --
--- Name: trust_bill_holds(uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Name: trust_bill_holds(uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.trust_bill_holds(p_pmc_id uuid) RETURNS TABLE(bill_id uuid, held numeric, short numeric, needed numeric)
+CREATE FUNCTION public.trust_bill_holds(p_pmc_id uuid, p_at timestamp with time zone DEFAULT now()) RETURNS TABLE(bill_id uuid, held numeric, short numeric, needed numeric)
     LANGUAGE sql STABLE
     SET search_path TO 'public', 'pg_temp'
     AS $$
-    WITH open AS (
+    WITH today AS (
+        SELECT trust_pmc_day(p_pmc_id, p_at) AS day
+    ),
+    open AS (
         SELECT b.id, b.ledger_account_id, b.due_on, b.bill_date, b.reference,
                b.amount + coalesce(m.amount, 0) AS need
         FROM trust_bills AS b
         LEFT JOIN trust_bill_markups AS m ON m.bill_id = b.id
         WHERE b.pmc_id = p_pmc_id
-          AND b.bill_date <= (now() AT TIME ZONE 'UTC')::date
+          AND b.bill_date <= (SELECT t.day FROM today AS t)
           AND NOT EXISTS (SELECT 1 FROM trust_bill_payments AS p
                           WHERE p.bill_id = b.id AND p.step = 'set_aside')
           AND NOT EXISTS (SELECT 1 FROM trust_bill_declines AS d WHERE d.bill_id = b.id)
     ),
     running AS (
-        -- What the account holds above the reserve its agreement in force today keeps: the
-        -- reserve stays in the account, so a bill is never laid over it.
+        -- What the account holds above the reserve its agreement in force on the company's day
+        -- keeps: the reserve stays in the account, so a bill is never laid over it.
         SELECT o.id, o.need,
                greatest(a.balance - coalesce((
                    SELECT g.reserve FROM trust_management_agreements AS g
                    WHERE g.ledger_account_id = o.ledger_account_id
-                     AND g.starts_on <= (now() AT TIME ZONE 'UTC')::date
+                     AND g.starts_on <= (SELECT t.day FROM today AS t)
                    ORDER BY g.starts_on DESC LIMIT 1), 0), 0) AS balance,
                sum(o.need) OVER (
                    PARTITION BY o.ledger_account_id
@@ -1596,6 +1599,7 @@ CREATE TABLE public.trust_charges (
     work_order_id uuid,
     charge_type_id uuid,
     concession boolean DEFAULT false NOT NULL,
+    request_id uuid,
     CONSTRAINT trust_charges_amount_check CHECK ((amount > (0)::numeric)),
     CONSTRAINT trust_charges_concession_credit CHECK (((NOT concession) OR (kind = 'credit'::text))),
     CONSTRAINT trust_charges_kind_check CHECK ((kind = ANY (ARRAY['rent'::text, 'fee'::text, 'credit'::text])))
@@ -1671,6 +1675,9 @@ BEGIN
             AND c.due_on >= date_trunc('month', p_due_on::timestamp)::date
             AND c.due_on < (date_trunc('month', p_due_on::timestamp) + interval '1 month')::date
       )
+      -- Due by the PMS's books, not the old system's before the cutover, as rent is.
+      AND greatest(date_trunc('month', p_due_on::timestamp)::date, l.starts_on, r.starts_on)
+          >= coalesce(trust_lease_cutover(l.id), '-infinity'::date)
     ORDER BY r.id
     ON CONFLICT (recurring_charge_id, due_on) WHERE recurring_charge_id IS NOT NULL DO NOTHING;
     GET DIAGNOSTICS v_charged = ROW_COUNT;
@@ -1695,6 +1702,7 @@ BEGIN
             AND date_trunc('month', c.due_on::timestamp)
                 = date_trunc('month', l.starts_on::timestamp)
       )
+      AND l.starts_on >= coalesce(trust_lease_cutover(l.id), '-infinity'::date)
     ORDER BY r.id
     ON CONFLICT (recurring_charge_id, due_on) WHERE recurring_charge_id IS NOT NULL DO NOTHING;
     GET DIAGNOSTICS v_first = ROW_COUNT;
@@ -1740,6 +1748,8 @@ BEGIN
             AND date_trunc('month', c.due_on::timestamp)
                 = date_trunc('month', p_month::timestamp)
       )
+      -- Due by the PMS's books, not the old system's before the cutover.
+      AND d.due_on >= coalesce(trust_lease_cutover(l.id), '-infinity'::date)
     ORDER BY r.id
     ON CONFLICT (recurring_charge_id, due_on) WHERE recurring_charge_id IS NOT NULL DO NOTHING;
     GET DIAGNOSTICS v_charged = ROW_COUNT;
@@ -1789,6 +1799,10 @@ BEGIN
             AND c.due_on >= date_trunc('month', p_due_on::timestamp)::date
             AND c.due_on < (date_trunc('month', p_due_on::timestamp) + interval '1 month')::date
       )
+      -- The month's rent was due (on its first, or the lease's first day) by the PMS's books,
+      -- not the old system's before the cutover.
+      AND greatest(date_trunc('month', p_due_on::timestamp)::date, l.starts_on)
+          >= coalesce(trust_lease_cutover(l.id), '-infinity'::date)
     ORDER BY l.id
     ON CONFLICT (lease_id, due_on) WHERE kind = 'rent' DO NOTHING;
     GET DIAGNOSTICS v_charged = ROW_COUNT;
@@ -1811,6 +1825,7 @@ BEGIN
             AND date_trunc('month', c.due_on::timestamp)
                 = date_trunc('month', l.starts_on::timestamp)
       )
+      AND l.starts_on >= coalesce(trust_lease_cutover(l.id), '-infinity'::date)
     ORDER BY l.id
     ON CONFLICT (lease_id, due_on) WHERE kind = 'rent' DO NOTHING;
     GET DIAGNOSTICS v_first = ROW_COUNT;
@@ -1854,6 +1869,8 @@ BEGIN
             AND date_trunc('month', c.due_on::timestamp)
                 = date_trunc('month', p_month::timestamp)
       )
+      -- Due by the PMS's books, not the old system's before the cutover.
+      AND d.due_on >= coalesce(trust_lease_cutover(l.id), '-infinity'::date)
     ORDER BY l.id
     ON CONFLICT (lease_id, due_on) WHERE kind = 'rent' DO NOTHING;
     GET DIAGNOSTICS v_charged = ROW_COUNT;
@@ -2506,7 +2523,8 @@ BEGIN
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM trust_autopay_accounts AS a
-        WHERE a.autopay_id = NEW.autopay_id AND a.saved_at::date <= NEW.due_on
+        WHERE a.autopay_id = NEW.autopay_id
+            AND trust_pmc_day(NEW.pmc_id, a.saved_at) <= NEW.due_on
     ) THEN
         RAISE EXCEPTION 'trust: autopay % had no bank account saved by %', NEW.autopay_id,
             NEW.due_on
@@ -4995,16 +5013,29 @@ BEGIN
     SELECT t.display_name, t.property_id INTO v_first
     FROM trust_tenants AS t WHERE t.pmc_id = NEW.pmc_id AND t.id = NEW.same_as;
 
+    IF EXISTS (SELECT 1 FROM trust_tenant_unlinks AS u WHERE u.tenant_id = NEW.tenant_id) THEN
+        RAISE EXCEPTION 'trust: % was linked to a record and its link was taken back: a record is '
+            'linked once; link the other record to them instead', v_joining.display_name
+            USING ERRCODE = 'check_violation';
+    END IF;
     IF EXISTS (SELECT 1 FROM trust_tenant_links AS k WHERE k.tenant_id = NEW.tenant_id) THEN
         RAISE EXCEPTION 'trust: % is linked to their first record already', v_joining.display_name
             USING ERRCODE = 'check_violation';
     END IF;
-    IF EXISTS (SELECT 1 FROM trust_tenant_links AS k WHERE k.tenant_id = NEW.same_as) THEN
+    IF EXISTS (
+        SELECT 1 FROM trust_tenant_links AS k
+        WHERE k.tenant_id = NEW.same_as
+          AND NOT EXISTS (SELECT 1 FROM trust_tenant_unlinks AS u WHERE u.tenant_id = k.tenant_id)
+    ) THEN
         RAISE EXCEPTION 'trust: % is linked to another record already: link to their first',
             v_first.display_name
             USING ERRCODE = 'check_violation';
     END IF;
-    IF EXISTS (SELECT 1 FROM trust_tenant_links AS k WHERE k.same_as = NEW.tenant_id) THEN
+    IF EXISTS (
+        SELECT 1 FROM trust_tenant_links AS k
+        WHERE k.same_as = NEW.tenant_id
+          AND NOT EXISTS (SELECT 1 FROM trust_tenant_unlinks AS u WHERE u.tenant_id = k.tenant_id)
+    ) THEN
         RAISE EXCEPTION 'trust: % has records at other properties linked to them: link % to them instead',
             v_joining.display_name, v_first.display_name
             USING ERRCODE = 'check_violation';
@@ -5049,7 +5080,8 @@ BEGIN
     SELECT f.display_name INTO v_first
     FROM trust_tenant_links AS k
     JOIN trust_tenants AS f ON f.id = k.same_as
-    WHERE k.pmc_id = NEW.pmc_id AND k.tenant_id = NEW.tenant_id;
+    WHERE k.pmc_id = NEW.pmc_id AND k.tenant_id = NEW.tenant_id
+      AND NOT EXISTS (SELECT 1 FROM trust_tenant_unlinks AS u WHERE u.tenant_id = k.tenant_id);
     IF FOUND THEN
         RAISE EXCEPTION 'trust: this tenant signs in as % at their first property: invite them there',
             v_first
@@ -5076,6 +5108,27 @@ BEGIN
             NEW.transfer_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_tenant_unlink(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_tenant_unlink() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM 1 FROM trust_tenants AS t
+    WHERE t.pmc_id = NEW.pmc_id
+      AND t.id IN (SELECT k.tenant_id FROM trust_tenant_links AS k WHERE k.tenant_id = NEW.tenant_id
+                   UNION ALL
+                   SELECT k.same_as FROM trust_tenant_links AS k WHERE k.tenant_id = NEW.tenant_id)
+    ORDER BY t.id
+    FOR NO KEY UPDATE;
     RETURN NEW;
 END;
 $$;
@@ -5365,7 +5418,7 @@ CREATE FUNCTION public.trust_check_work_order_step_vendor() RETURNS trigger
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
-    v_day date := (NEW.taken_at AT TIME ZONE 'UTC')::date;
+    v_day date := trust_pmc_day(NEW.pmc_id, NEW.taken_at);
     v_expires date;
 BEGIN
     IF NEW.step = 'scheduled' AND NOT EXISTS (
@@ -6227,6 +6280,24 @@ $$;
 
 
 --
+-- Name: trust_lease_cutover(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_lease_cutover(p_lease_id uuid) RETURNS date
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT max(o.opened_on)
+    FROM trust_leases AS l
+    JOIN trust_units AS u ON u.id = l.unit_id
+    JOIN trust_ledger_accounts AS a
+      ON a.property_id = u.property_id AND a.kind = 'owner_property'
+    JOIN trust_opening_balances AS o ON o.bank_account_id = a.bank_account_id
+    WHERE l.id = p_lease_id;
+$$;
+
+
+--
 -- Name: trust_lease_moved_from(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6417,6 +6488,7 @@ CREATE TABLE public.trust_journal_entries (
     memo text NOT NULL,
     proposed_by uuid NOT NULL,
     proposed_at timestamp with time zone DEFAULT now() NOT NULL,
+    request_id uuid,
     CONSTRAINT trust_journal_entries_memo_check CHECK (((memo ~ '\S'::text) AND (length(memo) <= 500)))
 );
 
@@ -7652,6 +7724,11 @@ BEGIN
             USING ERRCODE = 'insufficient_privilege',
                   HINT = 'Another staff member who holds the approve role posts it.';
     END IF;
+    IF v_entry.event_on > trust_pmc_day(p_pmc_id, clock_timestamp()) THEN
+        RAISE EXCEPTION 'trust: a journal entry dated % posts on its day or later, not before',
+            to_char(v_entry.event_on, 'MM/DD/YYYY')
+            USING ERRCODE = 'check_violation';
+    END IF;
 
     SELECT array_agg(t.id ORDER BY t.ordinality) INTO v_transfers
     FROM pgledger_create_transfers(
@@ -8249,16 +8326,18 @@ $$;
 
 
 --
--- Name: trust_propose_journal_entry(uuid, date, text, public.transfer_request[]); Type: FUNCTION; Schema: public; Owner: -
+-- Name: trust_propose_journal_entry(uuid, date, text, public.transfer_request[], uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.trust_propose_journal_entry(p_pmc_id uuid, p_event_on date, p_memo text, p_lines public.transfer_request[]) RETURNS uuid
+CREATE FUNCTION public.trust_propose_journal_entry(p_pmc_id uuid, p_event_on date, p_memo text, p_lines public.transfer_request[], p_request_id uuid DEFAULT NULL::uuid) RETURNS uuid
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
     v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
     v_entry uuid;
+    v_before trust_journal_entries;
+    v_today date := trust_pmc_day(p_pmc_id, clock_timestamp());
 BEGIN
     IF v_staff IS NULL THEN
         RAISE EXCEPTION 'trust: name the staff member who proposes the journal entry'
@@ -8266,6 +8345,36 @@ BEGIN
     END IF;
     IF p_event_on IS NULL THEN
         RAISE EXCEPTION 'trust: a journal entry is dated a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- The same request again returns what it proposed; another entry under its id is refused.
+    IF p_request_id IS NOT NULL THEN
+        PERFORM pg_advisory_xact_lock(
+            hashtextextended('journal entry request ' || p_request_id::text, 0)
+        );
+        SELECT e.* INTO v_before FROM trust_journal_entries AS e
+        WHERE e.pmc_id = p_pmc_id AND e.request_id = p_request_id;
+        IF FOUND THEN
+            IF v_before.proposed_by = v_staff
+               AND v_before.event_on = p_event_on
+               AND v_before.memo = p_memo
+               AND ARRAY(
+                       SELECT (l.from_account, l.to_account, l.amount)::transfer_request
+                       FROM trust_journal_entry_lines AS l
+                       WHERE l.entry_id = v_before.id
+                       ORDER BY l.line
+                   ) = p_lines
+            THEN
+                RETURN v_before.id;
+            END IF;
+            RAISE EXCEPTION 'trust: request id % was used for a different journal entry',
+                p_request_id
+                USING ERRCODE = 'unique_violation';
+        END IF;
+    END IF;
+    IF p_event_on > v_today THEN
+        RAISE EXCEPTION 'trust: a journal entry is dated no later than the company''s today, %, '
+            'not %', v_today, p_event_on
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     IF coalesce(cardinality(p_lines), 0) NOT BETWEEN 1 AND 20 THEN
@@ -8287,8 +8396,8 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
-    INSERT INTO trust_journal_entries (pmc_id, event_on, memo, proposed_by)
-    VALUES (p_pmc_id, p_event_on, p_memo, v_staff)
+    INSERT INTO trust_journal_entries (pmc_id, event_on, memo, proposed_by, request_id)
+    VALUES (p_pmc_id, p_event_on, p_memo, v_staff, p_request_id)
     RETURNING id INTO v_entry;
     INSERT INTO trust_journal_entry_lines (
         entry_id, pmc_id, line, from_account, to_account, amount
@@ -14773,18 +14882,21 @@ CREATE FUNCTION public.trust_tenant_records(p_pmc_id uuid, p_tenant_id uuid) RET
     LANGUAGE sql STABLE
     SET search_path TO 'public', 'pg_temp'
     AS $$
-    WITH person AS (
+    WITH standing AS (
+        SELECT k.tenant_id, k.same_as FROM trust_tenant_links AS k
+        WHERE k.pmc_id = p_pmc_id
+          AND NOT EXISTS (SELECT 1 FROM trust_tenant_unlinks AS u WHERE u.tenant_id = k.tenant_id)
+    ),
+    person AS (
         SELECT coalesce(
-            (SELECT k.same_as FROM trust_tenant_links AS k
-             WHERE k.pmc_id = p_pmc_id AND k.tenant_id = p_tenant_id),
-            p_tenant_id
+            (SELECT k.same_as FROM standing AS k WHERE k.tenant_id = p_tenant_id), p_tenant_id
         ) AS id
     )
     SELECT t.id FROM trust_tenants AS t, person
     WHERE t.pmc_id = p_pmc_id AND t.id = person.id
     UNION
-    SELECT k.tenant_id FROM trust_tenant_links AS k, person
-    WHERE k.pmc_id = p_pmc_id AND k.same_as = person.id
+    SELECT k.tenant_id FROM standing AS k, person
+    WHERE k.same_as = person.id
 $$;
 
 
@@ -18932,6 +19044,7 @@ CREATE TABLE public.trust_recurring_charges (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     charge_type_id uuid,
     concession boolean DEFAULT false NOT NULL,
+    request_id uuid,
     CONSTRAINT trust_recurring_charges_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
     CONSTRAINT trust_recurring_charges_concession_credit CHECK (((NOT concession) OR (kind = 'credit'::text))),
     CONSTRAINT trust_recurring_charges_kind_check CHECK ((kind = ANY (ARRAY['fee'::text, 'credit'::text]))),
@@ -19477,6 +19590,18 @@ CREATE TABLE public.trust_tenant_links (
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT trust_tenant_links_check CHECK ((tenant_id <> same_as))
+);
+
+
+--
+-- Name: trust_tenant_unlinks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_tenant_unlinks (
+    tenant_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
 );
 
 
@@ -23160,6 +23285,14 @@ ALTER TABLE ONLY public.trust_tenant_links
 
 
 --
+-- Name: trust_tenant_unlinks trust_tenant_unlinks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_unlinks
+    ADD CONSTRAINT trust_tenant_unlinks_pkey PRIMARY KEY (tenant_id);
+
+
+--
 -- Name: trust_tenants trust_tenants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24083,6 +24216,13 @@ CREATE UNIQUE INDEX trust_charges_one_rent_per_due_date ON public.trust_charges 
 
 
 --
+-- Name: trust_charges_request; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_charges_request ON public.trust_charges USING btree (pmc_id, request_id) WHERE (request_id IS NOT NULL);
+
+
+--
 -- Name: trust_charges_work_order_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -24626,6 +24766,13 @@ CREATE INDEX trust_income_certifications_recorded_by ON public.trust_income_cert
 --
 
 CREATE UNIQUE INDEX trust_inspection_items_room ON public.trust_inspection_items USING btree (inspection_id, lower(room));
+
+
+--
+-- Name: trust_journal_entries_request; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_journal_entries_request ON public.trust_journal_entries USING btree (pmc_id, request_id) WHERE (request_id IS NOT NULL);
 
 
 --
@@ -25658,6 +25805,13 @@ CREATE UNIQUE INDEX trust_recurring_charges_lease_kind ON public.trust_recurring
 
 
 --
+-- Name: trust_recurring_charges_request; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_recurring_charges_request ON public.trust_recurring_charges USING btree (pmc_id, request_id) WHERE (request_id IS NOT NULL);
+
+
+--
 -- Name: trust_recurring_work_order_ends_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -26005,6 +26159,13 @@ CREATE INDEX trust_tenant_links_recorded_by ON public.trust_tenant_links USING b
 --
 
 CREATE INDEX trust_tenant_links_same_as ON public.trust_tenant_links USING btree (pmc_id, same_as);
+
+
+--
+-- Name: trust_tenant_unlinks_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_tenant_unlinks_recorded_by ON public.trust_tenant_unlinks USING btree (pmc_id, recorded_by);
 
 
 --
@@ -27905,6 +28066,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_tenant_unlinks trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_tenant_unlinks FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_text_consents trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -29676,6 +29844,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tena
 
 
 --
+-- Name: trust_tenant_unlinks trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tenant_unlinks FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_tenants trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -30177,6 +30352,13 @@ CREATE TRIGGER trust_check_tenant_link BEFORE INSERT ON public.trust_tenant_link
 --
 
 CREATE TRIGGER trust_check_tenant_login BEFORE INSERT ON public.trust_logins FOR EACH ROW WHEN ((new.tenant_id IS NOT NULL)) EXECUTE FUNCTION public.trust_check_tenant_login();
+
+
+--
+-- Name: trust_tenant_unlinks trust_check_tenant_unlink; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_tenant_unlink BEFORE INSERT ON public.trust_tenant_unlinks FOR EACH ROW EXECUTE FUNCTION public.trust_check_tenant_unlink();
 
 
 --
@@ -31318,6 +31500,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tax_ids FOR EACH 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tenant_links FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_tenant_unlinks trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tenant_unlinks FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -37291,6 +37480,38 @@ ALTER TABLE ONLY public.trust_tenant_links
 
 
 --
+-- Name: trust_tenant_unlinks trust_tenant_unlinks_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_unlinks
+    ADD CONSTRAINT trust_tenant_unlinks_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_tenant_unlinks trust_tenant_unlinks_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_unlinks
+    ADD CONSTRAINT trust_tenant_unlinks_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_tenant_unlinks trust_tenant_unlinks_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_unlinks
+    ADD CONSTRAINT trust_tenant_unlinks_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
+-- Name: trust_tenant_unlinks trust_tenant_unlinks_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_unlinks
+    ADD CONSTRAINT trust_tenant_unlinks_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.trust_tenant_links(tenant_id);
+
+
+--
 -- Name: trust_tenants trust_tenants_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -38005,4 +38226,11 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261106000240'),
     ('20261106000241'),
     ('20261106000242'),
-    ('20261106000243');
+    ('20261106000243'),
+    ('20261106100000'),
+    ('20261106100100'),
+    ('20261106110000'),
+    ('20261106110100'),
+    ('20261106110200'),
+    ('20261106120000'),
+    ('20261106120100');

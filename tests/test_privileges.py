@@ -283,6 +283,8 @@ TABLES = {
     "trust_showing_outcomes": {"SELECT", "INSERT"},
     # A tenant's records at other properties, the same person (migration 0105).
     "trust_tenant_links": {"SELECT", "INSERT"},
+    # A link taken back (docs/edge-cases.md U-099): staff insert it; it names who.
+    "trust_tenant_unlinks": {"SELECT", "INSERT"},
     # Years closed (migration 0106): written only by trust_close_year.
     "trust_year_closes": {"SELECT"},
     # The old system's past transactions (migration 0107), never posted.
@@ -558,7 +560,7 @@ FUNCTIONS = {
     "trust_roll_over_leases(uuid,date)": {"trust_app"},
     "trust_routing_number_ok(text)": {"trust_app"},
     # What each open bill holds of its owner's balance: the app's, for the bills pages.
-    "trust_bill_holds(uuid)": {"trust_app"},
+    "trust_bill_holds(uuid,timestamptz)": {"trust_app"},
     "trust_charge_rent_due(uuid,date)": {"trust_app"},
     "trust_rent_for_month(date,date,numeric,date)": {"trust_app"},
     "trust_rent_on(uuid,date)": {"trust_app"},
@@ -634,6 +636,8 @@ FUNCTIONS = {
     "trust_charge_recurring_on_due_days(uuid,date,date)": {"trust_app"},
     "trust_rent_due_day(uuid,date)": {"trust_app"},
     "trust_rent_due_on(uuid,date)": {"trust_app"},
+    # The day a lease's money starts in the PMS, which the rent run charges from (M-144).
+    "trust_lease_cutover(uuid)": {"trust_app"},
     "trust_assess_late_fees(uuid,date)": {"trust_app"},
     "trust_charge_nsf_fee(uuid,text)": {"trust_app"},
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)": {"trust_app"},
@@ -652,7 +656,7 @@ FUNCTIONS = {
     "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)": {"trust_app"},
     "trust_transfer_lease(uuid,uuid,uuid,date,date,numeric,text,date)": {"trust_app"},
     "trust_close_year(uuid,integer)": {"trust_app"},
-    "trust_propose_journal_entry(uuid,date,text,transfer_request[])": {"trust_app"},
+    "trust_propose_journal_entry(uuid,date,text,transfer_request[],uuid)": {"trust_app"},
     "trust_post_journal_entry(uuid,uuid)": {"trust_app"},
     "trust_decline_journal_entry(uuid,uuid,text)": {"trust_app"},
     # What a lease owes, as the deposit's return counts it: the move-out page reads it.
@@ -724,6 +728,7 @@ FUNCTIONS = {
     "trust_check_lead_open()": set(),
     "trust_check_tenant_link()": set(),
     "trust_check_tenant_login()": set(),
+    "trust_check_tenant_unlink()": set(),
     "trust_refuse_closed_year()": set(),
     "trust_check_history_line()": set(),
     "trust_check_reserve_event()": set(),
@@ -930,7 +935,7 @@ SECURITY_DEFINER = {
     "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)",
     "trust_transfer_lease(uuid,uuid,uuid,date,date,numeric,text,date)",
     "trust_close_year(uuid,integer)",
-    "trust_propose_journal_entry(uuid,date,text,transfer_request[])",
+    "trust_propose_journal_entry(uuid,date,text,transfer_request[],uuid)",
     "trust_post_journal_entry(uuid,uuid)",
     "trust_decline_journal_entry(uuid,uuid,text)",
     "trust_audit()",  # writes the audit log, which no other role may write

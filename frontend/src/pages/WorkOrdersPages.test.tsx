@@ -451,7 +451,10 @@ describe("WorkOrderPage", () => {
 
     expect(posted(fetch)).toEqual([[
       "/api/rent/leases/l1/charges",
-      { kind: "fee", amount: "85.00", due_on: "2026-10-20", memo: "Work order #7: Leak under the sink", work_order_id: "w1" },
+      {
+        request_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        kind: "fee", amount: "85.00", due_on: "2026-10-20", memo: "Work order #7: Leak under the sink", work_order_id: "w1",
+      },
     ]]);
   });
 

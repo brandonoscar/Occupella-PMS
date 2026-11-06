@@ -2,9 +2,10 @@
 autopay starts its payment once (or records why none), stops by itself when it should, and each
 payment it starts goes to the payments partner once, however often that is tried."""
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import psycopg
 import pytest
@@ -14,9 +15,11 @@ from helpers import (
     charge,
     end_lease,
     hold_payments,
+    in_background,
     make_pmc,
     open_account,
     open_lease,
+    wait_until_blocked,
 )
 
 from pms import autopay, payments
@@ -213,6 +216,33 @@ def test_a_payment_left_unpaid_on_the_partners_page_is_not_on_its_way(
     assert runs(conn, mine) == [(MONTH, Decimal("1200.00"), None)]
 
 
+def by_hand(conn, pmc, lease, tenant, amount, started_at, ref):
+    return conn.execute(
+        "INSERT INTO trust_online_payments (pmc_id, lease_id, tenant_id, amount, fee_payer, method,"
+        " partner, partner_ref, created_at)"
+        " VALUES (%s, %s, %s, %s, 'company', 'ach', 'fake', %s, %s) RETURNING id",
+        (pmc.pmc_id, lease, tenant, amount, ref, started_at),
+    ).fetchone()[0]
+
+
+def test_a_payment_no_word_came_of_for_weeks_is_not_on_its_way(conn, app_conn, pmc, lease, tenant):
+    # docs/edge-cases.md P-067, P-068, H-145: a payment left on the partner's page whose expired
+    # report never came, a checkout whose report never arrived, or an autopay payment the
+    # partner left waiting on the tenant. Counted on its way for good, it lowered every balance
+    # autopay after it.
+    online(conn, pmc)
+    due = datetime.combine(MONTH, datetime.min.time(), UTC)
+    by_hand(conn, pmc, lease, tenant, 400, due - (autopay.ON_ITS_WAY_DAYS + 1) * DAY, "fake_old")
+    # One paid but waiting for staff (a payment hold) is still on its way, however old.
+    paid = by_hand(conn, pmc, lease, tenant, 100, due - 60 * DAY, "fake_paid")
+    report(conn, pmc, paid, "paid")
+    # One started within the days a bank payment takes is on its way.
+    by_hand(conn, pmc, lease, tenant, 50, due - (autopay.ON_ITS_WAY_DAYS - 1) * DAY, "fake_new")
+    mine = set_up(conn, pmc, lease, tenant)
+    run(app_conn, pmc)
+    assert runs(conn, mine) == [(MONTH, Decimal("1050.00"), None)]
+
+
 def test_a_fixed_autopay_pays_its_amount(conn, app_conn, pmc, lease, tenant):
     online(conn, pmc)
     mine = set_up(conn, pmc, lease, tenant, rule="fixed", amount="450.00")
@@ -283,6 +313,45 @@ def test_an_autopay_saved_after_this_months_due_date_pays_from_next_month(
     assert [r[0] for r in runs(conn, mine)] == [nxt]
 
 
+def test_an_account_saved_the_evening_of_the_due_day_pays_by_the_companys_day(conn, app_conn):
+    """docs/edge-cases.md D-094: whether this month paid turned on UTC's date of the save, so an
+    account a New York tenant saved at 9 pm on the due day (UTC's next day) paid from next month,
+    and one saved at 6 pm paid this month. The company's own day decides, in Python and in the
+    database's check alike."""
+    ny = make_pmc(conn, owners=1, time_zone="America/New_York")
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (ny.prepaid_rent,),
+    ).fetchone()[0]
+    unit = add_unit(conn, ny.pmc_id, ny.owners[0].property_id)
+    lease = open_lease(conn, ny.pmc_id, unit, MONTH - 60 * DAY, None, "1200.00", [tenant])
+    charge(conn, ny.pmc_id, lease, MONTH, "1200.00")
+    online(conn, ny)
+    evening = datetime.combine(MONTH, time(21, 0), ZoneInfo("America/New_York"))
+    assert evening.astimezone(UTC).date() == MONTH + DAY  # UTC's next day
+    mine = set_up(conn, ny, lease, tenant, saved_at=evening)
+
+    assert run(app_conn, ny, day=MONTH).payments == 1
+    assert runs(conn, mine) == [(MONTH, Decimal("1200.00"), None)]
+
+
+def test_a_database_session_in_another_time_zone_counts_the_same_day(
+    conn, app_conn, pmc, lease, tenant
+):
+    """docs/edge-cases.md D-006: the database's check read the day an account was saved in the
+    session's time zone. On a server set to a zone east of UTC it was stricter than the Python
+    check, refused the payment and failed the company's whole nightly run."""
+    online(conn, pmc)
+    evening = datetime.combine(MONTH, time(20, 0), UTC)  # already the next day in Tokyo
+    mine = set_up(conn, pmc, lease, tenant, saved_at=evening)
+    app_conn.execute("SET TIME ZONE 'Asia/Tokyo'")
+    try:
+        assert run(app_conn, pmc, day=MONTH).payments == 1
+    finally:
+        app_conn.execute("SET TIME ZONE 'UTC'")
+    assert runs(conn, mine) == [(MONTH, Decimal("1200.00"), None)]
+
+
 def test_an_unsaved_autopay_starts_nothing(conn, app_conn, pmc, lease, tenant):
     online(conn, pmc)
     mine = set_up(conn, pmc, lease, tenant, saved_at=None)
@@ -328,6 +397,48 @@ def test_an_autopay_stops_by_itself_after_two_payments_in_a_row_did_not_go_throu
     assert stopped(conn, mine) is None
     run(app_conn, pmc)
     assert stopped(conn, mine) == "failed twice"
+
+
+def given_up(conn, pmc, payment):
+    conn.execute(
+        "INSERT INTO trust_online_payment_events (pmc_id, payment_id, kind, partner_event,"
+        " happened_at) VALUES (%s, %s, 'expired', %s, now())",
+        (pmc.pmc_id, payment, autopay.GAVE_UP),
+    )
+
+
+def test_an_autopay_whose_payments_were_never_sent_two_months_running_stops_by_itself(
+    conn, app_conn, pmc, lease, tenant
+):
+    # docs/edge-cases.md P-065: saved at a Stripe account the company no longer uses, each
+    # payment fails to reach the partner for three days and is given up, the tenant emailed every
+    # month for good. Two in a row that never went through stop it, as two failed ones do.
+    online(conn, pmc)
+    mine = set_up(conn, pmc, lease, tenant)
+    earlier = (MONTH - DAY).replace(day=1)
+    charge(conn, pmc.pmc_id, lease, earlier, "1.00")
+    for month in (earlier, MONTH):
+        run(app_conn, pmc, day=month)
+        given_up(conn, pmc, autopay.payment_id_for(mine, month))
+    assert stopped(conn, mine) is None
+    run(app_conn, pmc)
+    assert stopped(conn, mine) == "failed twice"
+
+
+def test_a_payment_given_up_that_the_bank_paid_after_all_went_through(
+    conn, app_conn, pmc, lease, tenant
+):
+    online(conn, pmc)
+    mine = set_up(conn, pmc, lease, tenant)
+    earlier = (MONTH - DAY).replace(day=1)
+    charge(conn, pmc.pmc_id, lease, earlier, "1.00")
+    run(app_conn, pmc, day=earlier)
+    given_up(conn, pmc, autopay.payment_id_for(mine, earlier))
+    report(conn, pmc, autopay.payment_id_for(mine, earlier), "paid")  # it reached the bank
+    run(app_conn, pmc, day=MONTH)
+    given_up(conn, pmc, autopay.payment_id_for(mine, MONTH))
+    run(app_conn, pmc)
+    assert stopped(conn, mine) is None
 
 
 def test_one_payment_that_did_not_go_through_does_not_stop_an_autopay(
@@ -579,6 +690,64 @@ def test_a_stopped_autopays_payment_is_never_sent(conn, app_conn, pmc, lease, te
     assert run(app_conn, pmc).given_up == 1
     assert events(conn, autopay.payment_id_for(theirs, MONTH)) == [("expired", autopay.GAVE_UP)]
     assert autopay.submit_waiting(app_conn, Counting(), pmc.pmc_id) == 0
+
+
+@pytest.mark.timing
+def test_a_stop_under_way_as_its_payment_is_sent_keeps_it_from_being_sent(
+    conn, app_conn, pmc, lease, tenant, database_url
+):
+    # The tenant turns autopay off just as its payment is sent (docs/edge-cases.md C-081): the
+    # send waits for the stop and sends nothing, as the stop's email says.
+    online(conn, pmc)
+    mine = set_up(conn, pmc, lease, tenant)
+    run(app_conn, pmc)
+    partner = Counting()
+    with psycopg.connect(database_url) as turning_off:
+        autopay.stop(turning_off, pmc.pmc_id, mine, "tenant")  # not committed yet
+
+        thread, pid, outcome = in_background(
+            database_url, lambda worker: autopay.submit_waiting(worker, partner, pmc.pmc_id)
+        )
+        wait_until_blocked(conn, pid)
+        turning_off.commit()
+        thread.join(timeout=30)
+
+    assert outcome == {"result": 0}
+    assert partner.charged == []
+
+
+@pytest.mark.timing
+def test_a_stop_while_its_payment_is_sent_waits_until_it_is_recorded(
+    conn, app_conn, pmc, lease, tenant, database_url
+):
+    # The other way round: a stop that comes while the payment is with the partner waits until
+    # the payment is recorded as sent, so it stops what comes after it.
+    online(conn, pmc)
+    mine = set_up(conn, pmc, lease, tenant)
+    run(app_conn, pmc)
+    stopping: dict = {}
+
+    class TurnedOffMeanwhile(Counting):
+        def charge(self, payment_id, amount, memo, account):
+            def turn_off(worker):
+                with worker.transaction():
+                    return autopay.stop(worker, pmc.pmc_id, mine, "tenant")
+
+            thread, pid, outcome = in_background(database_url, turn_off)
+            wait_until_blocked(conn, pid)
+            stopping.update(thread=thread, outcome=outcome)
+            return super().charge(payment_id, amount, memo, account)
+
+    assert autopay.submit_waiting(app_conn, TurnedOffMeanwhile(), pmc.pmc_id) == 1
+    stopping["thread"].join(timeout=30)
+
+    assert stopping["outcome"] == {"result": True}
+    sent, stopped_at = conn.execute(
+        "SELECT s.created_at, st.created_at FROM trust_autopay_submissions AS s,"
+        " trust_autopay_stops AS st WHERE s.payment_id = %s AND st.autopay_id = %s",
+        (autopay.payment_id_for(mine, MONTH), mine),
+    ).fetchone()
+    assert sent < stopped_at
 
 
 def test_the_payment_id_is_the_same_for_an_autopay_and_due_date():

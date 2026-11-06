@@ -68,6 +68,29 @@ describe("PayOnlineCard", () => {
     expect(screen.getByRole("heading", { name: "Pay online" })).toBeTruthy();
   });
 
+  it("won't pay before the fee is shown, nor when it can't be (P-058, H-142)", async () => {
+    let answer: (response: Response) => void = () => {};
+    const fetch = vi.fn((path: string) => {
+      if (path.includes("/fee?")) return new Promise<Response>((resolve) => (answer = resolve));
+      return Promise.resolve(new Response(JSON.stringify(VIEW)));
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<PayOnlineCard leaseId="l1" />);
+    await screen.findByLabelText("Amount");
+    const pay = () => screen.getByRole("button", { name: "Pay online" }) as HTMLButtonElement;
+    // While the quote is on its way the tenant hasn't seen the fee yet.
+    await vi.waitFor(() => expect(fetch.mock.calls.some(([path]) => String(path).includes("/fee?"))).toBe(true));
+    expect(pay().disabled).toBe(true);
+    // The quote failed: the card says so, and Pay online stays off.
+    answer(new Response(JSON.stringify({ detail: "the payments partner is not answering" }), { status: 503 }));
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("pay-fee").textContent).toBe(
+        "We couldn't work out the processing fee, so you can't pay online just now. Try again in a few minutes.",
+      ),
+    );
+    expect(pay().disabled).toBe(true);
+  });
+
   it("won't pay an amount that isn't one", async () => {
     server(VIEW);
     render(<PayOnlineCard leaseId="l1" />);

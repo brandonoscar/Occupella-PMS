@@ -70,10 +70,23 @@ def staffer(handler, kinds=None):
     )
     member.rng = random.Random(0)
     member.today = speed.date(2026, 10, 20)
+    member.n, member.payments = 1, 0
     member.client = httpx2.Client(
         base_url="http://speed.test", transport=httpx2.MockTransport(handler)
     )
     return member
+
+
+def test_each_payment_a_staff_member_records_is_a_small_check_of_its_own():
+    # One like a payment recorded to its lease would wait for staff to say it is another
+    # (docs/edge-cases.md H-008), so no two of anyone's payments are alike: each is a check with a
+    # number of its own. Each is $25.00, as before H-008, too little to pay off a month's rent of
+    # a lease the run leaves owing (an amount of its own each, $1,025.01 and up, did, now and then).
+    one, two = staffer(lambda request: None), staffer(lambda request: None)
+    two.n = 2
+    bodies = [member.requests()["payment"][1]()[2] for member in (one, two) for _ in range(3)]
+    assert {(b["amount"], b["method"]) for b in bodies} == {("25.00", "check")}
+    assert len({b["reference"] for b in bodies}) == 6, bodies
 
 
 def test_staff_ask_for_each_page_as_the_portal_does():

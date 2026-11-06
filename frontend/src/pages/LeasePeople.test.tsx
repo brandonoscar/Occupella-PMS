@@ -112,6 +112,19 @@ describe("EndLeaseForm", () => {
     expect(said).toEqual(["The lease ends on 08/31/2026; a $2,050.00 lease-break fee was charged."]);
   });
 
+  it("won't end the lease while its lease-break fee can't be read (H-159)", async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ detail: "the server is busy" }), { status: 503 }));
+    vi.stubGlobal("fetch", fetch);
+    const { record } = recorder();
+    render(<EndLeaseForm lease={LEASE} record={record} />);
+    await screen.findByText(
+      "We couldn't read this lease's lease-break fee terms, so it can't be ended just now. Try again in a few minutes.",
+    );
+    expect((screen.getByRole("button", { name: "End lease" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(record).not.toHaveBeenCalled();
+  });
+
   it("says when the property charges no lease-break fee, and ends the lease without one", async () => {
     serve({ "/api/move-out/l1/break-fee": { early: true, fee: null, flat_fee: null, rent_months: null } });
     const { record, said } = recorder();

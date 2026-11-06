@@ -90,6 +90,7 @@ def journal(client, pmc):
     return client.post(
         "/api/journal",
         json={
+            "request_id": str(uuid.uuid4()),
             "event_on": str(date.today()),
             "memo": "Correction",
             "lines": [

@@ -111,6 +111,7 @@ def test_staff_move_a_lease_and_its_payments_pay_the_old_owner_first(
         post(
             client,
             f"/api/rent/leases/{new}/charges",
+            request_id=uuid.uuid4(),
             kind="fee",
             amount="100.00",
             due_on=TODAY,
@@ -198,6 +199,7 @@ def test_a_payment_short_of_what_the_old_lease_owes_pays_it_alone(
         post(
             client,
             f"/api/rent/leases/{new}/charges",
+            request_id=uuid.uuid4(),
             kind="fee",
             amount="100.00",
             due_on=TODAY,

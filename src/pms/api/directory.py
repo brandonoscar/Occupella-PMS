@@ -328,10 +328,13 @@ class Tenant(BaseModel):
     same_person: list[OtherRecord]
 
 
-# The person's records but the one asked about (%(pmc)s, %(tenant)s), by property.
+# The person's records but the one asked about (%(pmc)s, %(tenant)s), by property; first when
+# linked to nobody by a link not taken back (migration 20261106100100).
 SAME_PERSON = """
 SELECT t.id, p.id, p.display_name,
-       NOT EXISTS (SELECT 1 FROM trust_tenant_links AS k WHERE k.tenant_id = t.id)
+       NOT EXISTS (SELECT 1 FROM trust_tenant_links AS k WHERE k.tenant_id = t.id
+                   AND NOT EXISTS (SELECT 1 FROM trust_tenant_unlinks AS u
+                                   WHERE u.tenant_id = k.tenant_id))
 FROM trust_tenants AS t JOIN trust_properties AS p ON p.id = t.property_id
 WHERE t.pmc_id = %(pmc)s AND t.id <> %(tenant)s
   AND t.id IN (SELECT trust_tenant_records(%(pmc)s, %(tenant)s))
@@ -420,7 +423,8 @@ class SamePerson(BaseModel):
 def first_record(conn: psycopg.Connection[Any], pmc: UUID, tenant_id: UUID) -> UUID:
     """The person's first record: the one a record is linked to, else the record itself."""
     row = conn.execute(
-        "SELECT same_as FROM trust_tenant_links WHERE pmc_id = %s AND tenant_id = %s",
+        "SELECT same_as FROM trust_tenant_links AS k WHERE pmc_id = %s AND tenant_id = %s"
+        " AND NOT EXISTS (SELECT 1 FROM trust_tenant_unlinks AS u WHERE u.tenant_id = k.tenant_id)",
         (pmc, tenant_id),
     ).fetchone()
     return tenant_id if row is None else UUID(str(row[0]))
@@ -468,6 +472,44 @@ def same_person(session: Staff, conn: Conn, tenant_id: UUID, body: SamePerson) -
     if body.tenant_id == tenant_id:
         raise HTTPException(422, "pick the same person's record at another property")
     link(conn, session.pmc_id, tenant_id, first_record(conn, session.pmc_id, body.tenant_id))
+
+
+@router.post("/tenants/{tenant_id}/not-same-person", status_code=204)
+def not_same_person(session: Staff, conn: Conn, tenant_id: UUID, body: SamePerson) -> None:
+    """Takes back a link made by mistake (docs/edge-cases.md U-099): of these two records, the one
+    linked to the other is its own person again, at once. Whoever signs in as the other no
+    longer reads or acts on its leases, and its autopays, which they set up, stop. It signs in on
+    its own from then on (an invite of its own); it is never linked again itself."""
+    found(conn, "trust_tenants", session.pmc_id, tenant_id, "tenant")
+    found(conn, "trust_tenants", session.pmc_id, body.tenant_id, "tenant")
+    if body.tenant_id == tenant_id:
+        raise HTTPException(422, "pick the other record of the two")
+    row = conn.execute(
+        "SELECT k.tenant_id FROM trust_tenant_links AS k WHERE k.pmc_id = %(pmc)s"
+        " AND ((k.tenant_id = %(one)s AND k.same_as = %(two)s)"
+        "   OR (k.tenant_id = %(two)s AND k.same_as = %(one)s))"
+        " AND NOT EXISTS (SELECT 1 FROM trust_tenant_unlinks AS u WHERE u.tenant_id = k.tenant_id)",
+        {"pmc": session.pmc_id, "one": tenant_id, "two": body.tenant_id},
+    ).fetchone()
+    if row is None:
+        raise HTTPException(
+            409,
+            "these two records aren't linked: take a link back on the page of the record that"
+            " signs in",
+        )
+    linked = UUID(str(row[0]))
+    conn.execute(
+        "INSERT INTO trust_tenant_unlinks (pmc_id, tenant_id) VALUES (%s, %s)",
+        (session.pmc_id, linked),
+    )
+    from pms import autopay  # autopay reads the portal's leases, which read this module
+
+    for (made,) in conn.execute(
+        "SELECT a.id FROM trust_autopay AS a WHERE a.pmc_id = %s AND a.tenant_id = %s"
+        " AND NOT EXISTS (SELECT 1 FROM trust_autopay_stops AS s WHERE s.autopay_id = a.id)",
+        (session.pmc_id, linked),
+    ).fetchall():
+        autopay.stop(conn, session.pmc_id, made, "staff")
 
 
 @router.post("/tenants/{tenant_id}/name", status_code=204)

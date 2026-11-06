@@ -2,10 +2,12 @@
 the founder's review q009).
 
 Hypothesis makes up to five tenant records on up to three properties, then asks at random to link
-one record to another's person (as the API does: to that person's first record) and to give a
-record a portal login. A model of each person's records says which requests stand: a record joins
-a person while it is linked to nothing, is nobody's first, signs in to nothing, and sits at a
-property where the person has no record; a login goes only to a record linked to nothing, once.
+one record to another's person (as the API does: to that person's first record), to take a link
+back (migration 20261106100100, docs/edge-cases.md U-099) and to give a record a portal login. A
+model of each person's records says which requests stand: a record joins a person while it is
+linked to nothing, was never linked, is nobody's first, signs in to nothing, and sits at a property
+where the person has no record; a link is taken back once, and the record is its own person again;
+a login goes only to a record linked to nothing, once.
 The database must take exactly those and refuse the rest; after each, `trust_tenant_records`
 must give every record its person's records, each person must sign in at most once and only as
 their first, and nothing may move in the ledger.
@@ -20,6 +22,7 @@ from hypothesis import strategies as st
 REQUESTS = st.lists(
     st.one_of(
         st.tuples(st.just("link"), st.integers(0, 4), st.integers(0, 4)),
+        st.tuples(st.just("unlink"), st.integers(0, 4), st.just(0)),
         st.tuples(st.just("login"), st.integers(0, 4), st.just(0)),
     ),
     min_size=1,
@@ -36,6 +39,7 @@ def check(conn, places, requests):
     ]
     moved = conn.execute("SELECT count(*) FROM pgledger_transfers").fetchone()[0]
     same_as: dict[int, int] = {}  # a linked record -> its person's first record
+    ever_linked: set[int] = set()  # a record is linked once, even if its link was taken back
     signs_in: set[int] = set()
 
     def first(n: int) -> int:
@@ -51,7 +55,7 @@ def check(conn, places, requests):
             target = first(b)
             stands = (
                 a != target
-                and a not in same_as
+                and a not in ever_linked
                 and a not in same_as.values()
                 and a not in signs_in
                 and places[a] not in {places[m] for m in person(target)}
@@ -59,6 +63,12 @@ def check(conn, places, requests):
             write = (
                 "INSERT INTO trust_tenant_links (pmc_id, tenant_id, same_as) VALUES (%s, %s, %s)",
                 (pmc.pmc_id, records[a], records[target]),
+            )
+        elif kind == "unlink":
+            stands = a in same_as
+            write = (
+                "INSERT INTO trust_tenant_unlinks (pmc_id, tenant_id) VALUES (%s, %s)",
+                (pmc.pmc_id, records[a]),
             )
         else:
             stands = a not in same_as and a not in signs_in
@@ -71,12 +81,19 @@ def check(conn, places, requests):
             with conn.transaction():
                 conn.execute(*write)
             took = True
-        except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation):
+        except (
+            psycopg.errors.CheckViolation,
+            psycopg.errors.UniqueViolation,
+            psycopg.errors.ForeignKeyViolation,
+        ):
             took = False
         event(f"{kind} {'stands' if stands else 'refused'}")
         assert took == stands, (kind, a, b, same_as, signs_in)
         if took and kind == "link":
             same_as[a] = target
+            ever_linked.add(a)
+        elif took and kind == "unlink":
+            del same_as[a]
         elif took:
             signs_in.add(a)
 

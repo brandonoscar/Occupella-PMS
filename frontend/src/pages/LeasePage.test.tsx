@@ -477,9 +477,13 @@ describe("LeasePage", () => {
     expect(await screen.findByText("Military discount of $25.00 added every month.")).toBeTruthy();
     expect(posted(fetch)).toEqual([
       ["/api/rent/recurring-charges/r1/stop", { ends_on: "2026-11-01" }],
-      ["/api/rent/leases/l1/recurring-charges", { kind: "fee", amount: "50.00", memo: "Parking", starts_on: "2026-11-01" }],
-      ["/api/rent/leases/l1/recurring-charges",
-        { kind: "credit", amount: "25.00", memo: "Military discount", starts_on: "2026-11-01", concession: true }],
+      ["/api/rent/leases/l1/recurring-charges", {
+        request_id: expect.stringMatching(/^[0-9a-f-]{36}$/), kind: "fee", amount: "50.00", memo: "Parking", starts_on: "2026-11-01",
+      }],
+      ["/api/rent/leases/l1/recurring-charges", {
+        request_id: expect.stringMatching(/^[0-9a-f-]{36}$/), kind: "credit", amount: "25.00", memo: "Military discount",
+        starts_on: "2026-11-01", concession: true,
+      }],
     ]);
   });
 
@@ -783,7 +787,10 @@ describe("LeasePage", () => {
     await open();
     const dialog = await panel("End lease", true);
     fireEvent.change(within(dialog).getByLabelText("Last day"), { target: { value: "2026-11-30" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "End lease" }));
+    // End lease waits for the lease-break fee terms of the day picked (H-159).
+    const end = within(dialog).getByRole("button", { name: "End lease" }) as HTMLButtonElement;
+    await vi.waitFor(() => expect(end.disabled).toBe(false));
+    fireEvent.click(end);
     expect(await screen.findByText("The lease ends on 11/30/2026.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/move-out/l1/end", { ends_on: "2026-11-30", break_fee: false }]]);
   });

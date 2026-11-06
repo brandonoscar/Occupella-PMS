@@ -69,21 +69,28 @@ export function RemoveTenantForm({ lease, person, record }: { lease: LeaseDetail
 
 // Ending a lease from its page, any lease, with or without a deposit: its last day, and the
 // lease-break fee its property's terms charge when a lease with an end date ends before it, only
-// if staff tick it.
+// if staff tick it. It ends once the fee's terms for that day are read, never without them
+// (H-159: a lookup that failed ended the lease with no fee offered, silently).
+const NO_TERMS =
+  "We couldn't read this lease's lease-break fee terms, so it can't be ended just now. Try again in a few minutes.";
+
 export function EndLeaseForm({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
   const [last, setLast] = useState(lease.ends_on ?? companyDay());
-  const [fee, setFee] = useState<BreakFee | null>(null);
+  // The terms for the last day picked: not read yet, or "failed".
+  const [fee, setFee] = useState<BreakFee | "failed" | null>(null);
   const [charge, setCharge] = useState(false);
   useEffect(() => {
     let live = true;
+    setFee(null); // another day's terms are no answer for this one
     if (last) {
       api.get<BreakFee>(`/api/move-out/${lease.id}/break-fee?ends_on=${last}`)
         .then((found) => { if (live) setFee(found); })
-        .catch(() => { if (live) setFee(null); });
+        .catch(() => { if (live) setFee("failed"); });
     }
     return () => { live = false; };
   }, [lease.id, last]);
-  const offered = fee !== null && fee.early && fee.fee !== null ? fee.fee : null;
+  const read = fee !== null && fee !== "failed" ? fee : null;
+  const offered = read !== null && read.early && read.fee !== null ? read.fee : null;
   const charging = offered !== null && charge;
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
@@ -101,11 +108,12 @@ export function EndLeaseForm({ lease, record }: { lease: LeaseDetail; record: Re
           Charge the lease-break fee: {money(offered)}
         </label>
       )}
-      {fee !== null && fee.early && fee.fee === null && (
+      {read !== null && read.early && read.fee === null && (
         <p className="text-sm text-ink-muted">This lease's property charges no lease-break fee.</p>
       )}
+      {fee === "failed" && <Notice tone="error">{NO_TERMS}</Notice>}
       <div>
-        <Button type="submit"
+        <Button type="submit" disabled={read === null}
           says={`The lease ends on ${usDate(last)}; rent is charged only through that day${charging ? `, and the ${money(offered)} lease-break fee is charged` : ""}. The deposit is returned from Move-outs.`}>
           End lease
         </Button>

@@ -50,6 +50,13 @@ describe("online payments", () => {
     expect(waitingLine({ ...WAITING, what: "return", company_owes: null })).toContain("owner's account");
   });
 
+  it("says a payment started weeks ago with no word from the partner, to look up there (P-013)", () => {
+    expect(waitingLine({ ...WAITING, what: "no word", company_owes: null, started_on: "2026-10-05" })).toBe(
+      "Started online 10/05/2026, and the payments partner hasn't said since whether the bank paid:"
+        + " look it up there. Its report brings it into the books; don't record it by hand.",
+    );
+  });
+
   it("says what waits of an owner's payment in its own words", () => {
     const owners = { ...WAITING, lease_id: null, owner_id: "o1", memo: "Demo Owner A / Birch Flats" };
     expect(waitingLine({ ...owners, what: "payment", company_owes: null })).toBe(

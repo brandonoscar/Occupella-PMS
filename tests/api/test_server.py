@@ -3,7 +3,10 @@
 import logging
 import runpy
 
-from pms.api import Settings
+from fastapi.testclient import TestClient
+from psycopg.conninfo import make_conninfo
+
+from pms.api import Settings, create_app
 
 
 def test_the_server_reads_its_settings_from_the_environment(monkeypatch, database_url):
@@ -55,6 +58,23 @@ def test_each_pooled_connection_acts_as_the_app_with_the_planners_jit_off(client
             "trust_app",
             "off",
         )
+
+
+def test_a_database_restart_costs_no_request_a_server_error(database_url, conn):
+    # The database restarts in the middle of the day (docs/edge-cases.md H-005): each pooled
+    # connection it dropped is found dead before a request gets it, and a new one is made, so no
+    # request answers 500.
+    named = make_conninfo(database_url, application_name="pms-restart-test")
+    settings = Settings(database_url=named, public_url="http://testserver", cookie_secure=False)
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/api/sign-in").status_code == 200
+        dropped = conn.execute(
+            "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity"
+            " WHERE application_name = 'pms-restart-test'"
+        ).fetchone()[0]
+
+        assert dropped >= 1
+        assert [client.get("/api/sign-in").status_code for _ in range(3)] == [200, 200, 200]
 
 
 def test_a_server_with_the_nightly_run_off_says_so_at_start(database_url, caplog, monkeypatch):

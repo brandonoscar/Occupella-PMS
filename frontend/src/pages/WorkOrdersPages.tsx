@@ -18,6 +18,7 @@ import { Wide } from "../components/Wide";
 import { latest } from "../latest";
 import { companyDay, money, usDate } from "../money";
 import type { Paged } from "../rentals";
+import { requestId } from "../rent";
 import { navigate } from "../router";
 import { scopeParams, useScope } from "../scope";
 import type { Named, Portfolio } from "../setup";
@@ -634,6 +635,8 @@ export function WorkOrderPage({ me, id }: { me: Me; id: string }) {
 // A fee the tenant owes for the repair, on a lease at the work order's unit (or property). The
 // owner still pays the vendor's bill; what the tenant pays comes back to the owner's account.
 function ChargeForm({ order, record }: { order: WorkOrder; record: Recorder }) {
+  // One per panel: sent again (its answer lost), it charges the tenant nothing new (C-025).
+  const [id] = useState(requestId);
   const [lease, setLease] = useState(order.leases[0]?.id ?? "");
   const [amount, setAmount] = useState("");
   const [due, setDue] = useState(companyDay());
@@ -642,7 +645,7 @@ function ChargeForm({ order, record }: { order: WorkOrder; record: Recorder }) {
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
       event.preventDefault();
-      const body = { kind: "fee", amount, due_on: due, memo, work_order_id: order.id };
+      const body = { request_id: id, kind: "fee", amount, due_on: due, memo, work_order_id: order.id };
       return record(`/api/rent/leases/${lease}/charges`, body,
         () => `${money(amount)} charged to ${chosen?.tenants ?? "the tenant"}.`);
     }}>

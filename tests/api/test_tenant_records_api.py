@@ -257,3 +257,129 @@ def test_the_portal_answers_another_persons_lease_as_not_found(other_client, con
     assert str(theirs) not in {
         lease["lease_id"] for lease in ok(other_client.get("/api/tenant/leases"))
     }
+
+
+# --- a link taken back (docs/edge-cases.md U-099) ------------------------------------------------
+
+
+def test_staff_take_back_a_link_to_the_wrong_person_and_they_lose_the_lease_at_once(
+    client, other_client, conn, pmc, staff, tenant
+):
+    # Staff said the wrong record at Property 2 was the tenant who signs in at Property 1.
+    lease_at(conn, pmc, 0, tenant.person_id)
+    wrong = add_tenant(conn, pmc.pmc_id, pmc.owners[1].property_id, "Tenant 9")
+    theirs = lease_at(conn, pmc, 1, wrong, "900.00")
+    linked = {"tenant_id": str(tenant.person_id)}
+    ok(client.post(f"/api/tenants/{wrong}/same-person", json=linked), 204)
+    # Signed in as their own record, the tenant set up autopay of the other's lease.
+    made = conn.execute(
+        "INSERT INTO trust_autopay (pmc_id, lease_id, tenant_id, rule, amount, partner)"
+        " VALUES (%s, %s, %s, 'balance', 900, 'fake') RETURNING id",
+        (pmc.pmc_id, theirs, wrong),
+    ).fetchone()[0]
+    assert str(theirs) in {
+        lease["lease_id"] for lease in ok(other_client.get("/api/tenant/leases"))
+    }
+
+    ok(
+        client.post(
+            f"/api/tenants/{tenant.person_id}/not-same-person", json={"tenant_id": str(wrong)}
+        ),
+        204,
+    )
+
+    assert str(theirs) not in {
+        lease["lease_id"] for lease in ok(other_client.get("/api/tenant/leases"))
+    }
+    assert other_client.get(f"/api/tenant/leases/{theirs}/ledger").status_code == 404
+    assert ok(client.get(f"/api/tenants/{wrong}"))["same_person"] == []
+    assert ok(client.get(f"/api/tenants/{tenant.person_id}"))["same_person"] == []
+    # The autopay paying the other's rent from this tenant's bank stops, naming who.
+    assert conn.execute(
+        "SELECT why, recorded_by FROM trust_autopay_stops WHERE autopay_id = %s", (made,)
+    ).fetchone() == ("staff", staff.person_id)
+    assert conn.execute(
+        "SELECT recorded_by FROM trust_tenant_unlinks WHERE tenant_id = %s", (wrong,)
+    ).fetchone() == (staff.person_id,)
+    # It takes a portal invite of its own now.
+    invited = client.post(
+        "/api/invites", json={"kind": "tenant", "person_id": str(wrong), "email": "t9@example.com"}
+    )
+    assert invited.status_code == 201, invited.text
+
+
+def test_a_link_is_taken_back_from_either_records_page_once(client, conn, pmc, staff, tenant):
+    there = ok(
+        client.post(
+            f"/api/tenants/{tenant.person_id}/elsewhere",
+            json={"property_id": str(pmc.owners[1].property_id)},
+        ),
+        201,
+    )["id"]
+
+    ok(
+        client.post(
+            f"/api/tenants/{there}/not-same-person", json={"tenant_id": str(tenant.person_id)}
+        ),
+        204,
+    )
+    again = client.post(
+        f"/api/tenants/{tenant.person_id}/not-same-person", json={"tenant_id": there}
+    )
+
+    assert again.status_code == 409
+    assert again.json()["detail"] == (
+        "these two records aren't linked: take a link back on the page of the record that signs in"
+    )
+
+
+def test_two_records_of_one_person_at_other_properties_are_taken_apart_from_their_first(
+    client, conn, pmc, staff, tenant
+):
+    third = conn.execute(
+        "INSERT INTO trust_properties (pmc_id, display_name) VALUES (%s, 'Property 3')"
+        " RETURNING id",
+        (pmc.pmc_id,),
+    ).fetchone()[0]
+    elsewhere = f"/api/tenants/{tenant.person_id}/elsewhere"
+    one = ok(client.post(elsewhere, json={"property_id": str(pmc.owners[1].property_id)}), 201)
+    two = ok(client.post(elsewhere, json={"property_id": str(third)}), 201)
+
+    between = client.post(
+        f"/api/tenants/{one['id']}/not-same-person", json={"tenant_id": two["id"]}
+    )
+
+    assert between.status_code == 409
+    assert len(ok(client.get(f"/api/tenants/{one['id']}"))["same_person"]) == 2
+
+
+def test_only_staff_take_a_link_back(client, other_client, conn, pmc, tenant):
+    there = add_tenant(conn, pmc.pmc_id, pmc.owners[1].property_id, "Tenant 1")
+    conn.execute(
+        "INSERT INTO trust_tenant_links (pmc_id, tenant_id, same_as) VALUES (%s, %s, %s)",
+        (pmc.pmc_id, there, tenant.person_id),
+    )
+    path = f"/api/tenants/{tenant.person_id}/not-same-person"
+
+    assert client.post(path, json={"tenant_id": str(there)}).status_code == 401
+    assert other_client.post(path, json={"tenant_id": str(there)}).status_code == 403
+    assert conn.execute(
+        "SELECT count(*) FROM trust_tenant_unlinks WHERE tenant_id = %s", (there,)
+    ).fetchone() == (0,)
+
+
+def test_taking_a_link_back_refuses_bad_or_unknown_records(client, conn, pmc, staff, tenant):
+    theirs = make_pmc(conn)
+    stranger = add_tenant(conn, theirs.pmc_id, theirs.owners[0].property_id, "Tenant 8")
+    path = f"/api/tenants/{tenant.person_id}/not-same-person"
+
+    assert client.post(path, json={"tenant_id": "nope"}).status_code == 422
+    assert client.post(path, json={}).status_code == 422
+    assert client.post(path, json={"tenant_id": str(tenant.person_id)}).status_code == 422
+    assert client.post(path, json={"tenant_id": str(stranger)}).status_code == 404
+    assert (
+        client.post(
+            f"/api/tenants/{stranger}/not-same-person", json={"tenant_id": str(tenant.person_id)}
+        ).status_code
+        == 404
+    )

@@ -13,6 +13,7 @@ import { Wide } from "../components/Wide";
 import type { Journal, JournalEntry, JournalLine } from "../journal";
 import { accountLabel, entryTone, entryTotal, mayPost, whyNotPost } from "../journal";
 import { companyDay, money, usDate } from "../money";
+import { requestId } from "../rent";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
@@ -72,6 +73,8 @@ function ProposeCard({ journal, refresh }: { journal: Journal; refresh: () => vo
   const first = journal.accounts[0]?.id ?? "";
   const second = journal.accounts[1]?.id ?? first;
   const blank = (): JournalLine => ({ from_account: first, to_account: second, amount: "" });
+  // Proposed again (its answer lost), the same request id proposes nothing new (C-065).
+  const [id, setId] = useState(requestId);
   const [on, setOn] = useState(companyDay());
   const [memo, setMemo] = useState("");
   const [lines, setLines] = useState<JournalLine[]>([blank()]);
@@ -90,15 +93,17 @@ function ProposeCard({ journal, refresh }: { journal: Journal; refresh: () => vo
         className="flex flex-col gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
-          if (await record("/api/journal", { event_on: on, memo, lines }, () =>
+          if (await record("/api/journal", { request_id: id, event_on: on, memo, lines }, () =>
             `Proposed: ${memo}. Another staff member who may approve posts it.`)) {
+            setId(requestId());
             setMemo("");
             setLines([blank()]);
           }
         }}
       >
         <div className="flex flex-wrap items-end gap-3">
-          <Field label="Dated" id="journal-day" type="date" required value={on}
+          {/* No later than today: a later day moved balances now that reports leave out (M-135). */}
+          <Field label="Dated" id="journal-day" type="date" required value={on} max={companyDay()}
             onChange={(e) => setOn(e.target.value)} />
           <div className="min-w-64 flex-1">
             <Field label="What it corrects" id="journal-memo" required maxLength={500} value={memo}
