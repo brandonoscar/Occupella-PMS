@@ -97,12 +97,14 @@ def test_the_rent_roll_shows_leases_to_come_ended_owing_or_all(client, conn, sta
 def test_a_payment_records_how_it_came(client, conn, staff, pmc):
     lease, _ = lease_at(conn, pmc, "Unit 1", TODAY - 30 * DAY)
     charge(conn, pmc.pmc_id, lease, TODAY - 3 * DAY, "1200.00")
-    for method, reference in (
-        ("EFT", None),
-        ("check", "Check 7"),
-        ("cashier's check", "Cashier's check 8"),
-        ("money order", None),
-        ("cash", None),
+    for n, (method, reference) in enumerate(
+        (
+            ("EFT", None),
+            ("check", "Check 7"),
+            ("cashier's check", "Cashier's check 8"),
+            ("money order", None),
+            ("cash", None),
+        )
     ):
         ok(
             post(
@@ -113,6 +115,9 @@ def test_a_payment_records_how_it_came(client, conn, staff, pmc):
                 received_on=TODAY,
                 method=method,
                 reference=reference,
+                # Five payments of $100.00 the same day: each after the first says it is
+                # another, as staff do when Receive payment asks (docs/edge-cases.md H-008).
+                again=n > 0,
             ),
             201,
         )
