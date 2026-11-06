@@ -121,13 +121,15 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
 - **Fixed: a fee or a monthly charge entered twice.** Enter charge and Add recurring charge sent
   again after their answer was lost (a dropped connection, a second click on a slow page) charged
   the tenant twice, or billed them twice every month. Each now carries its panel's request id, as
-  Receive payment does: sent again, it charges nothing more. Migration `20261106110000`.
+  Receive payment does: sent again, it charges nothing more. A caller of the API sends a
+  `request_id` with `POST /api/rent/leases/<id>/charges` and `.../recurring-charges` now, as with
+  a payment. Migration `20261106110000`.
 - **Fixed: a journal entry proposed twice, or dated ahead.** A journal entry proposed again after
   its answer was lost waited twice, and an approver might post both. It now carries its page's
   request id, so the same proposal again is the one entry. An entry is dated no later than the
   company's today: one dated next year moved balances at once while every report as of today
-  left it out. One proposed for a later day before this release posts on its day. Migration
-  `20261106110100`.
+  left it out. One proposed for a later day before this release posts on its day. A caller of
+  `POST /api/journal` sends a `request_id` now. Migration `20261106110100`.
 - **Fixed: a lease-break fee charged twice.** End lease with the lease-break fee sent twice at
   once (two tabs, or a resend while the first ran) charged the fee twice. A lease is now charged
   one lease-break fee: the same end again changes nothing, and another end with the fee is
