@@ -1428,6 +1428,8 @@ def rent_runs(session: Staff, conn: Conn) -> list[RentRunLine]:
 
 
 class NewCharge(BaseModel):
+    # The panel's own id: sent again (its answer lost), it returns the charge it made (C-025).
+    request_id: UUID
     kind: Literal["fee", "credit"]
     amount: Amount
     due_on: date
@@ -1441,6 +1443,34 @@ class NewCharge(BaseModel):
 
 class Created(BaseModel):
     id: UUID
+
+
+def made_before(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    table: Literal["trust_charges", "trust_recurring_charges"],
+    request_id: UUID,
+    asked: dict[str, Any],
+    what: str,
+) -> UUID | None:
+    """What this request id made already (a charge or a recurring charge), None the first time;
+    the same request sent twice at once waits for the first. The same request id asking for
+    something else is refused (409), as a payment's is (docs/edge-cases.md C-025, C-026)."""
+    conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended('request ' || %s, 0))", (str(request_id),)
+    )
+    row = conn.execute(
+        sql.SQL("SELECT id, {} FROM {} WHERE pmc_id = %s AND request_id = %s").format(
+            sql.SQL(", ").join(sql.Identifier(c) for c in asked), sql.Identifier(table)
+        ),
+        (pmc_id, request_id),
+    ).fetchone()
+    if row is None:
+        return None
+    if tuple(row[1:]) != tuple(asked.values()):
+        raise HTTPException(409, f"this request id was used for a different {what}")
+    made: UUID = row[0]
+    return made
 
 
 def check_charge_type(
@@ -1464,8 +1494,21 @@ def check_charge_type(
 @router.post("/leases/{lease_id}/charges", status_code=201)
 def add_charge(session: Staff, conn: Conn, lease_id: UUID, new: NewCharge) -> Created:
     """A one-off fee the lease owes, or a credit that takes its amount off what it owes; maybe a
-    fee for a work order, charging the tenant for a repair."""
+    fee for a work order, charging the tenant for a repair. The same request id again returns
+    the charge it made."""
     lease_of(conn, session.pmc_id, lease_id)
+    asked = {
+        "lease_id": lease_id,
+        "kind": new.kind,
+        "amount": new.amount,
+        "due_on": new.due_on,
+        "memo": new.memo,
+        "work_order_id": new.work_order_id,
+        "charge_type_id": new.charge_type_id,
+    }
+    made = made_before(conn, session.pmc_id, "trust_charges", new.request_id, asked, "charge")
+    if made is not None:
+        return Created(id=made)
     if new.work_order_id is not None:
         if new.kind != "fee":
             raise HTTPException(422, "a work order is charged to a tenant as a fee")
@@ -1480,9 +1523,9 @@ def add_charge(session: Staff, conn: Conn, lease_id: UUID, new: NewCharge) -> Cr
     check_charge_type(conn, session.pmc_id, new.kind, new.charge_type_id)
     try:
         row = conn.execute(
-            "INSERT INTO trust_charges"
-            " (pmc_id, lease_id, due_on, kind, amount, memo, work_order_id, charge_type_id)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo,"
+            " work_order_id, charge_type_id, request_id)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (
                 session.pmc_id,
                 lease_id,
@@ -1492,6 +1535,7 @@ def add_charge(session: Staff, conn: Conn, lease_id: UUID, new: NewCharge) -> Cr
                 new.memo,
                 new.work_order_id,
                 new.charge_type_id,
+                new.request_id,
             ),
         ).fetchone()
     except psycopg.errors.CheckViolation as refused:
@@ -1502,6 +1546,7 @@ def add_charge(session: Staff, conn: Conn, lease_id: UUID, new: NewCharge) -> Cr
 
 
 class NewRecurringCharge(BaseModel):
+    request_id: UUID  # the panel's own id, as a one-off charge's (C-026)
     kind: Literal["fee", "credit"]
     amount: Amount
     memo: Memo
@@ -1514,13 +1559,27 @@ def add_recurring_charge(
     session: Staff, conn: Conn, lease_id: UUID, new: NewRecurringCharge
 ) -> Created:
     """A fee the lease owes every month besides its rent (pet rent, parking), or a credit it
-    gets every month, charged by the rent run from the first due date on or after starts_on."""
+    gets every month, charged by the rent run from the first due date on or after starts_on. The
+    same request id again returns the recurring charge it added."""
     lease_of(conn, session.pmc_id, lease_id)
+    asked = {
+        "lease_id": lease_id,
+        "kind": new.kind,
+        "amount": new.amount,
+        "memo": new.memo,
+        "starts_on": new.starts_on,
+        "charge_type_id": new.charge_type_id,
+    }
+    made = made_before(
+        conn, session.pmc_id, "trust_recurring_charges", new.request_id, asked, "recurring charge"
+    )
+    if made is not None:
+        return Created(id=made)
     check_charge_type(conn, session.pmc_id, new.kind, new.charge_type_id)
     row = conn.execute(
         "INSERT INTO trust_recurring_charges"
-        " (pmc_id, lease_id, kind, amount, memo, starts_on, charge_type_id)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        " (pmc_id, lease_id, kind, amount, memo, starts_on, charge_type_id, request_id)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (
             session.pmc_id,
             lease_id,
@@ -1529,6 +1588,7 @@ def add_recurring_charge(
             new.memo,
             new.starts_on,
             new.charge_type_id,
+            new.request_id,
         ),
     ).fetchone()
     assert row is not None

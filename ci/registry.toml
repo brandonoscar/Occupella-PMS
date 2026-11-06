@@ -217,6 +217,16 @@ tests = [
 ]
 
 [[invariant]]
+id = "charge-request-once"
+statement = "Staff's Enter charge and Add recurring charge carry their panel's request id (migration 20261106110000; docs/edge-cases.md C-025, C-026), kept once per company on the charge or recurring charge made: the same request id again returns what it made and charges nothing more, read under the request id's own lock so two sent at once make one; the same request id asking for another charge is refused, making nothing."
+tests = [
+  "tests/properties/test_request_id_properties.py::test_a_request_id_sent_again_makes_one_charge_and_another_under_it_is_refused",
+  "tests/api/test_rent.py::test_sending_a_charge_again_records_it_once",
+  "tests/api/test_rent.py::test_sending_a_recurring_charge_again_adds_it_once",
+  "tests/test_request_ids.py::test_one_request_sent_twice_at_once_is_made_once",
+]
+
+[[invariant]]
 id = "autopay-on-its-way-ages-out"
 statement = "A balance autopay pays what the lease owes by the due date less what is on its way, up to its amount, never below zero; on its way is a payment online not in the books, not failed, come back or expired, that was reported paid (waiting for staff) or started within ON_ITS_WAY_DAYS (14) before the due date (src/pms/autopay.py; docs/edge-cases.md P-067, P-068, H-145): one whose report never came no longer lowers every later month's payment. Staff see each such payment, started that long ago with no word from the partner and not in the books, on Banking's Online payments waiting (online_payments.no_word, P-013); nothing there records it."
 tests = [

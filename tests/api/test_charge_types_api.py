@@ -69,6 +69,7 @@ def test_a_fee_of_a_type_counts_on_its_own_line_of_the_income_statement(
         send(
             client,
             f"/api/rent/leases/{lease}/charges",
+            request_id=uuid.uuid4(),
             kind="fee",
             amount="50.00",
             due_on=START,
@@ -80,6 +81,7 @@ def test_a_fee_of_a_type_counts_on_its_own_line_of_the_income_statement(
         send(
             client,
             f"/api/rent/leases/{lease}/recurring-charges",
+            request_id=uuid.uuid4(),
             kind="fee",
             amount="25.00",
             memo="Dog",
@@ -91,6 +93,7 @@ def test_a_fee_of_a_type_counts_on_its_own_line_of_the_income_statement(
         send(
             client,
             f"/api/rent/leases/{lease}/charges",
+            request_id=uuid.uuid4(),
             kind="fee",
             amount="10.00",
             due_on=START,
@@ -163,11 +166,17 @@ def test_a_type_is_a_fees_and_the_companys_own(client, conn, staff, lease):
     charge = {"amount": "20.00", "due_on": TODAY, "memo": "Move-out clean"}
 
     credit = send(
-        client, f"/api/rent/leases/{lease}/charges", kind="credit", charge_type_id=mine, **charge
+        client,
+        f"/api/rent/leases/{lease}/charges",
+        request_id=uuid.uuid4(),
+        kind="credit",
+        charge_type_id=mine,
+        **charge,
     )
     monthly_credit = send(
         client,
         f"/api/rent/leases/{lease}/recurring-charges",
+        request_id=uuid.uuid4(),
         kind="credit",
         amount="5.00",
         memo="Discount",
@@ -175,11 +184,17 @@ def test_a_type_is_a_fees_and_the_companys_own(client, conn, staff, lease):
         charge_type_id=mine,
     )
     other = send(
-        client, f"/api/rent/leases/{lease}/charges", kind="fee", charge_type_id=theirs, **charge
+        client,
+        f"/api/rent/leases/{lease}/charges",
+        request_id=uuid.uuid4(),
+        kind="fee",
+        charge_type_id=theirs,
+        **charge,
     )
     unknown = send(
         client,
         f"/api/rent/leases/{lease}/recurring-charges",
+        request_id=uuid.uuid4(),
         kind="fee",
         amount="5.00",
         memo="Parking",

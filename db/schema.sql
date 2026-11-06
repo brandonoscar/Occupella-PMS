@@ -6942,6 +6942,7 @@ CREATE TABLE public.trust_charges (
     recurring_charge_id uuid,
     work_order_id uuid,
     charge_type_id uuid,
+    request_id uuid,
     CONSTRAINT trust_charges_amount_check CHECK ((amount > (0)::numeric)),
     CONSTRAINT trust_charges_kind_check CHECK ((kind = ANY (ARRAY['rent'::text, 'fee'::text, 'credit'::text])))
 );
@@ -17820,6 +17821,7 @@ CREATE TABLE public.trust_recurring_charges (
     starts_on date NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     charge_type_id uuid,
+    request_id uuid,
     CONSTRAINT trust_recurring_charges_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
     CONSTRAINT trust_recurring_charges_kind_check CHECK ((kind = ANY (ARRAY['fee'::text, 'credit'::text]))),
     CONSTRAINT trust_recurring_charges_memo_check CHECK ((memo <> ''::text))
@@ -22710,6 +22712,13 @@ CREATE UNIQUE INDEX trust_charges_one_rent_per_due_date ON public.trust_charges 
 
 
 --
+-- Name: trust_charges_request; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_charges_request ON public.trust_charges USING btree (pmc_id, request_id) WHERE (request_id IS NOT NULL);
+
+
+--
 -- Name: trust_charges_work_order_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -24212,6 +24221,13 @@ CREATE INDEX trust_recurring_charges_lease_id ON public.trust_recurring_charges 
 --
 
 CREATE UNIQUE INDEX trust_recurring_charges_lease_kind ON public.trust_recurring_charges USING btree (pmc_id, lease_id, id, kind);
+
+
+--
+-- Name: trust_recurring_charges_request; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_recurring_charges_request ON public.trust_recurring_charges USING btree (pmc_id, request_id) WHERE (request_id IS NOT NULL);
 
 
 --
@@ -35878,4 +35894,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261105001100'),
     ('20261105001200'),
     ('20261106100000'),
-    ('20261106100100');
+    ('20261106100100'),
+    ('20261106110000');

@@ -345,7 +345,11 @@ def books(
             conn,
             demo.leases[("Birch Flats", "Unit A")],
             rent.NewRecurringCharge(
-                kind="fee", amount=PET_RENT, memo="Pet rent", starts_on=month_ago
+                request_id=uuid.uuid4(),
+                kind="fee",
+                amount=PET_RENT,
+                memo="Pet rent",
+                starts_on=month_ago,
             ),
         )
 

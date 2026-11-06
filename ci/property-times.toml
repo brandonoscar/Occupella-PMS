@@ -86,6 +86,7 @@ nightly_factor = 60
 "tests/properties/test_receive_payment_properties.py::test_a_lease_goes_month_to_month_once_when_its_term_runs_out_without_an_end_of_staffs" = 20.0
 "tests/properties/test_receive_payment_properties.py::test_a_payment_pays_the_charges_chosen_first_and_the_rest_as_before" = 50.0
 "tests/properties/test_recurring_work_order_properties.py::test_recurring_work_orders_open_on_their_days_once" = 16.3
+"tests/properties/test_request_id_properties.py::test_a_request_id_sent_again_makes_one_charge_and_another_under_it_is_refused" = 8.8
 "tests/properties/test_rent_change_properties.py::test_the_rent_in_force_is_charged_each_month_and_changes_follow_the_rules" = 46.7
 "tests/properties/test_rent_due_day_properties.py::test_rent_is_charged_on_its_due_day_once_a_month" = 64.4
 "tests/properties/test_rent_from_the_cutover_properties.py::test_rent_is_charged_from_the_cutover_and_never_for_the_old_systems_days" = 8.2

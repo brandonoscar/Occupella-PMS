@@ -78,4 +78,30 @@ describe("Enter charge and monthly charges", () => {
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/setup/charge-types", expect.anything()));
     expect(screen.queryByLabelText("Type")).toBeNull();
   });
+
+  // Sent again after its answer was lost, a charge or a monthly charge keeps its request id, so
+  // the API charges nothing new; once saved, the next is a new request (C-025, C-026).
+  it.each([
+    ["Enter charge", ChargeForm, "What for", "Add"],
+    ["a monthly charge", RecurringForm, "Monthly, for", "Add every month"],
+  ] as const)("%s sent again keeps its request id until it is saved", async (_, Form, memo, add) => {
+    server([]);
+    const record = vi.fn(async () => false).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    render(<Form lease={LEASE} record={record} />);
+    const button = screen.getByRole("button", { name: add }) as HTMLButtonElement;
+    for (const n of [1, 2, 3]) {
+      await vi.waitFor(() => expect(button.disabled).toBe(false));
+      // A saved one clears the form for the next.
+      if (n !== 2) {
+        fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "25.00" } });
+        fireEvent.change(screen.getByLabelText(new RegExp(memo)), { target: { value: "Lost key" } });
+      }
+      fireEvent.click(button);
+      await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(n));
+    }
+    const ids = record.mock.calls.map((call) => ((call as unknown[])[1] as { request_id: string }).request_id);
+    expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(ids[1]).toBe(ids[0]);
+    expect(ids[2]).not.toBe(ids[0]);
+  });
 });

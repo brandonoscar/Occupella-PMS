@@ -455,7 +455,9 @@ describe("LeasePage", () => {
     expect(await screen.findByText("Parking of $50.00 added every month.")).toBeTruthy();
     expect(posted(fetch)).toEqual([
       ["/api/rent/recurring-charges/r1/stop", { ends_on: "2026-11-01" }],
-      ["/api/rent/leases/l1/recurring-charges", { kind: "fee", amount: "50.00", memo: "Parking", starts_on: "2026-11-01" }],
+      ["/api/rent/leases/l1/recurring-charges", {
+        request_id: expect.stringMatching(/^[0-9a-f-]{36}$/), kind: "fee", amount: "50.00", memo: "Parking", starts_on: "2026-11-01",
+      }],
     ]);
   });
 

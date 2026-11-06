@@ -298,6 +298,8 @@ function ChargeChoice({ charge, amount, onChange }: {
 }
 
 export function ChargeForm({ lease, record }: { lease: RentLease; record: Recorder }) {
+  // Sent again (its answer lost), the same request id charges nothing new (C-025).
+  const [id, setId] = useState(requestId);
   const [kind, setKind] = useState<"fee" | "credit">("fee");
   const [amount, setAmount] = useState("");
   const [due, setDue] = useState(companyDay());
@@ -310,9 +312,10 @@ export function ChargeForm({ lease, record }: { lease: RentLease; record: Record
       onSubmit={async (event) => {
         event.preventDefault();
         const typed = kind === "fee" && type ? { charge_type_id: type } : {};
-        const body = { kind, amount, due_on: due, memo, ...typed };
+        const body = { request_id: id, kind, amount, due_on: due, memo, ...typed };
         const said = () => `${kind === "fee" ? "Fee" : "Credit"} of ${money(amount)} added.`;
         if (await record(`/api/rent/leases/${lease.id}/charges`, body, said)) {
+          setId(requestId());
           setAmount("");
           setMemo("");
         }
@@ -375,6 +378,7 @@ export function RecurringLine({ recurring, record }: { recurring: RecurringCharg
 }
 
 export function RecurringForm({ lease, record }: { lease: RentLease; record: Recorder }) {
+  const [id, setId] = useState(requestId);  // as Enter charge's (C-026)
   const [kind, setKind] = useState<"fee" | "credit">("fee");
   const [amount, setAmount] = useState("");
   const [from, setFrom] = useState(companyDay());
@@ -387,9 +391,10 @@ export function RecurringForm({ lease, record }: { lease: RentLease; record: Rec
       onSubmit={async (event) => {
         event.preventDefault();
         const typed = kind === "fee" && type ? { charge_type_id: type } : {};
-        const body = { kind, amount, memo, starts_on: from, ...typed };
+        const body = { request_id: id, kind, amount, memo, starts_on: from, ...typed };
         const said = () => `${memo} of ${money(amount)} added every month.`;
         if (await record(`/api/rent/leases/${lease.id}/recurring-charges`, body, said)) {
+          setId(requestId());
           setAmount("");
           setMemo("");
         }

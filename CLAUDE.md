@@ -1067,7 +1067,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`trust_open_charges`, so a credit counts), and the rest is
   the first tenant's prepaid rent; prepaid rent is used the same way. Each record carries a
   request id the page makes (its key in `trust_post_transfers`), so sending it again records
-  nothing new; a payment like one already recorded to the lease under another request id (the
+  nothing new; so do a charge and a recurring charge staff enter (migration 20261106110000,
+  `trust_charges.request_id` and `trust_recurring_charges.request_id`, once per PMC, read under
+  the request id's lock: the same id again returns what it made, and with another charge is
+  refused; C-025, C-026); a payment like one already recorded to the lease under another request id (the
   same amount, day and way, and check number where both give one) is refused, 409, under the
   lease's lock, until staff say it is another (`not_a_duplicate`, which Receive payment asks
   first; H-008). The page lists each payment as it came in (its whole amount, prepaid rent

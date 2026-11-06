@@ -118,6 +118,10 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   address each try no longer gets past the sign-in and reset limits. A request that comes through
   a proxy `PMS_TRUSTED_PROXIES` doesn't name is logged once, naming the proxy, since every visitor
   behind it shares its address until it is named.
+- **Fixed: a fee or a monthly charge entered twice.** Enter charge and Add recurring charge sent
+  again after their answer was lost (a dropped connection, a second click on a slow page) charged
+  the tenant twice, or billed them twice every month. Each now carries its panel's request id, as
+  Receive payment does: sent again, it charges nothing more. Migration `20261106110000`.
 - **Fixed: Stripe's answers in an old API version, and a webhook missing its events.** Every
   call to Stripe now names the API version whose shapes the PMS reads (`2024-06-20`), so an
   account whose default is older than `latest_charge` no longer fails every paid report; and

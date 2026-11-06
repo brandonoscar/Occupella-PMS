@@ -27,13 +27,13 @@ answer in the portal for everything that can fail.
 |---|---|---|---|---|---|
 | [Money and the ledger](#money-and-the-ledger) | 152 | 114 | 8 | 30 | 4 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 84 | 15 | 65 | 13 |
-| [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
+| [Concurrency and retries](#concurrency-and-retries) | 143 | 67 | 30 | 46 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 74 | 8 | 83 | 18 |
 | [Bad files and imports](#bad-files-and-imports) | 152 | 70 | 17 | 65 | 1 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 90 | 11 | 55 | 5 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 75 | 14 | 83 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1161** | **612** | **113** | **436** | **46** |
+| **All** | **1161** | **614** | **113** | **434** | **46** |
 
 ## Open, high risk: the work list
 
@@ -518,8 +518,6 @@ its ten most pressing, each with the test that would close it.
 | C-135 | A deposit paid in while the return runs | The return waits for it | Tested | `tests/test_move_out.py::test_a_deposit_paid_in_meanwhile_waits_for_the_return` | H |
 | C-136 | Move to another unit resent | The same new lease comes back | Tested | `tests/api/test_lease_transfers_api.py::test_the_new_lease_keeps_the_old_one_s_due_day_unless_staff_pick_another` | H |
 | C-014 | A tenant leaves the lease while a payment waits for the lease lock | The tenant list was read before the lock, so the prepaid part can go to the tenant who just left | Open | src/pms/api/rent.py:468 (lease_of before lock_lease at 471) | M |
-| C-025 | Enter charge resent after its answer was lost | No request id: the tenant is charged twice | Open | src/pms/api/rent.py:1372 (NewCharge has no request id) | M |
-| C-026 | Add recurring charge resent after its answer was lost | No request id: two recurring charges, so the tenant is billed twice every month | Open | src/pms/api/rent.py:1446 (NewRecurringCharge) | M |
 | C-029 | The same payment file submitted twice at the same moment | Both pass the read check; the unique key stops the second, answered as a 500, not in words | Open | src/pms/api/payment_files.py:387 | M |
 | C-032 | A tenants file imported by two staff or two tabs at once | Names are looked up with no lock or unique key, so every tenant is added twice | Open | src/pms/api/switching.py:213 (Names.tenant) | M |
 | C-045 | Two staff run Pay bills on overlapping bills listed in different orders | Owner accounts are locked in the order sent; a deadlock is answered as a 500 | Open | src/pms/api/payables.py:1423 | M |
@@ -579,6 +577,8 @@ its ten most pressing, each with the test that would close it.
 | C-139 | Two admins take each other's admin role at once | One stays an admin | Tested | `tests/test_staff_roles.py::test_two_admins_taking_each_others_role_leave_one` | M |
 | C-140 | Two brokers named for one trust bank account at once | The second waits and is refused | Tested | `tests/test_trust_account_signers.py::test_two_brokers_named_at_once_the_second_waits_and_is_refused` | M |
 | C-143 | Two staff press Download the ACH file of a run never taken, at the same moment | A take locks the run (an advisory lock on payout-file:<run>) before it reads the takes, so two at once wait for each other and the second is refused as taken already | Tested | tests/api/test_payouts_api.py::test_two_first_takes_at_once_give_the_ach_file_once | M |
+| C-025 | Enter charge resent after its answer was lost | Enter charge carries its panel's request id (migration 20261106110000): sent again, it returns the charge it made and charges nothing more; the same id with another charge is refused (409), and two sent at once wait on the request id's lock | Tested | tests/api/test_rent.py::test_sending_a_charge_again_records_it_once; tests/test_request_ids.py::test_one_request_sent_twice_at_once_is_made_once; tests/properties/test_request_id_properties.py | M |
+| C-026 | Add recurring charge resent after its answer was lost | Add recurring charge carries its panel's request id too: sent again, it returns the recurring charge it added, so the tenant is billed once a month; the same id with another is refused (409) | Tested | tests/api/test_rent.py::test_sending_a_recurring_charge_again_adds_it_once; tests/test_request_ids.py::test_one_request_sent_twice_at_once_is_made_once; frontend/src/pages/ChargeTypes.test.tsx ("sent again keeps its request id until it is saved") | M |
 | C-015 | Ownership shares change while a payment waits for the lease lock | Owners and shares were read before the lock; the payment splits by the old shares | Open | src/pms/api/rent.py:469 (owners_of before lock_lease) | L |
 | C-033 | A history file submitted twice at once | Read check then insert; the unique key stops the second as a 500 | Open | src/pms/api/switching.py:621 | L |
 | C-037 | A bill payment resent with the same request id but a new amount | The first payment comes back as success with no comparison; staff believe the new amount was paid | Open | src/pms/api/payables.py:1271 | L |
@@ -614,7 +614,6 @@ its ten most pressing, each with the test that would close it.
 - C-090: a test that a paid payment with no report after N days is found by a poll of the partner and recorded once, and that a staff-recorded copy and a late report don't double it.
 - C-055: an API test that a second take of a run's ACH file asks for confirmation (or carries a new file id modifier) and is logged as a repeat.
 - C-065: an API test that proposing with the same request id twice leaves one entry waiting.
-- C-026: an API test that the same request id twice makes one recurring charge and the next rent run charges it once.
 - C-014: a timing test: a departure holds the lease lock, a payment waits, and its prepaid part goes to the tenant who stays.
 - C-081: a test with a partner whose charge sees a stop committed after the check, asserting the payment is not sent (lock the autopay across the send).
 - C-130: a timing test: an archival and a new lease on one unit at once, asserting one of them is refused.
