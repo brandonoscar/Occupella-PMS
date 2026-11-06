@@ -1851,3 +1851,37 @@ tests = [
   "tests/api/test_company_api.py::test_a_company_picks_its_time_zone_and_its_day_follows_it",
   "tests/api/test_company_api.py::test_a_company_that_picked_no_time_zone_is_in_new_york",
 ]
+
+[[invariant]]
+id = "unapplied-cash-held-and-tied-out"
+statement = "Money received into an operating trust bank account that can't be matched yet is held in that account's unapplied cash account (one per trust bank account, operating only; migration 20261106000240), counted by the tie-out as everything held is: the bank's cash is the book cash, which is every ledger account in it, unapplied cash included. It is applied to a lease (a payment as Receive payment makes, rent first) or refunded through the cash (a payout: disburse and the account's signers), never past what is left of it, each safe to retry. Month-end isn't approved while any is held, and the three-way reconciliation shows it on a line of its own."
+tests = [
+  "tests/properties/test_held_money_properties.py::test_held_money_ties_out_and_owner_held_deposits_are_never_in_trust",
+  "tests/test_unapplied_cash.py::test_received_unapplied_cash_is_counted_by_the_tie_out",
+  "tests/test_unapplied_cash.py::test_a_refund_is_a_payout_never_past_what_is_left_and_safe_to_retry",
+  "tests/test_unapplied_cash.py::test_month_end_is_not_approved_while_unapplied_cash_is_held",
+  "tests/test_unapplied_cash.py::test_a_payment_from_unapplied_cash_pays_the_lease_and_never_past_the_receipt",
+  "tests/api/test_unapplied_api.py::test_part_of_it_applied_and_the_rest_refunded_never_past_what_is_left",
+]
+
+[[invariant]]
+id = "owner-held-deposits-never-in-trust"
+statement = "A deposit the owner holds outside trust (migration 20261106000241) is a record, once per lease, tenant and kind, naming who: no money moves and no ledger account holds it, so no trust balance counts it; what the owner returned and kept of it at move-out comes to what was held, once. The tenant ledger and the owner's statement show it on memo lines that change no balance."
+tests = [
+  "tests/properties/test_held_money_properties.py::test_held_money_ties_out_and_owner_held_deposits_are_never_in_trust",
+  "tests/test_owner_held_deposits.py::test_a_deposit_the_owner_holds_is_recorded_naming_who_and_never_in_trust",
+  "tests/test_owner_held_deposits.py::test_at_move_out_the_owner_returns_or_keeps_it_once_and_nothing_moves",
+  "tests/test_owner_held_deposits.py::test_the_tenant_ledger_shows_it_as_memo_lines_that_change_no_balance",
+  "tests/test_owner_held_deposits.py::test_the_owner_statement_lists_what_the_owner_holds_on_a_memo_line_not_in_the_balance",
+  "tests/api/test_owner_held_api.py::test_at_move_out_staff_record_what_the_owner_returned_and_kept_and_nothing_moves",
+]
+
+[[invariant]]
+id = "concessions-on-their-own-line"
+statement = "A credit marked a concession, once or every month (migration 20261106000242), is a discount on rent the owner's accrual income statement counts on a line of its own right after rent, a contra to it on Schedule E's line 3, never in rent or the monthly charges; only a credit is one, and it moves no money. The owner's statement lists the concessions given in its period on a memo line that changes no balance."
+tests = [
+  "tests/test_concessions.py::test_the_accrual_statement_counts_concessions_on_their_own_line_against_rent",
+  "tests/test_concessions.py::test_only_a_credit_is_a_concession",
+  "tests/test_concessions.py::test_the_owner_statement_says_the_concessions_given_in_the_period_on_a_memo_line",
+  "tests/api/test_concessions_api.py::test_staff_mark_a_credit_once_or_every_month_a_concession_and_the_statement_counts_it",
+]
