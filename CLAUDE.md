@@ -595,7 +595,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - The owner money loop: a management agreement per owner's property account, in force from a
   date (new terms are a new row). `trust_post_management_fee` takes its percent of rent and
   recurring fees collected in a period (net of bounces; recurring fees since migration 0040),
-  or the minimum, plus a flat fee, into the PMC's fee account, once per period (a property owned
+  or the minimum, plus a flat fee, into the PMC's fee account, once per period, and staff's
+  Collect fees only once the period has ended by the company's today (M-112) (a property owned
   in shares on the period's last day: one fee for the property, its owners' collections added up
   under the terms they share, split by the shares, each account paying its part; owners whose
   terms differ take none until they agree; migration 0115, q044; staff set every owner's terms at

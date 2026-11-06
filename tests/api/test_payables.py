@@ -529,6 +529,30 @@ def test_management_fees_are_taken_once_a_period_for_each_agreement(client, conn
     assert balance(conn, pmc.pmc_income) == Decimal("150.00")
 
 
+def test_a_fee_period_is_collected_once_it_has_ended(client, conn, staff, pmc):
+    # Collect fees for a period that hasn't ended yet (docs/edge-cases.md M-112) took the fee on
+    # what came in so far and closed the period to every later fee: it waits for the period's end.
+    Rented(conn, pmc)
+    add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, fee_percent="10")
+    period = {"period_start": TODAY - 30 * DAY, "period_end": TODAY + DAY}
+    why = (
+        f"a fee period is collected once it has ended: this one ends {TODAY:%m/%d/%Y},"
+        f" so its fee is collected from {TODAY + DAY:%m/%d/%Y}"
+    )
+
+    early = call(client, "management-fees", on=TODAY, **period)
+    preview = ok(client.get("/api/payables/management-fees", params=period), 200)
+
+    refused(early, 422, why)
+    assert [(d["taken"], d["fee"], d["refused"]) for d in preview] == [(False, None, why)]
+    assert conn.execute(
+        "SELECT count(*) FROM trust_management_fees WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone() == (0,)
+    # Ended today: collected.
+    ended = ok(call(client, "management-fees", on=TODAY, **(period | {"period_end": TODAY})), 200)
+    assert [f["fee"] for f in ended] == ["150.00"]
+
+
 def test_the_fee_counts_a_recurring_fee_collected_with_the_rent(client, conn, staff, pmc):
     rented = Rented(conn, pmc)
     add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, fee_percent="10")

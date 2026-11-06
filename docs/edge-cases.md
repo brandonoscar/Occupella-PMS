@@ -25,7 +25,7 @@ answer in the portal for everything that can fail.
 
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
-| [Money and the ledger](#money-and-the-ledger) | 152 | 115 | 8 | 29 | 4 |
+| [Money and the ledger](#money-and-the-ledger) | 152 | 116 | 8 | 28 | 4 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 84 | 15 | 65 | 13 |
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 73 | 30 | 40 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 74 | 8 | 83 | 18 |
@@ -33,7 +33,7 @@ answer in the portal for everything that can fail.
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 90 | 11 | 55 | 5 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 75 | 14 | 83 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1161** | **621** | **113** | **427** | **46** |
+| **All** | **1161** | **622** | **113** | **426** | **46** |
 
 ## Open, high risk: the work list
 
@@ -176,7 +176,6 @@ its ten most pressing, each with the test that would close it.
 | M-097 | Bill holds read in the evening, Eastern time | Use the UTC date: a bill dated the company's tomorrow already holds, and tomorrow's reserve applies | Open | `db/migrations/20261104000300_shortfall_keeps_the_reserve.sql:67` | M |
 | M-105 | A recurring bill of a property or owner that was archived | Keeps entering a bill every month: archiving checks running recurring bills only for vendors | Open | `db/migrations/20261024000152_bill_lifecycle.sql:556` | M |
 | M-111 | Bounces in a period larger than its collections | The fee is 0, not negative; the shortfall is not carried on, so the fee taken earlier on the bounced rent stays | Open | `tests/test_owner_money.py::test_a_bounce_in_the_period_counts_against_it` | M |
-| M-112 | Collect fees for a period that hasn't ended yet | Takes the fee on what came in so far and locks the period against later fees | Open | `src/pms/api/payables.py:1932` | M |
 | M-026 | A balance autopay when the tenant holds prepaid rent | A founder's decision, not a plain bug: with prepaid rent used by itself on (Company setup, migration 0117, q031) the night uses it before autopay starts, so a balance autopay debits only the rest; with it off, as every company starts, prepaid rent waits for staff and a balance autopay debits the whole balance while the tenant holds it. Whether a balance autopay should count prepaid rent then is the founder's call | Open | tests/test_nightly.py::test_a_balance_autopay_counts_prepaid_rent_only_once_the_company_uses_it_by_itself (pins both); src/pms/nightly.py (use_prepaid_by_itself before autopay.start_due); src/pms/autopay.py to_pay | M |
 | M-066 | A lease owes exactly the deposits held | All kept; no return transfer is made | Guarded | `db/migrations/20261019000094_ownership_shares.sql:349` | M |
 | M-037 | A second rent in one month on an assisted lease (as in the mid-month run) | The rent run no longer charges a second rent in a month (migration 20261105000400), so the mid-month run can't cut the tenant's rent twice; a rent carried over by hand into a month already charged still would (trust_split_rent_assistance skips the authority's part on conflict) | Guarded | db/migrations/20261105000400_rent_once_a_month.sql; tests/test_rent_once_a_month.py::test_a_mid_month_run_charges_no_month_twice (without assistance); db/migrations/20261020000095_housing_assistance.sql:251 | M |
@@ -238,6 +237,7 @@ its ten most pressing, each with the test that would close it.
 | M-148 | A balance autopay bigger than what is owed less what is on its way | Pays no more than either | Tested | `tests/test_autopay.py::test_a_balance_autopay_pays_no_more_than_its_amount_or_than_is_owed_less_what_is_coming` | M |
 | M-149 | Two roommates' equal payments on one day in one payment file | The second waits as recorded already, for staff | Tested | `tests/api/test_payment_files_api.py::test_a_payment_that_looks_recorded_already_waits` | M |
 | M-135 | A journal entry dated next year | Refused: an entry is dated no later than the company's today (422 in words; the database refuses it too), and the date field offers no later day; one proposed for a later day before migration 20261106110100 posts only on its day or later | Tested | tests/api/test_journal.py::test_an_entry_is_dated_no_later_than_the_companys_today; tests/test_journal_entries.py::test_an_entry_is_dated_no_later_than_the_companys_today; tests/test_journal_entries.py::test_an_entry_dated_after_today_waits_for_its_day_to_post | M |
+| M-112 | Collect fees for a period that hasn't ended yet | Refused in words (422) until the period has ended by the company's today, and the page's rows say from when its fee is collected; a period that ended is collected as before | Tested | tests/api/test_payables.py::test_a_fee_period_is_collected_once_it_has_ended | M |
 | M-008 | A charge or bill of $10.005 written by a path other than the API or the CSV parser | Kept: the tables check only amount above 0, not whole cents | Open | `db/migrations/20261010000012_leases_and_charges.sql:66` | L |
 | M-010 | Deposit interest paid monthly instead of once a year | Each payment rounds per deposit, so twelve payments can differ by cents from one; nothing evens it out | Open | `db/migrations/20261022000122_deposit_interest.sql:165` | L |
 | M-014 | The same request id resent with a different check number or method | Taken as a retry: the first payment comes back and the new reference is silently dropped | Open | `src/pms/api/rent.py:362` | L |

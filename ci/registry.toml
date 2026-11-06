@@ -321,7 +321,7 @@ tests = [
 
 [[invariant]]
 id = "management-fee-once-per-period"
-statement = "A management fee is the agreement's percent of the rent and recurring fees collected in the period (net of bounced payments), or its minimum if that is more, plus its flat fee. It is taken once per owner account and period, an account's fee periods never overlap, and the same period retried returns the fee taken."
+statement = "A management fee is the agreement's percent of the rent and recurring fees collected in the period (net of bounced payments), or its minimum if that is more, plus its flat fee. It is taken once per owner account and period, an account's fee periods never overlap, and the same period retried returns the fee taken. Staff collect a period once it has ended by the company's today (docs/edge-cases.md M-112): taken early it would count only what came in so far and close the period to every later fee."
 tests = [
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
   "tests/test_owner_money.py::test_the_fee_is_a_percent_of_rent_collected_in_the_period",
@@ -332,6 +332,7 @@ tests = [
   "tests/test_owner_money.py::test_taking_the_fee_again_returns_it_and_posts_once",
   "tests/test_owner_money.py::test_a_period_overlapping_one_taken_is_refused",
   "tests/test_owner_money.py::test_the_same_fee_taken_twice_at_once_posts_once",
+  "tests/api/test_payables.py::test_a_fee_period_is_collected_once_it_has_ended",
 ]
 
 [[invariant]]
