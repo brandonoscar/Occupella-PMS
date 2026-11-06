@@ -26,14 +26,14 @@ answer in the portal for everything that can fail.
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
 | [Money and the ledger](#money-and-the-ledger) | 152 | 114 | 7 | 31 | 4 |
-| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 82 | 15 | 67 | 15 |
+| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 84 | 15 | 65 | 13 |
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 72 | 8 | 85 | 19 |
 | [Bad files and imports](#bad-files-and-imports) | 152 | 66 | 16 | 70 | 1 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 89 | 10 | 57 | 5 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 75 | 14 | 83 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1161** | **603** | **110** | **448** | **49** |
+| **All** | **1161** | **605** | **110** | **446** | **47** |
 
 ## Open, high risk: the work list
 
@@ -52,8 +52,6 @@ its ten most pressing, each with the test that would close it.
 - D-016: Server down from the 28th to the month's end, lease due on the 28th
 - D-017: Server down for a whole month, back on the 2nd of the next
 - D-026: Run rent now with Rent due on next month or a later year
-- D-065: A rent change from 03/01 with notice given 02/01
-- D-066: A rent increase recorded on the rent page in CA, OR, WA, NV or NY
 - D-069: California increase notice served by mail
 - D-078: A check received on the last grace day, recorded the next morning dated back
 - D-079: A lockbox file line dated within grace brought in after the fee
@@ -287,8 +285,6 @@ its ten most pressing, each with the test that would close it.
 | D-016 | Server down from the 28th to the month's end, lease due on the 28th | The next run charges only the new month (trust_run_rent from the 1st of today's month): the missed month's due-day rent and recurring charges are never charged and nothing says so | Open | src/pms/nightly.py:115 | H |
 | D-017 | Server down for a whole month, back on the 2nd of the next | That month's rent is never charged for any lease; only an admin's Run rent now with that month's date would catch it up | Open | src/pms/nightly.py:115 | H |
 | D-026 | Run rent now with Rent due on next month or a later year | Not checked (only late fees as of is): next month's rent is charged today | Open | src/pms/api/rent.py:1300 | H |
-| D-065 | A rent change from 03/01 with notice given 02/01 | Allowed: one month before is only 28 days in February, short of a 30-day rule (California's least), and no state warning runs | Open | db/migrations/20261015000061_rent_changes.sql:44 | H |
-| D-066 | A rent increase recorded on the rent page in CA, OR, WA, NV or NY | No state notice check runs there (rent_notice is called only by the renewal plan); the database asks a month | Open | src/pms/api/rent.py:1504; src/pms/api/renewals.py:190 | H |
 | D-069 | California increase notice served by mail | The 5 extra days for mail (CCP 1013) are not added; days are counted from today | Open | src/pms/rent_notice.py:83 | H |
 | D-078 | A check received on the last grace day, recorded the next morning dated back | The night already charged the fee; nothing undoes a late fee when a payment dated within grace comes in later | Open | db/migrations/20261031000200_late_fees_skip_paid_rents.sql:208 | H |
 | D-079 | A lockbox file line dated within grace brought in after the fee | Same: the fee stays until staff waive it | Open | src/pms/api/payment_files.py:109 | H |
@@ -350,6 +346,8 @@ its ten most pressing, each with the test that would close it.
 | D-124 | The draw day | Draws prepared on or after it, once a month, none paid | Tested | tests/test_nightly.py::test_a_night_on_or_after_the_draw_day_prepares_the_owners_draws_once_and_pays_none | H |
 | D-126 | The company's earned fees left in trust | Take-by day 25 days after the oldest | Tested | tests/api/test_company_fees_api.py::test_staff_take_the_companys_fees_out_oldest_first_and_once | H |
 | D-127 | A deposit's return deadline | 14 days after the lease's last day, 10 while it owes nothing | Tested | tests/api/test_deposit_statements_api.py::test_return_by_is_the_strictest_deadline_found_from_the_last_day | H |
+| D-065 | A rent change from 03/01 with notice given 02/01 | Still allowed by the database (a full month), but at a property in California, Oregon, Washington, Nevada or New York the Change rent panel warns that 28 days is short of the state's notice, counted from the day given | Tested | tests/api/test_renewal_plan_api.py::test_a_rent_change_on_the_rent_page_is_warned_of_a_states_notice_from_the_day_given | H |
+| D-066 | A rent increase recorded on the rent page in CA, OR, WA, NV or NY | The Change rent panel asks the API what notice the property's state asks before the increase (GET /api/leasing/renewals/<lease>/rent-change-notice, the renewal plan's rules) and warns, counted from the day notice was given; a warning only, as every state rule here is; the database still asks a month | Tested | tests/api/test_renewal_plan_api.py::test_a_rent_change_on_the_rent_page_is_warned_of_a_states_notice_from_the_day_given; frontend/src/pages/LeaseForms.test.tsx ("warns of the notice the property's state asks") | H |
 | D-006 | The database server's session TimeZone is not UTC (an operator's Postgres set to a local zone) | Reports name UTC explicitly, but trust_roll_over_leases casts created_at::date and trust_check_autopay_run casts saved_at::date in the session's zone; a zone east of UTC makes the autopay trigger stricter than the Python check and fails that company's whole nightly run | Open | db/migrations/20261024000154_receive_payment_and_lease_rules.sql:163; db/migrations/20261023000151_autopay.sql:146 | M |
 | D-015 | One company's run fails just after its midnight (a deadlock, a refused insert) | Logged and its admins emailed, but the day is marked done: nothing retries until the next night, so that day's late fees, reminders and autopay start a day late | Open | src/pms/nightly.py:308 | M |
 | D-018 | Server down from the draw day to the month's end | Draws are prepared only on or after the draw day within the same month, so that month's draws are never prepared | Open | db/migrations/20261024000153_draws_and_payouts.sql:398 | M |

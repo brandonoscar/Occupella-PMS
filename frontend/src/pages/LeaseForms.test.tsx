@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { companyDay, usDate } from "../money";
 import type { Paid, RentLease } from "../rent";
-import { PaymentForm, PaymentRow } from "./LeaseForms";
+import { PaymentForm, PaymentRow, RentChangeForm } from "./LeaseForms";
 
 afterEach(cleanup);
 
@@ -172,5 +172,34 @@ describe("PaymentRow", () => {
     render(<table><tbody><PaymentRow payment={{ ...PAID, note: null, attachments: [] }} record={recorder()} /></tbody></table>);
     expect(screen.queryByText(/^Note:/)).toBeNull();
     expect(screen.queryByRole("link", { name: "Check photo or PDF" })).toBeNull();
+  });
+});
+
+describe("RentChangeForm", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("warns of the notice the property's state asks, counted from the day given (D-065, D-066)", async () => {
+    const warning = "California asks 30 days' written notice before a rent increase of 5.0% (California"
+      + " Civil Code §827). This new rent starts in 28 days. To give that notice, start it on or after 03/03/2026.";
+    const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(path.includes("monthly_rent=1050.00")
+      ? { state: "CA", days: 30, law: "California Civil Code §827", increase_percent: "5.0", earliest: "2026-03-03", warning }
+      : null), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    render(<RentChangeForm lease={{ ...LEASE, ends_on: null }} record={recorder()} />);
+    fireEvent.change(screen.getByLabelText("From (the first of a month)"), { target: { value: "2026-03-01" } });
+    fireEvent.change(screen.getByLabelText("Written notice given on"), { target: { value: "2026-02-01" } });
+    // An amount typed half way asks nothing.
+    fireEvent.change(screen.getByLabelText("New monthly rent"), { target: { value: "1050." } });
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("New monthly rent"), { target: { value: "1050.00" } });
+
+    expect(await screen.findByText(warning)).toBeTruthy();
+    expect(fetch.mock.calls.at(-1)?.[0]).toBe(
+      "/api/leasing/renewals/l1/rent-change-notice?effective_on=2026-03-01&monthly_rent=1050.00&notice_given_on=2026-02-01",
+    );
+    // A warning only: Change rent still records it.
+    expect(screen.getByRole("button", { name: "Change rent" })).toHaveProperty("disabled", false);
+    fireEvent.change(screen.getByLabelText("New monthly rent"), { target: { value: "1000.00" } });
+    await vi.waitFor(() => expect(screen.queryByText(warning)).toBeNull());
   });
 });

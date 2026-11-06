@@ -9,12 +9,14 @@ rent increase (src/pms/rent_notice.py), so it can warn before sending. Nothing h
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
+from psycopg import Connection
 from pydantic import BaseModel
 
 from pms import notices, rent_notice
@@ -163,6 +165,57 @@ def first_of_next_month(day: date) -> date:
     return (day.replace(day=1) + timedelta(days=32)).replace(day=1)
 
 
+@dataclass(frozen=True)
+class Home:
+    lease_id: UUID
+    unit: UUID
+    property_id: UUID
+    began: date
+    ends_on: date | None
+
+
+def notice_of(
+    conn: Connection[Any],
+    pmc: UUID,
+    home: Home,
+    now: Decimal,
+    new_rent: Decimal,
+    starts_on: date,
+    sent_on: date,
+) -> RenewalNotice | None:
+    """The written notice the property's state asks before a new rent of `new_rent` (over `now`)
+    starts on `starts_on`, the notice going out on `sent_on`; None without an increase or without
+    a rule recorded for its state (docs/law.md, src/pms/rent_notice.py)."""
+    address = addresses.address_of(conn, home.property_id)
+    if address is None or address.state not in rent_notice.STATES:
+        return None
+    window = {
+        "pmc": pmc,
+        "unit": home.unit,
+        "lease": home.lease_id,
+        "from": starts_on - timedelta(days=365),
+        "to": starts_on - timedelta(days=1),
+    }
+    row = conn.execute(LOWEST, window).fetchone()
+    lowest = Decimal(row[0]) if row and row[0] is not None else now
+    first = conn.execute(LIVED_FROM, window).fetchone()
+    lived = rent_notice.whole_years(first[0] if first and first[0] else home.began, starts_on)
+    term = (
+        rent_notice.whole_years(home.began, home.ends_on + timedelta(days=1)) if home.ends_on else 0
+    )
+    rule = rent_notice.needed(address.state, now, lowest, new_rent, max(lived, term))
+    if rule is None:
+        return None
+    return RenewalNotice(
+        state=rule.state,
+        days=rule.days,
+        law=rule.law,
+        increase_percent=str(rule.increase_percent),
+        earliest=rent_notice.earliest(sent_on, rule),
+        warning=rent_notice.warning(rule, sent_on, starts_on),
+    )
+
+
 @router.get("/{lease_id}/plan")
 def renewal_plan(
     session: Staff,
@@ -185,32 +238,8 @@ def renewal_plan(
         PlanSigner(tenant_id=t, name=name, email=notices.address(conn, pmc, "tenant", t))
         for t, name in conn.execute(SIGNERS, {"lease": lease_id, "day": day}).fetchall()
     ]
-    notice = None
-    address = addresses.address_of(conn, property_id)
-    if address is not None and address.state in rent_notice.STATES:
-        window = {
-            "pmc": pmc,
-            "unit": unit,
-            "lease": lease_id,
-            "from": new_starts - timedelta(days=365),
-            "to": new_starts - timedelta(days=1),
-        }
-        row = conn.execute(LOWEST, window).fetchone()
-        lowest = Decimal(row[0]) if row and row[0] is not None else Decimal(now)
-        first = conn.execute(LIVED_FROM, window).fetchone()
-        lived = rent_notice.whole_years(first[0] if first and first[0] else began, new_starts)
-        term = rent_notice.whole_years(began, ends_on + timedelta(days=1)) if ends_on else 0
-        years = max(lived, term)
-        rule = rent_notice.needed(address.state, Decimal(now), lowest, new_rent, years)
-        if rule is not None:
-            notice = RenewalNotice(
-                state=rule.state,
-                days=rule.days,
-                law=rule.law,
-                increase_percent=str(rule.increase_percent),
-                earliest=rent_notice.earliest(day, rule),
-                warning=rent_notice.warning(rule, day, new_starts),
-            )
+    home = Home(lease_id, unit, property_id, began, ends_on)
+    notice = notice_of(conn, pmc, home, Decimal(now), new_rent, new_starts, day)
     return RenewalPlan(
         lease_id=lease_id,
         property=prop,
@@ -222,4 +251,35 @@ def renewal_plan(
         new_starts_on=new_starts,
         signers=signers,
         notice=notice,
+    )
+
+
+@router.get("/{lease_id}/rent-change-notice")
+def rent_change_notice(
+    session: Staff,
+    conn: Conn,
+    lease_id: UUID,
+    effective_on: Annotated[date, Query()],
+    monthly_rent: Annotated[Rent, Query()],
+    notice_given_on: Annotated[date, Query()],
+) -> RenewalNotice | None:
+    """The written notice the property's state asks before a rent change recorded on the rent page
+    (docs/edge-cases.md D-065, D-066), counted from the day notice was given: the Change rent panel
+    warns before it is recorded when the new rent starts sooner. A warning only, as every state
+    rule here is (q142); the database still asks a full month."""
+    found = conn.execute(
+        LEASE, {"pmc": session.pmc_id, "lease": lease_id, "day": effective_on - timedelta(days=1)}
+    ).fetchone()
+    if found is None:
+        raise HTTPException(404, "no such lease")
+    unit, property_id, _, _, began, ends_on, now = found
+    home = Home(lease_id, unit, property_id, began, ends_on)
+    return notice_of(
+        conn,
+        session.pmc_id,
+        home,
+        Decimal(now),
+        Decimal(monthly_rent),
+        effective_on,
+        notice_given_on,
     )

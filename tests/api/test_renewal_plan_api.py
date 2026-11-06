@@ -240,3 +240,109 @@ def test_only_staff_read_a_renewal_plan(client, conn, app_conn, pmc, caller):
     answer = client.get(f"/api/leasing/renewals/{lease}/plan")
 
     assert answer.status_code == (401 if caller == "nobody" else 403)
+
+
+# --- a rent change's notice (docs/edge-cases.md D-065, D-066) ----------------------------------
+
+
+def change_notice(client, lease, **asked):
+    return client.get(f"/api/leasing/renewals/{lease}/rent-change-notice", params=asked)
+
+
+def test_a_rent_change_on_the_rent_page_is_warned_of_a_states_notice_from_the_day_given(
+    client, conn, staff, pmc
+):
+    # A month-to-month lease in California raised 5% from March 1 with notice given February 1:
+    # the database's full month is only 28 days in February, short of the state's 30 (D-065), and
+    # the rent page ran no state check at all (D-066).
+    in_state(conn, pmc, "CA")
+    lease, _ = lease_of(conn, pmc, date(2025, 1, 1), None)
+
+    answer = change_notice(
+        client,
+        lease,
+        effective_on="2026-03-01",
+        monthly_rent="1050.00",
+        notice_given_on="2026-02-01",
+    )
+
+    assert answer.status_code == 200, answer.text
+    assert answer.json() == {
+        "state": "CA",
+        "days": 30,
+        "law": "California Civil Code §827",
+        "increase_percent": "5.0",
+        "earliest": "2026-03-03",
+        "warning": (
+            "California asks 30 days' written notice before a rent increase of 5.0% (California"
+            " Civil Code §827). This new rent starts in 28 days. To give that notice, start it on"
+            " or after 03/03/2026."
+        ),
+    }
+    # Given in January, it is notice enough.
+    enough = change_notice(
+        client,
+        lease,
+        effective_on="2026-03-01",
+        monthly_rent="1050.00",
+        notice_given_on="2026-01-30",
+    ).json()
+    assert enough["warning"] is None
+
+
+def test_a_rent_change_with_no_states_rule_or_no_increase_is_warned_of_nothing(
+    client, conn, staff, pmc
+):
+    lease, _ = lease_of(conn, pmc, date(2025, 1, 1), None)
+    asked = {"effective_on": "2026-03-01", "notice_given_on": "2026-02-01"}
+
+    # No address on file: no state.
+    none = change_notice(client, lease, monthly_rent="1500.00", **asked)
+    in_state(conn, pmc, "NV")
+    lower = change_notice(client, lease, monthly_rent="900.00", **asked)
+    nevada = change_notice(client, lease, monthly_rent="1100.00", **asked)
+
+    assert (none.status_code, none.json()) == (200, None)
+    assert lower.json() is None
+    assert nevada.json()["days"] == 60
+
+
+def test_only_staff_read_a_rent_changes_notice_and_only_their_own_leases(
+    client, other_client, conn, app_conn, pmc
+):
+    lease, _ = lease_of(conn, pmc, date(2025, 1, 1), None)
+    asked = {
+        "effective_on": "2026-03-01",
+        "monthly_rent": "1100.00",
+        "notice_given_on": "2026-02-01",
+    }
+
+    assert change_notice(client, lease, **asked).status_code == 401
+    join_as_tenant(other_client, conn, app_conn, pmc)
+    assert change_notice(other_client, lease, **asked).status_code == 403
+    join_as_staff(client, conn, app_conn, pmc)
+    theirs = make_pmc(conn)
+    elsewhere, _ = lease_of(conn, theirs, date(2025, 1, 1), None)
+    assert change_notice(client, elsewhere, **asked).status_code == 404
+
+
+def test_a_rent_changes_notice_asks_for_what_it_needs(client, conn, staff, pmc):
+    lease, _ = lease_of(conn, pmc, date(2025, 1, 1), None)
+
+    assert change_notice(client, lease, effective_on="2026-03-01").status_code == 422
+    assert (
+        change_notice(
+            client, lease, effective_on="soon", monthly_rent="1.00", notice_given_on="2026-02-01"
+        ).status_code
+        == 422
+    )
+    assert (
+        change_notice(
+            client,
+            lease,
+            effective_on="2026-03-01",
+            monthly_rent="-5",
+            notice_given_on="2026-02-01",
+        ).status_code
+        == 422
+    )

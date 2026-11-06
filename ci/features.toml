@@ -197,9 +197,10 @@ browser = [
 
 [[feature]]
 id = "rent-changes"
-statement = "Staff change a lease's rent from the first of a month after written notice of a full month (a lease with an end date only as its terms allow); the rent run charges the rent in force, and the tenant sees the change coming in the portal."
+statement = "Staff change a lease's rent from the first of a month after written notice of a full month (a lease with an end date only as its terms allow), warned as they fill it in when the property's state asks more notice before the increase, counted from the day notice was given (docs/edge-cases.md D-065, D-066); the rent run charges the rent in force, and the tenant sees the change coming in the portal."
 operations = [
   "POST /api/rent/leases/{lease_id}/rent-changes",
+  "GET /api/leasing/renewals/{lease_id}/rent-change-notice",
 ]
 browser = [
   "features.spec.ts › staff raise a month-to-month rent after a full month's notice, and the tenant sees it coming",
