@@ -11,9 +11,49 @@ database where any role such an API answers as holds anything in the schema."""
 
 import psycopg
 import pytest
+from helpers import migrated_database
 from psycopg import sql
 
 from pms import schema
+
+
+@pytest.fixture(scope="module")
+def books(database_url):
+    """A database of these tests' own. A GRANT or REVOKE on a function rewrites its catalog row,
+    even one that changes nothing, and plpgsql_check keys what its profiler counted by that row's
+    version: run in the shared test database, these tests' teardown wiped the coverage of every
+    function counted before them (11/06: SQL statements 99.9% down to 98.18%)."""
+    with migrated_database(database_url, "pms_api_exposure") as url:
+        yield url
+
+
+@pytest.fixture(scope="module", autouse=True)
+def shared_functions_untouched(database_url):
+    """And they stay there: every function of the shared test database keeps its catalog row."""
+
+    def versions():
+        with psycopg.connect(database_url) as shared:
+            return shared.execute(
+                "SELECT oid, xmin::text FROM pg_proc"
+                " WHERE pronamespace = 'public'::regnamespace ORDER BY oid"
+            ).fetchall()
+
+    before = versions()
+    yield
+    assert versions() == before, "a test here rewrote the shared database's functions"
+
+
+@pytest.fixture
+def conn(books):
+    with psycopg.connect(books, autocommit=True) as connection:
+        yield connection
+
+
+@pytest.fixture
+def app_conn(books):
+    with psycopg.connect(books, autocommit=True) as connection:
+        connection.execute("SET ROLE trust_app")
+        yield connection
 
 
 def role(conn: psycopg.Connection, name: str) -> str:
