@@ -1013,7 +1013,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   payment paid during a hold (Accept past the hold), one whose property has several owner accounts
   and no shares (Record it, naming whose; such a lease takes none online), a return an owner can't cover (Try again),
   and what the company's fee account can't (Record the company's deposit, never more than what
-  waits needs, area rent), and a payment the partner has said nothing of for 14 days
+  waits needs, two at once waiting for each other on the trust bank account, C-093; area rent),
+  and a payment the partner has said nothing of for 14 days
   (`online_payments.NO_WORD_DAYS`; "no word", to look up with the partner; until then it counts as
   on its way, and one reported paid counts however old). Each posting has a key of its own (`metadata ->> 'key'`, indexed), so
   a partner reporting twice moves nothing twice. The AI role reads these tables; it moves no money.

@@ -10,10 +10,12 @@ import json
 import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from uuid import uuid4
 
 import psycopg
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from helpers import (
     add_tenant,
@@ -22,10 +24,12 @@ from helpers import (
     balance,
     charge,
     import_statement,
+    in_background,
     open_account,
     open_lease,
     set_ownership,
     staff_named,
+    wait_until_blocked,
 )
 from people import join_as_staff, join_as_tenant, tenant_of
 
@@ -424,6 +428,51 @@ def test_the_company_covers_the_partners_fee_its_account_cant(
         "this request id was used for something else",
     )
     assert ok(client.get("/api/payments/waiting")) == []
+    assert balance(conn, pmc.pmc_income) == Decimal("0.00")
+
+
+@pytest.mark.timing
+def test_two_staff_covering_at_once_deposit_the_companys_money_once(
+    client, tenant_client, conn, staff, tenant, lease, pmc, database_url
+):
+    # Two staff press Cover at once, each page with its own request id (docs/edge-cases.md
+    # C-093): the second waits for the first and finds nothing left to cover, so the company's
+    # own money is deposited once and none of it sits in trust.
+    turn_on(client, "company")
+    payment = pay(tenant_client, lease, "500.00")["id"]
+    bank_says(tenant_client, payment, "paid")
+    session = SimpleNamespace(pmc_id=pmc.pmc_id)
+
+    def cover(connection):
+        body = op.Cover(
+            bank_account_id=pmc.operating_bank_id, amount=Decimal("4.00"), request_id=uuid4()
+        )
+        return op.cover(session, connection, body)
+
+    with psycopg.connect(database_url) as first:
+        assert cover(first) == op.Covered(still_waiting=0)
+
+        def second(worker):
+            with worker.transaction():
+                return cover(worker)
+
+        thread, pid, outcome = in_background(database_url, second)
+        wait_until_blocked(conn, pid)
+        first.commit()
+        thread.join(timeout=30)
+
+    refusal = outcome.get("error")
+    assert isinstance(refusal, HTTPException), outcome
+    assert (refusal.status_code, refusal.detail) == (
+        422,
+        "what waits here needs 0.00 from the company, no more",
+    )
+    assert conn.execute(
+        "SELECT count(*) FROM pgledger_transfers AS t"
+        " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id"
+        " WHERE a.pmc_id = %s AND t.metadata ->> 'kind' = 'company cover'",
+        (pmc.pmc_id,),
+    ).fetchone() == (1,)
     assert balance(conn, pmc.pmc_income) == Decimal("0.00")
 
 

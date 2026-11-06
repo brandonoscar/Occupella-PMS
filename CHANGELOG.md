@@ -137,6 +137,9 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   nothing more would be taken. A payment is now checked and sent while its autopay is held, so a
   stop under way keeps it from being sent, and a stop that comes while it is with the payments
   partner waits until it is recorded.
+- **Fixed: the company's deposit for online payments' costs made twice.** Two staff recording it
+  at once each deposited what waited, leaving the company's own money in trust. The second now
+  waits for the first and is told nothing more is needed.
 - **Fixed: Stripe's answers in an old API version, and a webhook missing its events.** Every
   call to Stripe now names the API version whose shapes the PMS reads (`2024-06-20`), so an
   account whose default is older than `latest_charge` no longer fails every paid report; and

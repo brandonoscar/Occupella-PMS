@@ -1058,8 +1058,14 @@ def cover(session: Staff, conn: Conn, body: Cover) -> Covered:
     """The company's own money, deposited into a trust bank account to pay what its fee account
     there can't (the partner's fees, tenants' fees that came back): into that account, then every
     payment waiting on it there settled, oldest first. Never more than they need, so the company's
-    money doesn't sit in trust; once per request id."""
+    money doesn't sit in trust; once per request id. Two at once (two staff, each page with its
+    own request id) wait for each other on the trust bank account, so the second reads what the
+    first left waiting (docs/edge-cases.md C-093)."""
     company = company_account(conn, session.pmc_id, body.bank_account_id)
+    conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended('company cover in ' || %s::uuid, 0))",
+        (body.bank_account_id,),
+    )
     key = f"cover/{body.request_id}"
 
     def owed_here() -> list[Waiting]:
