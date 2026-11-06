@@ -132,6 +132,7 @@ from pms.api import (
     tenant,
     throttle,
     today,
+    two_step,
     unit_details,
     utilities,
     vendor_links,
@@ -302,6 +303,8 @@ class AcceptInvite(InviteToken):
     # of the founder's review of 11/03); staff give neither.
     phone: Annotated[str, Field(max_length=40)] | None = None
     texts_ok: bool = False
+    # A reset an owner or a tenant asked for while their two-step sign-in is on: its code.
+    code: Code | None = None
 
 
 class ConfirmInvite(InviteToken):
@@ -343,6 +346,9 @@ class InviteDetails(BaseModel):
     expires_at: datetime
     # The words beside "OK to text me", for a tenant or an owner; none for staff.
     text_consent: str | None = None
+    # Setting the password takes the code from their authenticator app too (a reset an owner or
+    # a tenant asked for while their two-step sign-in is on).
+    two_step: bool = False
 
 
 class Enroll(BaseModel):
@@ -702,7 +708,7 @@ def create_app(settings: Settings) -> FastAPI:
                 phone = phones.e164(body.phone or "")
             except phones.BadPhone as bad:
                 raise HTTPException(422, str(bad)) from None
-        done = accounts.accept_invite(conn, body.token, body.password)
+        done = accounts.accept_invite(conn, body.token, body.password, body.code)
         if isinstance(done, accounts.Enrollment):
             return Enroll(totp_uri=done.totp_uri)
         if phone is not None and invited.text_consent is not None:
@@ -873,6 +879,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(dashboard.router)
     app.include_router(tax_ids.router)
     app.include_router(applicant_details.router)
+    app.include_router(two_step.router)
     # Software with an API key (ADR 0011): its own header, never a session's cookie.
     app.include_router(ai_keys.router)
     app.include_router(drafts.router)

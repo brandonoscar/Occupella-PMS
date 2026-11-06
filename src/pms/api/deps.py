@@ -279,6 +279,16 @@ Owner = Annotated[accounts.Session, Depends(_only("owner", "an owner"))]
 Tenant = Annotated[accounts.Session, Depends(_only("tenant", "a tenant"))]
 
 
+def portal_only(session: Current) -> accounts.Session:
+    if session.kind not in ("owner", "tenant"):
+        raise HTTPException(403, "only an owner or a tenant may do this")
+    return session
+
+
+# An owner or a tenant, at what both portals share (their two-step sign-in).
+Portal = Annotated[accounts.Session, Depends(portal_only)]
+
+
 def download(data: bytes, name: str, ext: str) -> Response:
     disposition = f'attachment; filename="{name}.{ext}"'
     return Response(

@@ -607,6 +607,9 @@ BODIES: dict[str, dict[str, Any]] = {
     },
     # The routes no session calls: the token, code or digest each takes, made up (and refused).
     "POST /api/invites/confirm": {"code": "123456"},
+    # An owner's or a tenant's own two-step sign-in: a made-up code, refused (it names no record).
+    "POST /api/me/two-step/confirm": {"code": "123456"},
+    "POST /api/me/two-step/off": {"code": "123456"},
     "POST /api/apply/view": {"token": "x" * 43},
     "POST /api/apply": {"token": "x" * 43},
     "POST /api/signing/consent": {"disclosure_sha256": "0" * 64},

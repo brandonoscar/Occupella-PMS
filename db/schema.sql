@@ -16190,6 +16190,7 @@ CREATE TABLE public.trust_invites (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     accepted_at timestamp with time zone,
+    asked_for boolean DEFAULT false NOT NULL,
     CONSTRAINT trust_invites_check CHECK ((expires_at > created_at)),
     CONSTRAINT trust_invites_token_hash_check CHECK ((length(token_hash) = 32))
 );
@@ -35732,4 +35733,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261105001000'),
     ('20261105001100'),
     ('20261105001200'),
-    ('20261106000100');
+    ('20261106000100'),
+    ('20261106000200');
