@@ -147,9 +147,12 @@ class _Pinned(http.client.HTTPSConnection):
         super().__init__(host, port, timeout=TIMEOUT, context=context)
         self._address = address
         self._context_used = context
-        # The connection's file descriptor while it is open, so give_up can shut it down from
-        # another thread whatever it is waiting on (the TLS handshake included); the lock keeps
-        # a descriptor closed and reused from being shut down.
+        # A file descriptor of the delivery's own for the connection's socket, so give_up can
+        # shut it down from another thread whatever it is waiting on (the TLS handshake, the
+        # status, the body). http.client closes its own descriptor as soon as an answer says
+        # Connection: close, before the body is read (the OWASP review of 11/06); this one stays
+        # open until the delivery finishes, so it is never a number another connection was
+        # given since, and the lock keeps give_up and finish from crossing.
         self._fd: int | None = None
         self._lock = threading.Lock()
         self.gave_up = False
@@ -157,10 +160,10 @@ class _Pinned(http.client.HTTPSConnection):
     def connect(self) -> None:
         raw = socket.create_connection((self._address, self.port), self.timeout)
         with self._lock:
-            self._fd = raw.fileno()
             if self.gave_up:
                 raw.close()
                 raise TimeoutError("given up before the connection was made")
+            self._fd = os.dup(raw.fileno())
         self.sock = self._context_used.wrap_socket(raw, server_hostname=self.host)
 
     def give_up(self) -> None:
@@ -177,10 +180,13 @@ class _Pinned(http.client.HTTPSConnection):
             finally:
                 same.detach()  # the connection still owns the descriptor
 
-    def close(self) -> None:
+    def finish(self) -> None:
+        """The delivery is over: the connection closed, and give_up shuts down nothing more."""
         with self._lock:
-            self._fd = None
-        super().close()
+            if self._fd is not None:
+                os.close(self._fd)
+                self._fd = None
+        self.close()
 
 
 def post(
@@ -193,10 +199,15 @@ def post(
     deadline = threading.Timer(DEADLINE, connection.give_up)
     deadline.daemon = True
     deadline.start()
+    answer: http.client.HTTPResponse | None = None
     try:
         connection.request("POST", path, body=body, headers=headers)
         answer = connection.getresponse()
         answer.read(65536)  # not kept
+        if connection.gave_up:
+            # Cut off at the deadline: the body ended because the delivery was shut down, so the
+            # answer read is part of one at best and the delivery is retried, never counted.
+            raise TimeoutError(f"the webhook didn't answer within {DEADLINE:.0f} s")
         return int(answer.status)
     except (OSError, http.client.HTTPException):
         if connection.gave_up:
@@ -204,7 +215,9 @@ def post(
         raise
     finally:
         deadline.cancel()
-        connection.close()
+        if answer is not None:
+            answer.close()
+        connection.finish()
 
 
 def signature(secret: str, at: int, body: bytes) -> str:

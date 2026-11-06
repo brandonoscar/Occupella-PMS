@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import os
 import socket
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -438,6 +439,33 @@ def test_a_post_goes_over_https_to_the_address_checked_by_its_name(receiver):
     assert got == [("/occupella?team=1", f"hooks.example.com:{port}", b'{"id":1}')]
 
 
+def test_a_delivery_leaves_no_descriptor_open_however_it_ends(receiver, monkeypatch):
+    """The connection keeps a descriptor of its own for the deadline (_Pinned): a delivery that
+    went through, and one refused before anything was sent, each close the one it made."""
+    import ssl
+
+    made, closed = [], []
+    real_dup, real_close = os.dup, os.close
+
+    def dup(fd):
+        made.append(real_dup(fd))
+        return made[-1]
+
+    def close(fd):
+        closed.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(webhooks.os, "dup", dup)
+    monkeypatch.setattr(webhooks.os, "close", close)
+    port, resolve, _ = receiver
+    for _ in range(3):
+        assert webhooks.post(f"https://hooks.example.com:{port}/x", b"{}", {}, resolve) == 202
+        with pytest.raises(ssl.SSLCertVerificationError):
+            webhooks.post(f"https://other.example.com:{port}/x", b"{}", {}, resolve)
+    assert len(made) == 6
+    assert closed == made
+
+
 def test_a_post_to_a_name_its_certificate_doesnt_carry_is_refused(receiver):
     """The connection goes to the address checked, but the certificate is checked against the
     host's name: one for another name fails before anything is sent."""
@@ -452,7 +480,8 @@ def test_a_post_to_a_name_its_certificate_doesnt_carry_is_refused(receiver):
 @pytest.fixture
 def slow_receiver(tmp_path, monkeypatch):
     """An HTTPS receiver that takes the request, then answers its status line one byte every
-    0.3 s (`trickle`) or never (`silent`): what the courier's deadline is for."""
+    0.3 s (`trickle`), never (`silent`), or at once saying Connection: close and then its body
+    one byte every 0.3 s for 12 s (`close-trickle`): what the courier's deadline is for."""
     import ssl
     import threading
     import time
@@ -482,6 +511,13 @@ def slow_receiver(tmp_path, monkeypatch):
                                 break
                             tls.sendall(bytes([byte]))
                             time.sleep(0.3)
+                    elif mode["answer"] == "close-trickle":
+                        tls.sendall(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n")
+                        for _ in range(40):
+                            if stop.is_set():
+                                break
+                            tls.sendall(b"x")
+                            time.sleep(0.3)
                     else:
                         stop.wait(15)
             except OSError:
@@ -508,11 +544,14 @@ def slow_receiver(tmp_path, monkeypatch):
 
 
 @pytest.mark.timing
-@pytest.mark.parametrize("answer", ["trickle", "silent"])
+@pytest.mark.parametrize("answer", ["trickle", "silent", "close-trickle"])
 def test_a_receiver_that_answers_too_slowly_is_given_up_at_the_deadline(slow_receiver, answer):
     # The AI pen test of 11/06: TIMEOUT bounds each read, not the delivery, so a receiver that
     # answers a byte every 9 s held the one courier thread, and every company's webhooks behind
-    # it, for as long as it liked. A delivery now has DEADLINE in all.
+    # it, for as long as it liked. A delivery now has DEADLINE in all. The OWASP review of 11/06:
+    # an answer saying Connection: close made http.client close the connection before its body
+    # was read, which let go of what the deadline shuts down, so a body trickled slowly enough
+    # held the thread as before (close-trickle).
     import time
 
     port, resolve, mode = slow_receiver
@@ -523,9 +562,9 @@ def test_a_receiver_that_answers_too_slowly_is_given_up_at_the_deadline(slow_rec
     assert time.monotonic() - started < webhooks.TIMEOUT  # cut at the deadline, not a read's
 
 
-def test_giving_up_before_the_connection_is_made_or_after_it_closed_does_nothing_more():
-    # The deadline may pass while the connection is being made, or just as it closes: the first
-    # connects nothing more, the second shuts down nothing (its descriptor may be another's now).
+def test_giving_up_before_the_connection_is_made_or_after_it_finished_does_nothing_more():
+    # The deadline may pass while the connection is being made, or just as the delivery finishes:
+    # the first connects nothing more, the second shuts down nothing (its descriptor is closed).
     listening = socket.create_server(("127.0.0.1", 0))
     try:
         port = listening.getsockname()[1]
@@ -533,8 +572,8 @@ def test_giving_up_before_the_connection_is_made_or_after_it_closed_does_nothing
         early.give_up()
         with pytest.raises(TimeoutError, match="given up before the connection was made"):
             early.connect()
-        early.close()
-        early.give_up()  # closed: nothing to shut down
+        early.finish()
+        early.give_up()  # finished: nothing to shut down
         unconnected = socket.socket()
         late = webhooks._Pinned("hooks.example.com", "127.0.0.1", port, None)
         late._fd = unconnected.fileno()
