@@ -128,6 +128,10 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   company's today: one dated next year moved balances at once while every report as of today
   left it out. One proposed for a later day before this release posts on its day. Migration
   `20261106110100`.
+- **Fixed: a lease-break fee charged twice.** End lease with the lease-break fee sent twice at
+  once (two tabs, or a resend while the first ran) charged the fee twice. A lease is now charged
+  one lease-break fee: the same end again changes nothing, and another end with the fee is
+  refused, saying the fee was charged already.
 - **Fixed: Stripe's answers in an old API version, and a webhook missing its events.** Every
   call to Stripe now names the API version whose shapes the PMS reads (`2024-06-20`), so an
   account whose default is older than `latest_charge` no longer fails every paid report; and

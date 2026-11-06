@@ -1429,7 +1429,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   sign and become the lease's guarantors, never tenants, and an offer needs a tenant. A
   property's lease-break fee terms (`trust_lease_break_fees`: a flat fee and months of rent, from
   a day) are those in force on a lease's first day; `POST /api/move-out/{id}/end` charges the fee
-  (due on the new last day) only when staff ask and the lease ends before its end date. Any lease
+  (due on the new last day) only when staff ask and the lease ends before its end date, once a
+  lease: it reads the lease under the lock `trust_end_lease` takes, so the same end sent again
+  charges nothing more, and another end with the fee is refused (C-133). Any lease
   is ended from its page's ⋯ menu, and Move-outs lists an ending lease with no deposit for 90 days.
 - Moving to another unit (migration 0091, `docs/law.md`, the founder's review q010 and q042):
   `trust_transfer_lease` ends a lease the day before a move and opens one at another unit of the

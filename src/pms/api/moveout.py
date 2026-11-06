@@ -401,12 +401,30 @@ def break_fee(session: Staff, conn: Conn, lease_id: UUID, ends_on: date) -> Brea
 @router.post("/{lease_id}/end", status_code=204)
 def end(session: Staff, conn: Conn, lease_id: UUID, body: End) -> None:
     """Sets the lease's last day (before its deposit is returned), and charges the lease-break
-    fee when staff ask and the lease ends before its end date. Its last month is charged only for
-    the days it covers. A lease staff end never goes month to month by itself."""
+    fee when staff ask and the lease ends before its end date, once a lease. Its last month is
+    charged only for the days it covers. A lease staff end never goes month to month by itself."""
+    # Two ends at once (two tabs, a resend while the first runs) wait for each other here, as
+    # trust_end_lease's do, so the lease and its lease-break fee are read once the other has
+    # committed (docs/edge-cases.md C-133).
+    conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended('lease days of ' || %s::uuid, 0))",
+        (session.pmc_id,),
+    )
     if returned(conn, session.pmc_id, lease_id):
         raise HTTPException(409, "the deposit was returned; the lease's days stay as they were")
     fee = None
     if body.break_fee:
+        charged = conn.execute(
+            "SELECT l.ends_on, c.due_on FROM trust_charges AS c"
+            " JOIN trust_leases AS l ON l.id = c.lease_id"
+            " WHERE c.pmc_id = %s AND c.lease_id = %s AND c.kind = 'fee'"
+            " AND c.memo = 'Lease-break fee'",
+            (session.pmc_id, lease_id),
+        ).fetchall()
+        if (body.ends_on, body.ends_on) in charged:
+            return  # sent again: it ends that day with its fee already
+        if charged:
+            raise HTTPException(409, "this lease was charged its lease-break fee already")
         found = break_fee_of(conn, session.pmc_id, lease_id, body.ends_on)
         if not found.early:
             raise HTTPException(

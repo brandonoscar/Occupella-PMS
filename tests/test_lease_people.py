@@ -9,6 +9,7 @@ removal takes off once. Every name here is synthetic."""
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 
 import psycopg
 import pytest
@@ -21,6 +22,7 @@ from helpers import (
     charge,
     complete_offer,
     end_lease,
+    in_background,
     make_pmc,
     offer_lease,
     open_application_link,
@@ -32,6 +34,7 @@ from helpers import (
     sign_offer,
     submit_application,
     transfer_batch,
+    wait_until_blocked,
 )
 
 JAN_1, MAR_31, JUN_30, JUL_5 = (
@@ -358,6 +361,40 @@ def test_household_rows_are_checked_taken_off_once_and_kept(conn, pmc, lease):
         " AND row_data ->> 'id' = %s",
         (str(pet),),
     ).fetchone() == (1,)
+
+
+@pytest.mark.timing
+def test_two_ends_with_the_lease_break_fee_at_once_charge_it_once(conn, pmc, tenants, database_url):
+    # Two tabs, or a resend while the first still runs (docs/edge-cases.md C-133): the second
+    # waits for the first and reads the lease as it left it, so one fee is charged.
+    from pms.api import moveout
+
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "Unit 9")
+    lease = open_lease(conn, pmc.pmc_id, unit, JAN_1, date(2026, 12, 31), "1200.00", [tenants[1]])
+    conn.execute(
+        "INSERT INTO trust_lease_break_fees (pmc_id, property_id, starts_on, flat_fee, rent_months)"
+        " VALUES (%s, %s, %s, 250.00, 1)",
+        (pmc.pmc_id, pmc.owners[0].property_id, JAN_1),
+    )
+    session = SimpleNamespace(pmc_id=pmc.pmc_id)
+    ending = moveout.End(ends_on=JUN_30, break_fee=True)
+    with psycopg.connect(database_url) as first:
+        moveout.end(session, first, lease, ending)  # holds the lease's days until it commits
+
+        def second(worker):
+            with worker.transaction():
+                moveout.end(session, worker, lease, ending)
+
+        thread, pid, outcome = in_background(database_url, second)
+        wait_until_blocked(conn, pid)
+        first.commit()
+        thread.join(timeout=30)
+
+    assert outcome == {"result": None}
+    assert conn.execute(
+        "SELECT due_on, amount FROM trust_charges WHERE lease_id = %s AND memo = 'Lease-break fee'",
+        (lease,),
+    ).fetchall() == [(JUN_30, Decimal("1450.00"))]
 
 
 def test_lease_break_fee_terms_are_one_a_day_and_in_bounds(conn, pmc):
