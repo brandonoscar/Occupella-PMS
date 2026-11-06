@@ -136,12 +136,15 @@ describe("SignPage", () => {
   it.each([
     ["void", "Synthetic PMC withdrew this lease offer. It takes no signature."],
     ["expired", "This link has run out. Ask Synthetic PMC for a new one."],
-  ] as const)("says a %s link signs nothing", async (status, words) => {
-    server({ "/api/signing/view": { ...VIEW, status } });
+  ] as const)("says a %s link signs nothing, and shows nothing of the lease", async (status, words) => {
+    // As the API answers a link that signs nothing (src/pms/api/signing.py ClosedSigning).
+    server({ "/api/signing/view": { company: VIEW.company, terms_url: null, privacy_url: VIEW.privacy_url, status } });
     render(<SignPage />);
 
     expect(await screen.findByText(words)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+    expect(screen.queryByText("Property 1, Unit 1")).toBeNull();
+    expect(screen.queryByRole("region", { name: "The lease" })).toBeNull();
   });
 
   it("says a link that isn't one of ours is not found", async () => {

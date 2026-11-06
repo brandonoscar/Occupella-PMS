@@ -98,12 +98,16 @@ def sign(browser, link, name):
     seen = browser.post("/api/signing/view", json={"token": token}).json()
     browser.post(
         "/api/signing/consent",
-        json={"token": token, "disclosure_sha256": seen["disclosure_sha256"]},
+        json={"token": token, "disclosure_sha256": seen.get("disclosure_sha256", "0" * 64)},
     )
     browser.post("/api/signing/document", json={"token": token})
     return browser.post(
         "/api/signing/sign",
-        json={"token": token, "typed_name": name, "document_sha256": seen["document_sha256"]},
+        json={
+            "token": token,
+            "typed_name": name,
+            "document_sha256": seen.get("document_sha256", "0" * 64),
+        },
     )
 
 

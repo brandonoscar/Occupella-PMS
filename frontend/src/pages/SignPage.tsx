@@ -10,7 +10,7 @@ import { Notice } from "../components/Notice";
 import { Card, Wordmark } from "../components/Shell";
 import { SignaturePad } from "../components/SignaturePad";
 import { money, usDate } from "../money";
-import type { SigningView } from "../signing";
+import { isClosed, type OpenSigning, type SigningView } from "../signing";
 
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
@@ -55,6 +55,16 @@ export function SignPage() {
       <Wordmark />
       {view === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
+      ) : isClosed(view) ? (
+        <>
+          <h1 className="font-display text-xl text-ink">Sign your lease with {view.company}</h1>
+          <LegalLinks company={view.company} legal={view} />
+          <Notice tone="info">
+            {view.status === "void"
+              ? `${view.company} withdrew this lease offer. It takes no signature.`
+              : `This link has run out. Ask ${view.company} for a new one.`}
+          </Notice>
+        </>
       ) : (
         <>
           <h1 className="font-display text-xl text-ink">Sign your lease with {view.company}</h1>
@@ -89,13 +99,7 @@ export function SignPage() {
 type Step = (path: string, body?: Record<string, unknown>) => Promise<void>;
 type Save = (path: string, name: string) => Promise<void>;
 
-function Standing({ view, step, save, paper }: { view: SigningView; step: Step; save: Save; paper: () => void }) {
-  if (view.status === "void") {
-    return <Notice tone="info">{view.company} withdrew this lease offer. It takes no signature.</Notice>;
-  }
-  if (view.status === "expired") {
-    return <Notice tone="info">This link has run out. Ask {view.company} for a new one.</Notice>;
-  }
+function Standing({ view, step, save, paper }: { view: OpenSigning; step: Step; save: Save; paper: () => void }) {
   if (view.status === "paper") {
     return (
       <Notice tone="info">
@@ -129,7 +133,7 @@ function Standing({ view, step, save, paper }: { view: SigningView; step: Step; 
   );
 }
 
-function Consent({ view, step, paper }: { view: SigningView; step: Step; paper: () => void }) {
+function Consent({ view, step, paper }: { view: OpenSigning; step: Step; paper: () => void }) {
   const [agreed, setAgreed] = useState(false);
   return (
     <Card title="Before you sign electronically">
@@ -154,7 +158,7 @@ function Consent({ view, step, paper }: { view: SigningView; step: Step; paper: 
   );
 }
 
-function Signing({ view, step, save, paper }: { view: SigningView; step: Step; save: Save; paper: () => void }) {
+function Signing({ view, step, save, paper }: { view: OpenSigning; step: Step; save: Save; paper: () => void }) {
   const [name, setName] = useState("");
   const [drawing, setDrawing] = useState<string | null>(null);
   const [intent, setIntent] = useState(false);

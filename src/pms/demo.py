@@ -1130,6 +1130,7 @@ def leasing_pipeline(
     first = offered.links[0]
     token = first.url.split("#", 1)[1]
     seen = signing.view(conn, signing.SigningToken(token=token))
+    assert isinstance(seen, signing.SigningView)  # a link just made signs
     signing.consent(
         request, conn, signing.Consent(token=token, disclosure_sha256=seen.disclosure_sha256)
     )

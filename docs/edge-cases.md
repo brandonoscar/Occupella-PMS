@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1167 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1168 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -30,10 +30,10 @@ answer in the portal for everything that can fail.
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 70 | 8 | 87 | 21 |
 | [Bad files and imports](#bad-files-and-imports) | 154 | 68 | 16 | 70 | 1 |
-| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 159 | 90 | 10 | 59 | 6 |
+| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 160 | 91 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 174 | 75 | 14 | 85 | 5 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1167** | **603** | **110** | **454** | **53** |
+| **All** | **1168** | **604** | **110** | **454** | **53** |
 
 ## Open, high risk: the work list
 
@@ -1130,6 +1130,7 @@ its ten most pressing, each with the test that would close it.
 | U-092 | An owner changes their own contact details | Staff see the owner changed them | Tested | tests/api/test_portals_two_api.py::test_an_owner_changes_their_own_contact_details_and_the_record_says_they_did | L |
 | U-104 | A tenant gives notice on a lease that already ended, or for a past day | Refused in words | Tested | tests/api/test_portals_two_api.py::test_the_database_takes_no_notice_on_an_ended_lease_or_from_a_tenant_who_left; ::test_a_notice_for_a_past_day_is_refused_in_words | L |
 | U-107 | A tenant sends a 21st message, a sixth notice or a 21st note in a day | 429 with what to do | Tested | tests/api/test_portals_two_api.py::test_a_person_writes_at_most_so_many_messages_a_day; ::test_a_lease_takes_so_many_notices_a_day; tests/api/test_request_details_api.py::test_notes_come_twenty_a_day_at_most | L |
+| U-160 | A signing link opened after its offer was voided or its 30 days ran out | Says whose it was and why (the company, its legal links, void or expired) and nothing of the lease: no home, rent, term or signers (it showed them all, with every co-signer's name and role) | Tested | tests/api/test_signing.py::test_a_link_that_ran_out_or_whose_offer_was_voided_signs_nothing; frontend/src/pages/SignPage.test.tsx ("says a void link signs nothing, and shows nothing of the lease") | L |
 
 ### Most pressing open, with the test that would close each
 
