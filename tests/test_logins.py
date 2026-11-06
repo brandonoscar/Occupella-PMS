@@ -181,40 +181,60 @@ def test_setup_starts_a_company_with_its_first_admin_and_their_invite(
         app_conn.execute("SET ROLE trust_app")
         invite = accounts.view_invite(app_conn, link.split("#", 1)[1])
     assert invite.email == "first.admin@example.com"
-    # Its starting chart of accounts, each on its Schedule E line.
+    # Its starting chart of accounts, each on its Schedule E line, and its starting kinds of fee,
+    # each with who keeps it.
     assert sorted(
         conn.execute(
             "SELECT name, schedule_e_line FROM trust_expense_accounts WHERE pmc_id = %s",
             (pmc_id,),
         ).fetchall()
     ) == sorted(setup.STARTING_CHART)
+    assert sorted(
+        conn.execute(
+            "SELECT name, trust_charge_type_payee(id) FROM trust_charge_types WHERE pmc_id = %s",
+            (pmc_id,),
+        ).fetchall()
+    ) == sorted(setup.STARTING_CHARGE_TYPES)
 
 
 def test_starting_chart_adds_what_a_company_lacks_once(conn, database_url, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", database_url)
     pmc = make_pmc(conn)
-    # The company already keeps repairs, spelled its own way, and one account of its own.
+    # The company already keeps general repairs, spelled its own way, one account renamed to a
+    # name of the chart's, and one of its own; and pet rent, spelled its own way.
     conn.execute(
         "INSERT INTO trust_expense_accounts (pmc_id, name, schedule_e_line)"
-        " VALUES (%s, 'REPAIRS', 14), (%s, 'Snow removal', 7)",
-        (pmc.pmc_id, pmc.pmc_id),
+        " VALUES (%s, 'GENERAL REPAIRS', 14), (%s, 'Lawn', 7), (%s, 'Window washing', 7)",
+        (pmc.pmc_id, pmc.pmc_id, pmc.pmc_id),
+    )
+    conn.execute(
+        "INSERT INTO trust_expense_account_names (pmc_id, expense_account_id, name)"
+        " SELECT pmc_id, id, 'Landscaping' FROM trust_expense_accounts"
+        " WHERE pmc_id = %s AND name = 'Lawn'",
+        (pmc.pmc_id,),
+    )
+    conn.execute(
+        "INSERT INTO trust_charge_types (pmc_id, name) VALUES (%s, 'PET RENT')", (pmc.pmc_id,)
     )
 
     assert admin.main(["starting-chart", str(pmc.pmc_id)]) == 0
-    assert capsys.readouterr().out == f"added {len(setup.STARTING_CHART) - 1} expense accounts\n"
+    assert capsys.readouterr().out == (
+        f"added {len(setup.STARTING_CHART) - 2} expense accounts\n"
+        f"added {len(setup.STARTING_CHARGE_TYPES) - 1} charge types\n"
+    )
     assert admin.main(["starting-chart", str(pmc.pmc_id)]) == 0
-    assert capsys.readouterr().out == "added 0 expense accounts\n"
+    assert capsys.readouterr().out == "added 0 expense accounts\nadded 0 charge types\n"
 
     names = {
         row[0]
         for row in conn.execute(
-            "SELECT name FROM trust_expense_accounts WHERE pmc_id = %s", (pmc.pmc_id,)
+            "SELECT trust_expense_account_name(id) FROM trust_expense_accounts WHERE pmc_id = %s",
+            (pmc.pmc_id,),
         )
     }
-    assert names == {name for name, _ in setup.STARTING_CHART if name != "Repairs"} | {
-        "REPAIRS",
-        "Snow removal",
-    }
+    assert names == {
+        name for name, _ in setup.STARTING_CHART if name not in ("General repairs", "Landscaping")
+    } | {"GENERAL REPAIRS", "Landscaping", "Window washing"}
 
 
 def test_starting_chart_refuses_a_company_that_isnt_there(database_url, monkeypatch, capsys):
@@ -228,6 +248,57 @@ def test_the_starting_chart_sits_on_expense_lines_and_never_on_management_fees()
     assert lines <= set(setup.SCHEDULE_E) and 11 not in lines
     names = [name.lower() for name, _ in setup.STARTING_CHART]
     assert len(names) == len(set(names))
+    # About fifty, covering what a manager files bills under: repairs by trade, turnover,
+    # services, each utility, the HOA, taxes, insurance, the legal side and the bank.
+    assert 45 <= len(names) <= 55
+    for kept in (
+        "plumbing repairs",
+        "electrical repairs",
+        "heating and cooling repairs",
+        "painting",
+        "flooring",
+        "turnover cleaning",
+        "landscaping",
+        "pest control",
+        "snow removal",
+        "electric",
+        "gas",
+        "water and sewer",
+        "hoa dues",
+        "hoa fines",
+        "property taxes",
+        "property insurance",
+        "legal fees",
+        "eviction costs",
+        "court and filing fees",
+        "postage and shipping",
+        "bank fees",
+        "mortgage interest",
+        "other expenses",
+    ):
+        assert kept in names, kept
+    # Nothing on depreciation (the owner's accountant's), and a mortgage's interest on line 12.
+    assert 18 not in lines
+    assert ("Mortgage interest", 12) in setup.STARTING_CHART
+
+
+def test_the_starting_fee_types_are_the_founders_with_their_payees():
+    assert dict(setup.STARTING_CHARGE_TYPES) == {
+        "Housing assistance rent": "owner",
+        "Resident benefit package": "company",
+        "Pet rent": "owner",
+        "One-time pet fee": "owner",
+        "Lease initiation fee": "company",
+        "Renewal fee": "company",
+        "Lease change fee": "company",
+        "Admin fee": "company",
+        "Lease break fee": "owner",
+        "Utility reimbursement": "owner",
+        "Parking and storage": "owner",
+        "Deposit forfeited to owner": "owner",
+    }
+    # None takes a name of the income statement's own lines.
+    assert not {name.lower() for name, _ in setup.STARTING_CHARGE_TYPES} & set(setup.INCOME_LINES)
 
 
 def test_setup_is_all_or_nothing(conn, database_url, monkeypatch, capsys):

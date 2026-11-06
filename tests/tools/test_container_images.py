@@ -98,3 +98,37 @@ def test_the_app_image_runs_the_python_every_job_tests_on():
 
     assert tested == {checked}
     assert re.fullmatch(MIRROR + rf"python:{re.escape(checked)}-slim@sha256:[0-9a-f]{{64}}", app)
+
+
+# The image's dbmate is built from source in a module that asks for newer modules than dbmate
+# pins, and Go builds with the higher of the two (Dockerfile). Each floor is the first version
+# with the fix of a vulnerability Grype failed the image on (selfhost.yml, --fail-on high).
+DBMATE_MODULE_FLOORS = {
+    "github.com/klauspost/compress": (1, 20, 2),  # GO-2026-6865 (high)
+    "github.com/andybalholm/brotli": (1, 2, 7),  # GO-2026-6888 (critical, exploited)
+    "golang.org/x/net": (0, 62, 0),  # GO-2026-6860 (high)
+}
+GO_GET_MODULE = re.compile(r"([\w./-]+)@v(\d+)\.(\d+)\.(\d+)")
+
+
+def dbmate_build_modules() -> dict[str, tuple[int, int, int]]:
+    """Each module@version the Dockerfile's dbmate stage asks `go get` for."""
+    text = (ROOT / "Dockerfile").read_text()
+    stage = text.split(" AS dbmate", 1)[1].split("\nFROM ", 1)[0]
+    command = stage.split("go get", 1)[1].split("&& go build", 1)[0]
+    return {
+        name: (int(major), int(minor), int(patch))
+        for name, major, minor, patch in GO_GET_MODULE.findall(command)
+    }
+
+
+def test_the_dbmate_build_asks_for_every_module_at_its_fixed_version_or_later():
+    asked = dbmate_build_modules()
+
+    assert "github.com/amacneil/dbmate/v2" in asked, "the scan found no go get of dbmate"
+    too_old = {
+        module: (asked.get(module), floor)
+        for module, floor in DBMATE_MODULE_FLOORS.items()
+        if asked.get(module, (0, 0, 0)) < floor
+    }
+    assert too_old == {}, "ask go get for at least these versions (see DBMATE_MODULE_FLOORS)"

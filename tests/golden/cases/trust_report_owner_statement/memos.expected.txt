@@ -1,0 +1,13 @@
+line	property	posted_on	item	detail	amount	balance
+1	NULL	NULL	PMC	Golden PMC	NULL	NULL
+2	NULL	NULL	owner	Owner 1	NULL	NULL
+3	NULL	NULL	period	2026-01-01 00:00:00 to 2026-02-01 00:00:00 UTC	NULL	NULL
+4	Property 1	NULL	opening balance	NULL	NULL	0.00
+5	Property 1	2026-01-09	posting	unapplied_cash: received, not yet applied - Rent payment	500.00	500.00
+6	Property 1	NULL	closing balance	NULL	NULL	500.00
+7	Property 1	NULL	memo: concessions	given in the period, credits off rent (not money moved)	150.00	NULL
+8	Property 1	NULL	memo: deposit held by owner	Tenant 1's security deposit, Unit 1: you hold it, not in trust	1200.00	NULL
+9	NULL	NULL	all properties: opening balance	NULL	NULL	0.00
+10	NULL	NULL	all properties: money in	NULL	500.00	NULL
+11	NULL	NULL	all properties: money out	NULL	0.00	NULL
+12	NULL	NULL	all properties: closing balance	NULL	NULL	500.00

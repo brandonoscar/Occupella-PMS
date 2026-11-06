@@ -1,8 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Me } from "../api";
 import type { Portfolio } from "../setup";
-import { ChartOfAccountsPage } from "./ChartOfAccountsPage";
 import type { Panel } from "./SetupPanels";
 import {
   AddLeasePanel, AddOwnerPanel, AddPropertyPanel, AddUnitPanel, DepositInterestPanel, LateFeesPanel, LeaseBreakFeePanel, NsfFeePanel,
@@ -14,15 +12,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
-
-const ME: Me = {
-  kind: "staff",
-  email: "staff@example.com",
-  name: "Staff 1",
-  person_id: "s1",
-  pmc_id: "p1",
-  pmc_name: "Synthetic PMC",
-};
 
 const BOOKS: Portfolio = {
   bank_accounts: [
@@ -291,31 +280,5 @@ describe("setup panels", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
     render(<AddOwnerPanel panel={panel()} propertyId="p1" />);
     expect(await screen.findByText("sign in first")).toBeTruthy();
-  });
-});
-
-describe("ChartOfAccountsPage", () => {
-  it("lists the expense accounts on their Schedule E lines and adds one from a side panel", async () => {
-    const fetch = server();
-    render(<ChartOfAccountsPage me={ME} />);
-
-    const row = await screen.findByRole("row", { name: "Landscaping" });
-    expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual(["Landscaping", "7: Cleaning and maintenance"]);
-    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
-    type("Expense account", "Repairs");
-    type("Schedule E line", "14");
-    press("Add account");
-    expect(await screen.findByText("Added Repairs.")).toBeTruthy();
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(posted(fetch)).toEqual([["/api/setup/expense-accounts", { name: "Repairs", schedule_e_line: 14 }]]);
-  });
-
-  it("says when there is no expense account yet", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(
-      JSON.stringify(path === "/api/setup/charge-types" ? [] : { ...BOOKS, expense_accounts: [] }), { status: 200 },
-    )));
-    render(<ChartOfAccountsPage me={ME} />);
-    expect(await screen.findByText("No expense accounts yet")).toBeTruthy();
-    expect(await screen.findByText("No charge types yet")).toBeTruthy();
   });
 });

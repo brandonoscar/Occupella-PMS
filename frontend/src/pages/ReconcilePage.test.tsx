@@ -113,6 +113,7 @@ function server(
       const body = path === "/api/reconcile" ? banks
         : path === "/api/payables/company-fees" ? (answers[path] ?? [])
         : path === "/api/payments/waiting" ? (answers[path] ?? [])
+        : path === "/api/unapplied" ? (answers[path] ?? [])
         : path === "/api/year-close" ? (answers[path] ?? NOTHING_TO_CLOSE)
         : path.endsWith("/bill-suggestions") ? (answers.suggestions ?? [])
         : path.startsWith("/api/bank-accounts/") && path.includes("/register") ? (answers.register ?? NO_MOVES)
@@ -549,6 +550,24 @@ describe("BankingPage", () => {
     expect(within(screen.getByRole("row", { name: "Deposit trust account" })).getAllByRole("cell").map((c) => c.textContent)).toEqual([
       "Deposit trust account", "Security deposits", "$0.00", "Not yet", "", "", "",
     ]);
+  });
+
+  it("shows the unapplied cash held in the operating accounts, and none for a deposit account alone", async () => {
+    const held = [{ id: "u1", bank_account_id: "b1", bank_account: "Operating trust account", received_on: "2026-10-01",
+      payer: "J. Sample", memo: null, method: "check", reference: "4410", amount: "500.00", left: "500.00", age_days: 3 }];
+    server(SHEET, { "/api/unapplied": held }, {}, BANKS);
+    render(<BankingPage me={ME} />);
+    const table = await screen.findByRole("table", { name: "Unapplied cash" });
+    expect(within(table).getByRole("row", { name: "J. Sample $500.00" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Record unapplied cash" }));
+    // The only operating account: none to choose, the deposit account never offered.
+    expect(within(screen.getByRole("dialog", { name: "Record unapplied cash" })).queryByLabelText("Trust bank account")).toBeNull();
+    cleanup();
+
+    server(SHEET, {}, {}, [BANKS[1]!]);
+    render(<BankingPage me={ME} />);
+    await screen.findByRole("row", { name: "Deposit trust account" });
+    expect(screen.queryByRole("button", { name: "Record unapplied cash" })).toBeNull();
   });
 
   it("shows the company's fees held in an operating account and transfers them out after asking", async () => {

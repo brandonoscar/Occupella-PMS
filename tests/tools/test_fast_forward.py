@@ -205,3 +205,17 @@ def test_a_failing_night_fails_the_command_and_says_how_to_replay_it(
     monkeypatch.setattr(fast_forward, "check_night", broken)
     assert fast_forward.main(["--months", "1", "--seed", "4"]) == 1
     assert "replay with --months 1 --seed 4" in capsys.readouterr().out
+
+
+def test_the_company_keeps_utcs_day_as_the_nights_count_it(app_conn):
+    # The nights run to datetime.now(UTC).date(). A company on New York's day is still on
+    # yesterday from midnight UTC until 05:00, so a bounce due on the last night came back on a
+    # day the company had not reached, and the run failed: every run started in those hours,
+    # ledger-invariants' 03:17 UTC one among them.
+    today = datetime.now(UTC).date()
+    life = fast_forward.start(app_conn, today.replace(day=1), seed=0)
+    (zone, day) = app_conn.execute(
+        "SELECT trust_pmc_time_zone(%s), trust_pmc_day(%s, now())",
+        (life.built.pmc_id, life.built.pmc_id),
+    ).fetchone()
+    assert (zone, day) == ("UTC", today)

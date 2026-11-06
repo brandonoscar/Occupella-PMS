@@ -345,6 +345,7 @@ SELECT t.ledger_account_id, b.display_name || ' (' || b.kind || ')' AS bank, t.k
            WHEN 'owner_property' THEN o.display_name || ' / ' || pr.display_name
            WHEN 'vendor_payable' THEN v.display_name
            WHEN 'pmc_income' THEN pmc.display_name
+           WHEN 'unapplied_cash' THEN 'received, not yet applied'
            ELSE tn.display_name
        END AS holder,
        a.balance, a.created_at AS opened_at

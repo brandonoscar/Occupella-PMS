@@ -872,6 +872,47 @@ tests = [
   "tests/test_switching.py::test_an_item_was_issued_by_the_cutover_and_none_comes_after_the_sign_off",
 ]
 
+[[invariant]]
+id = "account-codes-unique-never-rewriting-history"
+statement = "Every account of a company's chart has a code (migration 20261106000205): each ledger kind's control account, the income statement's own lines, every charge type and every expense account. A code is four digits within its section's range (1000s assets, 2000s liabilities, 4000s income, 5000-6999 expenses), never one kept for a later pass, and once among the company's codes today; a charge type or expense account added takes the next free code of its range (4501 on; its Schedule E line's block). A change is a new row naming who made it, the latest holding; nothing posted changes, and a database migrated with books in it gives every account a code."
+tests = [
+  "tests/test_chart_of_accounts.py::test_every_fixed_line_starts_with_its_code",
+  "tests/test_chart_of_accounts.py::test_an_account_added_takes_the_next_free_code_of_its_range",
+  "tests/test_chart_of_accounts.py::test_a_full_block_gives_the_next_free_expense_code",
+  "tests/test_chart_of_accounts.py::test_codes_are_unique_in_a_company_but_not_across_companies",
+  "tests/test_chart_of_accounts.py::test_a_code_changed_leaves_every_transfer_and_entry_as_it_was",
+  "tests/test_chart_of_accounts.py::test_codes_are_never_rewritten",
+  "tests/test_chart_of_accounts.py::test_the_migration_gives_every_account_a_company_has_a_code",
+  "tests/api/test_chart_api.py::test_staff_give_an_account_another_code_and_a_code_taken_is_refused_in_words",
+]
+
+[[invariant]]
+id = "chart-archived-only-when-unused"
+statement = "An expense account or charge type is renamed or archived by a new row naming who did it, the latest holding (migration 20261106000210); a name is once among the company's names today, whatever its case. An expense account is archived only while no bill neither paid in full nor declined is in it (by its latest expense account row or that row's split lines) and no recurring bill running through today enters its bills in it; a charge type only while no monthly charge of it runs past today. An archived one takes no new bill, split, recurring bill, fee or monthly charge, keeps its history and its past report lines; bringing it back is always allowed."
+tests = [
+  "tests/test_chart_of_accounts.py::test_a_name_is_once_among_the_names_today_whatever_its_case",
+  "tests/test_chart_of_accounts.py::test_an_expense_account_is_archived_only_once_no_open_bill_is_in_it",
+  "tests/test_chart_of_accounts.py::test_an_archived_expense_account_takes_no_new_bill_but_keeps_its_past",
+  "tests/test_chart_of_accounts.py::test_a_charge_type_is_archived_only_once_no_monthly_charge_of_it_runs",
+  "tests/test_chart_of_accounts.py::test_archiving_and_names_are_never_rewritten",
+  "tests/api/test_chart_api.py::test_staff_archive_an_expense_account_only_once_its_bills_are_paid",
+  "tests/api/test_chart_api.py::test_staff_archive_a_charge_type_and_it_takes_no_new_fee",
+]
+
+[[invariant]]
+id = "fee-goes-to-whoever-keeps-its-type"
+statement = "A charge type says who keeps its fees' money, the owner unless the company says it does, as it was when each fee was charged (migration 20261106000220). A tenant's payment, a payment file's, one paid online or by autopay, and prepaid rent used pay a fee the company keeps into the company's fee account in the trust bank account that holds the owner's money, and the rest of what pays the lease's charges into the owner's account; a bounce moves both back. The owner's cash and accrual income statements, year-end and management fee never count the company's part. Every trust bank account ties out. A deposit kept at move-out still pays the owner's account (a known gap)."
+tests = [
+  "tests/properties/test_fee_payee_properties.py::test_a_fee_goes_to_whoever_keeps_its_type_as_it_was_charged_and_the_books_tie_out",
+  "tests/api/test_fee_payees_api.py::test_before_this_every_fee_a_payment_pays_goes_to_the_owner",
+  "tests/api/test_fee_payees_api.py::test_a_fee_the_company_keeps_goes_to_its_fee_account_and_the_owner_gets_the_rest",
+  "tests/api/test_fee_payees_api.py::test_part_of_a_payment_pays_part_of_a_fee_the_company_keeps",
+  "tests/api/test_fee_payees_api.py::test_a_payee_changed_counts_for_fees_charged_from_then_on",
+  "tests/api/test_fee_payees_api.py::test_prepaid_rent_used_pays_a_fee_the_company_keeps_into_its_fee_account",
+  "tests/api/test_fee_payees_api.py::test_a_payment_that_bounces_takes_the_companys_part_back_too",
+  "tests/api/test_fee_payees_api.py::test_the_owners_statements_and_management_fee_leave_the_companys_fees_out",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]
@@ -1030,6 +1071,15 @@ tests = [
   "tests/test_owner_balances.py::test_each_property_shows_its_balance_reserve_and_what_is_available",
   "tests/test_owner_balances.py::test_balances_are_as_of_the_end_of_the_day_and_the_reserve_in_force_that_day",
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+]
+
+[[report]]
+id = "chart-of-accounts"
+statement = "A company's chart of accounts (migration 20261106000230): every account by section (Assets, Liabilities, Income, Expenses) and code, with its name today, type, Schedule E line (an expense's), who keeps an income line's money and whether it is active or archived. Compared to a checked-in golden file; its CSV writes no formula."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/api/test_chart_api.py::test_staff_read_every_account_by_section_and_code",
+  "tests/api/test_chart_api.py::test_the_chart_downloads_as_csv_and_a_formula_never_runs",
 ]
 
 # --- Self-host (selfhost.yml) --------------------------------------------------------------
@@ -1800,4 +1850,38 @@ tests = [
   "tests/test_nightly.py::test_the_scheduler_runs_each_company_once_its_day_has_begun",
   "tests/api/test_company_api.py::test_a_company_picks_its_time_zone_and_its_day_follows_it",
   "tests/api/test_company_api.py::test_a_company_that_picked_no_time_zone_is_in_new_york",
+]
+
+[[invariant]]
+id = "unapplied-cash-held-and-tied-out"
+statement = "Money received into an operating trust bank account that can't be matched yet is held in that account's unapplied cash account (one per trust bank account, operating only; migration 20261106000240), counted by the tie-out as everything held is: the bank's cash is the book cash, which is every ledger account in it, unapplied cash included. It is applied to a lease (a payment as Receive payment makes, rent first) or refunded through the cash (a payout: disburse and the account's signers), never past what is left of it, each safe to retry. Month-end isn't approved while any is held, and the three-way reconciliation shows it on a line of its own."
+tests = [
+  "tests/properties/test_held_money_properties.py::test_held_money_ties_out_and_owner_held_deposits_are_never_in_trust",
+  "tests/test_unapplied_cash.py::test_received_unapplied_cash_is_counted_by_the_tie_out",
+  "tests/test_unapplied_cash.py::test_a_refund_is_a_payout_never_past_what_is_left_and_safe_to_retry",
+  "tests/test_unapplied_cash.py::test_month_end_is_not_approved_while_unapplied_cash_is_held",
+  "tests/test_unapplied_cash.py::test_a_payment_from_unapplied_cash_pays_the_lease_and_never_past_the_receipt",
+  "tests/api/test_unapplied_api.py::test_part_of_it_applied_and_the_rest_refunded_never_past_what_is_left",
+]
+
+[[invariant]]
+id = "owner-held-deposits-never-in-trust"
+statement = "A deposit the owner holds outside trust (migration 20261106000241) is a record, once per lease, tenant and kind, naming who: no money moves and no ledger account holds it, so no trust balance counts it; what the owner returned and kept of it at move-out comes to what was held, once. The tenant ledger and the owner's statement show it on memo lines that change no balance."
+tests = [
+  "tests/properties/test_held_money_properties.py::test_held_money_ties_out_and_owner_held_deposits_are_never_in_trust",
+  "tests/test_owner_held_deposits.py::test_a_deposit_the_owner_holds_is_recorded_naming_who_and_never_in_trust",
+  "tests/test_owner_held_deposits.py::test_at_move_out_the_owner_returns_or_keeps_it_once_and_nothing_moves",
+  "tests/test_owner_held_deposits.py::test_the_tenant_ledger_shows_it_as_memo_lines_that_change_no_balance",
+  "tests/test_owner_held_deposits.py::test_the_owner_statement_lists_what_the_owner_holds_on_a_memo_line_not_in_the_balance",
+  "tests/api/test_owner_held_api.py::test_at_move_out_staff_record_what_the_owner_returned_and_kept_and_nothing_moves",
+]
+
+[[invariant]]
+id = "concessions-on-their-own-line"
+statement = "A credit marked a concession, once or every month (migration 20261106000242), is a discount on rent the owner's accrual income statement counts on a line of its own right after rent, a contra to it on Schedule E's line 3, never in rent or the monthly charges; only a credit is one, and it moves no money. The owner's statement lists the concessions given in its period on a memo line that changes no balance."
+tests = [
+  "tests/test_concessions.py::test_the_accrual_statement_counts_concessions_on_their_own_line_against_rent",
+  "tests/test_concessions.py::test_only_a_credit_is_a_concession",
+  "tests/test_concessions.py::test_the_owner_statement_says_the_concessions_given_in_the_period_on_a_memo_line",
+  "tests/api/test_concessions_api.py::test_staff_mark_a_credit_once_or_every_month_a_concession_and_the_statement_counts_it",
 ]

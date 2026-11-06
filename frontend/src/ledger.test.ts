@@ -73,6 +73,10 @@ describe("itemLabel", () => {
     expect(["rent", "fee", "credit", "payment", "bounced payment", "other"].map(itemLabel)).toEqual(
       ["Rent", "Fee", "Credit", "Payment", "Payment returned", "other"],
     );
+    // A deposit the owner holds, outside trust: memo lines that change no balance.
+    expect(["owner-held deposit", "owner-held deposit settled"].map(itemLabel)).toEqual(
+      ["Deposit held by the owner", "Deposit the owner held"],
+    );
   });
 });
 

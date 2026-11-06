@@ -75,6 +75,7 @@ from pms.api import (
     banking,
     budgets,
     calendar,
+    chart,
     company,
     custom_roles,
     dashboard,
@@ -105,6 +106,7 @@ from pms.api import (
     online_payments,
     outbox,
     owner,
+    owner_held,
     owner_payments,
     owner_portal,
     payables,
@@ -132,6 +134,7 @@ from pms.api import (
     tenant,
     throttle,
     today,
+    unapplied,
     unit_details,
     utilities,
     vendor_links,
@@ -790,6 +793,9 @@ def create_app(settings: Settings) -> FastAPI:
     calendar.hide_feed_tokens(logging.getLogger("uvicorn.access"))
     app.include_router(people.router)
     app.include_router(setup.router)
+    app.include_router(chart.router)
+    app.include_router(unapplied.router)
+    app.include_router(owner_held.router)
     app.include_router(go_live.router)
     app.include_router(payment_files.router)
     app.include_router(rent.router)

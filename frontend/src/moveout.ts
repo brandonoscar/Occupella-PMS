@@ -1,4 +1,5 @@
 // Staff's move-outs as the API sends them (src/pms/api/moveout.py), and how they read.
+import type { OwnerHeld } from "./ownerHeld";
 import { fromCents, toCents } from "./reconcile";
 import { usDate, usDatesIn } from "./money";
 
@@ -32,6 +33,8 @@ export type MoveOut = {
   // (docs/law.md); null before the lease has a last day, or once it was returned.
   return_by: string | null;
   fees: Fee[];
+  // Its tenants' deposits the owner holds, outside trust: the owner returns them.
+  owner_held?: OwnerHeld[];
 };
 
 // California asks for the receipts of repairs and cleaning over $125 with the statement, the

@@ -101,10 +101,18 @@ function negated(amount: string): string {
   return amount.startsWith("-") ? amount.slice(1) : `-${amount}`;
 }
 
-// What a ledger line is called on the page.
+// What a ledger line is called on the page. A deposit the owner holds is a memo line that changes
+// no balance (migration 20261106000241).
 export function itemLabel(item: string): string {
-  return { rent: "Rent", fee: "Fee", credit: "Credit", payment: "Payment" }[item] ??
-    (item === "bounced payment" ? "Payment returned" : item);
+  return {
+    rent: "Rent",
+    fee: "Fee",
+    credit: "Credit",
+    payment: "Payment",
+    "bounced payment": "Payment returned",
+    "owner-held deposit": "Deposit held by the owner",
+    "owner-held deposit settled": "Deposit the owner held",
+  }[item] ?? item;
 }
 
 // A ledger line in words: its kind, then its memo, unless the memo already says the kind
