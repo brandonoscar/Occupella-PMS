@@ -158,9 +158,12 @@ def to_pay(conn: psycopg.Connection[Any], pmc_id: UUID, autopay: Active, due_on:
     return max(min(Decimal(owes[0]) - Decimal(coming[0]), autopay.amount), ZERO)
 
 
-# The kinds of what the partner reported about each of an autopay's last two payments.
+# The kinds of what was reported about each of an autopay's last two payments: the partner's
+# reports, and "not sent" for one given up before the partner took it (give_up).
 LAST_TWO = """
-SELECT (SELECT array_agg(e.kind::text) FROM trust_online_payment_events AS e
+SELECT (SELECT array_agg(CASE WHEN e.kind = 'expired' AND e.partner_event = %s THEN 'not sent'
+                              ELSE e.kind::text END)
+        FROM trust_online_payment_events AS e
         WHERE e.payment_id = r.payment_id)
 FROM trust_autopay_runs AS r
 WHERE r.autopay_id = %s AND r.payment_id IS NOT NULL
@@ -170,9 +173,14 @@ LIMIT 2
 
 
 def failed_twice(conn: psycopg.Connection[Any], autopay_id: UUID) -> bool:
-    """Whether the autopay's last two payments both didn't go through or came back."""
-    kinds = [row[0] or [] for row in conn.execute(LAST_TWO, (autopay_id,)).fetchall()]
-    return len(kinds) == 2 and all("failed" in k or "returned" in k for k in kinds)
+    """Whether the autopay's last two payments both didn't go through or came back. One never
+    sent (given up: the partner couldn't take it for days, the account saved at keys the company
+    no longer uses; docs/edge-cases.md P-065) didn't go through, unless the bank paid it after
+    all."""
+    kinds = [row[0] or [] for row in conn.execute(LAST_TWO, (GAVE_UP, autopay_id)).fetchall()]
+    return len(kinds) == 2 and all(
+        "failed" in k or "returned" in k or ("not sent" in k and "paid" not in k) for k in kinds
+    )
 
 
 def left_on(conn: psycopg.Connection[Any], autopay: Active, day: date) -> bool:

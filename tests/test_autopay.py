@@ -357,6 +357,48 @@ def test_an_autopay_stops_by_itself_after_two_payments_in_a_row_did_not_go_throu
     assert stopped(conn, mine) == "failed twice"
 
 
+def given_up(conn, pmc, payment):
+    conn.execute(
+        "INSERT INTO trust_online_payment_events (pmc_id, payment_id, kind, partner_event,"
+        " happened_at) VALUES (%s, %s, 'expired', %s, now())",
+        (pmc.pmc_id, payment, autopay.GAVE_UP),
+    )
+
+
+def test_an_autopay_whose_payments_were_never_sent_two_months_running_stops_by_itself(
+    conn, app_conn, pmc, lease, tenant
+):
+    # docs/edge-cases.md P-065: saved at a Stripe account the company no longer uses, each
+    # payment fails to reach the partner for three days and is given up, the tenant emailed every
+    # month for good. Two in a row that never went through stop it, as two failed ones do.
+    online(conn, pmc)
+    mine = set_up(conn, pmc, lease, tenant)
+    earlier = (MONTH - DAY).replace(day=1)
+    charge(conn, pmc.pmc_id, lease, earlier, "1.00")
+    for month in (earlier, MONTH):
+        run(app_conn, pmc, day=month)
+        given_up(conn, pmc, autopay.payment_id_for(mine, month))
+    assert stopped(conn, mine) is None
+    run(app_conn, pmc)
+    assert stopped(conn, mine) == "failed twice"
+
+
+def test_a_payment_given_up_that_the_bank_paid_after_all_went_through(
+    conn, app_conn, pmc, lease, tenant
+):
+    online(conn, pmc)
+    mine = set_up(conn, pmc, lease, tenant)
+    earlier = (MONTH - DAY).replace(day=1)
+    charge(conn, pmc.pmc_id, lease, earlier, "1.00")
+    run(app_conn, pmc, day=earlier)
+    given_up(conn, pmc, autopay.payment_id_for(mine, earlier))
+    report(conn, pmc, autopay.payment_id_for(mine, earlier), "paid")  # it reached the bank
+    run(app_conn, pmc, day=MONTH)
+    given_up(conn, pmc, autopay.payment_id_for(mine, MONTH))
+    run(app_conn, pmc)
+    assert stopped(conn, mine) is None
+
+
 def test_one_payment_that_did_not_go_through_does_not_stop_an_autopay(
     conn, app_conn, pmc, lease, tenant
 ):
