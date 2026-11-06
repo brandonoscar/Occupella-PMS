@@ -30,6 +30,9 @@ import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
+import { OwnerHeldOutcomeForm } from "./OwnerHeldForms";
+import { ownerHeldLine, settledLine, stillHeldCents } from "../ownerHeld";
+import { fromCents } from "../reconcile";
 
 // Staff's move-outs: end the lease, inspect it on the way in and out, charge what the tenants
 // owe for cleaning or damage with its receipts, and return their deposits by the day they are
@@ -145,6 +148,9 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
           {Number(lease.carried) > 0 && ` and ${money(lease.carried)} at the home they moved from`} ·
           deposits held {money(lease.held)}
         </p>
+        {(lease.owner_held ?? []).length > 0 && (
+          <OwnerHeldPart lease={lease} ended={ended} record={record} />
+        )}
         <InspectionsPanel leaseId={id} label={leaseLabel(lease)} />
         {lease.fees.length > 0 && <FeeReceipts lease={lease} record={record} />}
         {lease.settled ? (
@@ -239,6 +245,30 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
         <Notice tone="error">{error}</Notice>
       </section>
     </li>
+  );
+}
+
+// The deposits the owner holds, outside trust, beside what trust holds: the owner returns them, and
+// once the lease has ended staff record what the owner returned and kept. Nothing moves in trust.
+function OwnerHeldPart({ lease, ended, record }: { lease: MoveOut; ended: boolean; record: Recorder }) {
+  const held = lease.owner_held ?? [];
+  const still = stillHeldCents(held);
+  return (
+    <div className="flex flex-col gap-2" aria-label={`Held by the owner, ${leaseLabel(lease)}`} role="group">
+      {still > 0 && (
+        <p className="text-sm font-medium" data-testid="owner-held">
+          Held by owner: {money(fromCents(still))} — the owner returns it
+        </p>
+      )}
+      <ul className="flex flex-col gap-2 text-sm">
+        {held.map((h) => (
+          <li key={h.id} className="flex flex-col gap-1">
+            <span>{ownerHeldLine(h)}{h.settled ? `. ${settledLine(h.settled)}` : ""}</span>
+            {h.settled === null && ended && <OwnerHeldOutcomeForm leaseId={lease.lease_id} held={h} record={record} />}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

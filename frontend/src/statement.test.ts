@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describePosting, group, periodLabel } from "./statement";
+import { describePosting, group, memoLine, periodLabel } from "./statement";
 
 // The golden owner statement (tests/golden/cases/trust_report_owner_statement/january), as
 // the API sends it.
@@ -109,5 +109,35 @@ describe("periodLabel", () => {
     expect(periodLabel("2026-10-01 00:00:00 to 2026-10-01 00:00:00 UTC")).toBe(
       "2026-10-01 00:00:00 to 2026-10-01 00:00:00 UTC",
     );
+  });
+});
+
+describe("memos", () => {
+  // The golden statement with memos (tests/golden/cases/trust_report_owner_statement/memos).
+  const MEMOS: (string | null)[][] = [
+    ["1", null, null, "period", "2026-01-01 00:00:00 to 2026-02-01 00:00:00 UTC", null, null],
+    ["2", "Property 1", null, "opening balance", null, null, "0.00"],
+    ["3", "Property 1", "2026-01-09", "posting", "unapplied_cash: received, not yet applied - Rent payment", "500.00", "500.00"],
+    ["4", "Property 1", null, "closing balance", null, null, "500.00"],
+    ["5", "Property 1", null, "memo: concessions", "given in the period, credits off rent (not money moved)", "150.00", null],
+    ["6", "Property 1", null, "memo: deposit held by owner", "Tenant 1's security deposit, Unit 1: you hold it, not in trust", "1200.00", null],
+    ["7", null, null, "all properties: closing balance", null, null, "500.00"],
+  ];
+
+  it("keeps a property's memos after its closing balance, out of every balance", () => {
+    const grouped = group({ title: "t", columns: COLUMNS, rows: MEMOS });
+    const [section] = grouped.properties;
+
+    expect(section?.closing).toBe("500.00");
+    expect(section?.memos?.map(memoLine)).toEqual([
+      "Concessions given in the period: credits off rent, no money moved",
+      "Deposit you hold: Tenant 1's security deposit, Unit 1: you hold it, not in trust",
+    ]);
+    expect(section?.memos?.map((m) => m.amount)).toEqual(["150.00", "1200.00"]);
+    expect(grouped.totals.closing).toBe("500.00");
+    // A payment from unapplied cash reads as what it was.
+    expect(describePosting(section?.postings[0]?.detail ?? "", "500.00")).toEqual({
+      what: "Rent payment", with: "received, not yet applied",
+    });
   });
 });

@@ -253,8 +253,10 @@ def test_a_late_fee_that_would_fall_in_a_closed_year_is_never_charged_and_the_ru
     """docs/edge-cases.md M-050, D-082: late fee terms entered after a year closed, in force
     from before it, reach a rent of that year still open. Its fee falls in the closed year, the
     year's lock refused it, and the company's whole run, rent included, failed every night. Such
-    a rent is charged no late fee, and the rest of the run goes on."""
+    a rent is charged no late fee, each of them (the year's lock looked up once a run), and the
+    rest of the run goes on."""
     lease = a_lease(conn, pmc)
+    older = charge(conn, pmc.pmc_id, lease, date(2025, 11, 1), "1000.00")  # unpaid since
     old = charge(conn, pmc.pmc_id, lease, DEC_1, "1000.00")  # unpaid since
     december(conn, pmc)
     close(conn, pmc.pmc_id, 2025, closer)
@@ -268,7 +270,7 @@ def test_a_late_fee_that_would_fall_in_a_closed_year_is_never_charged_and_the_ru
     app_conn.execute("SELECT trust_run_rent(%s, %s, %s)", (pmc.pmc_id, today.replace(day=1), today))
 
     assert conn.execute(
-        "SELECT count(*) FROM trust_late_fees WHERE rent_charge_id = %s", (old,)
+        "SELECT count(*) FROM trust_late_fees WHERE rent_charge_id = ANY(%s)", ([older, old],)
     ).fetchone() == (0,)
     # This month's rent posted all the same.
     assert conn.execute(

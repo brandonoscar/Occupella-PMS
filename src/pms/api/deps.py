@@ -54,6 +54,7 @@ HOLDERS = {
     "tenant_deposit": "the tenant's deposit",
     "vendor_payable": "the vendor's account",
     "pmc_income": "the company's fee account",
+    "unapplied_cash": "the unapplied cash",
 }
 BELOW_ZERO = re.compile(r"^(\w+) account \S+ would go below zero \(balance (-\d+(?:\.\d+)?)\)$")
 # trust_draw_owner's refusal (migrations 0016 and 0017) names the owner's account by its id too.
@@ -198,6 +199,7 @@ AREA_PATHS = (
     ("/api/assistance/", "rent"),  # a housing authority's part of the rent
     ("/api/utilities/", "rent"),  # utility bills charged to the leases
     ("/api/bank-accounts/", "rent"),  # bank deposits of what came in
+    ("/api/unapplied", "rent"),  # money received not yet applied (a refund takes disburse too)
     ("/api/payments/settings", "setup"),  # whether tenants pay online, who pays the fee
     ("/api/payments/keys", "setup"),  # the company's own Stripe keys (an admin's, too)
     ("/api/payments/", "rent"),  # online payments waiting, the company's cover of the fees

@@ -302,14 +302,17 @@ export function ChargeForm({ lease, record }: { lease: RentLease; record: Record
   const [memo, setMemo] = useState("");
   const [types] = useChargeTypes();
   const [type, setType] = useState("");
+  const [concession, setConcession] = useState(false);
   return (
     <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
         const typed = kind === "fee" && type ? { charge_type_id: type } : {};
-        const body = { kind, amount, due_on: due, memo, ...typed };
-        const said = () => `${kind === "fee" ? "Fee" : "Credit"} of ${money(amount)} added.`;
+        const given = kind === "credit" && concession ? { concession: true } : {};
+        const body = { kind, amount, due_on: due, memo, ...typed, ...given };
+        const word = kind === "fee" ? "Fee" : given.concession ? "Concession" : "Credit";
+        const said = () => `${word} of ${money(amount)} added.`;
         if (await record(`/api/rent/leases/${lease.id}/charges`, body, said)) {
           setAmount("");
           setMemo("");
@@ -330,6 +333,7 @@ export function ChargeForm({ lease, record }: { lease: RentLease; record: Record
       {kind === "fee" && (
         <ChargeTypeSelect id={`charge-type-${lease.id}`} types={types} value={type} onChange={setType} />
       )}
+      {kind === "credit" && <ConcessionBox id={`charge-concession-${lease.id}`} checked={concession} onChange={setConcession} />}
       <Button type="submit" variant="secondary">
         Add
       </Button>
@@ -372,6 +376,17 @@ export function RecurringLine({ recurring, record }: { recurring: RecurringCharg
   );
 }
 
+// A credit given as a concession, a discount on rent: the owner's accrual income statement counts it
+// on a line of its own, Concessions (migration 20261106000242).
+function ConcessionBox({ id, checked, onChange }: { id: string; checked: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <label htmlFor={id} className="flex items-center gap-2 text-sm text-ink">
+      <input id={id} type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      A concession (a discount on rent, on its own line)
+    </label>
+  );
+}
+
 export function RecurringForm({ lease, record }: { lease: RentLease; record: Recorder }) {
   const [kind, setKind] = useState<"fee" | "credit">("fee");
   const [amount, setAmount] = useState("");
@@ -379,13 +394,15 @@ export function RecurringForm({ lease, record }: { lease: RentLease; record: Rec
   const [memo, setMemo] = useState("");
   const [types] = useChargeTypes();
   const [type, setType] = useState("");
+  const [concession, setConcession] = useState(false);
   return (
     <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
         const typed = kind === "fee" && type ? { charge_type_id: type } : {};
-        const body = { kind, amount, memo, starts_on: from, ...typed };
+        const given = kind === "credit" && concession ? { concession: true } : {};
+        const body = { kind, amount, memo, starts_on: from, ...typed, ...given };
         const said = () => `${memo} of ${money(amount)} added every month.`;
         if (await record(`/api/rent/leases/${lease.id}/recurring-charges`, body, said)) {
           setAmount("");
@@ -407,6 +424,7 @@ export function RecurringForm({ lease, record }: { lease: RentLease; record: Rec
       {kind === "fee" && (
         <ChargeTypeSelect id={`recurring-type-${lease.id}`} types={types} value={type} onChange={setType} />
       )}
+      {kind === "credit" && <ConcessionBox id={`recurring-concession-${lease.id}`} checked={concession} onChange={setConcession} />}
       <Button type="submit" variant="secondary">
         Add every month
       </Button>

@@ -206,3 +206,41 @@ describe("MoveOutPage", () => {
     expect(posted(fetch)).toEqual([["/api/move-out/l3/statement/send", {}]]);
   });
 });
+
+// A deposit the owner holds, outside trust (migration 20261106000241): shown beside what trust
+// holds; once the lease has ended, staff record what the owner returned and kept.
+describe("a deposit the owner holds at move-out", () => {
+  const HELD = {
+    id: "h1", tenant_id: "t1", tenant: "Tenant 1", kind: "security" as const, amount: "1500.00",
+    held_since: "2026-01-01", memo: null, settled: null,
+  };
+
+  it("says the owner returns it, and records what the owner returned and kept", async () => {
+    const fetch = server({}, [{ ...ENDED, owner_held: [HELD] }]);
+    render(<MoveOutPage me={ME} />);
+    const part = await screen.findByRole("group", { name: "Held by the owner, Property 1 / Unit 1: Tenant 1" });
+    expect(within(part).getByTestId("owner-held").textContent).toBe("Held by owner: $1,500.00 — the owner returns it");
+    fireEvent.change(within(part).getByLabelText("Kept by the owner"), { target: { value: "300.00" } });
+    fireEvent.change(within(part).getByLabelText("On"), { target: { value: "2026-07-01" } });
+    fireEvent.click(within(part).getByRole("button", { name: "Record what the owner did" }));
+
+    expect(await screen.findByText("Recorded: the owner returned $1,200.00 and kept $300.00.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/move-out/l1/owner-held-deposits/h1/settle", {
+      returned: "1200.00", kept: "300.00", on: "2026-07-01",
+    }]]);
+  });
+
+  it("asks nothing before the lease has ended, and says what the owner did once recorded", async () => {
+    server({}, [
+      { ...OPEN, owner_held: [HELD] },
+      { ...DONE, owner_held: [{ ...HELD, id: "h3", settled: { returned: "1500.00", kept: "0.00", on: "2026-07-05", memo: null } }] },
+    ]);
+    render(<MoveOutPage me={ME} />);
+    const open = await screen.findByRole("group", { name: "Held by the owner, Property 1 / Unit 2: Tenant 1" });
+    expect(within(open).getByTestId("owner-held")).toBeTruthy();
+    expect(within(open).queryByRole("button", { name: "Record what the owner did" })).toBeNull();
+    const done = screen.getByRole("group", { name: "Held by the owner, Property 1 / Unit 3: Tenant 1" });
+    expect(within(done).queryByTestId("owner-held")).toBeNull();
+    expect(done.textContent).toContain("The owner returned $1,500.00 and kept $0.00 on 07/05/2026.");
+  });
+});

@@ -37,7 +37,7 @@ function useSave({ say, refresh, close }: Panel) {
 }
 
 // The company's owners, bank accounts and tenants, for a panel's choices.
-export function usePortfolio(): [Portfolio | null, string, () => void] {
+function usePortfolio(): [Portfolio | null, string, () => void] {
   const [books, setBooks] = useState<Portfolio | null>(null);
   const [error, setError] = useState("");
   const load = () => {

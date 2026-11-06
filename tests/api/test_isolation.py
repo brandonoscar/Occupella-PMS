@@ -108,7 +108,7 @@ RECORDS = {
     " WHERE pmc_id = %(pmc)s AND kind = 'security_deposit'",
     "bill": "SELECT id FROM trust_bills WHERE pmc_id = %(pmc)s AND reference = 'PLB-3002'",
     "expense account": "SELECT id FROM trust_expense_accounts"
-    " WHERE pmc_id = %(pmc)s AND name = 'Repairs'",
+    " WHERE pmc_id = %(pmc)s AND name = 'General repairs'",
     "charge type": "SELECT id FROM trust_charge_types WHERE pmc_id = %(pmc)s AND name = 'Cleaning'",
     # The plumber's, scheduled: open, so the plumber's link sees it.
     "work order": "SELECT id FROM trust_work_orders"
@@ -206,6 +206,10 @@ RECORDS = {
     + _LEASE_AT.format("Harbor Tower", demo.HARBOR_ENDED)
     + ")",
     "online payment": _ONLY.format("trust_online_payments"),
+    # Made by fill_in: money received that staff couldn't match yet.
+    "unapplied cash": _ONLY.format("trust_unapplied_receipts"),
+    # Made by fill_in: the lease's pet deposit its owner holds, outside trust.
+    "owner-held deposit": _ONLY.format("trust_owner_held_deposits"),
     "autopay": _ONLY.format("trust_autopay"),
     # Made by fill_in: a bill paid with its check printed.
     "payout run": _ONLY.format("trust_payout_runs"),
@@ -265,6 +269,9 @@ PATH_IDS = {
     "subscription_id": "webhook",
     "pmc_id": "company",
     "announcement_id": "announcement",
+    "type_id": "charge type",
+    "receipt_id": "unapplied cash",
+    "held_id": "owner-held deposit",
 }
 ROUTE_PATH_IDS = {
     ("/api/payables/recurring/{recurring_id}/expense-account", "recurring_id"): "recurring bill",
@@ -284,6 +291,8 @@ ROUTE_PATH_IDS = {
     # A line of the tenant's ledger: the lease's latest payment.
     ("/api/tenant/leases/{lease_id}/ledger/sources/{kind}/{source_id}", "source_id"): "payment",
     ("/api/messages/{about}/{person_id}", "person_id"): "tenant",
+    ("/api/setup/expense-accounts/{account_id}/name", "account_id"): "expense account",
+    ("/api/setup/expense-accounts/{account_id}/archive", "account_id"): "expense account",
 }
 # Path parameters that name no record, and what the route is sent.
 NOT_ID_PARAMS = {
@@ -594,6 +603,13 @@ BODIES: dict[str, dict[str, Any]] = {
     },
     # A lead is reached by an email or a phone.
     "POST /api/leasing/leads": {"email": "lead@example.com"},
+    # A code for one account: the company's expense account, in its range.
+    "POST /api/setup/codes": {
+        "code": "6455",
+        "line": None,
+        "charge_type_id": None,
+        "expense_account_id": Rec("expense account"),
+    },
     # Two owners' shares of one invoice.
     "POST /api/payables/shared-bills": {
         "shares": [
@@ -977,6 +993,27 @@ def fill_in(client: TestClient, company: Company, conn: psycopg.Connection[Any])
             },
         )
     staff("POST", f"/api/leases/{lease}/occupants", {"name": "Occupant 1", "relationship": "Child"})
+    staff(
+        "POST",
+        f"/api/rent/leases/{lease}/owner-held-deposits",
+        {
+            "tenant_id": str(one("tenant")),
+            "kind": "pet",
+            "amount": "300.00",
+            "held_since": str(TODAY),
+        },
+    )
+    staff(
+        "POST",
+        "/api/unapplied",
+        {
+            "request_id": str(uuid.uuid4()),
+            "amount": "40.00",
+            "received_on": str(TODAY),
+            "payer": "Unknown payer",
+            "method": "check",
+        },
+    )
     staff(
         "POST",
         f"/api/assistance/leases/{lease}/charges",

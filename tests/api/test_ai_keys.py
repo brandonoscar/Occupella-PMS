@@ -16,7 +16,15 @@ from people import join_as, join_as_owner, join_as_staff, tenant_of
 from pms import accounts
 from pms.api import ai_keys, create_app
 
-TODAY = str(datetime.now(UTC).date())
+
+def on_this_day() -> None:
+    """Today (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares it with the database's."""
+    global TODAY
+    TODAY = str(datetime.now(UTC).date())
+
+
+on_this_day()
 NOT_VALID = "this key was taken back or doesn't exist"
 ADMINS = "only an admin sees, makes and takes back API keys"
 

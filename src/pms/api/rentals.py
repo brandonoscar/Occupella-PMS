@@ -771,14 +771,25 @@ def lease_page(session: Staff, conn: Conn, lease_id: UUID) -> Lease:
 
 
 LedgerKind = Literal[
-    "rent", "recurring", "late fee", "NSF fee", "fee", "credit", "payment", "bounced payment"
+    "rent",
+    "recurring",
+    "late fee",
+    "NSF fee",
+    "fee",
+    "credit",
+    "payment",
+    "bounced payment",
+    "memo",
 ]
+# The tenant ledger's memo lines, which change no balance: a deposit the owner holds, outside
+# trust, and what the owner did with it at move-out (migration 20261106000241).
+MEMO_ITEMS = ("owner-held deposit", "owner-held deposit settled")
 
 
 class LedgerLine(BaseModel):
     on: date
     # A charge's kind (rent, a recurring charge, a late fee, an NSF fee, another fee, a credit),
-    # or a payment, or a bounced payment.
+    # or a payment, or a bounced payment, or a memo that changes no balance.
     kind: LedgerKind
     memo: str | None
     charged: str | None
@@ -863,6 +874,7 @@ LEDGER_WORDS = {
     "credit": "Credit",
     "payment": "Payment",
     "bounced payment": "Bounced payment",
+    "memo": "Memo",
 }
 
 
@@ -908,6 +920,8 @@ def lease_ledger(
             kind = item
         elif item == "bounced payment":
             transfer_id, kind = next(bounces), item
+        elif item in MEMO_ITEMS:
+            kind = "memo"
         else:
             charge_id, kind = next(charges)
         if start is not None and on < start:

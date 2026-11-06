@@ -57,12 +57,14 @@ import { navigate } from "../router";
 import { LedgerTab } from "./LeaseLedger";
 import { GoLink } from "./NeedsAttention";
 import { RenewLeaseForm } from "./RenewLeaseForm";
+import { OwnerHeldForm } from "./OwnerHeldForms";
+import { ownerHeldLine, settledLine } from "../ownerHeld";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
 type Panel =
   | "payment" | "charge" | "rent" | "due" | "recurring" | "insurance" | "deposit" | "leasing" | "hold"
-  | "release" | "end" | "remove" | "move" | "interest" | "renew";
+  | "release" | "end" | "remove" | "move" | "interest" | "renew" | "owner-held";
 const PANELS: Record<Panel, string> = {
   payment: "Receive payment",
   charge: "Enter charge",
@@ -71,6 +73,7 @@ const PANELS: Record<Panel, string> = {
   recurring: "Add recurring charge",
   insurance: "Renters insurance",
   deposit: "Record deposit",
+  "owner-held": "Record a deposit the owner holds",
   leasing: "Take leasing fee",
   hold: "Place payment hold",
   release: "Release payment hold",
@@ -155,6 +158,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
     { label: "Add recurring charge", onSelect: () => setPanel("recurring") },
     { label: "Renters insurance", onSelect: () => setPanel("insurance") },
     { label: "Record deposit", onSelect: () => setPanel("deposit") },
+    { label: "Record a deposit the owner holds", onSelect: () => setPanel("owner-held") },
     { label: "Deposit interest", onSelect: () => setPanel("interest") },
     { label: "Take leasing fee", onSelect: () => setPanel("leasing") },
     open === null
@@ -231,7 +235,8 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
       {panel === null && <Notice tone="error">{refused}</Notice>}
       <div>
         <Tabs label="Lease" tabs={TABS} value={tab} onChange={setTab} />
-        {tab === "summary" && <Summary lease={lease} record={record} recordDeposit={() => setPanel("deposit")} />}
+        {tab === "summary" && <Summary lease={lease} record={record} recordDeposit={() => setPanel("deposit")}
+          recordOwnerHeld={() => setPanel("owner-held")} />}
         {tab === "ledger" && <LedgerTab lease={lease} runs={runs} record={record} />}
         {tab === "tenants" && (
           <div className="flex flex-col gap-6">
@@ -258,6 +263,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           {panel === "recurring" && <RecurringForm lease={lease} record={recordThenClose} />}
           {panel === "insurance" && <InsuranceForms lease={lease} record={recordThenClose} />}
           {panel === "deposit" && <DepositForm lease={lease} record={recordThenClose} />}
+          {panel === "owner-held" && <OwnerHeldForm lease={lease} record={recordThenClose} />}
           {panel === "leasing" && <LeasingFeeForm lease={lease} record={recordThenClose} />}
           {panel === "hold" && <HoldForm lease={lease} record={recordThenClose} />}
           {panel === "release" && open !== null && <ReleaseForm hold={open} record={recordThenClose} />}
@@ -278,7 +284,9 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
 // Summary: the term and rent (and its changes), what is held for the tenants, what is still
 // open, the monthly charges (each stopped from its ⋯ menu), housing assistance and renters
 // insurance.
-function Summary({ lease, record, recordDeposit }: { lease: LeaseDetail; record: Recorder; recordDeposit: () => void }) {
+function Summary({ lease, record, recordDeposit, recordOwnerHeld }: {
+  lease: LeaseDetail; record: Recorder; recordDeposit: () => void; recordOwnerHeld: () => void;
+}) {
   const deposit = lease.tenants.reduce((sum, t) => sum + Number(t.deposit), 0).toFixed(2);
   const prepaid = lease.tenants.reduce((sum, t) => sum + Number(t.prepaid), 0).toFixed(2);
   const kinds = depositKindsLine(lease.tenants);
@@ -303,6 +311,22 @@ function Summary({ lease, record, recordDeposit }: { lease: LeaseDetail; record:
           {Number(lease.deposit_asked.to_receive) > 0 && (
             <div className="mt-3"><Button variant="secondary" onClick={recordDeposit}>Record deposit</Button></div>
           )}
+        </Card>
+      )}
+      {(lease.owner_held ?? []).length > 0 && (
+        <Card title="Held by the owner">
+          <p className="text-sm text-ink-muted">Never in trust: the owner holds it and returns it at move-out.</p>
+          <ul className="mt-2 flex flex-col gap-1 text-base" aria-label={`Held by the owner, ${lease.unit}`}>
+            {(lease.owner_held ?? []).map((held) => (
+              <li key={held.id} className="flex flex-wrap items-center gap-2">
+                <span>{ownerHeldLine(held)}</span>
+                {held.settled
+                  ? <span className="text-sm text-ink-muted">{settledLine(held.settled)}</span>
+                  : <Badge tone="info">Owner holds it</Badge>}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3"><Button variant="secondary" onClick={recordOwnerHeld}>Record a deposit the owner holds</Button></div>
         </Card>
       )}
       {lease.rent_changes.length > 0 && (

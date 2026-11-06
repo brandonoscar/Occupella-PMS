@@ -234,7 +234,9 @@ export type LeaseDetail = RentLease & {
 };
 
 export type LedgerKind =
-  | "rent" | "recurring" | "late fee" | "NSF fee" | "fee" | "credit" | "payment" | "bounced payment";
+  | "rent" | "recurring" | "late fee" | "NSF fee" | "fee" | "credit" | "payment" | "bounced payment"
+  // A line that changes no balance: a deposit the owner holds, outside trust, and what became of it.
+  | "memo";
 export const LEDGER_KIND: Record<LedgerKind, string> = {
   rent: "Rent",
   recurring: "Monthly charge",
@@ -244,6 +246,7 @@ export const LEDGER_KIND: Record<LedgerKind, string> = {
   credit: "Credit",
   payment: "Payment",
   "bounced payment": "Bounced payment",
+  memo: "Memo",
 };
 export type LedgerLine = {
   on: string;
