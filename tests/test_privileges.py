@@ -259,6 +259,8 @@ TABLES = {
     "trust_showing_outcomes": {"SELECT", "INSERT"},
     # A tenant's records at other properties, the same person (migration 0105).
     "trust_tenant_links": {"SELECT", "INSERT"},
+    # A link taken back (docs/edge-cases.md U-099): staff insert it; it names who.
+    "trust_tenant_unlinks": {"SELECT", "INSERT"},
     # Years closed (migration 0106): written only by trust_close_year.
     "trust_year_closes": {"SELECT"},
     # The old system's past transactions (migration 0107), never posted.
@@ -673,6 +675,7 @@ FUNCTIONS = {
     "trust_check_lead_open()": set(),
     "trust_check_tenant_link()": set(),
     "trust_check_tenant_login()": set(),
+    "trust_check_tenant_unlink()": set(),
     "trust_refuse_closed_year()": set(),
     "trust_check_history_line()": set(),
     "trust_check_reserve_event()": set(),

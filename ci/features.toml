@@ -915,10 +915,11 @@ browser = [
 
 [[feature]]
 id = "tenant-at-two-properties"
-statement = "Staff make a tenant who rents at another property too a tenant there (the same name and contact details, linked to their first record), or say a tenant there is the same person; each record keeps its own leases and money, the person signs in once, and the portal shows and acts on their leases at every property (migration 0105, the founder's review q009)."
+statement = "Staff make a tenant who rents at another property too a tenant there (the same name and contact details, linked to their first record), or say a tenant there is the same person; each record keeps its own leases and money, the person signs in once, and the portal shows and acts on their leases at every property (migration 0105, the founder's review q009). A link made by mistake is taken back, after a question, from the record linked or its first: it is its own person again at once, and its autopays stop (migration 20261106100100, docs/edge-cases.md U-099)."
 operations = [
   "POST /api/tenants/{tenant_id}/elsewhere",
   "POST /api/tenants/{tenant_id}/same-person",
+  "POST /api/tenants/{tenant_id}/not-same-person",
 ]
 browser = [
   "features.spec.ts › staff make a tenant a tenant at a second property and lease them a unit there; they sign in once, see both homes and ask for a repair at the new one",

@@ -4441,7 +4441,7 @@ test("staff make a tenant a tenant at a second property and lease them a unit th
   await same.getByRole("button", { name: "Find" }).click();
   await same.getByRole("button", { name: /^Same person: Taylor Demo, .*Cedar House/ }).click();
   await expect(page.getByRole("alertdialog")).toContainText(
-    /Link Drew Sample and Taylor Demo \(.*Cedar House\) for good\? They get one portal sign-in/,
+    /Link Drew Sample and Taylor Demo \(.*Cedar House\)\? They get one portal sign-in/,
   );
   await page.getByRole("alertdialog").getByRole("button", { name: "This is them" }).click();
   await expect(same.getByRole("alert")).toContainText("Drew Sample signs in to the portal: link Taylor Demo to them instead");
@@ -4465,6 +4465,20 @@ test("staff make a tenant a tenant at a second property and lease them a unit th
   await picker.selectOption({ index: 1 });
   await expect(part(tenant, "Your lease").getByText("Cedar House", { exact: true })).toBeVisible();
   await tenant.close();
+
+  // A link made by mistake is taken back from the record linked (docs/edge-cases.md U-099): it is
+  // its own person again, and whoever signs in at Cedar House no longer sees its lease.
+  await section(page, "Tenants");
+  await page.getByRole("row", { name: "Taylor Demo", exact: true }).filter({ hasText: "Aspen Row" })
+    .getByRole("link", { name: "Taylor Demo" }).click();
+  await part(page, "Other properties").getByRole("button", { name: "Actions for Tenant at Cedar House" }).click();
+  await page.getByRole("menuitem", { name: "Not the same person" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    "Taylor Demo isn't the tenant who signs in at Cedar House? Take the link back:",
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: "Not the same person" }).click();
+  await expect(page.getByText("The link is taken back: each record is its own person.")).toBeVisible();
+  await expect(part(page, "Other properties")).toContainText("Renting at another property too?");
 });
 
 test("staff approve last December in each trust bank account, close the year, and a charge dated in it is refused in words", async ({

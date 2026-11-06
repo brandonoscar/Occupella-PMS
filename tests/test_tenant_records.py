@@ -188,3 +188,104 @@ def test_a_link_waits_for_a_login_of_its_record_and_then_is_refused(conn, databa
 
     assert isinstance(outcome.get("error"), psycopg.errors.CheckViolation), outcome
     assert "signs in to the portal" in str(outcome["error"])
+
+
+# --- a link taken back (docs/edge-cases.md U-099) ------------------------------------------------
+
+
+def unlink(conn, pmc_id, tenant):
+    conn.execute(
+        "INSERT INTO trust_tenant_unlinks (pmc_id, tenant_id) VALUES (%s, %s)", (pmc_id, tenant)
+    )
+
+
+def test_a_link_taken_back_leaves_each_record_its_own_person(conn):
+    # Staff marked the wrong person's record "the same person": the person signing in as the first
+    # record read and acted on the other's lease, ledger and files. Taken back, each is its own.
+    pmc = make_pmc(conn, owners=3)
+    first = add_tenant(conn, pmc.pmc_id, property_of(pmc, 0), "Tenant 1")
+    wrong = add_tenant(conn, pmc.pmc_id, property_of(pmc, 1), "Tenant 9")
+    there = add_tenant(conn, pmc.pmc_id, property_of(pmc, 2), "Tenant 1")
+    link(conn, pmc.pmc_id, wrong, first)
+    link(conn, pmc.pmc_id, there, first)
+    staff = add_staff(conn, pmc.pmc_id)
+    with acting_as(conn, staff):
+        unlink(conn, pmc.pmc_id, wrong)
+
+    assert records(conn, pmc.pmc_id, wrong) == {wrong}
+    assert records(conn, pmc.pmc_id, first) == records(conn, pmc.pmc_id, there) == {first, there}
+    assert conn.execute(
+        "SELECT recorded_by FROM trust_tenant_unlinks WHERE tenant_id = %s", (wrong,)
+    ).fetchone() == (staff,)
+    # It signs in on its own now, and someone else's record may be linked to it.
+    login(conn, pmc.pmc_id, wrong, "tenant9@example.com")
+    elsewhere = add_tenant(conn, pmc.pmc_id, property_of(pmc, 0), "Tenant 9")
+    link(conn, pmc.pmc_id, elsewhere, wrong)
+    assert records(conn, pmc.pmc_id, wrong) == {wrong, elsewhere}
+
+
+def test_a_link_is_taken_back_once_and_never_rewritten(conn, pmc):
+    first = add_tenant(conn, pmc.pmc_id, property_of(pmc, 0), "Tenant 1")
+    there = add_tenant(conn, pmc.pmc_id, property_of(pmc, 1), "Tenant 1")
+    alone = add_tenant(conn, pmc.pmc_id, property_of(pmc, 1), "Tenant 2")
+    link(conn, pmc.pmc_id, there, first)
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        unlink(conn, make_pmc(conn).pmc_id, there)  # another company's
+    unlink(conn, pmc.pmc_id, there)
+
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        unlink(conn, pmc.pmc_id, there)
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        unlink(conn, pmc.pmc_id, alone)  # linked to nobody
+    # A record whose link was taken back is linked to nobody for good.
+    with pytest.raises(psycopg.errors.CheckViolation, match="its link was taken back"):
+        link(conn, pmc.pmc_id, there, first)
+    for change in (
+        "UPDATE trust_tenant_unlinks SET recorded_by = NULL",
+        "DELETE FROM trust_tenant_unlinks",
+    ):
+        with pytest.raises(psycopg.errors.RestrictViolation, match="append-only"):
+            conn.execute(change)
+
+
+def test_a_first_record_whose_links_were_taken_back_is_linked_to_again(conn, pmc):
+    first = add_tenant(conn, pmc.pmc_id, property_of(pmc, 0), "Tenant 1")
+    wrong = add_tenant(conn, pmc.pmc_id, property_of(pmc, 1), "Tenant 9")
+    right = add_tenant(conn, pmc.pmc_id, property_of(pmc, 1), "Tenant 1")
+    link(conn, pmc.pmc_id, wrong, first)
+    # One record a property: the wrong one held Property 2 for the person.
+    with pytest.raises(psycopg.errors.CheckViolation, match="is a tenant at Property 2 already"):
+        link(conn, pmc.pmc_id, right, first)
+    unlink(conn, pmc.pmc_id, wrong)
+    link(conn, pmc.pmc_id, right, first)
+    assert records(conn, pmc.pmc_id, first) == {first, right}
+
+
+def test_the_app_takes_a_link_back_and_the_ai_reads_it(conn, app_conn, ai_conn, pmc):
+    first = add_tenant(conn, pmc.pmc_id, property_of(pmc, 0), "Tenant 1")
+    there = add_tenant(conn, pmc.pmc_id, property_of(pmc, 1), "Tenant 1")
+    link(app_conn, pmc.pmc_id, there, first)
+    unlink(app_conn, pmc.pmc_id, there)
+    assert ai_conn.execute(
+        "SELECT pmc_id FROM trust_tenant_unlinks WHERE tenant_id = %s", (there,)
+    ).fetchone() == (pmc.pmc_id,)
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        unlink(ai_conn, pmc.pmc_id, first)
+
+
+@pytest.mark.timing
+def test_a_login_waits_for_a_link_taken_back_and_then_signs_in(conn, database_url, pmc):
+    first = add_tenant(conn, pmc.pmc_id, property_of(pmc, 0), "Tenant 1")
+    there = add_tenant(conn, pmc.pmc_id, property_of(pmc, 1), "Tenant 9")
+    link(conn, pmc.pmc_id, there, first)
+    with psycopg.connect(database_url) as taking_back:
+        unlink(taking_back, pmc.pmc_id, there)  # not committed yet
+        thread, pid, outcome = in_background(database_url, lambda w: login(w, pmc.pmc_id, there))
+        wait_until_blocked(conn, pid)
+        taking_back.commit()
+    thread.join(timeout=30)
+
+    assert "error" not in outcome, outcome
+    assert conn.execute(
+        "SELECT count(*) FROM trust_logins WHERE tenant_id = %s", (there,)
+    ).fetchone() == (1,)

@@ -14,21 +14,27 @@ import { navigate } from "../router";
 import { GoLink } from "./NeedsAttention";
 import { useRecord } from "./useRecord";
 import { AskFirst } from "../components/Confirm";
+import { RowMenu } from "../components/RowMenu";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
 type Found = { kind: string; id: string; label: string; detail: string };
 
 // A tenant renting at two properties at once (migration 0105, q009): a record at each, linked to
-// their first. Each record keeps its own leases and money; they sign in once, as their first.
+// their first. Each record keeps its own leases and money; they sign in once, as their first. A
+// link made by mistake is taken back (docs/edge-cases.md U-099) from the record linked, on its
+// first's row, or from the first, on each linked record's row.
 export function SamePersonCard({ tenant, refresh, say }: {
   tenant: Tenant;
   refresh: () => void;
   say: (said: string) => void;
 }) {
   const [open, setOpen] = useState<"elsewhere" | "same" | null>(null);
+  const { error, record } = useRecord(refresh, say);
+  const linked = tenant.same_person.some((other) => other.first);
   return (
     <Card title="Other properties">
+      <Notice tone="error">{error}</Notice>
       {tenant.same_person.length === 0 ? (
         <p className="mb-3 text-base text-ink-muted">
           Renting at another property too? Make {tenant.name} a tenant there, or say a tenant there is them.
@@ -39,6 +45,19 @@ export function SamePersonCard({ tenant, refresh, say }: {
             <li key={other.id} className="flex flex-wrap items-center gap-2">
               <GoLink href={`/tenants/${other.id}`} className={LINK}>Tenant at {other.property.name}</GoLink>
               {other.first && <Badge tone="info">Signs in here</Badge>}
+              {(!linked || other.first) && (
+                <RowMenu label={`Tenant at ${other.property.name}`} actions={[{
+                  label: "Not the same person",
+                  danger: true,
+                  confirm: linked
+                    ? `${tenant.name} isn't the tenant who signs in at ${other.property.name}? Take the link back:`
+                      + " whoever signs in there no longer sees this record's leases, and its autopays stop."
+                    : `The tenant at ${other.property.name} isn't ${tenant.name}? Take the link back: ${tenant.name}`
+                      + " no longer sees that record's leases, and its autopays stop.",
+                  onSelect: () => record(`/api/tenants/${tenant.id}/not-same-person`, { tenant_id: other.id },
+                    () => "The link is taken back: each record is its own person."),
+                }]} />
+              )}
             </li>
           ))}
         </ul>
@@ -134,8 +153,8 @@ function SamePerson({ tenant, refresh, say, onClose }: {
                 const done = await record(`/api/tenants/${tenant.id}/same-person`, { tenant_id: hit.id },
                   () => `${tenant.name} and ${hit.label} (${hit.detail}) are the same person now.`);
                 if (done) onClose();
-              }} says="Links the two for good: one portal sign-in, and each record keeps its own leases and money."
-                question={`Link ${tenant.name} and ${hit.label} (${hit.detail}) for good? They get one portal sign-in; each record keeps its own leases and money.`}>
+              }} says="Links the two: one portal sign-in, and each record keeps its own leases and money."
+                question={`Link ${tenant.name} and ${hit.label} (${hit.detail})? They get one portal sign-in; each record keeps its own leases and money.`}>
                 This is them
               </AskFirst>
             </li>

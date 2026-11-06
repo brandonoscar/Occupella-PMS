@@ -1560,7 +1560,7 @@ tests = [
 
 [[invariant]]
 id = "a-tenant-is-one-record-a-property"
-statement = "Someone renting at two properties at once is a record at each, linked to their first (migration 0105): a record joins a person only while it is linked to nothing, is no one's first, signs in to nothing, and sits at a property where the person has no record yet; only a record linked to nothing takes a portal login, once; trust_tenant_records gives every record its person's records; links are append-only, name who made them, move no money and wait for a login of the same record (and it for them); each record keeps its own leases and money."
+statement = "Someone renting at two properties at once is a record at each, linked to their first (migration 0105): a record joins a person only while it is linked to nothing, is no one's first, signs in to nothing, and sits at a property where the person has no record yet; only a record linked to nothing takes a portal login, once; trust_tenant_records gives every record its person's records; links are append-only, name who made them, move no money and wait for a login of the same record (and it for them); each record keeps its own leases and money. A link made by mistake is taken back once, naming who (trust_tenant_unlinks, migration 20261106100100; docs/edge-cases.md U-099): the record is its own person again at once, signs in on its own and may be linked to, but is never linked again itself, and its autopays stop."
 tests = [
   "tests/properties/test_tenant_record_properties.py::test_a_person_is_one_record_a_property_and_signs_in_once_as_their_first",
   "tests/test_tenant_records.py::test_a_tenant_renting_at_another_property_is_a_record_there_linked_to_their_first",
@@ -1570,6 +1570,11 @@ tests = [
   "tests/test_tenant_records.py::test_a_login_waits_for_a_link_of_its_record_and_then_is_refused",
   "tests/test_tenant_records.py::test_a_link_waits_for_a_login_of_its_record_and_then_is_refused",
   "tests/api/test_tenant_records_api.py::test_the_tenant_acts_on_the_other_propertys_lease_as_their_record_there",
+  "tests/test_tenant_records.py::test_a_link_taken_back_leaves_each_record_its_own_person",
+  "tests/test_tenant_records.py::test_a_link_is_taken_back_once_and_never_rewritten",
+  "tests/test_tenant_records.py::test_a_first_record_whose_links_were_taken_back_is_linked_to_again",
+  "tests/test_tenant_records.py::test_a_login_waits_for_a_link_taken_back_and_then_signs_in",
+  "tests/api/test_tenant_records_api.py::test_staff_take_back_a_link_to_the_wrong_person_and_they_lose_the_lease_at_once",
 ]
 
 [[invariant]]

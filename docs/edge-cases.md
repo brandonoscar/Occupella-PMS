@@ -30,10 +30,10 @@ answer in the portal for everything that can fail.
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 72 | 8 | 85 | 19 |
 | [Bad files and imports](#bad-files-and-imports) | 152 | 66 | 16 | 70 | 1 |
-| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 88 | 10 | 58 | 6 |
+| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 89 | 10 | 57 | 5 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 75 | 14 | 83 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1161** | **602** | **110** | **449** | **50** |
+| **All** | **1161** | **603** | **110** | **448** | **49** |
 
 ## Open, high risk: the work list
 
@@ -101,7 +101,6 @@ its ten most pressing, each with the test that would close it.
 - U-014: A staff member uses the invite link shown on screen to become an owner or tenant who already has a password
 - U-015: An admin re-invites another staff member (an approver, the trust account's broker) and uses the link
 - U-085: A former owner (the property sold, or its ownership moved to another owner)
-- U-099: Staff mark the wrong person's record as "the same person"
 - U-100: A tenant left a lease others stay on
 
 **Hosting, operations and the portal's failure states**
@@ -985,7 +984,6 @@ its ten most pressing, each with the test that would close it.
 | U-014 | A staff member uses the invite link shown on screen to become an owner or tenant who already has a password | Possible: whoever has the area makes an invite, sees its link once, sets a password and acts as the owner (approves bills over the limit by typing the owner's name) | Open | src/pms/api/app.py:508 invite returns the link; src/pms/api/owner.py:433 approve_bill trusts the session | H |
 | U-015 | An admin re-invites another staff member (an approver, the trust account's broker) and uses the link | The admin sets their password and authenticator and acts as them, defeating prepared-by-one-approved-by-another and the signer rules; the audit log shows only who made the invite | Open | src/pms/accounts.py:303 accept_invite replaces the password and TOTP secret; db/migrations/20261012000034_staff_roles.sql trust_check_staff_invite | H |
 | U-085 | A former owner (the property sold, or its ownership moved to another owner) | Still sees the property's units, tenants' names, rents, what each lease owes, repairs and files, as their account there remains | Open | src/pms/api/owner_portal.py:63 owned_properties (any owner_property account, no share or date) | H |
-| U-099 | Staff mark the wrong person's record as "the same person" | Nothing undoes a link: the wrong person signs in to the other's lease, ledger, receipts and files, and may pay or file under it | Open | src/pms/api/directory.py:463 same_person; db/migrations/20261021000105_tenant_records.sql:25 (no removal table) | H |
 | U-100 | A tenant left a lease others stay on | Still reads it: the staying tenant's later payments, rent changes, files and the property's announcements | Open | src/pms/api/tenant.py:268 lease_of ignores departures; tests/api/test_lease_people_api.py::test_a_tenant_who_left_reads_the_lease_and_files_nothing_more; src/pms/api/announcements.py:145 | H |
 | U-078 | An owner approves in one tab and declines in another at the same moment | One decision stands; the other is 409 | Guarded | src/pms/api/owner.py:421 decide; db/migrations/20261013000041_owner_bill_decisions.sql:90 trust_bill_decision | H |
 | U-002 | Company A's session cookie used with company B's record ids in a path or body | Every route answers not found or refuses, and changes nothing of B's | Tested | tests/api/test_isolation.py::test_a_route_refuses_another_companys_record_in_its_path; ::test_a_write_refuses_another_companys_record_in_its_body | H |
@@ -1026,6 +1024,7 @@ its ten most pressing, each with the test that would close it.
 | U-118 | A withdrawn application's offer gets every signature | It never becomes a lease | Tested | tests/test_application_withdrawals.py::test_no_offer_of_a_withdrawn_application_becomes_a_lease | H |
 | U-119 | A withdrawal and making the lease at the same moment | One waits and is refused | Tested | tests/test_application_withdrawals.py::test_a_withdrawal_waits_for_a_lease_being_made_and_then_is_refused | H |
 | U-139 | The same payment sent twice (a double click, a retry) | Recorded once | Tested | tests/api/test_rent.py::test_sending_a_payment_again_records_it_once | H |
+| U-099 | Staff mark the wrong person's record as "the same person" | Staff take the link back from either record's page (Not the same person, asked first; trust_tenant_unlinks, migration 20261106100100): the record is its own person again at once, the person signing in as the other no longer reads or acts on its leases, its autopays stop, and it takes an invite of its own; it is never linked again itself | Tested | tests/api/test_tenant_records_api.py::test_staff_take_back_a_link_to_the_wrong_person_and_they_lose_the_lease_at_once; tests/test_tenant_records.py::test_a_link_taken_back_leaves_each_record_its_own_person; tests/properties/test_tenant_record_properties.py; frontend/src/pages/SamePersonCard.test.tsx | H |
 | U-006 | Someone types a long repair request, email or journal entry for over an hour without a request | The session ends with no warning; Save gets a "sign in first" toast and the typed work is lost (WCAG 2.2.1 asks for a warning) | Open | src/pms/accounts.py:43 IDLE_MINUTES; frontend/src/api.ts:36 call() has no 401 handling | M |
 | U-007 | A login is disabled while its tab is open | Its next request gets 401; the page keeps showing what it loaded and each click toasts "sign in first" instead of going to sign-in | Open | frontend/src/App.tsx:100 checks 401 only when the page first loads; frontend/src/api.ts:36 | M |
 | U-011 | Staff re-invite a disabled login | The invite is made (201) and, while the server sends email, emailed; the link then reads "can't be used" | Open | src/pms/accounts.py:192 create_invite has no disabled check; :267 _open_invite refuses it | M |

@@ -4492,16 +4492,29 @@ BEGIN
     SELECT t.display_name, t.property_id INTO v_first
     FROM trust_tenants AS t WHERE t.pmc_id = NEW.pmc_id AND t.id = NEW.same_as;
 
+    IF EXISTS (SELECT 1 FROM trust_tenant_unlinks AS u WHERE u.tenant_id = NEW.tenant_id) THEN
+        RAISE EXCEPTION 'trust: % was linked to a record and its link was taken back: a record is '
+            'linked once; link the other record to them instead', v_joining.display_name
+            USING ERRCODE = 'check_violation';
+    END IF;
     IF EXISTS (SELECT 1 FROM trust_tenant_links AS k WHERE k.tenant_id = NEW.tenant_id) THEN
         RAISE EXCEPTION 'trust: % is linked to their first record already', v_joining.display_name
             USING ERRCODE = 'check_violation';
     END IF;
-    IF EXISTS (SELECT 1 FROM trust_tenant_links AS k WHERE k.tenant_id = NEW.same_as) THEN
+    IF EXISTS (
+        SELECT 1 FROM trust_tenant_links AS k
+        WHERE k.tenant_id = NEW.same_as
+          AND NOT EXISTS (SELECT 1 FROM trust_tenant_unlinks AS u WHERE u.tenant_id = k.tenant_id)
+    ) THEN
         RAISE EXCEPTION 'trust: % is linked to another record already: link to their first',
             v_first.display_name
             USING ERRCODE = 'check_violation';
     END IF;
-    IF EXISTS (SELECT 1 FROM trust_tenant_links AS k WHERE k.same_as = NEW.tenant_id) THEN
+    IF EXISTS (
+        SELECT 1 FROM trust_tenant_links AS k
+        WHERE k.same_as = NEW.tenant_id
+          AND NOT EXISTS (SELECT 1 FROM trust_tenant_unlinks AS u WHERE u.tenant_id = k.tenant_id)
+    ) THEN
         RAISE EXCEPTION 'trust: % has records at other properties linked to them: link % to them instead',
             v_joining.display_name, v_first.display_name
             USING ERRCODE = 'check_violation';
@@ -4546,7 +4559,8 @@ BEGIN
     SELECT f.display_name INTO v_first
     FROM trust_tenant_links AS k
     JOIN trust_tenants AS f ON f.id = k.same_as
-    WHERE k.pmc_id = NEW.pmc_id AND k.tenant_id = NEW.tenant_id;
+    WHERE k.pmc_id = NEW.pmc_id AND k.tenant_id = NEW.tenant_id
+      AND NOT EXISTS (SELECT 1 FROM trust_tenant_unlinks AS u WHERE u.tenant_id = k.tenant_id);
     IF FOUND THEN
         RAISE EXCEPTION 'trust: this tenant signs in as % at their first property: invite them there',
             v_first
@@ -4573,6 +4587,27 @@ BEGIN
             NEW.transfer_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_tenant_unlink(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_tenant_unlink() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM 1 FROM trust_tenants AS t
+    WHERE t.pmc_id = NEW.pmc_id
+      AND t.id IN (SELECT k.tenant_id FROM trust_tenant_links AS k WHERE k.tenant_id = NEW.tenant_id
+                   UNION ALL
+                   SELECT k.same_as FROM trust_tenant_links AS k WHERE k.tenant_id = NEW.tenant_id)
+    ORDER BY t.id
+    FOR NO KEY UPDATE;
     RETURN NEW;
 END;
 $$;
@@ -13858,18 +13893,21 @@ CREATE FUNCTION public.trust_tenant_records(p_pmc_id uuid, p_tenant_id uuid) RET
     LANGUAGE sql STABLE
     SET search_path TO 'public', 'pg_temp'
     AS $$
-    WITH person AS (
+    WITH standing AS (
+        SELECT k.tenant_id, k.same_as FROM trust_tenant_links AS k
+        WHERE k.pmc_id = p_pmc_id
+          AND NOT EXISTS (SELECT 1 FROM trust_tenant_unlinks AS u WHERE u.tenant_id = k.tenant_id)
+    ),
+    person AS (
         SELECT coalesce(
-            (SELECT k.same_as FROM trust_tenant_links AS k
-             WHERE k.pmc_id = p_pmc_id AND k.tenant_id = p_tenant_id),
-            p_tenant_id
+            (SELECT k.same_as FROM standing AS k WHERE k.tenant_id = p_tenant_id), p_tenant_id
         ) AS id
     )
     SELECT t.id FROM trust_tenants AS t, person
     WHERE t.pmc_id = p_pmc_id AND t.id = person.id
     UNION
-    SELECT k.tenant_id FROM trust_tenant_links AS k, person
-    WHERE k.pmc_id = p_pmc_id AND k.same_as = person.id
+    SELECT k.tenant_id FROM standing AS k, person
+    WHERE k.same_as = person.id
 $$;
 
 
@@ -18330,6 +18368,18 @@ CREATE TABLE public.trust_tenant_links (
 
 
 --
+-- Name: trust_tenant_unlinks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_tenant_unlinks (
+    tenant_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
 -- Name: trust_tenants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21856,6 +21906,14 @@ ALTER TABLE ONLY public.trust_tenant_links
 
 
 --
+-- Name: trust_tenant_unlinks trust_tenant_unlinks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_unlinks
+    ADD CONSTRAINT trust_tenant_unlinks_pkey PRIMARY KEY (tenant_id);
+
+
+--
 -- Name: trust_tenants trust_tenants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24507,6 +24565,13 @@ CREATE INDEX trust_tenant_links_same_as ON public.trust_tenant_links USING btree
 
 
 --
+-- Name: trust_tenant_unlinks_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_tenant_unlinks_recorded_by ON public.trust_tenant_unlinks USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_text_consents_by_login; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -26264,6 +26329,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_tenant_unlinks trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_tenant_unlinks FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_text_consents trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27958,6 +28030,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tena
 
 
 --
+-- Name: trust_tenant_unlinks trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tenant_unlinks FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_tenants trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28354,6 +28433,13 @@ CREATE TRIGGER trust_check_tenant_link BEFORE INSERT ON public.trust_tenant_link
 --
 
 CREATE TRIGGER trust_check_tenant_login BEFORE INSERT ON public.trust_logins FOR EACH ROW WHEN ((new.tenant_id IS NOT NULL)) EXECUTE FUNCTION public.trust_check_tenant_login();
+
+
+--
+-- Name: trust_tenant_unlinks trust_check_tenant_unlink; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_tenant_unlink BEFORE INSERT ON public.trust_tenant_unlinks FOR EACH ROW EXECUTE FUNCTION public.trust_check_tenant_unlink();
 
 
 --
@@ -29418,6 +29504,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tax_ids FOR EACH 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tenant_links FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_tenant_unlinks trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tenant_unlinks FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -35142,6 +35235,38 @@ ALTER TABLE ONLY public.trust_tenant_links
 
 
 --
+-- Name: trust_tenant_unlinks trust_tenant_unlinks_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_unlinks
+    ADD CONSTRAINT trust_tenant_unlinks_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_tenant_unlinks trust_tenant_unlinks_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_unlinks
+    ADD CONSTRAINT trust_tenant_unlinks_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_tenant_unlinks trust_tenant_unlinks_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_unlinks
+    ADD CONSTRAINT trust_tenant_unlinks_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
+-- Name: trust_tenant_unlinks trust_tenant_unlinks_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_unlinks
+    ADD CONSTRAINT trust_tenant_unlinks_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.trust_tenant_links(tenant_id);
+
+
+--
 -- Name: trust_tenants trust_tenants_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -35752,4 +35877,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261105001000'),
     ('20261105001100'),
     ('20261105001200'),
-    ('20261106100000');
+    ('20261106100000'),
+    ('20261106100100');
