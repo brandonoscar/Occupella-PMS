@@ -107,8 +107,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   IBM Plex Sans, embedded (`src/pms/pdf_fonts.py`): names as people wrote them (Nguyễn, O’Brien,
   Дмитрий); a letter it lacks (Arabic, Chinese...) reads "?".
 - The API (`src/pms/api`, `python -m pms.api`, FastAPI) runs every request in one transaction
-  as `trust_app` (the planner's JIT off: it cost more than it saved), committed before the answer
-  is sent; a staff member's request names them to the audit log. Behind a proxy it trusts
+  as `trust_app` (the planner's JIT off: it cost more than it saved), on a pooled connection
+  checked as the request takes it, so one a database restart dropped is replaced (H-005),
+  committed before the answer is sent; a staff member's request names them to the audit log. Behind a proxy it trusts
   (`PMS_TRUSTED_PROXIES`, as `compose.selfhost.yaml` sets it) a visitor's address is the one the
   proxy names, as a signature's evidence keeps it (trusting "*", the last X-Forwarded-For
   address, the one the proxy wrote: `app.NearestProxy`). It refuses to start at `.env.example`'s

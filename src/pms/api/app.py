@@ -367,8 +367,15 @@ def create_app(settings: Settings) -> FastAPI:
         schema.check(conn)
         conn.commit()
 
+    # Each connection is checked as a request takes it: one the database dropped (a restart, a
+    # failover) is replaced, so no request answers 500 for it (docs/edge-cases.md H-005).
     pool = ConnectionPool(
-        settings.database_url, min_size=1, max_size=10, configure=configure, open=False
+        settings.database_url,
+        min_size=1,
+        max_size=10,
+        configure=configure,
+        check=ConnectionPool.check_connection,
+        open=False,
     )
 
     @asynccontextmanager
