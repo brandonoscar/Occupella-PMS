@@ -279,6 +279,11 @@ def _open_invite(conn: psycopg.Connection[Any], token: str, lock: bool) -> Any:
     )
     if row is None:
         raise NotFound("this invite link can't be used: ask for a new one")
+    # A company that isn't active takes no one in, as it signs no one in: an invite made before it
+    # was suspended set the password, then failed making the session (the AI pen test of 11/06).
+    status = company_status(conn, row[1])
+    if status != "active":
+        raise CompanyNotActive(NOT_ACTIVE[status])
     return row
 
 

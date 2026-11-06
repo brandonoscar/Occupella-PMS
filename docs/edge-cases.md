@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1166 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1167 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -30,10 +30,10 @@ answer in the portal for everything that can fail.
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 70 | 8 | 87 | 21 |
 | [Bad files and imports](#bad-files-and-imports) | 154 | 68 | 16 | 70 | 1 |
-| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 158 | 89 | 10 | 59 | 6 |
+| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 159 | 90 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 174 | 75 | 14 | 85 | 5 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1166** | **602** | **110** | **454** | **53** |
+| **All** | **1167** | **603** | **110** | **454** | **53** |
 
 ## Open, high risk: the work list
 
@@ -1092,6 +1092,7 @@ its ten most pressing, each with the test that would close it.
 | U-151 | Keyboard-only use of a row's ⋯ menu | Opens from the keyboard, the arrow keys move, focus comes back | Tested | frontend/src/components/RowMenu.test.tsx "opens from the keyboard on its first action, moves with the arrow keys and gives focus back" | M |
 | U-153 | Every page against WCAG 2.2 AA | axe checks every page the browser tests reach | Tested | frontend/e2e/portal.spec.ts "every page of the demo meets WCAG 2.2 AA as axe checks it, in plain words: staff's, an owner's, a tenant's and the public ones" | M |
 | U-158 | A page on a sibling subdomain (another site of the same domain) loads a GET that writes: an img of the 1099 export, a tax ID's reveal, a payout run's ACH file or checks | Refused (403, "this request came from another site") whenever the browser says another site asked, as every change is; nothing is recorded or taken. The session cookie is SameSite=Strict, which counts a sibling subdomain as the same site, so these four GETs had recorded an admin revealing every tax ID; a test walks the API and fails on any GET that writes without the check | Tested | tests/api/test_tax_ids_api.py::test_a_reveal_another_site_asked_for_is_refused_and_records_nothing; tests/api/test_payouts_api.py::test_a_payout_file_another_site_asked_for_is_refused_and_not_taken; tests/api/test_gets_that_write.py | M |
+| U-159 | An invite or a password reset link made before the company was suspended or closed, opened or accepted after | Refused (403) in the words sign-in uses, nothing set; it works again once the company is active (it set the password, then failed making the session: a server error) | Tested | tests/api/test_company_status.py::test_an_invite_of_a_company_that_isnt_active_is_refused_in_words | M |
 | U-031 | A server run with several processes | Each process counts alone, so the sign-in limit is that many times larger | Open | src/pms/api/throttle.py docstring (counted per process) | L |
 | U-037 | Sign out on one device while others stay signed in | Only that session ends; there is no list of sessions or "sign out everywhere" short of a new password | Open | src/pms/accounts.py:480 sign_out | L |
 | U-038 | A shared office computer after sign-out | The browser keeps the company id and the last property scope | Open | frontend/src/App.tsx:101 PMC_KEY in localStorage; frontend/src/scope.ts | L |
