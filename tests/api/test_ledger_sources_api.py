@@ -32,10 +32,19 @@ from people import join_as_owner, join_as_staff, join_as_tenant, tenant_of
 
 from pms.api.ledger_sources import came
 
-TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
-START = TODAY - timedelta(days=60)
-PERIOD = {"start": str(TODAY), "end": str(TODAY)}
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's."""
+    global TODAY, START, PERIOD
+    TODAY = datetime.now(UTC).date()
+    START = TODAY - timedelta(days=60)
+    PERIOD = {"start": str(TODAY), "end": str(TODAY)}
+
+
+on_this_day()
 
 
 def routing(prefix8: str) -> str:
