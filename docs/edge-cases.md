@@ -30,10 +30,10 @@ answer in the portal for everything that can fail.
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 73 | 30 | 40 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 74 | 8 | 83 | 18 |
 | [Bad files and imports](#bad-files-and-imports) | 152 | 70 | 17 | 65 | 1 |
-| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 90 | 11 | 55 | 5 |
+| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 91 | 11 | 54 | 5 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 76 | 14 | 82 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1161** | **626** | **113** | **422** | **46** |
+| **All** | **1161** | **627** | **113** | **421** | **46** |
 
 ## Open, high risk: the work list
 
@@ -1045,7 +1045,6 @@ its ten most pressing, each with the test that would close it.
 | U-133 | A vendor, or whoever holds their link, says a job is done by mistake | The work order closes for good and the tenant's request with it; nothing reopens either | Open | tests/api/test_maintenance.py::test_nothing_follows_a_closed_work_order; db/migrations/20261018000086_vendor_links.sql | M |
 | U-135 | Staff add a lease to a unit another staff member just archived (a stale page, or the API) | Nothing refuses it: the unit stays archived with a lease in effect and leaves the lists | Open | db/schema.sql:1951 trust_check_archival runs only on an archival; no archived check on trust_leases | M |
 | U-137 | A bill entered for a vendor another staff member just archived | Only the picker hides archived vendors; the database takes the bill | Open | src/pms/api/setup.py:377-382; db/migrations/20261021000110_vendor_archivals.sql (no trigger on bills) | M |
-| U-144 | A company name of about 180 characters (200 are allowed) | Invite and reset subjects pass the 200-character limit: the database refuses, a server error, and on reset only for an email that has a login (it tells who has one) | Open | src/pms/email.py:258 and :288 (not cut); db/migrations/20261013000042_owner_emails.sql:25; src/pms/api/setup.py:31 | M |
 | U-154 | A screen reader opens a receipt, statement, adverse action notice or lease PDF | The PDFs carry no tags or language (NOT VERIFIED with a screen reader) | Open | no StructTreeRoot or set_lang anywhere in src/pms | M |
 | U-156 | Staff choose the wrong owner when recording an online payment waiting for "whose" | It goes into that owner's account; putting it right takes a journal entry by two staff | Open | src/pms/api/online_payments.py record | M |
 | U-052 | The only admin loses their authenticator | The server's operator prints a new invite with python -m pms.admin invite, which names nobody | Guarded | src/pms/admin.py:66; db/migrations/20261012000034_staff_roles.sql trust_check_staff_invite | M |
@@ -1091,6 +1090,7 @@ its ten most pressing, each with the test that would close it.
 | U-153 | Every page against WCAG 2.2 AA | axe checks every page the browser tests reach | Tested | frontend/e2e/portal.spec.ts "every page of the demo meets WCAG 2.2 AA as axe checks it, in plain words: staff's, an owner's, a tenant's and the public ones" | M |
 | U-138 | Two staff enter the same tenant's check from two tabs | The second waits on the lease's lock, then is refused as like one recorded (rent.refuse_alike) unless staff say it is another payment | Tested | tests/test_payments_alike.py::test_the_same_check_from_two_tabs_at_once_is_recorded_once; tests/api/test_rent.py::test_a_payment_like_one_recorded_waits_for_staff_to_say_it_is_another | M |
 | U-032 | An attacker on IPv6 rotates addresses within their /64 | An IPv6 address counts as its whole /64 (throttle.counted_as), so rotating within it is one address to the limit; an IPv4 address, written as IPv6 or not, counts as itself | Tested | tests/api/test_throttle.py::test_an_ipv6_visitor_counts_as_their_whole_64; tests/api/test_throttle.py::test_the_address_counted_is_an_ipv6_64_or_the_ipv4_address | M |
+| U-144 | A company name of about 180 characters (200 are allowed) | Every email written through email._write (invites, resets, staff's messages) cuts its subject to the outbox's 200 characters, as the PMS's own notices already did, so a long name never fails it, and a reset answers the same whether or not the email has a login | Tested | tests/api/test_password_reset.py::test_a_company_with_a_long_name_still_sends_its_reset_and_invite | M |
 | U-031 | A server run with several processes | Each process counts alone, so the sign-in limit is that many times larger | Open | src/pms/api/throttle.py docstring (counted per process) | L |
 | U-037 | Sign out on one device while others stay signed in | Only that session ends; there is no list of sessions or "sign out everywhere" short of a new password | Open | src/pms/accounts.py:480 sign_out | L |
 | U-038 | A shared office computer after sign-out | The browser keeps the company id and the last property scope | Open | frontend/src/App.tsx:101 PMC_KEY in localStorage; frontend/src/scope.ts | L |
