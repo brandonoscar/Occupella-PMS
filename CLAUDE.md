@@ -109,8 +109,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   parse (`deps.Rows`) and the audit log's rows keep the ledger's own words. Every PDF prints in
   IBM Plex Sans, embedded (`src/pms/pdf_fonts.py`): names as people wrote them (Nguyễn, O’Brien,
   Дмитрий); a letter it lacks (Arabic, Chinese...) reads "?".
-- The API (`src/pms/api`, `python -m pms.api`, FastAPI) runs every request in one transaction
-  as `trust_app` (the planner's JIT off: it cost more than it saved), committed before the answer
+- The API (`src/pms/api`, `python -m pms.api`, FastAPI; its settings from the environment, or
+  from the one an app it is mounted in hands it, `Settings.from_env`) runs every request in one
+  transaction as `trust_app` (the planner's JIT off: it cost more than it saved), committed before the answer
   is sent; a staff member's request names them to the audit log. Behind a proxy it trusts
   (`PMS_TRUSTED_PROXIES`, as `compose.selfhost.yaml` sets it) a visitor's address is the one the
   proxy names, as a signature's evidence keeps it (trusting "*", the last X-Forwarded-For

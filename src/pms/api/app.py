@@ -29,7 +29,7 @@ import logging
 import os
 import secrets
 import tempfile
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -205,23 +205,25 @@ class Settings:
     trusted_proxies: str = ""
 
     @classmethod
-    def from_env(cls) -> Settings:
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
+        """The settings in `environ`, the process's own environment unless another is given: an
+        app the PMS is mounted in hands it the books' settings alone (AgenticHelixis
+        docs/decisions/ADR-one-product.md, phase 3), so a DATABASE_URL of its own never leaks in."""
+        env = os.environ if environ is None else environ
         return cls(
-            database_url=os.environ["DATABASE_URL"],
-            public_url=os.environ.get("PMS_PUBLIC_URL", cls.public_url),
-            cookie_secure=os.environ.get("PMS_COOKIE_SECURE", "true").lower() != "false",
-            db_role=os.environ.get("PMS_DB_ROLE", cls.db_role),
-            static_dir=Path(os.environ["PMS_STATIC_DIR"])
-            if "PMS_STATIC_DIR" in os.environ
-            else None,
-            screening_partner=os.environ.get("PMS_SCREENING_PARTNER", ""),
-            email_sender=os.environ.get("PMS_EMAIL_SENDER", ""),
-            geocoder=os.environ.get("PMS_GEOCODER", ""),
-            payments=os.environ.get("PMS_PAYMENTS", ""),
-            nightly=os.environ.get("PMS_NIGHTLY", "on").lower() != "off",
-            webhooks=os.environ.get("PMS_WEBHOOKS", "on").lower() != "off",
-            fake_partners=os.environ.get("PMS_FAKE_PARTNERS", ""),
-            trusted_proxies=os.environ.get("PMS_TRUSTED_PROXIES", "").strip(),
+            database_url=env["DATABASE_URL"],
+            public_url=env.get("PMS_PUBLIC_URL", cls.public_url),
+            cookie_secure=env.get("PMS_COOKIE_SECURE", "true").lower() != "false",
+            db_role=env.get("PMS_DB_ROLE", cls.db_role),
+            static_dir=Path(env["PMS_STATIC_DIR"]) if "PMS_STATIC_DIR" in env else None,
+            screening_partner=env.get("PMS_SCREENING_PARTNER", ""),
+            email_sender=env.get("PMS_EMAIL_SENDER", ""),
+            geocoder=env.get("PMS_GEOCODER", ""),
+            payments=env.get("PMS_PAYMENTS", ""),
+            nightly=env.get("PMS_NIGHTLY", "on").lower() != "off",
+            webhooks=env.get("PMS_WEBHOOKS", "on").lower() != "off",
+            fake_partners=env.get("PMS_FAKE_PARTNERS", ""),
+            trusted_proxies=env.get("PMS_TRUSTED_PROXIES", "").strip(),
         )
 
     @property
