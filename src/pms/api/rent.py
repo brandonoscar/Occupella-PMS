@@ -441,6 +441,60 @@ class Recorded:
     to_prepaid: Decimal
 
 
+# A tenant's payment like this one recorded to the lease already under another key: the same
+# amount received the same day, by the same way and with the same check or reference where both
+# say one (docs/edge-cases.md H-008, U-138; a payment file's line asks the same of amount and
+# day, src/pms/api/payment_files.py).
+ALIKE = """
+SELECT 1 FROM pgledger_transfers AS t
+JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id
+WHERE a.pmc_id = %(pmc)s AND t.event_at = %(at)s
+  AND t.metadata ->> 'kind' = 'tenant payment' AND t.metadata ->> 'lease_id' = %(lease)s
+  AND t.metadata ->> 'amount' = %(amount)s AND t.metadata ->> 'key' <> %(key)s
+  AND (t.metadata ->> 'method' IS NULL OR %(method)s::text IS NULL
+       OR t.metadata ->> 'method' = %(method)s)
+  AND (t.metadata ->> 'reference' IS NULL OR %(reference)s::text IS NULL
+       OR lower(btrim(t.metadata ->> 'reference')) = lower(btrim(%(reference)s)))
+LIMIT 1
+"""
+
+
+def refuse_alike(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    lease_id: UUID,
+    key: str,
+    amount: Decimal,
+    received_on: date,
+    method: str | None,
+    reference: str | None,
+) -> None:
+    """Refuses a payment like one recorded to the lease (ALIKE) under another request id,
+    unless this request id was recorded already (a retry, which returns it). Staff closing the
+    panel after its answer was lost, or entering one check from two tabs, make a new request id
+    each time; read under the lease's lock, so two at once see each other."""
+    if conn.execute(
+        "SELECT 1 FROM pgledger_transfers WHERE metadata ->> 'key' = %s LIMIT 1", (key,)
+    ).fetchone():
+        return
+    params = {
+        "pmc": pmc_id,
+        "at": at(received_on),
+        "lease": str(lease_id),
+        "amount": cents(amount),
+        "key": key,
+        "method": method,
+        "reference": reference,
+    }
+    if conn.execute(ALIKE, params).fetchone():
+        raise HTTPException(
+            409,
+            f"a payment of ${amount:,.2f} received {received_on:%m/%d/%Y} is recorded on this"
+            " lease already: refresh the page to see it, and record this one only if it is"
+            " another payment, saying so",
+        )
+
+
 def record_payment(
     conn: psycopg.Connection[Any],
     pmc_id: UUID,
@@ -453,6 +507,7 @@ def record_payment(
     method: PaidBy | None = None,
     past_hold_by: str | None = None,
     chosen: list[tuple[UUID, Decimal]] | None = None,
+    alike_refused: bool = False,
 ) -> Recorded:
     """A tenant's payment into the operating trust bank account: the owner's account takes
     what the lease owes, matched to its rent first, then its other charges, each oldest first
@@ -464,16 +519,19 @@ def record_payment(
     it, unless staff accept it past the hold (`past_hold_by` names them): then every hold in
     force that day allows it, in the same transaction. Staff may choose the open charges it pays
     (`chosen`: each charge with how much, in that order); what is left of it pays the rest in the
-    usual order."""
+    usual order. With `alike_refused`, a payment like one recorded to the lease is refused
+    (refuse_alike)."""
     lease = lease_of(conn, pmc_id, lease_id)
     owners = owners_of(conn, pmc_id, lease.property_id, received_on, account)
     bank = owners.bank
     lock_lease(conn, lease_id)
+    key = f"payment/{request_id}"
+    if alike_refused:
+        refuse_alike(conn, pmc_id, lease_id, key, amount, received_on, method, reference)
     earlier_leases = moved_from(conn, lease_id)
     for prior, _, _ in earlier_leases:
         lock_lease(conn, prior)
     wanted = chosen_charges(conn, pmc_id, lease_id, amount, chosen, bool(earlier_leases))
-    key = f"payment/{request_id}"
     metadata: dict[str, Any] = {
         "key": key,
         "kind": "tenant payment",
@@ -1694,6 +1752,9 @@ class NewPayment(BaseModel):
     account: Annotated[str, Field(min_length=1, max_length=100)] | None = None
     # Accept it although the lease is on a payment hold (an eviction filed): the PMC's choice.
     past_hold: bool = False
+    # Staff say it is another payment, though one of the same amount received the same day is
+    # recorded to the lease already; without it such a payment is refused (H-008, U-138).
+    not_a_duplicate: bool = False
     # What staff write about it (ADR 0010 phase 1c): kept with the payment; the AI never reads it.
     note: Note | None = None
     # The open charges it pays, each with how much, in this order; what is left of the payment
@@ -1741,6 +1802,7 @@ def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
             new.method,
             staff_name(conn, session.pmc_id, session.person_id) if new.past_hold else None,
             [(c.charge_id, c.amount) for c in new.charges] if new.charges else None,
+            alike_refused=not new.not_a_duplicate,
         )
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
         # a payment hold, a closed period, or a match made differently before

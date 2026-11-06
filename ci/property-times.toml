@@ -72,6 +72,7 @@ nightly_factor = 60
 "tests/properties/test_owner_online_payment_properties.py::test_owner_payments_online_record_what_the_partner_reports_once_and_keep_trust_whole" = 57.6
 "tests/properties/test_ownership_properties.py::test_a_co_owned_propertys_money_splits_by_its_shares_to_the_cent" = 23.6
 "tests/properties/test_payables_properties.py::test_payables_invariants_hold_under_random_bills_contributions_and_draws" = 165.6
+"tests/properties/test_payment_alike_properties.py::test_a_payment_like_one_recorded_is_recorded_only_when_staff_say_it_is_another" = 9.1
 "tests/properties/test_payment_files_properties.py::test_payment_files_record_each_line_once_to_the_lease_it_names" = 144.1
 "tests/properties/test_payment_keys_properties.py::test_a_companys_keys_take_only_its_own_payments_and_its_latest_keys_hold" = 36.0
 "tests/properties/test_payout_properties.py::test_an_ach_file_adds_up_as_nacha_asks" = 2.9

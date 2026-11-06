@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { companyDay, usDate } from "../money";
 import type { Paid, RentLease } from "../rent";
 import { PaymentForm, PaymentRow } from "./LeaseForms";
 
@@ -108,6 +109,40 @@ describe("PaymentForm", () => {
     expect(screen.getByRole("button", { name: "Record payment" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: "Save and add another" })).toHaveProperty("disabled", true);
     expect(record).not.toHaveBeenCalled();
+  });
+
+  it("asks whether a payment like one recorded is another before sending it (H-008, U-138)", async () => {
+    const record = recorder();
+    const today = companyDay();
+    const recorded: Paid = {
+      transfer_id: "tr0", received_on: today, amount: "600.00", reference: "2101", method: "check", bounced: false,
+    };
+    render(<PaymentForm lease={{ ...LEASE, payments: [recorded] }} record={record} />);
+    fireEvent.change(screen.getByLabelText("Payment received"), { target: { value: "600" } });
+
+    expect(screen.getByText(`A payment of $600.00 received ${usDate(today)} is recorded on this lease already.`)).toBeTruthy();
+    const pay = screen.getByRole("button", { name: "Record payment" });
+    expect(pay).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByLabelText("This is another payment, not that one again"));
+    expect(pay).toHaveProperty("disabled", false);
+    fireEvent.click(pay);
+    await vi.waitFor(() => expect(record).toHaveBeenCalled());
+    expect(record.mock.calls[0]?.[1]).toMatchObject({ amount: "600", not_a_duplicate: true });
+
+    // Another amount is its own payment: nothing to ask.
+    fireEvent.change(screen.getByLabelText("Payment received"), { target: { value: "601.00" } });
+    expect(screen.queryByLabelText("This is another payment, not that one again")).toBeNull();
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "Record payment" })).toHaveProperty("disabled", false));
+  });
+
+  it("sends no word of a duplicate for a payment like none recorded", async () => {
+    const record = recorder();
+    render(<PaymentForm lease={{ ...LEASE, payments: [] }} record={record} />);
+    fireEvent.change(screen.getByLabelText("Payment received"), { target: { value: "600.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record payment" }));
+    await vi.waitFor(() => expect(record).toHaveBeenCalled());
+    expect(record.mock.calls[0]?.[1]).not.toHaveProperty("not_a_duplicate");
   });
 
   it("offers no choice of charges when nothing is open, or the lease's tenants moved to it", () => {

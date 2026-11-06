@@ -30,10 +30,10 @@ answer in the portal for everything that can fail.
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 69 | 8 | 88 | 22 |
 | [Bad files and imports](#bad-files-and-imports) | 152 | 66 | 16 | 70 | 1 |
-| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 73 | 14 | 85 | 5 |
+| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 88 | 10 | 58 | 6 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 74 | 14 | 84 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1161** | **596** | **110** | **455** | **54** |
+| **All** | **1161** | **598** | **110** | **453** | **53** |
 
 ## Open, high risk: the work list
 
@@ -109,7 +109,6 @@ its ten most pressing, each with the test that would close it.
 
 **Hosting, operations and the portal's failure states**
 
-- H-008: A payment's answer is lost, staff close the panel and record it again
 - H-031: The daily backup fails (password changed, pg_dump error, disk)
 - H-055: PMS_DATA_KEY changed while bank payments are on their way
 - H-067: PMS_TRUSTED_PROXIES empty behind a proxy on another host or network
@@ -1060,7 +1059,6 @@ its ten most pressing, each with the test that would close it.
 | U-133 | A vendor, or whoever holds their link, says a job is done by mistake | The work order closes for good and the tenant's request with it; nothing reopens either | Open | tests/api/test_maintenance.py::test_nothing_follows_a_closed_work_order; db/migrations/20261018000086_vendor_links.sql | M |
 | U-135 | Staff add a lease to a unit another staff member just archived (a stale page, or the API) | Nothing refuses it: the unit stays archived with a lease in effect and leaves the lists | Open | db/schema.sql:1951 trust_check_archival runs only on an archival; no archived check on trust_leases | M |
 | U-137 | A bill entered for a vendor another staff member just archived | Only the picker hides archived vendors; the database takes the bill | Open | src/pms/api/setup.py:377-382; db/migrations/20261021000110_vendor_archivals.sql (no trigger on bills) | M |
-| U-138 | Two staff enter the same tenant's check from two tabs | Two payments: each panel makes its own request id and nothing warns of a match, as bills and payment files do | Open | src/pms/api/rent.py (no duplicate check); compare src/pms/api/payment_files.py:161 | M |
 | U-144 | A company name of about 180 characters (200 are allowed) | Invite and reset subjects pass the 200-character limit: the database refuses, a server error, and on reset only for an email that has a login (it tells who has one) | Open | src/pms/email.py:258 and :288 (not cut); db/migrations/20261013000042_owner_emails.sql:25; src/pms/api/setup.py:31 | M |
 | U-154 | A screen reader opens a receipt, statement, adverse action notice or lease PDF | The PDFs carry no tags or language (NOT VERIFIED with a screen reader) | Open | no StructTreeRoot or set_lang anywhere in src/pms | M |
 | U-156 | Staff choose the wrong owner when recording an online payment waiting for "whose" | It goes into that owner's account; putting it right takes a journal entry by two staff | Open | src/pms/api/online_payments.py record | M |
@@ -1104,6 +1102,7 @@ its ten most pressing, each with the test that would close it.
 | U-150 | A screen reader in a side panel or confirm question | Focus stays inside and returns to what opened it | Tested | frontend/src/components/SidePanel.test.tsx "closes on Escape and on Close, giving focus back to what opened it" | M |
 | U-151 | Keyboard-only use of a row's ⋯ menu | Opens from the keyboard, the arrow keys move, focus comes back | Tested | frontend/src/components/RowMenu.test.tsx "opens from the keyboard on its first action, moves with the arrow keys and gives focus back" | M |
 | U-153 | Every page against WCAG 2.2 AA | axe checks every page the browser tests reach | Tested | frontend/e2e/portal.spec.ts "every page of the demo meets WCAG 2.2 AA as axe checks it, in plain words: staff's, an owner's, a tenant's and the public ones" | M |
+| U-138 | Two staff enter the same tenant's check from two tabs | The second waits on the lease's lock, then is refused as like one recorded (rent.refuse_alike) unless staff say it is another payment | Tested | tests/test_payments_alike.py::test_the_same_check_from_two_tabs_at_once_is_recorded_once; tests/api/test_rent.py::test_a_payment_like_one_recorded_waits_for_staff_to_say_it_is_another | M |
 | U-031 | A server run with several processes | Each process counts alone, so the sign-in limit is that many times larger | Open | src/pms/api/throttle.py docstring (counted per process) | L |
 | U-037 | Sign out on one device while others stay signed in | Only that session ends; there is no list of sessions or "sign out everywhere" short of a new password | Open | src/pms/accounts.py:480 sign_out | L |
 | U-038 | A shared office computer after sign-out | The browser keeps the company id and the last property scope | Open | frontend/src/App.tsx:101 PMC_KEY in localStorage; frontend/src/scope.ts | L |
@@ -1159,7 +1158,6 @@ its ten most pressing, each with the test that would close it.
 
 | ID | Edge case | What the PMS does | Status | Evidence | Risk |
 |---|---|---|---|---|---|
-| H-008 | A payment's answer is lost, staff close the panel and record it again | The reopened panel makes a new request id, so the payment is recorded twice; Receive payment has no same lease, day and amount warning (payment files have one) | Open | frontend/src/pages/LeaseForms.tsx:109; src/pms/api/payment_files.py:161 has the check, src/pms/api/rent.py none | H |
 | H-031 | The daily backup fails (password changed, pg_dump error, disk) | "FAIL" in the backup container's log, and since this fix the backup service reads unhealthy in `docker compose ps` once no good dump is less than 26 hours old (tested); still no admin email and nothing on the Dashboard: the founder deferred emailing anyone (11/05): it touches self-hosting only, and the hosted product's backups are Supabase's | Open | tests/tools/test_backup_daily.py::test_healthy_while_a_good_dump_is_less_than_26_hours_old; scripts/backup-daily.sh (healthy); docs/support.md | H |
 | H-055 | PMS_DATA_KEY changed while bank payments are on their way | The company's webhook answers 404, Stripe retries then stops; rent the bank paid never reaches the books; one log line | Open | src/pms/api/online_payments.py:680-683; src/pms/payments.py:551-556 | H |
 | H-067 | PMS_TRUSTED_PROXIES empty behind a proxy on another host or network | Every visitor has the proxy's address: 20 failed sign-ins by anyone lock the whole company out for 15 minutes, 10 resets an hour for everyone, signatures record the proxy's address | Open | src/pms/api/throttle.py:84-86 | H |
@@ -1181,6 +1179,7 @@ its ten most pressing, each with the test that would close it.
 | H-161 | PMS_PUBLIC_URL written with its default port (https://rentals.example.com:443) | Settings.origin drops the scheme's default port, as a browser's Origin does | Tested | tests/test_deployment.py::test_the_origin_is_written_as_a_browser_sends_it; tests/api/test_sign_in.py::test_our_own_site_goes_through_however_its_address_was_written | H |
 | H-162 | PMS_PUBLIC_URL with capitals in its host (https://Rentals.Example.com) | Settings.origin writes the scheme and host in lower case, as a browser's Origin does | Tested | tests/test_deployment.py::test_the_origin_is_written_as_a_browser_sends_it; tests/api/test_sign_in.py::test_our_own_site_goes_through_however_its_address_was_written | H |
 | H-167 | PMS_PUBLIC_URL with a user or password in it (https://admin:secret@rentals.test) | The origin check ignores it, so it started, and every emailed link (invites, resets, statements) carried the credentials | Tested | tests/test_deployment.py::test_the_app_refuses_to_start_at_an_address_no_browser_opens_it_at (refused at start, never repeating them) | H |
+| H-008 | A payment's answer is lost, staff close the panel and record it again | Refused with what was recorded (409): a payment like one recorded to the lease under another request id (the same amount received the same day, by the same way and check number where both say one) waits for staff to say it is another; the panel says so first from the lease's payments and holds Record payment until they tick it; the same request id again is a retry | Tested | tests/api/test_rent.py::test_a_payment_like_one_recorded_waits_for_staff_to_say_it_is_another; tests/properties/test_payment_alike_properties.py::test_a_payment_like_one_recorded_is_recorded_only_when_staff_say_it_is_another; frontend/src/pages/LeaseForms.test.tsx ("asks whether a payment like one recorded is another before sending it") | H |
 | H-003 | The database is down while staff open pages | Each request waits 30 s for a pool connection, then gets 503 "the PMS is busy just now: try again in a moment": it says busy, not down, and every click takes 30 s | Open | src/pms/api/deps.py:121-132 (PoolTimeout always read as busy); no test of a page with the database down | M |
 | H-004 | The database is down when the portal first loads | Home renders nothing while /api/me waits 30 s (a white page), then shows one error line with no menu, no retry button and no word of what to do | Open | frontend/src/App.tsx:96-109 | M |
 | H-005 | The database restarts in the middle of the day | The pool has no connection check, so each idle pooled connection fails once after the restart: those requests answer 500 and the portal says "the server answered 500" | Open | src/pms/api/app.py:310-311 (ConnectionPool with no check=) | M |

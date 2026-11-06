@@ -70,10 +70,22 @@ def staffer(handler, kinds=None):
     )
     member.rng = random.Random(0)
     member.today = speed.date(2026, 10, 20)
+    member.n, member.payments = 1, 0
     member.client = httpx2.Client(
         base_url="http://speed.test", transport=httpx2.MockTransport(handler)
     )
     return member
+
+
+def test_each_payment_a_staff_member_records_is_its_own_amount():
+    # One like a payment recorded to its lease would wait for staff to say it is another
+    # (docs/edge-cases.md H-008), so no two of anyone's payments are alike.
+    one, two = staffer(lambda request: None), staffer(lambda request: None)
+    two.n = 2
+    amounts = [
+        member.requests()["payment"][1]()[2]["amount"] for member in (one, two) for _ in range(3)
+    ]
+    assert len(set(amounts)) == 6, amounts
 
 
 def test_staff_ask_for_each_page_as_the_portal_does():

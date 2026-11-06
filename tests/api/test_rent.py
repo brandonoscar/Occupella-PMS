@@ -415,6 +415,52 @@ def test_sending_a_payment_again_records_it_once(client, conn, staff, home):
     assert lease_row(client, home)["tenants"][0]["prepaid"] == "100.00"
 
 
+def test_a_payment_like_one_recorded_waits_for_staff_to_say_it_is_another(
+    client, conn, staff, home
+):
+    # docs/edge-cases.md H-008 and U-138: the answer lost and the panel opened again, or the same
+    # check entered from two tabs, makes a new request id each time.
+    home.charge(conn, START)
+    first = ok(pay(client, home, "600.00", reference="2101"))
+
+    again = pay(client, home, "600.00", reference="2101")
+    other_day = ok(pay(client, home, "600.00", received_on=TODAY - DAY))
+    other_amount = ok(pay(client, home, "601.00"))
+    other_check = ok(pay(client, home, "600.00", reference="2102", method="check"))
+    said = ok(pay(client, home, "600.00", not_a_duplicate=True))
+
+    refused(
+        again,
+        409,
+        f"a payment of $600.00 received {TODAY:%m/%d/%Y} is recorded on this lease already:"
+        " refresh the page to see it, and record this one only if it is another payment,"
+        " saying so",
+    )
+    assert first["transfers"] != said["transfers"]
+    assert other_day["to_owner"] == "600.00" and other_amount["to_owner"] == "300.00"
+    assert other_check["to_prepaid"] == "600.00"  # another check number: another payment
+    assert balance(conn, home.owner) == Decimal("1500.00")
+    assert len(lease_row(client, home)["payments"]) == 5  # the one refused wrote nothing
+    # The same request id again is a retry: it returns the payment as recorded, whatever is alike.
+    request = uuid.uuid4()
+    third = ok(pay(client, home, "600.00", request_id=request, not_a_duplicate=True))
+    assert ok(pay(client, home, "600.00", request_id=request)) == third
+
+
+def test_a_payment_alike_to_another_lease_is_its_own(client, conn, staff, home, pmc):
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "Unit 2")
+    other = open_lease(conn, pmc.pmc_id, unit, START, None, "900.00", [home.tenant])
+    ok(pay(client, home, "500.00"))
+    answer = call(
+        client,
+        f"leases/{other}/payments",
+        request_id=uuid.uuid4(),
+        amount="500.00",
+        received_on=TODAY,
+    )
+    assert answer.status_code == 201, answer.text
+
+
 def test_prepaid_rent_pays_the_next_rent(client, conn, staff, home):
     ok(pay(client, home, "300.00"))
     home.charge(conn, START + 30 * DAY, "250.00")

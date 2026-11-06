@@ -14,6 +14,7 @@ import type { Bounce, DepositKind, Hold, OpenCharge, Payment, PaymentMethod, Rec
 import {
   DEPOSIT_KINDS,
   PAYMENT_METHODS,
+  alikePayment,
   bounceSummary,
   chargeLabel,
   chosenCharges,
@@ -112,6 +113,7 @@ export function PaymentForm({ lease, record, onRecorded }: {
   const [reference, setReference] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("check");
   const [pastHold, setPastHold] = useState(false);
+  const [notDuplicate, setNotDuplicate] = useState(false);
   const [note, setNote] = useState("");
   const [file, setFile] = useState<PaymentFile | null>(null);
   const [picker, setPicker] = useState(0);
@@ -130,16 +132,21 @@ export function PaymentForm({ lease, record, onRecorded }: {
   const charges = choosing ? chosenCharges(picked) : [];
   const problem = file === null ? "" : file.type === null
     ? "A file is a PDF, a JPEG or a PNG." : file.size > MAX_BYTES ? "A file is at most 5 MB." : "";
+  // One of this amount received this day is recorded already: the answer lost and the panel
+  // opened again, or the same check from another tab (H-008, U-138). Staff say it is another.
+  const alike = alikePayment(lease.payments ?? [], amount, on, method, reference);
+  const waiting = problem !== "" || (alike !== null && !notDuplicate);
   return (
     <div className="flex flex-col gap-4">
       <Form
         className="flex flex-col gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
-          if (problem) return;
+          if (waiting) return;
           const body = {
             request_id: id, amount, received_on: on, method, reference: reference || null, ...chosen,
             ...(lease.on_hold && pastHold ? { past_hold: true } : {}),
+            ...(alike && notDuplicate ? { not_a_duplicate: true } : {}),
             ...(note.trim() ? { note: note.trim() } : {}),
             ...(file ? { attachment: { title: file.title, content_type: file.type, content_base64: file.base64 } } : {}),
             ...(charges.length > 0 ? { charges } : {}),
@@ -148,6 +155,7 @@ export function PaymentForm({ lease, record, onRecorded }: {
             setId(requestId());
             setAmount("");
             setReference("");
+            setNotDuplicate(false);
             setNote("");
             setFile(null);
             setPicker((n) => n + 1);
@@ -224,13 +232,24 @@ export function PaymentForm({ lease, record, onRecorded }: {
             Accept this payment past the payment hold
           </label>
         )}
+        {alike && (
+          <div className="flex flex-col gap-2">
+            <Notice tone="info">
+              {`A payment of ${money(alike.amount)} received ${usDate(alike.received_on)} is recorded on this lease already.`}
+            </Notice>
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <input type="checkbox" checked={notDuplicate} onChange={(e) => setNotDuplicate(e.target.checked)} />
+              This is another payment, not that one again
+            </label>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" disabled={problem !== ""} onClick={() => { another.current = false; }}
+          <Button type="submit" disabled={waiting} onClick={() => { another.current = false; }}
             says={`${charges.length > 0 ? "Pays the charges chosen first, then the rest owed" : "Pays what is owed, rent first"}; any extra is held as prepaid rent. Each tenant with an email on file is emailed a receipt.`}>
             Record payment
           </Button>
           {onRecorded && (
-            <Button type="submit" variant="secondary" disabled={problem !== ""}
+            <Button type="submit" variant="secondary" disabled={waiting}
               onClick={() => { another.current = true; }}>
               Save and add another
             </Button>

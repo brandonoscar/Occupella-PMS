@@ -205,6 +205,18 @@ tests = [
 ]
 
 [[invariant]]
+id = "payment-alike-waits-for-staff"
+statement = "Staff's Receive payment refuses a tenant's payment like one recorded to the lease under another request id (the same amount received the same day, by the same way and with the same check or reference where both say one; rent.refuse_alike, docs/edge-cases.md H-008, U-138), recording nothing, unless staff say it is another payment; read under the lease's lock, so the same check from two tabs at once is recorded once. The same request id again returns the payment as recorded; a payment alike to one on another lease is its own; every trust bank account ties out."
+tests = [
+  "tests/properties/test_payment_alike_properties.py::test_a_payment_like_one_recorded_is_recorded_only_when_staff_say_it_is_another",
+  "tests/test_payments_alike.py::test_a_payment_like_one_recorded_is_refused_unless_staff_say_it_is_another",
+  "tests/test_payments_alike.py::test_a_payment_alike_but_by_another_way_or_check_number_is_its_own",
+  "tests/test_payments_alike.py::test_the_same_check_from_two_tabs_at_once_is_recorded_once",
+  "tests/api/test_rent.py::test_a_payment_like_one_recorded_waits_for_staff_to_say_it_is_another",
+  "tests/api/test_rent.py::test_a_payment_alike_to_another_lease_is_its_own",
+]
+
+[[invariant]]
 id = "events-in-order-never-skipped"
 statement = "An event (ADR 0011, migration 20261105000500) is written by the database alone (trust_record_event, as the owner; neither the app nor the AI's role may write one) in the same transaction as the write it tells of, its kind and ids only, and none for a write undone; append-only. A reader with a key reads its company's events after the last it got, in the order their transactions began writing, each only once every transaction that began writing before it has finished, so it gets every committed event exactly once and never a rolled-back one, and never another company's. A webhook goes only to an https address whose every resolved address is public, signed with its sealed secret, retried after each wait up to its last attempt, from when it was added and while it stands; only an admin adds or takes one back."
 tests = [
