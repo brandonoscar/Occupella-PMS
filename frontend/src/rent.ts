@@ -1,4 +1,5 @@
 // Staff's rent work as the API sends it (src/pms/api/rent.py), and how it reads.
+import type { OwnerHeld } from "./ownerHeld";
 import { day, money, sumMoney, usDate, usDatesIn } from "./money";
 
 export type OpenCharge = {
@@ -66,6 +67,7 @@ export type RecurringCharge = {
   starts_on: string;
   ends_on: string | null;
   charge_type: string | null; // the company's type of fee it is
+  concession?: boolean; // a monthly credit given as a concession (migration 20261106000242)
 };
 export type RentChange = {
   id: string;
@@ -124,6 +126,8 @@ export type RentLease = {
   // The security deposit its signed lease offer asked, what is held of it and what is still to
   // receive; null when no offer asked one, or once its deposits were returned.
   deposit_asked?: DepositAsked | null;
+  // Its tenants' deposits the owner holds, outside trust (migration 20261106000241).
+  owner_held?: OwnerHeld[];
 };
 // Asking holds nothing: staff record the deposit when it comes in (migration 0071, q036).
 export type DepositAsked = { asked: string; held: string; to_receive: string };
@@ -214,7 +218,9 @@ export function chargeLabel(charge: OpenCharge): string {
 }
 
 export function recurringLabel(recurring: RecurringCharge): string {
-  const amount = recurring.kind === "credit" ? `credit of ${money(recurring.amount)}` : money(recurring.amount);
+  const amount = recurring.kind === "credit"
+    ? `${recurring.concession ? "concession" : "credit"} of ${money(recurring.amount)}`
+    : money(recurring.amount);
   const stops = recurring.ends_on ? `, stops ${usDate(recurring.ends_on)}` : "";
   const typed = recurring.charge_type ? ` (${recurring.charge_type})` : "";
   return `${recurring.memo}${typed}: ${amount} a month from ${usDate(recurring.starts_on)}${stops}`;

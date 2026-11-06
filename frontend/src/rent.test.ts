@@ -141,6 +141,10 @@ describe("rent", () => {
     expect(recurringLabel({ ...pet, kind: "credit", memo: "Concession", ends_on: "2026-07-01" })).toBe(
       "Concession: credit of $35.00 a month from 01/01/2026, stops 07/01/2026",
     );
+    // One marked a concession (migration 20261106000242) says so.
+    expect(recurringLabel({ ...pet, kind: "credit", memo: "Military discount", concession: true })).toBe(
+      "Military discount: concession of $35.00 a month from 01/01/2026",
+    );
   });
   it("says what security deposit a signed lease asked, what is held and what is still to receive", () => {
     const asked: DepositAsked = { asked: "1500.00", held: "1000.00", to_receive: "500.00" };

@@ -38,6 +38,14 @@ license law forbids a broker to keep their own money mixed with what they hold f
   nightly run each month from a day it picks; migration 0082), the leasing fee once per lease, or
   another fee staff take (an inspection, a lease-up, another), saying what it is for, by a staff
   member who holds disburse, once per request, logged with who did it.
+- A tenant's fee of a kind the company keeps (Settings, Chart of accounts: an admin fee, a lease
+  initiation fee; migration 20261106000220) is paid into the company's fee account in the trust
+  bank account the payment came into, never into the owner's, and leaves trust as every other
+  fee of the company's does, below. Its 25 days count from that payment, as the fee account
+  shows. A deposit kept at move-out still pays such a fee to the owner's account (a known gap:
+  the company then takes it from the owner as another fee). NOT VERIFIED: no state's rule on
+  whom a tenant's fee belongs to was read for this; the lease and the management agreement say,
+  and the company chooses each kind's payee.
 - `trust_withdraw_pmc_fees` takes the company's fees out of a trust bank account to the
   company's own account: never more than the fee account holds, once per request, by a staff
   member who holds the disburse role, logged with who did it.

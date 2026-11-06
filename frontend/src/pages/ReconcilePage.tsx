@@ -1,4 +1,5 @@
 import { OnlinePaymentsWaiting } from "./OnlinePaymentsCards";
+import { UnappliedCash } from "./UnappliedCashCard";
 import { Landmark } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
@@ -141,6 +142,10 @@ export function BankingPage({ me }: { me: Me }) {
             </tbody>
           </table>
         </Wide>
+      )}
+      {banks !== null && banks.some((bank) => bank.kind === "operating") && (
+        <UnappliedCash banks={banks.filter((bank) => bank.kind === "operating")} refresh={runs}
+          changed={() => setRuns((n) => n + 1)} />
       )}
       {banks !== null && banks.length > 0 && <YearCloseCard refresh={() => setRuns((n) => n + 1)} />}
       {transferring && (

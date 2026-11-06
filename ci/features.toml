@@ -895,6 +895,46 @@ browser = [
 ]
 
 [[feature]]
+id = "chart-of-accounts"
+statement = "Staff read the company's chart of accounts in Settings, Chart of accounts: every account by section (Assets, Liabilities, Income, Expenses) and code (our own numbering: 1000s assets, 2000s what the trust holds, 4000s income, 5000-6999 expenses by Schedule E line), with its type, Schedule E line, who keeps an income line's money and whether it is archived. They give any account another code (four digits in its section's range, no other account's, never one kept for later), rename and archive a charge type or an expense account (archiving asks first and is refused while an open bill or a running monthly charge uses it) and bring one back, say whether the company or the owner keeps a charge type's fees from now on, and download the chart as CSV."
+operations = [
+  "GET /api/setup/chart-of-accounts",
+  "POST /api/setup/codes",
+  "POST /api/setup/expense-accounts/{account_id}/name",
+  "POST /api/setup/expense-accounts/{account_id}/archive",
+  "POST /api/setup/charge-types/{type_id}/name",
+  "POST /api/setup/charge-types/{type_id}/archive",
+  "POST /api/setup/charge-types/{type_id}/payee",
+]
+browser = [
+  "features.spec.ts › staff read the chart of accounts by section and code, give an account another code, rename and archive accounts, say the company keeps a fee and download the chart",
+]
+
+[[feature]]
+id = "owner-held-deposits"
+statement = "Staff record from a lease's ⋯ menu a tenant's security, pet or key deposit the owner holds outside trust (its amount and the day it was held from, once per tenant and kind), never in a trust balance and with no money moving; the lease's Summary shows it beside what trust holds, its Ledger as a memo line that changes no balance, and Move-outs says \"Held by owner: $X — the owner returns it\" beside the deposits in trust; once the lease has ended, staff record what the owner returned and kept of it, together what the owner held, once."
+operations = [
+  "POST /api/rent/leases/{lease_id}/owner-held-deposits",
+  "POST /api/move-out/{lease_id}/owner-held-deposits/{held_id}/settle",
+]
+browser = [
+  "features.spec.ts › staff record a deposit the owner holds outside trust on the lease page, see it on the ledger and at move-out, and record that the owner returned it with nothing moving in trust",
+]
+
+[[feature]]
+id = "unapplied-cash"
+statement = "Staff record money that came into an operating trust bank account and can't be matched yet as unapplied cash on Banking (who it seems to be from, how it came, the day and a memo), held in that account's unapplied cash account and listed oldest first with how long it has waited; they apply it, all or part, to a lease they find (it pays what the lease owes as Receive payment does, rent first, the rest prepaid rent, and its tenants get a receipt) or refund it after confirming the amount (a payout: disburse and the account's signers), never past what is left. Month-end isn't approved while any is held, and the three-way reconciliation shows it on a line of its own."
+operations = [
+  "GET /api/unapplied",
+  "POST /api/unapplied",
+  "POST /api/unapplied/{receipt_id}/apply",
+  "POST /api/unapplied/{receipt_id}/refund",
+]
+browser = [
+  "features.spec.ts › staff record money they can't match yet as unapplied cash, month-end waits for it, and they apply part to a lease and refund the rest",
+]
+
+[[feature]]
 id = "charge-types"
 statement = "Staff add the company's own charge types (a name once whatever its case, none of the income statement's own lines) in Settings, Chart of accounts, and give a fee one on Enter charge or a monthly charge (never a credit); the owner's income statement counts what was collected on each type on a line of its own, after the other income, and the budget beside it counts that line as income."
 operations = ["GET /api/setup/charge-types", "POST /api/setup/charge-types"]

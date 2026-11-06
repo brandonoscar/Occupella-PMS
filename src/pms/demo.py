@@ -113,6 +113,12 @@ TERMS = {
 }
 PET_RENT = D("35.00")
 LATE_FEE = D("50.00")
+# The starting chart's accounts the demo's bills go in, by what the demo calls them.
+STARTING_ACCOUNTS = {
+    "Repairs": "General repairs",
+    "Landscaping": "Landscaping",
+    "Water": "Water and sewer",
+}
 # Cedar House's rent from next month, after a month's written notice.
 NEW_RENT = D("2300.00")
 
@@ -276,11 +282,15 @@ def books(
                     ),
                 )
             )
-        for name, line in (("Repairs", 14), ("Landscaping", 7), ("Water", 17)):
-            demo.expense_accounts[name] = uid(
-                setup.add_expense_account(
-                    s, conn, setup.NewExpenseAccount(name=name, schedule_e_line=line)
-                )
+        # The starting chart of accounts a company is set up with (pms.admin setup), the bills
+        # below in its repairs, landscaping and water.
+        setup.add_starting_chart(conn, pmc_id)
+        setup.add_starting_charge_types(conn, pmc_id)
+        for key, name in STARTING_ACCOUNTS.items():
+            demo.expense_accounts[key] = one(
+                conn,
+                "SELECT id FROM trust_expense_accounts WHERE pmc_id = %s AND name = %s",
+                (pmc_id, name),
             )
         # The company's own kinds of fee (migration 0100), each on its own income line.
         for name in ("Application fee", "Cleaning"):

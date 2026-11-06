@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from pms import deposit_statement, exports, notice_letters, notices
 from pms.api import company, directory, documents, rent
 from pms.api.deps import Conn, Staff, refusal
+from pms.api.owner_held import OwnerHeld, held_by_owner
 
 router = APIRouter(prefix="/api/move-out")
 
@@ -118,6 +119,9 @@ class MoveOut(BaseModel):
     # a last day, or once it was returned.
     return_by: date | None = None
     fees: list[Fee] = []
+    # Its tenants' deposits the owner holds, outside trust (migration 20261106000241): the owner
+    # returns them, and staff record what the owner returned and kept.
+    owner_held: list[OwnerHeld] = []
 
 
 # The strictest deadlines found (docs/law.md): a deposit and its itemized statement within 14
@@ -292,13 +296,21 @@ RECENT = timedelta(days=90)
 
 @router.get("")
 def move_outs(session: Staff, conn: Conn) -> list[MoveOut]:
-    """Every lease that holds a deposit for its tenants or whose deposit was returned, and every
-    lease ending (its last day set) that holds none, until 90 days after its last day."""
+    """Every lease that holds a deposit for its tenants or whose deposit was returned, every
+    lease ending (its last day set) that holds none, until 90 days after its last day, and every
+    ended lease with a deposit the owner holds that staff haven't settled."""
     found = []
     since = rent.today(conn, session.pmc_id) - RECENT
+    owners_hold = held_by_owner(conn, session.pmc_id)
     for row in conn.execute(LEASES, (session.pmc_id,)).fetchall():
         lease, prop, unit, starts, ends, owed, tenants, tenant_ids, held, prop_id, *done = row
-        if held <= 0 and done[0] is None and (ends is None or ends < since):
+        unsettled = any(h.settled is None for h in owners_hold.get(lease, []))
+        if (
+            held <= 0
+            and done[0] is None
+            and (ends is None or ends < since)
+            and not (ends is not None and unsettled)
+        ):
             continue
         earlier = conn.execute(MOVED_FROM, (lease,)).fetchall()
         carried = sum((owing for _, _, owing in earlier), Decimal(0))
@@ -334,6 +346,7 @@ def move_outs(session: Staff, conn: Conn) -> list[MoveOut]:
                 ),
                 return_by=None if done[0] is not None else return_by(ends, owed + carried),
                 fees=fees_of(conn, lease, ends),
+                owner_held=owners_hold.get(lease, []),
             )
         )
     return found

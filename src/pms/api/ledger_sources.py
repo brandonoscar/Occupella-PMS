@@ -488,6 +488,9 @@ SELECT step, id FROM entries ORDER BY on_date, step, at, id
 STEP: dict[int, LedgerKind] = {1: "charge", 2: "payment", 3: "returned"}
 # A ledger row's item for a payment and a returned payment; any other item is a charge.
 ITEM = {"payment": "payment", "bounced payment": "returned"}
+# Lines that open nothing: the lease's, its balance's, and memo lines that change no balance (a
+# deposit the owner holds, outside trust, migration 20261106000241).
+NO_SOURCE = ("lease", "balance", "owner-held deposit", "owner-held deposit settled")
 
 
 def ledger_rows(
@@ -502,16 +505,13 @@ def ledger_rows(
         ).fetchall()
     ]
     item = rows.columns.index("item")
-    entries = [r for r in rows.rows if r[item] not in ("lease", "balance")]
+    entries = [r for r in rows.rows if r[item] not in NO_SOURCE]
     lined_up = len(entries) == len(found) and all(
         ITEM.get(str(r[item]), "charge") == source.kind
         for r, source in zip(entries, found, strict=True)
     )
     sources = iter(found)
-    given = [
-        next(sources) if lined_up and r[item] not in ("lease", "balance") else None
-        for r in rows.rows
-    ]
+    given = [next(sources) if lined_up and r[item] not in NO_SOURCE else None for r in rows.rows]
     words = payment_lines(conn, [s.id for s in given if s is not None and s.kind == "payment"])
     return LedgerRows(
         title=rows.title,

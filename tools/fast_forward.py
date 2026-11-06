@@ -106,7 +106,9 @@ def request_id(life: Life) -> UUID:
 def start(conn: psycopg.Connection[Any], first: date, seed: int) -> Life:
     """The demo's books from `first`, everything the PMS does by itself on, and a habit for
     each lease."""
-    built = demo.books(conn, first)
+    # Its day is UTC's, as the nights here count days (main's today): on the demo's New York day
+    # a run between midnight and 05:00 UTC reached a day the company had not.
+    built = demo.books(conn, first, "UTC")
     # Replayable, not secret: one seed for every choice.
     life = Life(built, random.Random(seed), first)  # noqa: S311
     with as_manager(conn, life) as s:

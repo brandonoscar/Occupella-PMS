@@ -141,7 +141,8 @@ def test_the_portals_own_pages_still_read_the_report_as_written():
 def test_every_kind_of_ledger_account_has_its_words(conn):
     (check,) = conn.execute(
         "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
-        " WHERE conname = 'trust_ledger_accounts_kind_shape_v2'"
+        # Its third shape since migration 20261106000240 (unapplied cash).
+        " WHERE conname = 'trust_ledger_accounts_kind_shape_v3'"
     ).fetchone()
     assert set(re.findall(r"'([a-z_]+)'::text", check)) == set(wording.KINDS)
 

@@ -12,8 +12,9 @@ usage:
 
 setup does the first install's steps in one: it adds the company (its PMC), its first staff
 member, makes them its admin, gives the company its starting expense accounts (the Schedule E
-chart in pms.api.setup.STARTING_CHART) and prints their invite link, all or nothing.
-starting-chart adds those accounts to a company made before setup did, skipping any it has.
+chart in pms.api.setup.STARTING_CHART) and kinds of fee (STARTING_CHARGE_TYPES, each with who
+keeps it), and prints their invite link, all or nothing. starting-chart adds those accounts and
+kinds of fee to a company made before setup did, skipping any it has by name.
 status sets a company's status (migration 20261105000100): suspended, nobody signs in and its
 sessions and API keys stop, while its nightly run goes on; closed, the same and its nightly run
 stops too; active again undoes either. Nothing is deleted.
@@ -56,7 +57,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     admin.add_argument("pmc_id", type=UUID)
     admin.add_argument("staff_id", type=UUID)
     chart = commands.add_parser(
-        "starting-chart", help="add the starting expense accounts a company lacks"
+        "starting-chart", help="add the starting expense accounts and fee types a company lacks"
     )
     chart.add_argument("pmc_id", type=UUID)
     status = commands.add_parser("status", help="set a company's status, with the reason")
@@ -97,6 +98,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     conn, company[0], "staff", person[0], options.email, None
                 )
                 books.add_starting_chart(conn, company[0])
+                books.add_starting_charge_types(conn, company[0])
                 print(f"company {company[0]}")
                 print(f"admin {person[0]}")
                 print(f"{public_url}/invite#{made.token}")
@@ -119,6 +121,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     return 2
                 added = books.add_starting_chart(conn, options.pmc_id)
                 print(f"added {added} expense accounts")
+                kinds = books.add_starting_charge_types(conn, options.pmc_id)
+                print(f"added {kinds} charge types")
             elif options.command == "status":
                 if (
                     conn.execute(

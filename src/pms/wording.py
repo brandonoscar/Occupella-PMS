@@ -30,6 +30,7 @@ KINDS = {
     "bank_cash": "Bank",
     "owner_property": "Owner",
     "pmc_income": "Company fees",
+    "unapplied_cash": "Unapplied cash",
     "prepaid_rent": "Prepaid rent",
     "tenant_deposit": "Deposit",
     "vendor_payable": "Vendor",

@@ -51,8 +51,8 @@ def test_staff_add_charge_types_and_list_them_by_name(client, conn, staff):
     fee = add_type(client, "  Application fee ")
 
     assert ok(client.get("/api/setup/charge-types"), 200) == [
-        {"id": fee, "name": "Application fee"},
-        {"id": pets, "name": "Pet rent"},
+        {"id": fee, "name": "Application fee", "payee": "owner"},
+        {"id": pets, "name": "Pet rent", "payee": "owner"},
     ]
     (by,) = conn.execute(
         "SELECT recorded_by FROM trust_charge_types WHERE id = %s", (pets,)
@@ -141,6 +141,8 @@ def test_the_same_name_again_or_an_income_line_s_is_refused(client, staff):
 
     again = send(client, "/api/setup/charge-types", name="PARKING")
     line = send(client, "/api/setup/charge-types", name="Late fees")
+    # The accrual statement's concessions line since migration 20261106000243.
+    concessions = send(client, "/api/setup/charge-types", name="concessions")
 
     assert (again.status_code, again.json()["detail"]) == (
         409,
@@ -149,6 +151,10 @@ def test_the_same_name_again_or_an_income_line_s_is_refused(client, staff):
     assert (line.status_code, line.json()["detail"]) == (
         422,
         "Late fees is a line of the income statement already",
+    )
+    assert (concessions.status_code, concessions.json()["detail"]) == (
+        422,
+        "concessions is a line of the income statement already",
     )
 
 
@@ -204,7 +210,9 @@ def test_a_type_is_a_fees_and_the_companys_own(client, conn, staff, lease):
 
     assert [a.status_code for a in (credit, monthly_credit, other, unknown)] == [422, 422, 404, 404]
     assert credit.json()["detail"] == "only a fee has a charge type"
-    assert ok(client.get("/api/setup/charge-types"), 200) == [{"id": mine, "name": "Cleaning"}]
+    assert ok(client.get("/api/setup/charge-types"), 200) == [
+        {"id": mine, "name": "Cleaning", "payee": "owner"}
+    ]
     (count,) = conn.execute(
         "SELECT count(*) FROM trust_charges WHERE lease_id = %s", (lease,)
     ).fetchone()

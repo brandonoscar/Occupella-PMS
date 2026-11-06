@@ -1,7 +1,6 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RentLease } from "../rent";
-import { ChargeTypesCard } from "./ChargeTypes";
 import { ChargeForm, RecurringForm } from "./LeaseForms";
 
 afterEach(() => {
@@ -24,25 +23,6 @@ function server(types: { id: string; name: string }[]) {
 }
 
 const LEASE = { id: "l1" } as RentLease;
-
-describe("ChargeTypesCard", () => {
-  it("lists the company's charge types and adds one in a side panel", async () => {
-    const fetch = server([]);
-    render(<ChargeTypesCard say={() => {}} />);
-    expect(await screen.findByText("No charge types yet")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Add charge type" }));
-    const panel = screen.getByRole("dialog", { name: "Add charge type" });
-    fireEvent.change(within(panel).getByLabelText(/Charge type/), { target: { value: "Application fee" } });
-    fireEvent.click(within(panel).getByRole("button", { name: "Add charge type" }));
-
-    const list = await screen.findByRole("list", { name: "Charge types" });
-    expect(within(list).getByText("Application fee")).toBeTruthy();
-    const post = fetch.mock.calls.find(([, init]) => init?.method === "POST");
-    expect(post?.[0]).toBe("/api/setup/charge-types");
-    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ name: "Application fee" });
-  });
-});
 
 describe("Enter charge and monthly charges", () => {
   it("give a fee one of the company's types, and never a credit", async () => {

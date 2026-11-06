@@ -366,8 +366,10 @@ class BankMachine(RuleBasedStateMachine):
                 " FROM trust_report_three_way_reconciliation(%s, %s)",
                 (self.pmc.pmc_id, reconciliation),
             ).fetchall()
-            totals = {item: amount for line, item, _, amount in rows if line <= 14}
-            listed = [(i, a) for line, i, _, a in rows if line > 14 and i != "ledger"]
+            # Fifteen lines of totals (the unapplied cash among them since migration 240), then
+            # each item.
+            totals = {item: amount for line, item, _, amount in rows if line <= 15}
+            listed = [(i, a) for line, i, _, a in rows if line > 15 and i != "ledger"]
             book = sum((mv.cash for mv in self.moved if mv.day <= through), Decimal(0))
             transit = [mv.cash for mv in self.outstanding(through) if mv.cash > 0]
             out = [mv.cash for mv in self.outstanding(through) if mv.cash < 0]

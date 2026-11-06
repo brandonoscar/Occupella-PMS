@@ -1,0 +1,28 @@
+line	section	code	name	account_type	schedule_e	kept_by	status
+1	Assets	1000	Trust bank cash	Bank cash	NULL	NULL	active
+2	Liabilities	2000	Owner funds	Owner funds	NULL	NULL	active
+3	Liabilities	2100	Tenant security deposits	Tenant deposits	NULL	NULL	active
+4	Liabilities	2110	Tenant pet deposits	Tenant deposits	NULL	NULL	active
+5	Liabilities	2120	Tenant key deposits	Tenant deposits	NULL	NULL	active
+6	Liabilities	2150	Owner-held deposits (memo)	Memo, not in trust	NULL	NULL	active
+7	Liabilities	2200	Prepaid rent	Prepaid rent	NULL	NULL	active
+8	Liabilities	2250	Unapplied cash	Unapplied cash	NULL	NULL	active
+9	Liabilities	2300	Vendor payables	Vendor payables	NULL	NULL	active
+10	Liabilities	2400	Company fees held in trust	Company fees	NULL	NULL	active
+11	Income	4001	Rent	Income line	NULL	owner	active
+12	Income	4010	Concessions	Contra income	NULL	owner	active
+13	Income	4100	Recurring charges	Income line	NULL	owner	active
+14	Income	4200	Late fees	Income line	NULL	owner	active
+15	Income	4300	NSF fees	Income line	NULL	owner	active
+16	Income	4400	Other charges	Income line	NULL	owner	active
+17	Income	4501	Application fee	Charge type	NULL	owner	active
+18	Income	4502	Admin fee	Charge type	NULL	company	active
+19	Income	4503	Key replacement	Charge type	NULL	owner	archived
+20	Expenses	5000	Bills not in an expense account	Expense line	NULL	NULL	active
+21	Expenses	5501	Advertising	Expense account	5	NULL	active
+22	Expenses	5800	Leasing fees	Expense line	8	NULL	active
+23	Expenses	6100	Management fees	Expense line	11	NULL	active
+24	Expenses	6401	Plumbing	Expense account	14	NULL	active
+25	Expenses	6402	Electrical	Expense account	14	NULL	archived
+26	Expenses	6750	Water	Expense account	17	NULL	active
+27	Expenses	6900	Security deposit interest	Expense line	19	NULL	active

@@ -95,7 +95,17 @@ export function LedgerTab({ lease, runs, record }: { lease: LeaseDetail; runs: n
                   <td className="text-right">{money(ledger.opening)}</td>
                 </tr>
               )}
-              {ledger.lines.map((line, n) => (
+              {ledger.lines.map((line, n) => line.kind === "memo" ? (
+                // A memo changes no balance and opens nothing: a deposit the owner holds, say.
+                <tr key={n} aria-label={`Memo: ${line.memo ?? ""}`}>
+                  <td className="whitespace-nowrap">{usDate(line.on)}</td>
+                  <td>{LEDGER_KIND[line.kind]}</td>
+                  <td className="text-ink-muted">{usDatesIn(line.memo ?? "")}</td>
+                  <td aria-label="No charge" />
+                  <td aria-label="No payment" />
+                  <td className="text-right">{money(line.balance)}</td>
+                </tr>
+              ) : (
                 <tr key={n} className="cursor-pointer hover:bg-raised" onClick={() => setOpen(line)}>
                   <td className="whitespace-nowrap">{usDate(line.on)}</td>
                   <td>

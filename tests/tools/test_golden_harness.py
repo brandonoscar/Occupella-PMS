@@ -62,6 +62,7 @@ def test_report_discovery_and_missing_cases(conn, tmp_path):
         "trust_report_bank_reconciliation",
         "trust_report_budget_vs_actual",
         "trust_report_cash_flow",
+        "trust_report_chart_of_accounts",
         "trust_report_cutover",
         "trust_report_delinquency",
         "trust_report_deposit_interest",

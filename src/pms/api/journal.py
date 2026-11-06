@@ -45,6 +45,7 @@ LABEL = (
     "   THEN coalesce(a.deposit_kind || ' ', '') || 'deposit: ' || t.display_name"
     "  WHEN 'vendor_payable' THEN 'vendor: ' || v.display_name"
     "  WHEN 'pmc_income' THEN 'company fees'"
+    "  WHEN 'unapplied_cash' THEN 'unapplied cash'"
     " END"
     " FROM trust_ledger_accounts AS a"
     " JOIN trust_bank_accounts AS b ON b.id = a.bank_account_id"
@@ -61,6 +62,7 @@ KINDS = (
     "tenant_deposit",
     "vendor_payable",
     "pmc_income",
+    "unapplied_cash",
 )
 
 

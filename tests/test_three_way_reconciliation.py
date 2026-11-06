@@ -1,6 +1,7 @@
 """trust_report_three_way_reconciliation: bank statement, trust journal and beneficiary ledgers
 for one approved reconciliation, with every difference listed (migration 20261009000009; ledger
-lines in byte order since 20261009000011; what had not cleared the bank since 20261013000050).
+lines in byte order since 20261009000011; what had not cleared the bank since 20261013000050;
+the unapplied cash among the ledgers on a line of its own since 20261106000240).
 
 The golden case under tests/golden/cases/ pins the full layout; these check the rules behind it.
 """
@@ -62,6 +63,7 @@ def test_a_move_split_across_the_period_end_shows_in_both_accounts(conn, databas
         "bank statement balance": 0,
         "trust journal (book cash)": Decimal("1500.00"),
         "beneficiary ledgers": Decimal("1180.00"),
+        "of which unapplied cash": Decimal("0.00"),
         "difference: bank statement - trust journal": Decimal("-1500.00"),
         "difference: trust journal - beneficiary ledgers": Decimal("320.00"),
     }
@@ -83,8 +85,8 @@ def test_only_ledgers_with_activity_before_the_period_end_are_listed(conn):
 
     # Owner 1 came and went in January (listed at zero); Owner 2's first money is February's.
     assert ledger_lines(rows) == [("owner_property: Owner 1 / Property 1", Decimal("0.00"))]
-    # Ten lines, four on what had not cleared (migration 0050), then the ledger.
-    assert [line for line, *_ in rows] == list(range(1, 16))
+    # Eleven lines, four on what had not cleared (migration 0050), then the ledger.
+    assert [line for line, *_ in rows] == list(range(1, 17))
 
 
 def test_an_account_with_no_postings_reports_zero_everywhere(conn):
@@ -101,7 +103,7 @@ def test_a_reconciliation_is_reported_only_within_its_pmc(conn):
     reconciliation = approve(conn, pmc.pmc_id, pmc.operating_bank_id, JAN, FEB)
 
     assert report(conn, other.pmc_id, reconciliation) == []
-    assert len(report(conn, pmc.pmc_id, reconciliation)) == 14
+    assert len(report(conn, pmc.pmc_id, reconciliation)) == 15
 
 
 def test_the_report_reads_the_same_in_any_time_zone(conn, database_url):
@@ -203,10 +205,11 @@ def test_a_period_approved_from_statements_lists_what_had_not_cleared(conn, ai_c
 
     rows = report(conn, pmc.pmc_id, reconciliation)
 
-    assert [(item, amount) for _, item, _, amount in rows[5:14]] == [
+    assert [(item, amount) for _, item, _, amount in rows[5:15]] == [
         ("bank statement balance", Decimal("1000.00")),
         ("trust journal (book cash)", Decimal("900.00")),
         ("beneficiary ledgers", Decimal("900.00")),
+        ("of which unapplied cash", Decimal("0.00")),
         ("difference: bank statement - trust journal", Decimal("100.00")),
         ("difference: trust journal - beneficiary ledgers", Decimal("0.00")),
         ("deposits in transit", Decimal("200.00")),
@@ -214,12 +217,12 @@ def test_a_period_approved_from_statements_lists_what_had_not_cleared(conn, ai_c
         ("adjusted bank balance", Decimal("900.00")),
         ("difference: adjusted bank balance - trust journal", Decimal("0.00")),
     ]
-    assert rows[14:16] == [
-        (15, "deposit in transit", "2026-01-31 Late fee, Property 1", Decimal("200.00")),
-        (16, "outstanding withdrawal", "2026-01-20 Check 101, Owner 1", Decimal("-300.00")),
+    assert rows[15:17] == [
+        (16, "deposit in transit", "2026-01-31 Late fee, Property 1", Decimal("200.00")),
+        (17, "outstanding withdrawal", "2026-01-20 Check 101, Owner 1", Decimal("-300.00")),
     ]
     assert ledger_lines(rows) == [("owner_property: Owner 1 / Property 1", Decimal("900.00"))]
-    assert [line for line, *_ in rows] == list(range(1, 18))
+    assert [line for line, *_ in rows] == list(range(1, 19))
     assert report(ai_conn, pmc.pmc_id, reconciliation) == rows
 
 
@@ -229,11 +232,11 @@ def test_without_an_imported_statement_what_had_not_cleared_is_not_known(conn):
 
     rows = report(conn, pmc.pmc_id, approve(conn, pmc.pmc_id, pmc.operating_bank_id, JAN, FEB))
 
-    assert [(item, detail, amount) for _, item, detail, amount in rows[10:14]] == [
+    assert [(item, detail, amount) for _, item, detail, amount in rows[11:15]] == [
         (item, "not known: no imported bank statement covers 2026-01-31", None)
         for item in UNCLEARED
     ]
-    assert [item for _, item, *_ in rows[14:]] == ["ledger"]
+    assert [item for _, item, *_ in rows[15:]] == ["ledger"]
 
 
 def test_a_period_that_ends_during_a_day_cannot_say_what_had_not_cleared(conn):
@@ -245,6 +248,6 @@ def test_a_period_that_ends_during_a_day_cannot_say_what_had_not_cleared(conn):
         approve(conn, pmc.pmc_id, pmc.operating_bank_id, JAN, datetime(2026, 2, 1, 12, tzinfo=UTC)),
     )
 
-    assert [(item, detail, amount) for _, item, detail, amount in rows[10:14]] == [
+    assert [(item, detail, amount) for _, item, detail, amount in rows[11:15]] == [
         (item, "not known: the period does not end at midnight (UTC)", None) for item in UNCLEARED
     ]
