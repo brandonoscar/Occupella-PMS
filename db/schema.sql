@@ -2019,11 +2019,6 @@ BEGIN
             v_from, v_through, NEW.code
             USING ERRCODE = 'check_violation';
     END IF;
-    IF trust_reserved_account_code(NEW.code) IS NOT NULL THEN
-        RAISE EXCEPTION 'trust: code % is kept for %', NEW.code,
-            trust_reserved_account_code(NEW.code)
-            USING ERRCODE = 'check_violation';
-    END IF;
     IF NEW.code = (
         SELECT c.code FROM trust_account_codes_of(NEW.pmc_id) AS c
         WHERE c.line IS NOT DISTINCT FROM NEW.line

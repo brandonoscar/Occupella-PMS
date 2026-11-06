@@ -7,7 +7,8 @@
 --                              trust; migration 20261106000241), 2250 unapplied cash (migration
 --                              20261106000240) and 4010 concessions, a contra to rent (migration
 --                              20261106000242). No code is kept for later any more
---                              (trust_reserved_account_code names none).
+--                              (trust_reserved_account_code names none), so
+--                              trust_check_account_code no longer asks.
 --   charge type names          a new kind of fee isn't named "Concessions", an income statement
 --                              line's own name now; one a company named so before keeps its name.
 --   trust_report_owner_statement  a posting from unapplied cash names it ("unapplied_cash:
@@ -78,6 +79,69 @@ CREATE OR REPLACE FUNCTION trust_reserved_account_code(p_code text) RETURNS text
     SET search_path TO 'public', 'pg_temp'
     AS $$
     SELECT NULL::text
+$$;
+
+-- A code given is no longer asked whether it is kept for later, as none is: the first pass's check
+-- of that could refuse no code now.
+CREATE OR REPLACE FUNCTION trust_check_account_code() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_section text;
+    v_from integer;
+    v_through integer;
+    v_taken text;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('account codes of ' || NEW.pmc_id::text, 0));
+    -- As the column's check says, but before the code is read as a number.
+    IF NEW.code IS NULL OR NEW.code !~ '^[1-9][0-9]{3}$' THEN
+        RAISE EXCEPTION 'trust: a code is four digits, from 1000, not %', NEW.code
+            USING ERRCODE = 'check_violation';
+    END IF;
+    v_section := CASE
+        WHEN NEW.charge_type_id IS NOT NULL THEN 'income'
+        WHEN NEW.expense_account_id IS NOT NULL THEN 'expense'
+        ELSE (SELECT l.section FROM trust_chart_lines() AS l WHERE l.line = NEW.line)
+    END;
+    SELECT r.f, r.t INTO v_from, v_through
+    FROM (VALUES ('asset', 1000, 1999), ('liability', 2000, 2999), ('income', 4000, 4999),
+                 ('expense', 5000, 6999)) AS r (s, f, t)
+    WHERE r.s = v_section;
+    IF NEW.code::integer NOT BETWEEN v_from AND v_through THEN
+        RAISE EXCEPTION 'trust: % account''s code is from % to %, not %',
+            CASE v_section WHEN 'asset' THEN 'an asset' WHEN 'liability' THEN 'a liability'
+                           WHEN 'income' THEN 'an income' ELSE 'an expense' END,
+            v_from, v_through, NEW.code
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.code = (
+        SELECT c.code FROM trust_account_codes_of(NEW.pmc_id) AS c
+        WHERE c.line IS NOT DISTINCT FROM NEW.line
+          AND c.charge_type_id IS NOT DISTINCT FROM NEW.charge_type_id
+          AND c.expense_account_id IS NOT DISTINCT FROM NEW.expense_account_id
+    ) THEN
+        RAISE EXCEPTION 'trust: its code is % already', NEW.code
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT coalesce(
+               (SELECT l.name FROM trust_chart_lines() AS l WHERE l.line = c.line),
+               trust_charge_type_name(c.charge_type_id),
+               trust_expense_account_name(c.expense_account_id)
+           )
+    INTO v_taken
+    FROM trust_account_codes_of(NEW.pmc_id) AS c
+    WHERE c.code = NEW.code
+      AND (c.line IS DISTINCT FROM NEW.line
+           OR c.charge_type_id IS DISTINCT FROM NEW.charge_type_id
+           OR c.expense_account_id IS DISTINCT FROM NEW.expense_account_id)
+    LIMIT 1;
+    IF FOUND THEN
+        RAISE EXCEPTION 'trust: code % is %''s already', NEW.code, v_taken
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    RETURN NEW;
+END;
 $$;
 
 CREATE OR REPLACE FUNCTION trust_report_owner_statement(p_pmc_id uuid, p_owner_id uuid, p_period_start timestamp with time zone, p_period_end timestamp with time zone) RETURNS TABLE(line integer, property text, posted_on text, item text, detail text, amount numeric, balance numeric)
@@ -319,6 +383,72 @@ CREATE OR REPLACE FUNCTION trust_reserved_account_code(p_code text) RETURNS text
         WHEN '2250' THEN 'unapplied cash'
         WHEN '4010' THEN 'concessions'
     END
+$$;
+
+CREATE OR REPLACE FUNCTION trust_check_account_code() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_section text;
+    v_from integer;
+    v_through integer;
+    v_taken text;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('account codes of ' || NEW.pmc_id::text, 0));
+    -- As the column's check says, but before the code is read as a number.
+    IF NEW.code IS NULL OR NEW.code !~ '^[1-9][0-9]{3}$' THEN
+        RAISE EXCEPTION 'trust: a code is four digits, from 1000, not %', NEW.code
+            USING ERRCODE = 'check_violation';
+    END IF;
+    v_section := CASE
+        WHEN NEW.charge_type_id IS NOT NULL THEN 'income'
+        WHEN NEW.expense_account_id IS NOT NULL THEN 'expense'
+        ELSE (SELECT l.section FROM trust_chart_lines() AS l WHERE l.line = NEW.line)
+    END;
+    SELECT r.f, r.t INTO v_from, v_through
+    FROM (VALUES ('asset', 1000, 1999), ('liability', 2000, 2999), ('income', 4000, 4999),
+                 ('expense', 5000, 6999)) AS r (s, f, t)
+    WHERE r.s = v_section;
+    IF NEW.code::integer NOT BETWEEN v_from AND v_through THEN
+        RAISE EXCEPTION 'trust: % account''s code is from % to %, not %',
+            CASE v_section WHEN 'asset' THEN 'an asset' WHEN 'liability' THEN 'a liability'
+                           WHEN 'income' THEN 'an income' ELSE 'an expense' END,
+            v_from, v_through, NEW.code
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF trust_reserved_account_code(NEW.code) IS NOT NULL THEN
+        RAISE EXCEPTION 'trust: code % is kept for %', NEW.code,
+            trust_reserved_account_code(NEW.code)
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.code = (
+        SELECT c.code FROM trust_account_codes_of(NEW.pmc_id) AS c
+        WHERE c.line IS NOT DISTINCT FROM NEW.line
+          AND c.charge_type_id IS NOT DISTINCT FROM NEW.charge_type_id
+          AND c.expense_account_id IS NOT DISTINCT FROM NEW.expense_account_id
+    ) THEN
+        RAISE EXCEPTION 'trust: its code is % already', NEW.code
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT coalesce(
+               (SELECT l.name FROM trust_chart_lines() AS l WHERE l.line = c.line),
+               trust_charge_type_name(c.charge_type_id),
+               trust_expense_account_name(c.expense_account_id)
+           )
+    INTO v_taken
+    FROM trust_account_codes_of(NEW.pmc_id) AS c
+    WHERE c.code = NEW.code
+      AND (c.line IS DISTINCT FROM NEW.line
+           OR c.charge_type_id IS DISTINCT FROM NEW.charge_type_id
+           OR c.expense_account_id IS DISTINCT FROM NEW.expense_account_id)
+    LIMIT 1;
+    IF FOUND THEN
+        RAISE EXCEPTION 'trust: code % is %''s already', NEW.code, v_taken
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    RETURN NEW;
+END;
 $$;
 
 CREATE OR REPLACE FUNCTION trust_report_owner_statement(p_pmc_id uuid, p_owner_id uuid, p_period_start timestamp with time zone, p_period_end timestamp with time zone) RETURNS TABLE(line integer, property text, posted_on text, item text, detail text, amount numeric, balance numeric)
