@@ -668,8 +668,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   numbers and no ACH file); only its last four come back. A trust bank account's ACH details from
   its bank and first check number (`trust_bank_payout_settings`, its Payouts tab, area setup).
   Pay owners and Pay bills may write their payouts' files (`trust_payout_runs`, per trust bank
-  account and way paid): a NACHA file (PPD to owners, CCD to vendors) and checks to print on
-  pre-printed stock, numbered on; a download takes disburse and is logged
+  account and way paid): a NACHA file (PPD to owners, CCD to vendors; its File ID Modifier the
+  run's place among the company's ACH runs of its day, A to Z then 0 to 9, so a bank never takes
+  a second file of a day for a duplicate; P-114) and checks to print on pre-printed stock,
+  numbered on; a download takes disburse and is logged
   (`trust_payout_file_downloads`), and an ACH file taken already comes again only when asked
   again (`?again=true`; the page's Download again asks first: a bank pays a file uploaded twice). The PMS moves no money: the company's bank does. All
   append-only; the AI role reads no bank account, ACH detail or download.

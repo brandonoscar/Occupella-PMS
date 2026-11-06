@@ -13,6 +13,7 @@ each file taken is logged with who took it. The AI role reads none of it.
 
 from __future__ import annotations
 
+import string
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -714,8 +715,37 @@ def ach_file(session: Staff, conn: Conn, run_id: UUID, again: bool = False) -> R
         effective_on=run.paid_on,
         entries=entries,
     )
-    text = nacha.write(origin, [batch], created[0])
+    text = nacha.write(
+        origin, [batch], created[0], file_id_of(conn, session.pmc_id, run_id, created[0])
+    )
     return download(text.encode("ascii"), f"ach-{run.paid_on}-{str(run_id)[:8]}", "ach")
+
+
+# A file's File ID Modifier (NACHA's file header, position 34): A for the company's first ACH run of
+# the day its file is dated, B for the second, and on to Z, then 0 to 9.
+FILE_IDS = string.ascii_uppercase + string.digits
+
+
+def file_id_of(
+    conn: psycopg.Connection[Any], pmc_id: UUID, run_id: UUID, created_at: datetime
+) -> str:
+    """The run's own File ID Modifier: a bank refuses a second file of a day with the same
+    one as a duplicate (docs/edge-cases.md P-114, F-137). Its place among the company's ACH
+    runs made that day, so the same run's file taken again keeps it."""
+    day = created_at.replace(hour=0, minute=0, second=0, microsecond=0)
+    row = conn.execute(
+        "SELECT count(*) FROM trust_payout_runs WHERE pmc_id = %s AND method = 'EFT'"
+        " AND created_at >= %s AND (created_at, id) < (%s, %s)",
+        (pmc_id, day, created_at, run_id),
+    ).fetchone()
+    assert row is not None
+    if row[0] >= len(FILE_IDS):
+        raise HTTPException(
+            409,
+            f"this is the company's ACH run number {row[0] + 1} of the day, and a bank tells only"
+            f" {len(FILE_IDS)} files of one day apart: ask the bank how to send it",
+        )
+    return FILE_IDS[row[0]]
 
 
 ADDRESS = """
