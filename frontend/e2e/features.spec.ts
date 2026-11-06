@@ -1214,15 +1214,20 @@ test("staff take the month's management fees once, find no leasing fee due, and 
   await expect(birch.getByRole("cell").nth(2)).toHaveText("$250.00");
   await expect(birch.getByRole("cell").nth(3)).toHaveText("$250.00");
 
-  // Management fees: nothing was collected yet this month, so Demo Owner A's agreements would
-  // take their $50.00 minimum; looking takes nothing, and Collect fees takes it, once.
+  // Management fees: this month's period hasn't ended, so its fee waits for its end and nothing
+  // can be collected (docs/edge-cases.md M-112).
   await section(page, "Management fees");
-  const nextMonth = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)), 1))
-    .toISOString()
-    .slice(0, 10);
+  const nextMonth = firstOfMonthsAgo(-1);
   await page.getByLabel("Period from").fill(firstOfThisMonth());
   await page.getByLabel("Up to (not including)").fill(nextMonth);
   const fee = page.getByRole("row", { name: "Demo Owner A, Birch Flats", exact: true });
+  await expect(fee).toContainText(`a fee period is collected once it has ended`);
+  await expect(fee).toContainText(`so its fee is collected from ${us(nextMonth)}`);
+  await expect(page.getByRole("button", { name: "Collect fees" })).toBeDisabled();
+  // Nothing was collected the month before the demo's books begin, so Demo Owner A's agreements
+  // would take their $50.00 minimum for it; looking takes nothing, and Collect fees takes it, once.
+  await page.getByLabel("Period from").fill(firstOfMonthsAgo(3));
+  await page.getByLabel("Up to (not including)").fill(firstOfMonthsAgo(2));
   await expect(fee).toContainText("$50.00");
   await expect(fee).toContainText("To collect");
   await page.getByRole("button", { name: "Collect fees" }).click();
