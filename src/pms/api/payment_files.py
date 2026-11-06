@@ -183,10 +183,9 @@ def find(conn: psycopg.Connection[Any], pmc_id: UUID, line: Line, line_id: UUID)
             None, f"{len(leases)} leases in effect on {us(line.received_on)} at {where}{more}"
         )
     lease_id = cast(UUID, leases[0][0])
-    already = rent.recorded_already(
+    if rent.recorded_already(
         conn, pmc_id, lease_id, line.amount, line.received_on, request_id(line_id)
-    )
-    if already is not None:
+    ):
         return Found(
             lease_id,
             f"a payment of ${line.amount:,.2f} on {us(line.received_on)} is recorded to this lease"
