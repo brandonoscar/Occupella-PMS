@@ -512,9 +512,15 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def invalid(request: Request, error: RequestValidationError) -> Response:
-        # FastAPI's own answer, in ASCII JSON: what it can't encode as UTF-8 (a lone surrogate,
-        # echoed back as the input refused) is escaped instead of failing as a server error.
-        body = json.dumps({"detail": jsonable_encoder(error.errors())}, ensure_ascii=True)
+        # FastAPI's own answer, in ASCII JSON (what it can't encode as UTF-8, a lone surrogate, is
+        # escaped instead of failing as a server error), without the input refused: echoed back,
+        # a body just under MAX_BODY made one unauthenticated request cost the server seconds and
+        # megabytes (the AI pen test of 11/06). Where and why is what the portal reads.
+        said = [
+            {key: value for key, value in found.items() if key in ("loc", "msg", "type", "ctx")}
+            for found in error.errors()
+        ]
+        body = json.dumps({"detail": jsonable_encoder(said)}, ensure_ascii=True)
         return Response(body, status_code=422, media_type="application/json")
 
     @app.exception_handler(psycopg.DataError)
