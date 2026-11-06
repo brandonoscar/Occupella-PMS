@@ -3,7 +3,7 @@ the company's chart by section, with its code, and the edits staff make to it.
 
 The chart is the ledger's control accounts (one for each kind of money the trust holds), the
 income statement's own income and expense lines, the company's charge types and its expense
-accounts (migrations 20261106000200 to 20261106000230). Staff give any account another code,
+accounts (migrations 20261106000205 to 20261106000230). Staff give any account another code,
 rename or archive (and bring back) a charge type or an expense account, and say who keeps a
 charge type's fees. Each edit is a new row, naming who made it; the database refuses a code
 taken or outside its section, a name taken, and archiving what an open bill or a running monthly

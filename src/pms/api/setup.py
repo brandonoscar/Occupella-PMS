@@ -62,7 +62,7 @@ SCHEDULE_E = {
 # company takes are the income statement's own lines (the ledger's), never an expense account,
 # and so is security deposit interest; nothing sits on line 18 (depreciation is the owner's
 # accountant's). A mortgage's principal is no Schedule E expense, so only its interest is here.
-# Each takes the next code of its line's block as it is added (migration 20261106000200). Staff
+# Each takes the next code of its line's block as it is added (migration 20261106000205). Staff
 # rename, add, archive and leave unused ones as they like.
 STARTING_CHART: tuple[tuple[str, int], ...] = (
     ("Advertising and listings", 5),

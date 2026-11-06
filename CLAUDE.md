@@ -1346,7 +1346,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   collected on each type on a line of its own after the other income (a rent run's charge under
   its recurring charge's type), and the budget beside it counts that line as income. Owners read and download a year's in the portal (`/api/owner/income-statement`);
   staff download any owner's from the owners page.
-- Chart of accounts (migrations 20261106000200 to 20261106000230, the founder's pass of 11/05;
+- Chart of accounts (migrations 20261106000205 to 20261106000230, the founder's pass of 11/05;
   `src/pms/api/chart.py`, `pages/ChartOfAccountsPage.tsx`, area setup): every account of a
   company's chart has a code of our own numbering, four digits, once among its codes today
   (`trust_account_codes`: append-only, the latest holding, naming who; `trust_account_codes_of`).

@@ -1,4 +1,4 @@
-"""The chart of accounts in the database (migrations 20261106000200 to 20261106000230): every
+"""The chart of accounts in the database (migrations 20261106000205 to 20261106000230): every
 account's code, unique among a company's codes today and given the next free one of its range
 as an account is added; renaming and archiving expense accounts and charge types, a new row each
 time; and archiving refused while an open bill or a running monthly charge uses one.
@@ -620,7 +620,7 @@ def test_the_chart_report_refuses_an_unknown_pmc(conn):
 
 def test_the_migration_gives_every_account_a_company_has_a_code(database_url, tmp_path):
     migrations = sorted((ROOT / "db/migrations").glob("*.sql"))
-    codes_migration = next(m for m in migrations if m.name.startswith("20261106000200"))
+    codes_migration = next(m for m in migrations if m.name.startswith("20261106000205"))
     for migration in migrations[: migrations.index(codes_migration)]:
         shutil.copy(migration, tmp_path)
 

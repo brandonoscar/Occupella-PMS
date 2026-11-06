@@ -7,7 +7,7 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 ## Unreleased
 
 The chart of accounts (the founder's pass of 11/05 and its second part of 11/06), migrations
-`20261106000200` to `20261106000243`. No posting is rewritten: every transfer, entry and balance
+`20261106000205` to `20261106000243`. No posting is rewritten: every transfer, entry and balance
 stays as it was (a test applies them to a database holding books and checks).
 
 - **Chart of accounts (Settings, Chart of accounts):** every account of the company's chart by
@@ -20,7 +20,7 @@ stays as it was (a test applies them to a database holding books and checks).
   management fees, 6900 deposit interest). Staff give any account another code in its section's
   range, rename and archive an expense account or a kind of fee (refused while an open bill or a
   running monthly charge uses it) and bring one back, and download the chart as CSV
-  (`trust_report_chart_of_accounts`). Migrations `20261106000200` (codes), `20261106000210`
+  (`trust_report_chart_of_accounts`). Migrations `20261106000205` (codes), `20261106000210`
   (names and archiving), `20261106000230` (the report).
 - **Who keeps a fee:** each kind of fee says whether the owner (the default) or the company keeps
   its money, from now on (migration `20261106000220`). Receive payment, payment files, payments

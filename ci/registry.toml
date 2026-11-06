@@ -874,7 +874,7 @@ tests = [
 
 [[invariant]]
 id = "account-codes-unique-never-rewriting-history"
-statement = "Every account of a company's chart has a code (migration 20261106000200): each ledger kind's control account, the income statement's own lines, every charge type and every expense account. A code is four digits within its section's range (1000s assets, 2000s liabilities, 4000s income, 5000-6999 expenses), never one kept for a later pass, and once among the company's codes today; a charge type or expense account added takes the next free code of its range (4501 on; its Schedule E line's block). A change is a new row naming who made it, the latest holding; nothing posted changes, and a database migrated with books in it gives every account a code."
+statement = "Every account of a company's chart has a code (migration 20261106000205): each ledger kind's control account, the income statement's own lines, every charge type and every expense account. A code is four digits within its section's range (1000s assets, 2000s liabilities, 4000s income, 5000-6999 expenses), never one kept for a later pass, and once among the company's codes today; a charge type or expense account added takes the next free code of its range (4501 on; its Schedule E line's block). A change is a new row naming who made it, the latest holding; nothing posted changes, and a database migrated with books in it gives every account a code."
 tests = [
   "tests/test_chart_of_accounts.py::test_every_fixed_line_starts_with_its_code",
   "tests/test_chart_of_accounts.py::test_an_account_added_takes_the_next_free_code_of_its_range",

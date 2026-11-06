@@ -104,7 +104,7 @@ TABLES = {
     # latest row is its account, so a correction is an insert too. The ids order the rows.
     "trust_expense_accounts": {"SELECT", "INSERT"},
     "trust_charge_types": {"SELECT", "INSERT"},
-    # The chart of accounts (migrations 20261106000200 to 20261106000220): an account's code, an
+    # The chart of accounts (migrations 20261106000205 to 20261106000220): an account's code, an
     # expense account's or charge type's name, whether it is archived, and who keeps a type's
     # fees, each the latest row holding, so a change is an insert. The ids order the rows.
     "trust_account_codes": {"SELECT", "INSERT"},
@@ -567,7 +567,7 @@ FUNCTIONS = {
     "trust_open_charges(uuid,uuid,timestamptz)": {"trust_app"},
     # Where a charge comes in the order money pays them: rent first (migration 0093).
     "trust_pay_rank(trust_charges)": {"trust_app"},
-    # The chart of accounts (migrations 20261106000200 to 20261106000220): its fixed lines, each
+    # The chart of accounts (migrations 20261106000205 to 20261106000220): its fixed lines, each
     # account's code today, the next free code of a range, names and archivals today, and who
     # keeps a charge type's or a charge's money. The app's; the AI role reads the chart through
     # trust_report_chart_of_accounts.

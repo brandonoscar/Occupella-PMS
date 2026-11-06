@@ -1,4 +1,4 @@
--- A company's chart of accounts (migrations 20261106000200 to 20261106000230, and the second
+-- A company's chart of accounts (migrations 20261106000205 to 20261106000230, and the second
 -- pass's lines of 20261106000243). Worked by hand: the fixed lines keep their starting codes
 -- (1000 trust bank cash; 2000 to 2400 what the trust holds, with 2150 owner-held deposits, a
 -- memo, and 2250 unapplied cash; 4000 to 4400 the income statement's own income lines, with 4010
