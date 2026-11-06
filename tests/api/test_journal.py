@@ -1,7 +1,8 @@
 """Journal entries (src/pms/api/journal.py): one staff member proposes an entry, another who
 holds the approve role posts it; nothing moves until then, and every trust rule holds."""
 
-from datetime import UTC, date, datetime
+import uuid
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -56,13 +57,17 @@ def lines(pmc, amount="25.00"):
     ]
 
 
+def body(pmc, amount="25.00", event_on=FEB_10, memo=MEMO, request_id=None):
+    return {
+        "request_id": str(request_id or uuid.uuid4()),
+        "event_on": event_on,
+        "memo": memo,
+        "lines": lines(pmc, amount),
+    }
+
+
 def propose(client, pmc, amount="25.00", event_on=FEB_10, memo=MEMO):
-    return ok(
-        client.post(
-            "/api/journal", json={"event_on": event_on, "memo": memo, "lines": lines(pmc, amount)}
-        ),
-        201,
-    )["id"]
+    return ok(client.post("/api/journal", json=body(pmc, amount, event_on, memo)), 201)["id"]
 
 
 def entries(client):
@@ -100,6 +105,35 @@ def test_a_bookkeeper_proposes_and_a_manager_posts(
         " AND row_data ->> 'entry_id' = %s",
         (entry,),
     ).fetchone() == (manager.person_id,)
+
+
+def test_proposing_again_with_the_same_request_id_leaves_one_entry_waiting(
+    client, other_client, conn, pmc, bookkeeper, manager
+):
+    # Proposed again after its answer was lost (docs/edge-cases.md C-065): one entry waits, so
+    # the approver can't post the same correction twice.
+    request = uuid.uuid4()
+    first = ok(client.post("/api/journal", json=body(pmc, request_id=request)), 201)
+    again = ok(client.post("/api/journal", json=body(pmc, request_id=request)), 201)
+    other = client.post("/api/journal", json=body(pmc, "30.00", request_id=request))
+
+    assert again == first
+    refused(other, 409, "this request id was used for a different journal entry")
+    assert list(entries(other_client)) == [first["id"]]
+
+
+def company_today(conn, pmc):
+    return conn.execute("SELECT trust_pmc_day(%s, clock_timestamp())", (pmc.pmc_id,)).fetchone()[0]
+
+
+def test_an_entry_is_dated_no_later_than_the_companys_today(client, conn, pmc, bookkeeper):
+    # Dated next year, it moved balances now while reports as of today left it out (M-135).
+    today = company_today(conn, pmc)
+    later = client.post("/api/journal", json=body(pmc, event_on=str(today + timedelta(days=1))))
+
+    refused(later, 422, f"a journal entry is dated no later than today, {today:%m/%d/%Y}")
+    assert entries(client) == {}
+    ok(client.post("/api/journal", json=body(pmc, event_on=str(today))), 201)
 
 
 def test_the_page_lists_the_pmcs_accounts_in_words(client, pmc, bookkeeper, manager):
@@ -185,6 +219,7 @@ def test_a_post_the_ledger_refuses_says_why_and_moves_nothing(
         client.post(
             "/api/journal",
             json={
+                "request_id": str(uuid.uuid4()),
                 "event_on": FEB_10,
                 "memo": "Deposit held in the operating account",
                 "lines": [
@@ -214,9 +249,7 @@ def test_only_the_pmcs_staff_use_the_journal(client, other_client, conn, app_con
 
     for answer in (
         other_client.get("/api/journal"),
-        other_client.post(
-            "/api/journal", json={"event_on": FEB_10, "memo": MEMO, "lines": lines(pmc)}
-        ),
+        other_client.post("/api/journal", json=body(pmc)),
         other_client.post(f"/api/journal/{entry}/post", json={}),
         other_client.post(f"/api/journal/{entry}/decline", json={"reason": "No"}),
     ):
@@ -237,13 +270,7 @@ def test_only_the_pmcs_staff_use_the_journal(client, other_client, conn, app_con
         404,
         "no such journal entry",
     )
-    refused(
-        other_client.post(
-            "/api/journal", json={"event_on": FEB_10, "memo": MEMO, "lines": lines(pmc)}
-        ),
-        404,
-        "no such ledger account",
-    )
+    refused(other_client.post("/api/journal", json=body(pmc)), 404, "no such ledger account")
     assert entries(client)[entry]["status"] == "waiting"
 
 
@@ -255,32 +282,27 @@ def test_only_the_pmcs_staff_use_the_journal(client, other_client, conn, app_con
         {"event_on": "not a day"},
         {"lines": []},
         {"lines": "many"},
+        {"request_id": "not an id"},
     ],
 )
 def test_an_entry_needs_a_day_a_memo_and_one_to_twenty_lines(client, pmc, bookkeeper, change):
-    body = {"event_on": FEB_10, "memo": MEMO, "lines": lines(pmc)} | change
-    refused(client.post("/api/journal", json=body), 422)
+    refused(client.post("/api/journal", json=body(pmc) | change), 422)
+    without = {k: v for k, v in body(pmc).items() if k != "request_id"}
+    refused(client.post("/api/journal", json=without), 422)
     assert entries(client) == {}
 
 
 @pytest.mark.parametrize("amount", ["0", "-1.00", "1.001", "10000000.01", "ten"])
 def test_a_line_moves_whole_cents_between_two_accounts(client, pmc, bookkeeper, amount):
-    refused(
-        client.post(
-            "/api/journal", json={"event_on": FEB_10, "memo": MEMO, "lines": lines(pmc, amount)}
-        ),
-        422,
-    )
+    refused(client.post("/api/journal", json=body(pmc, amount)), 422)
     same = [{"from_account": pmc.pmc_income, "to_account": pmc.pmc_income, "amount": "1.00"}]
     refused(
-        client.post("/api/journal", json={"event_on": FEB_10, "memo": MEMO, "lines": same}),
+        client.post("/api/journal", json=body(pmc) | {"lines": same}),
         422,
         "from one account to another",
     )
     many = lines(pmc) * 21
-    refused(
-        client.post("/api/journal", json={"event_on": FEB_10, "memo": MEMO, "lines": many}), 422
-    )
+    refused(client.post("/api/journal", json=body(pmc) | {"lines": many}), 422)
     assert entries(client) == {}
 
 

@@ -1292,6 +1292,19 @@ tests = [
   "tests/test_journal_entries.py::test_the_app_writes_entries_only_through_their_functions",
 ]
 
+[[invariant]]
+id = "a-journal-entry-is-proposed-once-and-never-ahead"
+statement = "A journal entry carries the request id of the page that proposed it (migration 20261106110100; docs/edge-cases.md C-065), once per company: the same request again (the same staff member, day, memo and lines) returns the entry it proposed, read under the request id's own lock so two at once propose one, and the same id with another entry is refused, so a resend never leaves two to post. An entry is dated no later than the company's today when proposed (M-135), and one dated later waits for its day to post: balances never move ahead of the reports."
+tests = [
+  "tests/properties/test_journal_properties.py::test_journal_entries_move_money_only_when_another_approver_posts_them",
+  "tests/test_journal_entries.py::test_the_same_request_id_proposes_one_entry",
+  "tests/test_journal_entries.py::test_one_entry_proposed_twice_at_once_is_proposed_once",
+  "tests/test_journal_entries.py::test_an_entry_is_dated_no_later_than_the_companys_today",
+  "tests/test_journal_entries.py::test_an_entry_dated_after_today_waits_for_its_day_to_post",
+  "tests/api/test_journal.py::test_proposing_again_with_the_same_request_id_leaves_one_entry_waiting",
+  "tests/api/test_journal.py::test_an_entry_is_dated_no_later_than_the_companys_today",
+]
+
 [[report]]
 id = "deposit-return"
 statement = "The itemized statement of a lease's security deposits once returned, as staff send it to the tenants: the property and unit, the tenants and the lease's days, each lease they moved from, each tenant's deposit, what was kept for each charge (naming the home of one of a lease moved from), the totals, what went back to each tenant, and who returned it when. Compared to a checked-in golden file."

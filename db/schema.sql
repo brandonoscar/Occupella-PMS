@@ -5844,6 +5844,7 @@ CREATE TABLE public.trust_journal_entries (
     memo text NOT NULL,
     proposed_by uuid NOT NULL,
     proposed_at timestamp with time zone DEFAULT now() NOT NULL,
+    request_id uuid,
     CONSTRAINT trust_journal_entries_memo_check CHECK (((memo ~ '\S'::text) AND (length(memo) <= 500)))
 );
 
@@ -7082,6 +7083,11 @@ BEGIN
             USING ERRCODE = 'insufficient_privilege',
                   HINT = 'Another staff member who holds the approve role posts it.';
     END IF;
+    IF v_entry.event_on > trust_pmc_day(p_pmc_id, clock_timestamp()) THEN
+        RAISE EXCEPTION 'trust: a journal entry dated % posts on its day or later, not before',
+            to_char(v_entry.event_on, 'MM/DD/YYYY')
+            USING ERRCODE = 'check_violation';
+    END IF;
 
     SELECT array_agg(t.id ORDER BY t.ordinality) INTO v_transfers
     FROM pgledger_create_transfers(
@@ -7679,16 +7685,18 @@ $$;
 
 
 --
--- Name: trust_propose_journal_entry(uuid, date, text, public.transfer_request[]); Type: FUNCTION; Schema: public; Owner: -
+-- Name: trust_propose_journal_entry(uuid, date, text, public.transfer_request[], uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.trust_propose_journal_entry(p_pmc_id uuid, p_event_on date, p_memo text, p_lines public.transfer_request[]) RETURNS uuid
+CREATE FUNCTION public.trust_propose_journal_entry(p_pmc_id uuid, p_event_on date, p_memo text, p_lines public.transfer_request[], p_request_id uuid DEFAULT NULL::uuid) RETURNS uuid
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
     v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
     v_entry uuid;
+    v_before trust_journal_entries;
+    v_today date := trust_pmc_day(p_pmc_id, clock_timestamp());
 BEGIN
     IF v_staff IS NULL THEN
         RAISE EXCEPTION 'trust: name the staff member who proposes the journal entry'
@@ -7696,6 +7704,36 @@ BEGIN
     END IF;
     IF p_event_on IS NULL THEN
         RAISE EXCEPTION 'trust: a journal entry is dated a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- The same request again returns what it proposed; another entry under its id is refused.
+    IF p_request_id IS NOT NULL THEN
+        PERFORM pg_advisory_xact_lock(
+            hashtextextended('journal entry request ' || p_request_id::text, 0)
+        );
+        SELECT e.* INTO v_before FROM trust_journal_entries AS e
+        WHERE e.pmc_id = p_pmc_id AND e.request_id = p_request_id;
+        IF FOUND THEN
+            IF v_before.proposed_by = v_staff
+               AND v_before.event_on = p_event_on
+               AND v_before.memo = p_memo
+               AND ARRAY(
+                       SELECT (l.from_account, l.to_account, l.amount)::transfer_request
+                       FROM trust_journal_entry_lines AS l
+                       WHERE l.entry_id = v_before.id
+                       ORDER BY l.line
+                   ) = p_lines
+            THEN
+                RETURN v_before.id;
+            END IF;
+            RAISE EXCEPTION 'trust: request id % was used for a different journal entry',
+                p_request_id
+                USING ERRCODE = 'unique_violation';
+        END IF;
+    END IF;
+    IF p_event_on > v_today THEN
+        RAISE EXCEPTION 'trust: a journal entry is dated no later than the company''s today, %, '
+            'not %', v_today, p_event_on
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     IF coalesce(cardinality(p_lines), 0) NOT BETWEEN 1 AND 20 THEN
@@ -7717,8 +7755,8 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
-    INSERT INTO trust_journal_entries (pmc_id, event_on, memo, proposed_by)
-    VALUES (p_pmc_id, p_event_on, p_memo, v_staff)
+    INSERT INTO trust_journal_entries (pmc_id, event_on, memo, proposed_by, request_id)
+    VALUES (p_pmc_id, p_event_on, p_memo, v_staff, p_request_id)
     RETURNING id INTO v_entry;
     INSERT INTO trust_journal_entry_lines (
         entry_id, pmc_id, line, from_account, to_account, amount
@@ -23237,6 +23275,13 @@ CREATE UNIQUE INDEX trust_inspection_items_room ON public.trust_inspection_items
 
 
 --
+-- Name: trust_journal_entries_request; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_journal_entries_request ON public.trust_journal_entries USING btree (pmc_id, request_id) WHERE (request_id IS NOT NULL);
+
+
+--
 -- Name: trust_late_fees_policy_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35895,4 +35940,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261105001200'),
     ('20261106100000'),
     ('20261106100100'),
-    ('20261106110000');
+    ('20261106110000'),
+    ('20261106110100');

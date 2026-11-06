@@ -1368,11 +1368,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   authorities owe it, the bills not yet set aside, and the owner's equity. Both on Reports, read
   only, and the AI runs them.
 - Journal entries (migration 0053): a correction between a PMC's ledger accounts that no other
-  write path makes. A staff member proposes one (`trust_propose_journal_entry`: a day, what it
-  corrects, 1 to 20 lines of whole cents between accounts of the PMC); another who holds approve
-  posts it (`trust_post_journal_entry`: once, its lines as ledger transfers dated its day, and the
-  same call again returns them), never whoever proposed it; anyone declines it, with why, before
-  it is posted. Posting keeps every trust rule above or moves nothing. Every step names a staff
+  write path makes. A staff member proposes one (`trust_propose_journal_entry`: a day no later
+  than the company's today, what it corrects, 1 to 20 lines of whole cents between accounts of the
+  PMC, and the page's request id, migration 20261106110100: the same request again returns the
+  entry, with another entry it is refused; C-065, M-135); another who holds approve posts it
+  (`trust_post_journal_entry`: once, on its day or later, its lines as ledger transfers dated its
+  day, and the same call again returns them), never whoever proposed it; anyone declines it, with
+  why, before it is posted. Posting keeps every trust rule above or moves nothing. Every step names a staff
   member (the command line can't take one); entries, lines and decisions are append-only, and the
   AI only reads them. Entries waiting show on the Dashboard.
 - More reports (migration 0054), each read only and on Reports: the balance

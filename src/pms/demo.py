@@ -537,6 +537,7 @@ def every_page(conn: psycopg.Connection[Any], demo: Demo, today: date) -> None:
             s,
             conn,
             journal.NewEntry(
+                request_id=uuid.uuid4(),
                 event_on=this_month,
                 memo="Reserve moved to Birch Flats, as Demo Owner A asked",
                 lines=[

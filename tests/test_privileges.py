@@ -603,7 +603,7 @@ FUNCTIONS = {
     "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)": {"trust_app"},
     "trust_transfer_lease(uuid,uuid,uuid,date,date,numeric,text,date)": {"trust_app"},
     "trust_close_year(uuid,integer)": {"trust_app"},
-    "trust_propose_journal_entry(uuid,date,text,transfer_request[])": {"trust_app"},
+    "trust_propose_journal_entry(uuid,date,text,transfer_request[],uuid)": {"trust_app"},
     "trust_post_journal_entry(uuid,uuid)": {"trust_app"},
     "trust_decline_journal_entry(uuid,uuid,text)": {"trust_app"},
     # What a lease owes, as the deposit's return counts it: the move-out page reads it.
@@ -881,7 +881,7 @@ SECURITY_DEFINER = {
     "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)",
     "trust_transfer_lease(uuid,uuid,uuid,date,date,numeric,text,date)",
     "trust_close_year(uuid,integer)",
-    "trust_propose_journal_entry(uuid,date,text,transfer_request[])",
+    "trust_propose_journal_entry(uuid,date,text,transfer_request[],uuid)",
     "trust_post_journal_entry(uuid,uuid)",
     "trust_decline_journal_entry(uuid,uuid,text)",
     "trust_audit()",  # writes the audit log, which no other role may write

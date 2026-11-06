@@ -122,6 +122,12 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   again after their answer was lost (a dropped connection, a second click on a slow page) charged
   the tenant twice, or billed them twice every month. Each now carries its panel's request id, as
   Receive payment does: sent again, it charges nothing more. Migration `20261106110000`.
+- **Fixed: a journal entry proposed twice, or dated ahead.** A journal entry proposed again after
+  its answer was lost waited twice, and an approver might post both. It now carries its page's
+  request id, so the same proposal again is the one entry. An entry is dated no later than the
+  company's today: one dated next year moved balances at once while every report as of today
+  left it out. One proposed for a later day before this release posts on its day. Migration
+  `20261106110100`.
 - **Fixed: Stripe's answers in an old API version, and a webhook missing its events.** Every
   call to Stripe now names the API version whose shapes the PMS reads (`2024-06-20`), so an
   account whose default is older than `latest_charge` no longer fails every paid report; and
