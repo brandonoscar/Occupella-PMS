@@ -10,10 +10,11 @@ reason.
 Invariants checked after every step (ci/registry.toml maps each to this test):
   - the bills, decisions and payment steps are the model's: a vendor's reference is entered
     once; a bill takes one decision, an approval or a decline, and a decline only before it is
-    set aside; a bill is set aside at most once, never once declined, and only with the owner's
-    approval when it is over the limit in force on its date; it is paid at most once, never
-    dated before it was set aside, and paying one not set aside sets it aside first (ADR 0010),
-    opening the vendor's account if they have none;
+    set aside; in the portal, its owner decides only a bill over its limit; a bill is set aside
+    at most once, never once declined, and only with the owner's approval when it is over the
+    limit in force on its date; it is paid at most once, never dated before it was set aside,
+    and paying one not set aside sets it aside first (ADR 0010), opening the vendor's account if
+    they have none;
   - each vendor's account holds exactly what was set aside for its bills and not yet paid, and
     every balance is the model's;
   - a draw never pays out more than the balance above the reserve and the unpaid bills (a bill
@@ -324,6 +325,49 @@ class BillMachine(RuleBasedStateMachine):
         else:
             send()
             self.declined[bill_id] = on
+
+    @precondition(lambda self: self.bills)
+    @rule(data=st.data(), role=ROLES, day=DAYS, decline=st.booleans())
+    def decide_a_bill_in_the_portal(self, data, role, day, decline):
+        """The bill's own owner approves or declines it in the portal: only a bill over the limit
+        of the agreement in force on its date is theirs to decide (migration 20261106000100; the AI
+        pen test of 11/06), and a decline only before the bill is set aside."""
+        bill_id = data.draw(st.sampled_from(list(self.bills)))
+        bill, on = self.bills[bill_id], BASE + timedelta(days=day)
+        owner = self.pmc.owners[self.owner_account.index(bill.account)].owner_id
+        terms = self.agreement_on(bill.account, bill.bill_date)
+
+        def send():
+            act = decline_bill if decline else approve_bill
+            act(
+                self.conns[role],
+                self.pmc_id,
+                bill_id,
+                on,
+                "Owner, in the owner portal",
+                owner_id=owner,
+            )
+
+        if bill_id in self.approved or bill_id in self.declined:
+            with pytest.raises(psycopg.errors.UniqueViolation, match="decision already"):
+                send()
+        elif decline and bill_id in self.set_aside:
+            with pytest.raises(
+                psycopg.errors.CheckViolation,
+                match="taken from the owner.s account for bill .* already",
+            ):
+                send()
+        elif bill.amount <= (terms.limit if terms else 0):
+            with pytest.raises(
+                psycopg.errors.CheckViolation, match="within its owner.s approval limit"
+            ):
+                send()
+        else:
+            send()
+            if decline:
+                self.declined[bill_id] = on
+            else:
+                self.approved.add(bill_id)
 
     @precondition(lambda self: self.bills)
     @rule(data=st.data(), role=ROLES, day=DAYS, second=TIMES)
