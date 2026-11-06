@@ -26,14 +26,14 @@ answer in the portal for everything that can fail.
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
 | [Money and the ledger](#money-and-the-ledger) | 152 | 117 | 8 | 27 | 4 |
-| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 89 | 15 | 60 | 13 |
+| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 90 | 15 | 59 | 13 |
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 75 | 30 | 38 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 75 | 8 | 82 | 18 |
 | [Bad files and imports](#bad-files-and-imports) | 152 | 71 | 17 | 64 | 1 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 91 | 11 | 54 | 5 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 76 | 14 | 82 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1161** | **634** | **113** | **414** | **46** |
+| **All** | **1161** | **635** | **113** | **413** | **46** |
 
 ## Open, high risk: the work list
 
@@ -367,7 +367,6 @@ its ten most pressing, each with the test that would close it.
 | D-139 | The signing page's You signed on | The UTC date of the signature: a tenant signing at 9 pm Pacific sees tomorrow's date | Open | frontend/src/pages/SignPage.tsx:111 | M |
 | D-147 | Tests that count days in UTC | make_pmc gives every test company UTC's day, so most money paths never run for a New York company between 00:00 and 05:00 UTC; only the nightly and company-day tests do | Open | tests/helpers.py:109 | M |
 | D-150 | A staff code entered at a 30-second step boundary, or an app clock off by a minute | The step before and after are accepted; the app's own clock is used, so a skew past 30 seconds refuses good codes | Open | src/pms/accounts.py:432 | M |
-| D-153 | A vendor assigned at 9 pm Eastern on the last day of their insurance | The check uses the step's UTC date, so the vendor reads as expired and is refused while still covered that day | Open | db/migrations/20261016000072_work_order_details.sql:80 | M |
 | D-159 | New York tenant who moved to another unit of the same building | Years count only leases at this unit, so a long tenant who moved counts from the move (NOT VERIFIED how 226-c counts a move) | Open | src/pms/api/renewals.py SAME_HOME | M |
 | D-162 | A company outside the US reads its pages | Every screen shows days as MM/DD/YYYY (the founder's word list of 10/26, `usDate`), whatever the company's date order; only files read in its order | Open | frontend/src/money.ts (usDate); src/pms/wording.py | M |
 | D-164 | A company outside the US uses the rest of the books | Addresses take a state's USPS code and a ZIP, money is dollars, owners and vendors are paid by NACHA file, tax forms are the 1099 and Schedule E, and docs/law.md covers US states only | Open | src/pms/api/addresses.py; src/pms/payouts/nacha.py; docs/law.md | M |
@@ -409,6 +408,7 @@ its ten most pressing, each with the test that would close it.
 | D-015 | One company's run fails just after its midnight (a deadlock, a refused insert) | Logged and its admins emailed once a day; its day is not marked done, so the scheduler runs it again a minute past the next hour, and each hour after until it runs | Tested | tests/test_nightly.py::test_a_company_whose_run_failed_is_tried_again_the_next_hour_not_the_next_day | M |
 | D-006 | The database server's session TimeZone is not UTC (an operator's Postgres set to a local zone) | Reports name UTC explicitly; trust_roll_over_leases reads the company's day (migration 20261105001000), and trust_check_autopay_run reads the day an account was saved as the company's (migration 20261106120000), as Python does, whatever the session's zone | Tested | tests/test_autopay.py::test_a_database_session_in_another_time_zone_counts_the_same_day | M |
 | D-094 | Autopay's bank account saved in the evening of a due day (after 8 pm Eastern) | Whether this month pays turns on the company's day of the save, in Python and in the database's check (migration 20261106120000): a save on the due day's evening pays this month | Tested | tests/test_autopay.py::test_an_account_saved_the_evening_of_the_due_day_pays_by_the_companys_day | M |
+| D-153 | A vendor assigned at 9 pm Eastern on the last day of their insurance | The check reads the step's day as the company's (migration 20261106120100): a vendor assigned at 9 pm on their policy's last day is covered, and one assigned after the company's midnight is refused | Tested | tests/test_work_order_details.py::test_a_vendor_is_covered_through_the_companys_last_day_of_their_policy | M |
 | D-005 | The browser's time zone data and the database's disagree after a DST rule change | Default dates come from the browser's Intl data, today's checks from Postgres's tzdata; nothing compares them outside CI | Open | frontend/src/money.ts:38; db/migrations/20261104000900_company_time_zone.sql:39 | L |
 | D-008 | A company moves its zone backwards after UTC midnight (New York to Hawaii at 1 am Eastern) | Its day goes back to yesterday; the scheduler only checks that the day differs from its last run, so it runs yesterday again (parts are once per date) and payments staff record next are dated yesterday | Open | src/pms/nightly.py:293 | L |
 | D-009 | A company moves its zone forwards in its evening (Hawaii to New York at 10 pm Hawaii) | Its day jumps to tomorrow at once: payments recorded tonight are dated tomorrow and the new day's run waits for the next hourly look | Open | src/pms/api/company.py:219 | L |

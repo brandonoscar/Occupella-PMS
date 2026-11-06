@@ -4,6 +4,7 @@ insurance ran out, a work order's photos, and the work orders report counting a 
 the assigned."""
 
 from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 import psycopg
 import pytest
@@ -160,6 +161,22 @@ def test_a_vendor_whose_insurance_ran_out_is_not_assigned(conn, app_conn, pmc, o
     # A renewal starting the next day covers them again.
     add_policy(conn, pmc.pmc_id, pmc.vendor_id, date(2026, 1, 6), date(2027, 1, 5), "GL-2")
     step_work_order(app_conn, pmc.pmc_id, order, "assigned", JAN_6, pmc.vendor_id)
+
+
+def test_a_vendor_is_covered_through_the_companys_last_day_of_their_policy(conn):
+    """docs/edge-cases.md D-153: the check read the step's UTC date, so a New York company
+    assigning a vendor at 9 pm on the policy's last day (UTC's next day) was refused while they
+    were still covered that day. It reads the company's day."""
+    ny = make_pmc(conn, time_zone="America/New_York")
+    order = add_work_order(conn, ny.pmc_id, ny.owners[0].property_id, None, "Leaking tap", JAN_5)
+    add_policy(conn, ny.pmc_id, ny.vendor_id, date(2025, 1, 1), date(2026, 1, 5))
+    new_york = ZoneInfo("America/New_York")
+
+    evening = datetime(2026, 1, 5, 21, tzinfo=new_york)  # 02:00 UTC on Jan 6
+    step_work_order(conn, ny.pmc_id, order, "assigned", evening, ny.vendor_id)
+    after_midnight = datetime(2026, 1, 6, 0, 30, tzinfo=new_york)
+    with pytest.raises(psycopg.errors.CheckViolation, match="insurance expired on 01/05/2026"):
+        step_work_order(conn, ny.pmc_id, order, "assigned", after_midnight, ny.vendor_id)
 
 
 def test_a_policy_not_yet_started_does_not_count_and_no_policy_blocks_nothing(conn, pmc, order):

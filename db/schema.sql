@@ -4832,7 +4832,7 @@ CREATE FUNCTION public.trust_check_work_order_step_vendor() RETURNS trigger
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
-    v_day date := (NEW.taken_at AT TIME ZONE 'UTC')::date;
+    v_day date := trust_pmc_day(NEW.pmc_id, NEW.taken_at);
     v_expires date;
 BEGIN
     IF NEW.step = 'scheduled' AND NOT EXISTS (
@@ -35947,4 +35947,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261106110000'),
     ('20261106110100'),
     ('20261106110200'),
-    ('20261106120000');
+    ('20261106120000'),
+    ('20261106120100');

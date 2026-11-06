@@ -173,6 +173,10 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   company's day. On a database server whose session time zone is east of UTC, the database's own
   check was stricter than the app's and failed the company's whole nightly run; both now read the
   company's day. Migration `20261106120000`.
+- **Fixed: a vendor refused on the last day of their insurance.** Assigning a vendor after 7 pm
+  Eastern on their policy's last day was refused as if it had run out, because the check counted
+  UTC's day. It now counts the company's: covered through the last day, refused from the next.
+  Migration `20261106120100`.
 - **Fixed: Stripe's answers in an old API version, and a webhook missing its events.** Every
   call to Stripe now names the API version whose shapes the PMS reads (`2024-06-20`), so an
   account whose default is older than `latest_charge` no longer fails every paid report; and
