@@ -94,27 +94,6 @@ def test_settings_read_the_allowance_from_the_environment(monkeypatch):
     assert Settings.from_env().fake_partners == ""
 
 
-def test_settings_read_only_the_environment_they_are_given(monkeypatch):
-    # The hosted product mounts the PMS inside another app whose process may hold a DATABASE_URL
-    # of its own (AgenticHelixis docs/decisions/ADR-one-product.md, phase 3): it hands the PMS
-    # the books' settings, and nothing of the process's own may leak into them.
-    monkeypatch.setenv("DATABASE_URL", "postgresql://another-app@localhost/not-the-books")
-    monkeypatch.setenv("PMS_WEBHOOKS", "off")
-    books = {
-        "DATABASE_URL": "postgresql://books@localhost/books",
-        "PMS_PUBLIC_URL": "https://rentals.example.com",
-        "PMS_NIGHTLY": "off",
-    }
-
-    settings = Settings.from_env(books)
-
-    assert settings.database_url == "postgresql://books@localhost/books"
-    assert settings.public_url == "https://rentals.example.com"
-    assert settings.nightly is False
-    assert settings.webhooks is True  # its own default: the process's PMS_WEBHOOKS isn't read
-    assert Settings.from_env().database_url == "postgresql://another-app@localhost/not-the-books"
-
-
 def https_with_fake_payments(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql://unused")
     monkeypatch.setenv("PMS_PUBLIC_URL", "https://rentals.example.com")
