@@ -1690,7 +1690,7 @@ tests = [
 
 [[invariant]]
 id = "autopay-each-due-date-once-by-its-rule"
-statement = "Autopay (migration 0151): each autopay comes to each rent due date at most once, starting a payment of what its rule says (a fixed amount, or what the lease owes by then less what is on its way from payments not yet in the books, never more than the amount the tenant set) or recording why none (a payment hold in force on the due date, nothing owed, payments online off); never before its bank account was saved, never after it stopped, and it stops by itself after two payments in a row didn't go through (failed, came back, or given up before the partner took it and never paid; docs/edge-cases.md P-065) or when the lease ended or the tenant left. Each payment is sent to the partner under an id fixed by the autopay and the due date, and the partner, asked again (its answer lost, a run that stopped halfway, two runs at once), takes it once; none is sent once something was reported of it or its autopay stopped, and one never sent is given up (expired), so it is no longer on its way. The payment reaches the books only as any payment online does. Append-only."
+statement = "Autopay (migration 0151): each autopay comes to each rent due date at most once, starting a payment of what its rule says (a fixed amount, or what the lease owes by then less what is on its way from payments not yet in the books, never more than the amount the tenant set) or recording why none (a payment hold in force on the due date, nothing owed, payments online off); never before its bank account was saved, never after it stopped, and it stops by itself after two payments in a row didn't go through (failed, came back, or given up before the partner took it and never paid; docs/edge-cases.md P-065) or when the lease ended or the tenant left. Each payment is sent to the partner under an id fixed by the autopay and the due date, and the partner, asked again (its answer lost, a run that stopped halfway, two runs at once), takes it once; none is sent once something was reported of it or its autopay stopped (a stop and a send wait for each other under the autopay's lock, so a stop under way keeps its payment from being sent; docs/edge-cases.md C-081), and one never sent is given up (expired), so it is no longer on its way. The payment reaches the books only as any payment online does. Append-only."
 tests = [
   "tests/properties/test_autopay_properties.py::test_autopay_pays_each_due_date_once_by_its_rule_and_the_partner_takes_each_once",
   "tests/test_autopay.py::test_a_balance_autopay_pays_what_is_owed_on_the_due_day_once",
@@ -1703,6 +1703,8 @@ tests = [
   "tests/api/test_autopay_api.py::test_run_rent_now_starts_the_autopay_payment_which_goes_to_the_partner_and_the_books",
   "tests/test_autopay.py::test_an_autopay_whose_payments_were_never_sent_two_months_running_stops_by_itself",
   "tests/test_autopay.py::test_a_payment_given_up_that_the_bank_paid_after_all_went_through",
+  "tests/test_autopay.py::test_a_stop_under_way_as_its_payment_is_sent_keeps_it_from_being_sent",
+  "tests/test_autopay.py::test_a_stop_while_its_payment_is_sent_waits_until_it_is_recorded",
 ]
 
 [[invariant]]

@@ -1053,7 +1053,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   Once that commits, each payment goes to the partner (`trust_autopay_submissions`), which finds
   one it took before under the same id rather than take two; one it can't take now is tried at
   the next run, for three days, and none is sent once something was reported of it or its autopay
-  stopped. One never sent is given up at the next run a day after that, or once its autopay
+  stopped: it is checked, sent and recorded under the autopay's advisory lock, which a stop takes
+  too, so a stop under way keeps it from being sent and one that comes while it is with the
+  partner waits until it is recorded (C-081). One never sent is given up at the next run a day after that, or once its autopay
   stopped: marked expired (`pms-not-sent`), so it is no longer on its way, and the tenant is
   emailed (`autopay_not_sent`); a report that the bank paid it still counts. While the server
   sends email, the tenant is emailed of each payment before the bank is debited. It stops (`trust_autopay_stops`, once) when the tenant or

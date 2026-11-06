@@ -132,6 +132,11 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   once (two tabs, or a resend while the first ran) charged the fee twice. A lease is now charged
   one lease-break fee: the same end again changes nothing, and another end with the fee is
   refused, saying the fee was charged already.
+- **Fixed: autopay taken just after it was turned off.** A tenant who turned autopay off while
+  the night's payments were being sent could still be debited, though the stop's email said
+  nothing more would be taken. A payment is now checked and sent while its autopay is held, so a
+  stop under way keeps it from being sent, and a stop that comes while it is with the payments
+  partner waits until it is recorded.
 - **Fixed: Stripe's answers in an old API version, and a webhook missing its events.** Every
   call to Stripe now names the API version whose shapes the PMS reads (`2024-06-20`), so an
   account whose default is older than `latest_charge` no longer fails every paid report; and

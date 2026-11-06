@@ -14,9 +14,11 @@ from helpers import (
     charge,
     end_lease,
     hold_payments,
+    in_background,
     make_pmc,
     open_account,
     open_lease,
+    wait_until_blocked,
 )
 
 from pms import autopay, payments
@@ -648,6 +650,64 @@ def test_a_stopped_autopays_payment_is_never_sent(conn, app_conn, pmc, lease, te
     assert run(app_conn, pmc).given_up == 1
     assert events(conn, autopay.payment_id_for(theirs, MONTH)) == [("expired", autopay.GAVE_UP)]
     assert autopay.submit_waiting(app_conn, Counting(), pmc.pmc_id) == 0
+
+
+@pytest.mark.timing
+def test_a_stop_under_way_as_its_payment_is_sent_keeps_it_from_being_sent(
+    conn, app_conn, pmc, lease, tenant, database_url
+):
+    # The tenant turns autopay off just as its payment is sent (docs/edge-cases.md C-081): the
+    # send waits for the stop and sends nothing, as the stop's email says.
+    online(conn, pmc)
+    mine = set_up(conn, pmc, lease, tenant)
+    run(app_conn, pmc)
+    partner = Counting()
+    with psycopg.connect(database_url) as turning_off:
+        autopay.stop(turning_off, pmc.pmc_id, mine, "tenant")  # not committed yet
+
+        thread, pid, outcome = in_background(
+            database_url, lambda worker: autopay.submit_waiting(worker, partner, pmc.pmc_id)
+        )
+        wait_until_blocked(conn, pid)
+        turning_off.commit()
+        thread.join(timeout=30)
+
+    assert outcome == {"result": 0}
+    assert partner.charged == []
+
+
+@pytest.mark.timing
+def test_a_stop_while_its_payment_is_sent_waits_until_it_is_recorded(
+    conn, app_conn, pmc, lease, tenant, database_url
+):
+    # The other way round: a stop that comes while the payment is with the partner waits until
+    # the payment is recorded as sent, so it stops what comes after it.
+    online(conn, pmc)
+    mine = set_up(conn, pmc, lease, tenant)
+    run(app_conn, pmc)
+    stopping: dict = {}
+
+    class TurnedOffMeanwhile(Counting):
+        def charge(self, payment_id, amount, memo, account):
+            def turn_off(worker):
+                with worker.transaction():
+                    return autopay.stop(worker, pmc.pmc_id, mine, "tenant")
+
+            thread, pid, outcome = in_background(database_url, turn_off)
+            wait_until_blocked(conn, pid)
+            stopping.update(thread=thread, outcome=outcome)
+            return super().charge(payment_id, amount, memo, account)
+
+    assert autopay.submit_waiting(app_conn, TurnedOffMeanwhile(), pmc.pmc_id) == 1
+    stopping["thread"].join(timeout=30)
+
+    assert stopping["outcome"] == {"result": True}
+    sent, stopped_at = conn.execute(
+        "SELECT s.created_at, st.created_at FROM trust_autopay_submissions AS s,"
+        " trust_autopay_stops AS st WHERE s.payment_id = %s AND st.autopay_id = %s",
+        (autopay.payment_id_for(mine, MONTH), mine),
+    ).fetchone()
+    assert sent < stopped_at
 
 
 def test_the_payment_id_is_the_same_for_an_autopay_and_due_date():

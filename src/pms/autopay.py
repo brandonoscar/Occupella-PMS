@@ -14,7 +14,8 @@ Two steps, so a payment is never asked of the bank twice and never asked without
    in a row didn't go through. While the server sends email, the tenant is told of each payment
    before the bank is debited.
 2. `submit_waiting`, after that commits: each payment started and not yet accepted is sent to the
-   partner, each in a transaction of its own, then recorded as accepted. The partner finds a
+   partner, each in a transaction of its own that checks it, sends it and records it as accepted
+   under its autopay's lock, which a stop takes too (C-081). The partner finds a
    payment it already made under the same id rather than making another (pms.payments), so a run
    that stopped between the two steps, or two runs at once, debit the tenant once. One the partner
    can't take now is tried again at the next run, for three days, and never once its autopay
@@ -194,9 +195,15 @@ def left_on(conn: psycopg.Connection[Any], autopay: Active, day: date) -> bool:
     )
 
 
+# An autopay's lock: a stop and the sending of its payment wait for each other, so a payment is
+# sent only while its autopay stands and a stop under way keeps it from being sent (C-081).
+LOCK = "SELECT pg_advisory_xact_lock(hashtextextended('autopay ' || %s::uuid, 0))"
+
+
 def stop(conn: psycopg.Connection[Any], pmc_id: UUID, autopay_id: UUID, why: Why) -> bool:
     """Stops an autopay, once; False when it was stopped already. Staff's stop names them
-    (trust.staff_id, set for the request)."""
+    (trust.staff_id, set for the request). A payment of it being sent is recorded first."""
+    conn.execute(LOCK, (autopay_id,))
     made = conn.execute(
         "INSERT INTO trust_autopay_stops (pmc_id, autopay_id, why) VALUES (%s, %s, %s)"
         " ON CONFLICT (autopay_id) DO NOTHING RETURNING id",
@@ -459,7 +466,7 @@ WHERE NOT EXISTS (SELECT 1 FROM trust_autopay_submissions AS s WHERE s.payment_i
 # Autopay payments still to be sent, started in the last few days.
 WAITING = (
     """
-SELECT r.pmc_id, r.payment_id, p.amount + p.tenant_fee, p.lease_id, p.partner,
+SELECT r.pmc_id, r.payment_id, r.autopay_id, p.amount + p.tenant_fee, p.lease_id, p.partner,
        acct.partner_customer, acct.partner_method, acct.partner_mandate
 FROM trust_autopay_runs AS r
 JOIN trust_online_payments AS p ON p.id = r.payment_id
@@ -481,36 +488,39 @@ def submit_waiting(
 ) -> int:
     """Sends each autopay payment started and not yet accepted to its company's partner (of one
     PMC, or all), each in a transaction of its own; the number accepted. One the partner can't
-    take now waits for the next run, for RETRY_DAYS."""
+    take now waits for the next run, for RETRY_DAYS. Each is checked, sent and recorded under its
+    autopay's lock, so a stop under way keeps it from being sent and a stop that comes while it
+    is with the partner waits until it is recorded (docs/edge-cases.md C-081)."""
     resolver = payments.Resolver.of(partner)
     since = (now or datetime.now(UTC)) - timedelta(days=RETRY_DAYS)
     with conn.transaction():
         waiting = conn.execute(WAITING, {"since": since, "pmc": pmc_id}).fetchall()
     accepted = 0
-    for pmc, payment, total, lease, name, customer, method, mandate in waiting:
+    for pmc, payment, autopay_id, total, lease, name, customer, method, mandate in waiting:
         with conn.transaction():
             # The company's partner now: its own keys, else the server's; one that changed
             # since the payment started doesn't take it.
             chosen = resolver.for_pmc(conn, pmc)
             if chosen is None or chosen.name != name:
                 continue
-            # Stopped (or given up) since it was listed: never sent.
+            conn.execute(LOCK, (autopay_id,))
+            # Stopped (or given up, or sent by another run) since it was listed: never sent.
             if conn.execute(STILL_UNSENT, (payment,)).fetchone() is None:
                 continue
             memo = rent.lease_memo(conn, lease)
-        try:
-            ref = chosen.charge(
-                payment,
-                Decimal(total),
-                f"Rent – {memo}",
-                payments.Account(customer, method, mandate),
-            )
-        except payments.PartnerFailed:
-            log.exception(
-                "the payments partner didn't take autopay payment %s; tried again later", payment
-            )
-            continue
-        with conn.transaction():
+            try:
+                ref = chosen.charge(
+                    payment,
+                    Decimal(total),
+                    f"Rent – {memo}",
+                    payments.Account(customer, method, mandate),
+                )
+            except payments.PartnerFailed:
+                log.exception(
+                    "the payments partner didn't take autopay payment %s; tried again later",
+                    payment,
+                )
+                continue
             made = conn.execute(
                 "INSERT INTO trust_autopay_submissions (payment_id, pmc_id, partner_ref)"
                 " VALUES (%s, %s, %s) ON CONFLICT (payment_id) DO NOTHING RETURNING payment_id",
