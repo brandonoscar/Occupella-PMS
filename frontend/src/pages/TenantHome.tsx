@@ -26,6 +26,7 @@ import { ManagerCard } from "./ManagerCard";
 import { TenantAutopayCard } from "./AutopayCards";
 import { PayOnlineCard } from "./PayOnlineCard";
 import { CalendarCard } from "./CalendarCard";
+import { TwoStepCard } from "./TwoStepCard";
 import { MyContactCard } from "../components/ContactCard";
 import { MessagesCard } from "../components/MessagesCard";
 import type { NavEntry } from "../components/Shell";
@@ -119,7 +120,7 @@ const HEADERS: Record<TenantSection, [string, string]> = {
   lease: ["Your lease", "Your lease, its files, renters insurance, renewals and moving out."],
   repairs: ["Repairs", "Ask for a repair and follow how it's going."],
   messages: ["Messages", "Write to your manager and read their answers."],
-  profile: ["Your profile", "Your contact details, your calendar and your manager's."],
+  profile: ["Your profile", "Your contact details, how you sign in, your calendar and your manager's."],
 };
 
 
@@ -666,6 +667,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
       {section === "profile" && (
         <>
           <MyContactCard name={me.name} />
+          <TwoStepCard />
           <CalendarCard path="/api/tenant/calendar"
             intro="Your rent due days, repair visits and your lease's last day, in your own calendar app (Google, Apple, Outlook). It updates by itself." />
         </>

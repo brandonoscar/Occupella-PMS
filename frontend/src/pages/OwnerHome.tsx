@@ -18,6 +18,7 @@ import { OwnerYearEnd } from "./OwnerYearEnd";
 import { Form } from "../components/Form";
 import { ManagerCard } from "./ManagerCard";
 import { MyContactCard } from "../components/ContactCard";
+import { TwoStepCard } from "./TwoStepCard";
 import { MessagesCard } from "../components/MessagesCard";
 import type { NavEntry } from "../components/Shell";
 import { OwnerPropertyCard, OwnerRepairsCard } from "./OwnerPortalPages";
@@ -70,7 +71,7 @@ const HEADERS: Record<OwnerSection, [string, string]> = {
   repairs: ["Repairs", "The work your manager opened at your properties, and how it's going."],
   documents: ["Documents", "What your manager shared with you."],
   messages: ["Messages", "Write to your manager and read their answers."],
-  profile: ["Your profile", "Your contact details, and your manager's."],
+  profile: ["Your profile", "Your contact details, how you sign in, and your manager's."],
 };
 
 export function OwnerHome({ me, section = "overview", propertyId }: {
@@ -205,6 +206,7 @@ export function OwnerHome({ me, section = "overview", propertyId }: {
       {section === "profile" && (
         <>
           <MyContactCard name={me.name} who="owner" />
+          <TwoStepCard />
           <ManagerCard />
         </>
       )}
