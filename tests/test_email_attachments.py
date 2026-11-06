@@ -189,6 +189,40 @@ def test_an_attachment_that_fails_in_any_way_is_a_failed_delivery_and_stops_noth
     ]
 
 
+def test_an_email_whose_html_fails_is_a_failed_delivery_and_stops_nothing_behind_it(
+    conn, app_conn, pmc, tag, monkeypatch
+):
+    # docs/edge-cases.md P-087: the HTML made from an email's text (or the sender) failing with
+    # an error the delivery doesn't name, a ValueError say, is that email's failed attempt; the
+    # emails behind it still go in the same run.
+    tenant = tenant_of(conn, pmc)
+    writer = add_staff(conn, pmc.pmc_id, "Writer 1")
+    write(conn, pmc, "message", f"{tag} first", tenant_id=tenant, sent_by=writer)
+    write(conn, pmc, "message", f"{tag} second", tenant_id=tenant, sent_by=writer)
+    render = email.email_html.render
+
+    def fails_once(text, kind, subject, company, lines):
+        if subject.endswith("first"):
+            raise ValueError("a figure the table can't lay out")
+        return render(text, kind, subject, company, lines)
+
+    monkeypatch.setattr(email.email_html, "render", fails_once)
+    keeping = Keeping()
+    email.deliver_pending(app_conn, keeping)
+
+    assert [message.subject for message in keeping.sent if tag in message.subject] == [
+        f"{tag} second"
+    ]
+    assert conn.execute(
+        "SELECT e.subject, d.error FROM trust_email_deliveries AS d JOIN trust_emails AS e"
+        " ON e.id = d.email_id WHERE e.pmc_id = %s ORDER BY e.subject",
+        (pmc.pmc_id,),
+    ).fetchall() == [
+        (f"{tag} first", "ValueError: a figure the table can't lay out"),
+        (f"{tag} second", None),
+    ]
+
+
 def test_smtp_sends_the_attachment_beside_the_text_and_html(monkeypatch):
     seen = []
 

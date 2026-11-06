@@ -28,12 +28,12 @@ answer in the portal for everything that can fail.
 | [Money and the ledger](#money-and-the-ledger) | 151 | 113 | 7 | 31 | 4 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 82 | 15 | 67 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
-| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 69 | 8 | 88 | 22 |
+| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 70 | 8 | 87 | 21 |
 | [Bad files and imports](#bad-files-and-imports) | 152 | 66 | 16 | 70 | 1 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 73 | 14 | 85 | 5 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1160** | **595** | **110** | **455** | **54** |
+| **All** | **1160** | **596** | **110** | **454** | **53** |
 
 ## Open, high risk: the work list
 
@@ -88,7 +88,6 @@ its ten most pressing, each with the test that would close it.
 - P-065: The company changes Stripe accounts (server's to own, or new keys) with autopays saved at the old one
 - P-067: Stripe leaves an off-session payment waiting on the tenant (requires_action; NOT VERIFIED for ACH)
 - P-068: A hand payment left on Stripe's page whose expired report never comes
-- P-087: The attachment or HTML fails with something other than a database or lookup error (fpdf, ValueError, HTTPException; NOT VERIFIED that any does today)
 - P-115: The bank returns an owner's ACH draw (account closed, no account)
 - P-116: The bank returns a vendor's ACH payment
 - P-121: A printed check is lost, misprinted or voided
@@ -648,7 +647,6 @@ its ten most pressing, each with the test that would close it.
 | P-065 | The company changes Stripe accounts (server's to own, or new keys) with autopays saved at the old one | The partner name is still "stripe", so the new account is asked to charge a customer it doesn't know; fails three days, given up, tenant emailed every month; a give-up never counts toward stopping it and staff aren't told | Open | src/pms/autopay.py:162-165, 476-478 | H |
 | P-067 | Stripe leaves an off-session payment waiting on the tenant (requires_action; NOT VERIFIED for ACH) | Recorded as sent, and no report follows; it stays "on its way", so every later balance autopay pays less and the tenant falls behind into late fees | Open | src/pms/autopay.py:128-137, 484-501 | H |
 | P-068 | A hand payment left on Stripe's page whose expired report never comes | Counted on its way forever, lowering every balance autopay | Open | src/pms/autopay.py:128-137 | H |
-| P-087 | The attachment or HTML fails with something other than a database or lookup error (fpdf, ValueError, HTTPException; NOT VERIFIED that any does today) | Not caught: the pass stops at that email, which is first again next time, so every later email waits behind it unrecorded | Open | src/pms/email.py:662-672 | H |
 | P-115 | The bank returns an owner's ACH draw (account closed, no account) | No way to record it: the draw stays paid and the owner's balance wrong until two staff post a journal entry | Open | src/pms/api/payouts.py (no return path); src/pms/api/journal.py | H |
 | P-116 | The bank returns a vendor's ACH payment | The bill stays Paid and can't be voided once money was taken | Open | src/pms/api/payables.py:1309-1328 (void refused once money was taken) | H |
 | P-121 | A printed check is lost, misprinted or voided | Reprinting gives the same numbers again; there is no void and reissue, and the money stays recorded as gone | Open | src/pms/api/payouts.py:699-728 | H |
@@ -658,6 +656,7 @@ its ten most pressing, each with the test that would close it.
 | P-024 | A return (dispute) arrives before the paid report lands (paid kept failing on its fee, or isn't subscribed) | As C-087: refused for now so Stripe retries; a return after a failure is still acknowledged | Tested | tests/api/test_online_payments_api.py::test_a_return_for_a_payment_that_failed_is_acknowledged_and_changes_nothing | H |
 | P-040 | Paid online for a property with two owner accounts and no ownership shares | Checkout says off for such a lease; the waiting list names the owners to choose among (choose_account), Record takes account; the card says when the list couldn't load | Tested | tests/api/test_online_payments_api.py::test_a_property_with_two_owner_accounts_and_no_shares_takes_no_payment_online, ::test_a_payment_paid_after_a_second_owner_account_waits_for_staff_to_choose_one; frontend/src/pages/OnlinePaymentsCards.test.tsx (asks whose a payment is..., says so when the list couldn't load) | H |
 | P-075 | SMTP server hangs | Delivery after a write, and autopay's submissions, run one at a time in a process (outbox.OneAtATime): a write while one runs returns at once and makes it run once more after, so a hung mail server or partner holds one pooled connection, never the pool | Tested | tests/api/test_outbox.py::test_many_writes_at_once_lend_the_slow_partner_one_connection | H |
+| P-087 | The attachment or HTML fails with something other than a database or lookup error (fpdf, ValueError, HTTPException; NOT VERIFIED that any does today) | Any error making an email's file or HTML, or sending it, is that attempt's failed delivery with its error; the emails behind it go out in the same run | Tested | tests/test_email_attachments.py::test_an_email_whose_html_fails_is_a_failed_delivery_and_stops_nothing_behind_it; ::test_an_attachment_that_fails_in_any_way_is_a_failed_delivery_and_stops_nothing_behind_it | H |
 | P-111 | PMS_DATA_KEY changed (one is set, but not the one that sealed the numbers) | Before anything is recorded, each ACH payee's bank account number must open under the server's key; one that doesn't is refused (409 naming them: pay by check, or run with the key that sealed it), and checks need no key | Tested | tests/api/test_payouts_api.py::test_a_server_with_another_key_records_no_ach_payout | H |
 | P-129 | Every amount positive with a separate Type (Debit or Credit) column | Each line's way is read from the type column (Debit, Credit, Dr, Cr, ACH_DEBIT...) when every amount is positive; a type saying neither is refused with its line; signed amounts keep their signs | Tested | tests/test_statement_files.py::test_a_csv_of_positive_amounts_reads_each_ones_way_from_its_type | H |
 | P-004 | Stripe slow (up to 20 s a call) while many tenants pay at once | Each checkout holds one of the pool's 10 connections and an open transaction for the whole Stripe call; staff pages then get 503 busy | Open | src/pms/payments.py:183; src/pms/api/app.py:311 (max_size=10); src/pms/api/online_payments.py:334-337 | M |
@@ -799,16 +798,11 @@ its ten most pressing, each with the test that would close it.
 
 ### Most pressing open, with the test that would close each
 
-1. P-040: an API test that a paid online payment on a two-owner property without shares appears in GET /api/payments/waiting (not a 422) and that Record takes an owner account; a vitest that the Waiting card shows an error notice when the GET fails.
-2. P-024: a webhook test that a return arriving before paid is kept (or answered 5xx so Stripe resends) and settles once paid lands.
-3. P-027 and P-028: Stripe event tests for charge.refunded and charge.dispute.closed (won), each read and recorded, or at least listed for staff.
-4. P-013 (with P-011, P-012, P-051): a nightly sweep that lists payments started more than a few days ago with no report, shown on Banking and the Dashboard, and a test that one appears there.
-5. P-048 and P-049: a test that an https server refuses sk_test_ keys (or that a report whose livemode doesn't match the keys is refused), and a test that old test keys stop counting once live keys are saved.
-6. P-130: a preview of the statement's lines and totals before Import statement, confirmed with AskFirst, and a browser test; plus a way to set aside a statement imported in error.
-7. P-087: a test that a sender or attachment raising a ValueError records a failed delivery and the next email still goes.
-8. P-075: a test that deliveries never hold more than one pool connection at once, with SMTP set to hang, and that staff pages still answer.
-9. P-111: an API test that Pay owners by ACH refuses before recording when a payee's sealed number doesn't open under the current PMS_DATA_KEY.
-10. P-065: an autopay test that a company changing Stripe accounts stops (or flags) autopays saved at the old one and tells the tenant to save their bank again.
+1. P-027 and P-028: Stripe event tests for charge.refunded and charge.dispute.closed (won), each read and recorded, or at least listed for staff.
+2. P-013 (with P-011, P-012, P-051): a nightly sweep that lists payments started more than a few days ago with no report, shown on Banking and the Dashboard, and a test that one appears there.
+3. P-048 and P-049: a test that an https server refuses sk_test_ keys (or that a report whose livemode doesn't match the keys is refused), and a test that old test keys stop counting once live keys are saved.
+4. P-130: a preview of the statement's lines and totals before Import statement, confirmed with AskFirst, and a browser test; plus a way to set aside a statement imported in error.
+5. P-065: an autopay test that a company changing Stripe accounts stops (or flags) autopays saved at the old one and tells the tenant to save their bank again.
 
 ## Bad files and imports
 
@@ -969,16 +963,7 @@ its ten most pressing, each with the test that would close it.
 
 ### Most pressing open, with the test that would close each
 
-1. F-015 / F-016: build a deposit statement whose move-out photo is a PNG declaring 30000 x 30000 pixels. Assert the statement still downloads, with a could-not-be-added page. Then queue its email ahead of a receipt and assert deliver_pending records a failed delivery and still sends the receipt (tests/test_deposit_statement.py, tests/test_email_attachments.py).
-2. F-064: an API test bringing in a payment file line "1234,56" (and a charges file with a decimal comma). Assert it is refused saying the line, and that nothing is recorded (tests/api/test_payment_files_api.py, tests/test_statement_files.py).
-3. F-061: a parametrized test that a day-first date ("05/01/2026" written for 5 January) is refused or asked about, never read as May 1, in payment files and charges (tests/test_statement_files.py::read_date cases).
-4. F-083: send the same cutover items file twice. Assert the second adds nothing ({"added": 0, "kept": n}) and that the tie-out is unchanged (tests/api/test_switch.py).
-5. F-076: one charges file with two identical $25.00 fees due the same day. Assert both come in, or that the file is refused saying it can't tell them apart from a resend (tests/api/test_switch.py).
-6. F-077: a unit with an ended lease and a new one, and a charges row dated after the new move-in. Assert it is refused for naming no tenant, or goes to the lease a tenant column names (tests/api/test_switch.py).
-7. F-129: a property test in tests/properties/test_quickbooks_properties.py. Two tenants of one name at two properties, and two owners' accounts. Assert every ledger account has a QuickBooks name of its own, in IIF and in the Online CSV.
-8. F-122: export trust_report_audit_log as PDF and Excel over a day a lease offer was made, under a time limit marked timing. Assert it finishes, no Excel cell passes 32,767 characters, and the offer's PDF bytes never appear in the detail (tests/test_exports.py).
-9. F-126: build records.zip for a company holding, say, 200 MB of documents under a memory and time ceiling (tools/speed.py or a nightly test). Assert it streams, or stays under the ceiling.
-10. F-010: an API test where a tenant uploads a PDF holding /JavaScript or /EmbeddedFile, and the applicant apply page sends one as proof of income. Assert it is refused, or served with the script stripped, per whatever rule the founder picks (tests/api/test_portals_two_api.py, tests/api/test_applicant_details_api.py).
+1. F-010: an API test where a tenant uploads a PDF holding /JavaScript or /EmbeddedFile, and the applicant apply page sends one as proof of income. Assert it is refused, or served with the script stripped, per whatever rule the founder picks (tests/api/test_portals_two_api.py, tests/api/test_applicant_details_api.py).
 
 ## People doing the unexpected, permissions and security
 
