@@ -4450,6 +4450,9 @@ test("staff make a tenant a tenant at a second property and lease them a unit th
   );
   await page.getByRole("alertdialog").getByRole("button", { name: "This is them" }).click();
   await expect(same.getByRole("alert")).toContainText("Drew Sample signs in to the portal: link Taylor Demo to them instead");
+  // The refused panel stays open with its reason; staff close it to go on.
+  await same.getByRole("button", { name: "Close" }).click();
+  await expect(same).toBeHidden();
 
   // Taylor signs in once and has both homes; a repair asked for at Aspen Row is theirs there.
   const tenant = await browser.newPage();
