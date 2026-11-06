@@ -59,13 +59,6 @@ ORDER BY r.received_on, r.created_at, r.id
 """
 
 
-def found(conn: psycopg.Connection[Any], pmc_id: UUID, receipt_id: UUID) -> Unapplied:
-    for each in listed(conn, pmc_id, True):
-        if each.id == receipt_id:
-            return each
-    raise HTTPException(404, "no such unapplied cash")
-
-
 def listed(conn: psycopg.Connection[Any], pmc_id: UUID, everything: bool) -> list[Unapplied]:
     return [
         Unapplied(
