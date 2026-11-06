@@ -1,8 +1,9 @@
--- A company's chart of accounts (migrations 20261106000200 to 20261106000230). Worked by hand:
--- the fixed lines keep their starting codes (1000 trust bank cash; 2000 to 2400 what the trust
--- holds; 4000 to 4400 the income statement's own income lines; 5000 bills in no account, 5800
--- leasing fees, 6100 management fees, 6900 deposit interest) but rent, which staff numbered
--- 4001. Three charge types take 4501, 4502 and 4503 as they are added: Application fee (the
+-- A company's chart of accounts (migrations 20261106000200 to 20261106000230, and the second
+-- pass's lines of 20261106000243). Worked by hand: the fixed lines keep their starting codes
+-- (1000 trust bank cash; 2000 to 2400 what the trust holds, with 2150 owner-held deposits, a
+-- memo, and 2250 unapplied cash; 4000 to 4400 the income statement's own income lines, with 4010
+-- concessions, a contra to rent; 5000 bills in no account, 5800 leasing fees, 6100 management
+-- fees, 6900 deposit interest) but rent, which staff numbered 4001. Three charge types take 4501, 4502 and 4503 as they are added: Application fee (the
 -- owner's), Admin fee (the company keeps it) and Key copy, renamed Key replacement and then
 -- archived. Expense accounts take the next code of their Schedule E line's block: Plumbing and
 -- Electrical on line 14 take 6401 and 6402, Water on line 17 takes 6701, Ads on line 5 takes

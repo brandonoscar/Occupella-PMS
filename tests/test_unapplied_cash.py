@@ -244,3 +244,32 @@ def test_unapplied_cash_is_never_rewritten(conn):
     ):
         with pytest.raises(psycopg.errors.RestrictViolation, match="append-only"):
             conn.execute(f"DELETE FROM {table}")  # noqa: S608
+
+
+def test_the_owner_statement_names_a_payment_from_unapplied_cash(conn):
+    pmc = make_pmc(conn)
+    account = unapplied_account(conn, pmc)
+    receive(conn, pmc, account, "200.00")
+    post(
+        conn,
+        pmc.pmc_id,
+        f"payment/{uuid.uuid4()}",
+        [(account, pmc.owners[0].account, Decimal("200.00"))],
+        datetime.combine(JAN_10, datetime.min.time(), UTC),
+        {"kind": "tenant payment", "memo": "Rent payment"},
+    )
+
+    postings = conn.execute(
+        "SELECT detail, amount FROM trust_report_owner_statement(%s, %s, %s, %s)"
+        " WHERE item = 'posting'",
+        (
+            pmc.pmc_id,
+            pmc.owners[0].owner_id,
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 2, 1, tzinfo=UTC),
+        ),
+    ).fetchall()
+
+    assert postings == [
+        ("unapplied_cash: received, not yet applied - Rent payment", Decimal("200.00"))
+    ]

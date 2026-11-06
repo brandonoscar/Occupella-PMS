@@ -67,10 +67,13 @@ def test_staff_read_every_account_by_section_and_code(client, staff):
         ("liability", "2100", "Tenant security deposits"),
         ("liability", "2110", "Tenant pet deposits"),
         ("liability", "2120", "Tenant key deposits"),
+        ("liability", "2150", "Owner-held deposits (memo)"),
         ("liability", "2200", "Prepaid rent"),
+        ("liability", "2250", "Unapplied cash"),
         ("liability", "2300", "Vendor payables"),
         ("liability", "2400", "Company fees held in trust"),
         ("income", "4000", "Rent"),
+        ("income", "4010", "Concessions"),
         ("income", "4100", "Recurring charges"),
         ("income", "4200", "Late fees"),
         ("income", "4300", "NSF fees"),
@@ -112,7 +115,8 @@ def test_staff_give_an_account_another_code_and_a_code_taken_is_refused_in_words
     assert (moved, again) == ({"code": "4001", "changed": True}, {"code": "4001", "changed": False})
     refused(taken, 409, "code 4001 is Rent's already")
     refused(section, 409, "an income account's code is from 4000 to 4999, not 6001")
-    refused(kept, 409, "code 4010 is kept for concessions")
+    # Kept for later in the first pass, 4010 is the concessions line's since the second.
+    refused(kept, 409, "code 4010 is Concessions's already")
     assert row(client, line="rent")["code"] == "4001"
     # One row for the change, naming who made it; the same code again wrote nothing.
     assert conn.execute(

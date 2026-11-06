@@ -6,8 +6,8 @@ income statement's own income and expense lines, the company's charge types and 
 accounts (migrations 20261106000200 to 20261106000230). Staff give any account another code,
 rename or archive (and bring back) a charge type or an expense account, and say who keeps a
 charge type's fees. Each edit is a new row, naming who made it; the database refuses a code
-taken, outside its section or kept for later, a name taken, and archiving what an open bill or a
-running monthly charge still uses. Nothing here moves money or rewrites what was posted.
+taken or outside its section, a name taken, and archiving what an open bill or a running monthly
+charge still uses. Nothing here moves money or rewrites what was posted.
 """
 
 from __future__ import annotations
@@ -33,10 +33,15 @@ LineKey = Literal[
     "tenant_deposit",
     "pet_deposit",
     "key_deposit",
+    # The second pass's (migration 20261106000243): a memo of deposits owners hold outside
+    # trust, money received not yet applied, and concessions, a contra to rent.
+    "owner_held_deposits",
     "prepaid_rent",
+    "unapplied_cash",
     "vendor_payable",
     "pmc_income",
     "rent",
+    "concessions",
     "recurring_charges",
     "late_fees",
     "nsf_fees",

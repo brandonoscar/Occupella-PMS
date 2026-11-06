@@ -576,7 +576,16 @@ def add_expense_account(session: Staff, conn: Conn, new: NewExpenseAccount) -> C
 
 
 # The income statement's own income lines: a charge type takes none of their names.
-INCOME_LINES = ("rent", "recurring charges", "late fees", "nsf fees", "other charges")
+# The income statement's own income lines, which no kind of fee is named as (concessions, a contra
+# to rent, since migration 20261106000243).
+INCOME_LINES = (
+    "rent",
+    "recurring charges",
+    "late fees",
+    "nsf fees",
+    "other charges",
+    "concessions",
+)
 
 
 class ChargeType(Named):

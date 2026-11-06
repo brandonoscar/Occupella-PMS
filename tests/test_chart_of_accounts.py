@@ -97,6 +97,10 @@ def test_every_fixed_line_starts_with_its_code(conn):
         "prepaid_rent": "2200",
         "vendor_payable": "2300",
         "pmc_income": "2400",
+        # The second pass's (migration 20261106000243).
+        "owner_held_deposits": "2150",
+        "unapplied_cash": "2250",
+        "concessions": "4010",
         "rent": "4000",
         "recurring_charges": "4100",
         "late_fees": "4200",
@@ -163,16 +167,30 @@ def test_codes_are_unique_in_a_company_but_not_across_companies(conn):
         ("prepaid_rent", "1100", "a liability account's code is from 2000 to 2999, not 1100"),
         ("rent", "5100", "an income account's code is from 4000 to 4999, not 5100"),
         ("management_fees", "7000", "an expense account's code is from 5000 to 6999, not 7000"),
-        ("owner_property", "2150", "code 2150 is kept for owner-held deposits"),
-        ("prepaid_rent", "2250", "code 2250 is kept for unapplied cash"),
-        ("rent", "4010", "code 4010 is kept for concessions"),
         ("rent", "4000", "its code is 4000 already"),
     ],
 )
-def test_a_code_outside_its_section_kept_for_later_or_unchanged_is_refused(conn, line, code, why):
+def test_a_code_outside_its_section_or_unchanged_is_refused(conn, line, code, why):
     pmc = make_pmc(conn).pmc_id
 
     with pytest.raises(psycopg.errors.CheckViolation, match=why):
+        give(conn, pmc, code, line=line)
+
+
+@pytest.mark.parametrize(
+    ("line", "code", "why"),
+    [
+        ("owner_property", "2150", r"code 2150 is Owner-held deposits \(memo\)'s already"),
+        ("prepaid_rent", "2250", "code 2250 is Unapplied cash's already"),
+        ("rent", "4010", "code 4010 is Concessions's already"),
+    ],
+)
+def test_the_codes_kept_for_the_second_pass_are_its_lines_now(conn, line, code, why):
+    # Kept for later in the first pass, they are owner-held deposits', unapplied cash's and
+    # concessions' since migration 20261106000243: another account takes one as any code taken.
+    pmc = make_pmc(conn).pmc_id
+
+    with pytest.raises(psycopg.errors.UniqueViolation, match=why):
         give(conn, pmc, code, line=line)
 
 
@@ -522,6 +540,13 @@ def test_the_migration_gives_every_account_a_company_has_a_code(database_url, tm
             ledger = conn.execute(
                 "SELECT array_agg(t ORDER BY t.id) FROM pgledger_transfers AS t"
             ).fetchone()
+            entries = conn.execute(
+                "SELECT array_agg(e ORDER BY e.id) FROM pgledger_entries AS e"
+            ).fetchone()
+            balances = conn.execute(
+                "SELECT array_agg((a.id, a.balance, a.version) ORDER BY a.id)"
+                " FROM pgledger_accounts AS a"
+            ).fetchone()
         for migration in migrations[migrations.index(codes_migration) :]:
             shutil.copy(migration, tmp_path)
 
@@ -529,11 +554,25 @@ def test_the_migration_gives_every_account_a_company_has_a_code(database_url, tm
         assert applied.returncode == 0, applied.stderr
 
         with psycopg.connect(url, autocommit=True) as conn:
+            # No transfer, entry or balance changed, through the last migration of the pass.
             assert (
                 conn.execute(
                     "SELECT array_agg(t ORDER BY t.id) FROM pgledger_transfers AS t"
                 ).fetchone()
                 == ledger
+            )
+            assert (
+                conn.execute(
+                    "SELECT array_agg(e ORDER BY e.id) FROM pgledger_entries AS e"
+                ).fetchone()
+                == entries
+            )
+            assert (
+                conn.execute(
+                    "SELECT array_agg((a.id, a.balance, a.version) ORDER BY a.id)"
+                    " FROM pgledger_accounts AS a"
+                ).fetchone()
+                == balances
             )
             for pmc in books:
                 rows = conn.execute(
@@ -564,4 +603,12 @@ def test_the_migration_gives_every_account_a_company_has_a_code(database_url, tm
                     "6701",
                     "5501",
                 ]
-                assert len(rows) == 17 + 3 + 11 + 4
+                # The fixed lines (twenty since the second pass: owner-held deposits 2150,
+                # unapplied cash 2250 and concessions 4010), its three charge types, the eleven
+                # starting kinds of fee it lacked and its four expense accounts.
+                assert [found[n] for n in ("Owner-held deposits (memo)", "Unapplied cash")] == [
+                    "2150",
+                    "2250",
+                ]
+                assert found["Concessions"] == "4010"
+                assert len(rows) == 20 + 3 + 11 + 4

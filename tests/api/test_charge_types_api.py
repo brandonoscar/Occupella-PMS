@@ -138,6 +138,8 @@ def test_the_same_name_again_or_an_income_line_s_is_refused(client, staff):
 
     again = send(client, "/api/setup/charge-types", name="PARKING")
     line = send(client, "/api/setup/charge-types", name="Late fees")
+    # The accrual statement's concessions line since migration 20261106000243.
+    concessions = send(client, "/api/setup/charge-types", name="concessions")
 
     assert (again.status_code, again.json()["detail"]) == (
         409,
@@ -146,6 +148,10 @@ def test_the_same_name_again_or_an_income_line_s_is_refused(client, staff):
     assert (line.status_code, line.json()["detail"]) == (
         422,
         "Late fees is a line of the income statement already",
+    )
+    assert (concessions.status_code, concessions.json()["detail"]) == (
+        422,
+        "concessions is a line of the income statement already",
     )
 
 

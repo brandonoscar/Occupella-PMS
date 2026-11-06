@@ -1,6 +1,6 @@
 import { money, usDate, usDatesIn } from "../money";
 import type { Grouped } from "../statement";
-import { describePosting, periodLabel } from "../statement";
+import { describePosting, memoLine, periodLabel } from "../statement";
 import { OpensSource } from "./SourcePanel";
 import { Wide } from "./Wide";
 
@@ -58,6 +58,15 @@ export function StatementView({
                 <td className={CELL} colSpan={3}>Closing balance</td>
                 <td className={AMOUNT}>{money(section.closing)}</td>
               </tr>
+              {/* Memos change no balance: concessions given, a deposit the owner holds. */}
+              {(section.memos ?? []).map((memo, n) => (
+                <tr key={`memo-${n}`} className="border-t border-line text-ink-muted" aria-label={`Memo: ${memoLine(memo)}`}>
+                  <td className={CELL}>Memo</td>
+                  <td className={CELL}>{memoLine(memo)}</td>
+                  <td className={AMOUNT}>{money(memo.amount)}</td>
+                  <td className={AMOUNT}><span className="sr-only">Not in the balance</span></td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </Wide>

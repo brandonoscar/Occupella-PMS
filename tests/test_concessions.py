@@ -122,3 +122,57 @@ def test_a_concession_comes_off_rent_first_as_any_credit(conn, home):
         "SELECT o.open FROM trust_open_charges(%s, %s, 'infinity') AS o WHERE o.charge_id = %s",
         (pmc.pmc_id, lease, rent),
     ) == Decimal("900.00")
+
+
+def statement(conn, pmc, start=JAN_1, end=date(2026, 3, 1)):
+    return conn.execute(
+        "SELECT property, item, detail, amount, balance"
+        " FROM trust_report_owner_statement(%s, %s, %s::timestamptz, %s::timestamptz)"
+        " ORDER BY line",
+        (pmc.pmc_id, pmc.owners[0].owner_id, f"{start} 00:00+00", f"{end} 00:00+00"),
+    ).fetchall()
+
+
+def test_the_owner_statement_says_the_concessions_given_in_the_period_on_a_memo_line(conn, home):
+    pmc, lease = home
+    for due in (JAN_1, FEB_1):
+        charge(conn, pmc.pmc_id, lease, due, "1000.00")
+    concession(conn, pmc, lease, "100.00")
+    monthly_concession(conn, pmc, lease, "50.00")
+    for due in (JAN_1, FEB_1):
+        charge_recurring_due(conn, pmc.pmc_id, due)
+    charge(conn, pmc.pmc_id, lease, FEB_1, "25.00", kind="credit", memo="Goodwill")
+
+    rows = statement(conn, pmc)
+    february = statement(conn, pmc, start=FEB_1)
+
+    memos = [
+        (item, detail, amount, balance)
+        for _, item, detail, amount, balance in rows
+        if item.startswith("memo")
+    ]
+    assert memos == [
+        (
+            "memo: concessions",
+            "given in the period, credits off rent (not money moved)",
+            Decimal("200.00"),
+            None,
+        ),
+    ]
+    # After the property's closing balance, which it leaves as it is.
+    items = [item for _, item, *_ in rows]
+    assert items.index("memo: concessions") == items.index("closing balance") + 1
+    assert [a for _, item, _, a, _ in february if item == "memo: concessions"] == [Decimal("50.00")]
+    assert "memo: concessions" not in [
+        item for _, item, *_ in statement(conn, pmc, start=date(2026, 3, 1), end=date(2026, 4, 1))
+    ]
+
+
+def test_no_new_kind_of_fee_is_named_concessions(conn, home):
+    pmc, _ = home
+
+    with pytest.raises(psycopg.errors.CheckViolation, match="not_concessions"):
+        conn.execute(
+            "INSERT INTO trust_charge_types (pmc_id, name) VALUES (%s, 'Concessions')",
+            (pmc.pmc_id,),
+        )

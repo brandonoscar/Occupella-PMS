@@ -186,3 +186,54 @@ def test_deposits_the_owner_holds_are_never_rewritten(conn, home):
     for table in ("trust_owner_held_deposits", "trust_owner_held_deposit_outcomes"):
         with pytest.raises(psycopg.errors.RestrictViolation, match="append-only"):
             conn.execute(f"DELETE FROM {table}")  # noqa: S608
+
+
+def test_the_owner_statement_lists_what_the_owner_holds_on_a_memo_line_not_in_the_balance(
+    conn, home
+):
+    pmc, lease, tenant = home
+    held = hold(conn, pmc, lease, tenant)
+    hold(conn, pmc, lease, tenant, "200.00", kind="pet")
+    name = one(conn, "SELECT display_name FROM trust_tenants WHERE id = %s", (tenant,))
+    unit = one(
+        conn,
+        "SELECT u.display_name FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id"
+        " WHERE l.id = %s",
+        (lease,),
+    )
+
+    def memos(start, end):
+        return [
+            (item, detail, amount, balance)
+            for item, detail, amount, balance in conn.execute(
+                "SELECT item, detail, amount, balance FROM trust_report_owner_statement"
+                "(%s, %s, %s::timestamptz, %s::timestamptz) ORDER BY line",
+                (pmc.pmc_id, pmc.owners[0].owner_id, f"{start} 00:00+00", f"{end} 00:00+00"),
+            ).fetchall()
+            if item.startswith("memo")
+        ]
+
+    january = memos(JAN_1, date(2026, 2, 1))
+    end_lease(conn, pmc.pmc_id, lease, JUN_30)
+    settle(conn, pmc, held, "1500.00", "0.00")
+    july = memos(date(2026, 7, 1), date(2026, 8, 1))
+
+    assert january == [
+        (
+            "memo: deposit held by owner",
+            f"{name}'s security deposit, {unit}: you hold it, not in trust",
+            Decimal("1500.00"),
+            None,
+        ),
+        (
+            "memo: deposit held by owner",
+            f"{name}'s pet deposit, {unit}: you hold it, not in trust",
+            Decimal("200.00"),
+            None,
+        ),
+    ]
+    # Returned by the owner at move-out, only the pet deposit is still theirs to hold.
+    assert [detail for _, detail, _, _ in july] == [
+        f"{name}'s pet deposit, {unit}: you hold it, not in trust"
+    ]
+    assert memos(date(2025, 12, 1), JAN_1) == []

@@ -19,11 +19,16 @@ export type Posting = {
   source: string | null;
 };
 
+// A memo after a property's closing balance, changing no balance (migration 20261106000243):
+// the concessions given in the period, or a deposit the owner holds outside trust.
+export type Memo = { item: string; detail: string; amount: string };
+
 export type PropertySection = {
   name: string;
   opening: string;
   postings: Posting[];
   closing: string;
+  memos?: Memo[];
 };
 
 export type Grouped = {
@@ -74,6 +79,10 @@ export function group(data: StatementData): Grouped {
       case "closing balance":
         if (current) current.closing = value(balance);
         break;
+      case "memo: concessions":
+      case "memo: deposit held by owner":
+        if (current) (current.memos ??= []).push({ item: value(item), detail: value(detail), amount: value(amount) });
+        break;
       case "all properties: opening balance":
         grouped.totals.opening = value(balance);
         break;
@@ -98,6 +107,8 @@ export function group(data: StatementData): Grouped {
 // the API's plain words (src/pms/wording.py).
 const WITHOUT_MEMO: Record<string, (amount: string) => string> = {
   bank_cash: (amount) => (amount.startsWith("-") ? "Paid out" : "Received"),
+  // A payment from money that came in before it found its lease (migration 20261106000240).
+  unapplied_cash: () => "Payment",
   pmc_income: () => "Management company",
   vendor_payable: () => "Vendor",
   owner_property: () => "Transfer",
@@ -139,4 +150,12 @@ export function periodLabel(period: string): string {
   if (last < start) return period;
   const sameYear = start.getUTCFullYear() === last.getUTCFullYear();
   return `${sameYear ? MONTH_DAY.format(start) : LONG.format(start)} to ${LONG.format(last)}`;
+}
+
+// A memo as the owner reads it: what it is, then the report's words.
+export function memoLine(memo: Memo): string {
+  const what = memo.item === "memo: concessions" ? "Concessions given in the period" : "Deposit you hold";
+  return memo.item === "memo: concessions"
+    ? `${what}: credits off rent, no money moved`
+    : `${what}: ${memo.detail}`;
 }
