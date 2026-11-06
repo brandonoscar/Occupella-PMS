@@ -1375,32 +1375,35 @@ $$;
 
 
 --
--- Name: trust_bill_holds(uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Name: trust_bill_holds(uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.trust_bill_holds(p_pmc_id uuid) RETURNS TABLE(bill_id uuid, held numeric, short numeric, needed numeric)
+CREATE FUNCTION public.trust_bill_holds(p_pmc_id uuid, p_at timestamp with time zone DEFAULT now()) RETURNS TABLE(bill_id uuid, held numeric, short numeric, needed numeric)
     LANGUAGE sql STABLE
     SET search_path TO 'public', 'pg_temp'
     AS $$
-    WITH open AS (
+    WITH today AS (
+        SELECT trust_pmc_day(p_pmc_id, p_at) AS day
+    ),
+    open AS (
         SELECT b.id, b.ledger_account_id, b.due_on, b.bill_date, b.reference,
                b.amount + coalesce(m.amount, 0) AS need
         FROM trust_bills AS b
         LEFT JOIN trust_bill_markups AS m ON m.bill_id = b.id
         WHERE b.pmc_id = p_pmc_id
-          AND b.bill_date <= (now() AT TIME ZONE 'UTC')::date
+          AND b.bill_date <= (SELECT t.day FROM today AS t)
           AND NOT EXISTS (SELECT 1 FROM trust_bill_payments AS p
                           WHERE p.bill_id = b.id AND p.step = 'set_aside')
           AND NOT EXISTS (SELECT 1 FROM trust_bill_declines AS d WHERE d.bill_id = b.id)
     ),
     running AS (
-        -- What the account holds above the reserve its agreement in force today keeps: the
-        -- reserve stays in the account, so a bill is never laid over it.
+        -- What the account holds above the reserve its agreement in force on the company's day
+        -- keeps: the reserve stays in the account, so a bill is never laid over it.
         SELECT o.id, o.need,
                greatest(a.balance - coalesce((
                    SELECT g.reserve FROM trust_management_agreements AS g
                    WHERE g.ledger_account_id = o.ledger_account_id
-                     AND g.starts_on <= (now() AT TIME ZONE 'UTC')::date
+                     AND g.starts_on <= (SELECT t.day FROM today AS t)
                    ORDER BY g.starts_on DESC LIMIT 1), 0), 0) AS balance,
                sum(o.need) OVER (
                    PARTITION BY o.ledger_account_id
@@ -35941,4 +35944,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261106100000'),
     ('20261106100100'),
     ('20261106110000'),
-    ('20261106110100');
+    ('20261106110100'),
+    ('20261106110200');

@@ -640,10 +640,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   aside or paid, and from the day it was declined it holds nothing back from draws and is not
   unpaid in the reports.
 - A bill's life (migration 0152, `docs/adr/0010-design-pass.md`, the founder's design pass):
-  "set aside" is no longer a step staff take. A bill dated by today, not paid in full nor
-  declined, *holds* its amount and markup from its owner's property account without moving money
-  (`trust_bill_holds`: each account's balance less the reserve of its agreement in force today
-  laid over its open bills, the one due first first, so the reserve stays in the account
+  "set aside" is no longer a step staff take. A bill dated by today (the company's day, migration
+  20261106110200), not paid in full nor declined, *holds* its amount and markup from its owner's
+  property account without moving money (`trust_bill_holds`: each account's balance less the
+  reserve of its agreement in force on the company's day laid over its open bills, the one due first first, so the reserve stays in the account
   (migration 20261104000300); what it can't cover is Short, and what the owner must send to cover
   it and those before it).
   Draws already leave it (`trust_unpaid_bills`), so a draw never pays held money. Paying is

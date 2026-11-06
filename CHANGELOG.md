@@ -147,6 +147,10 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
 - **Fixed: management fees collected before their period ended.** Collect fees for a period still
   running took the fee on what had come in so far and closed the period to later fees, so rent
   paid after was never counted. A period is now collected once it has ended; the page says when.
+- **Fixed: tomorrow's bills held money in the evening.** From 8 pm Eastern, a bill dated the
+  company's tomorrow already held the owner's money and read Ready to pay or Short, and an
+  agreement starting tomorrow already kept its reserve: holds counted UTC's day. They now count
+  the company's own day. Migration `20261106110200`.
 - **Fixed: Stripe's answers in an old API version, and a webhook missing its events.** Every
   call to Stripe now names the API version whose shapes the PMS reads (`2024-06-20`), so an
   account whose default is older than `latest_charge` no longer fails every paid report; and

@@ -536,7 +536,7 @@ FUNCTIONS = {
     "trust_roll_over_leases(uuid,date)": {"trust_app"},
     "trust_routing_number_ok(text)": {"trust_app"},
     # What each open bill holds of its owner's balance: the app's, for the bills pages.
-    "trust_bill_holds(uuid)": {"trust_app"},
+    "trust_bill_holds(uuid,timestamptz)": {"trust_app"},
     "trust_charge_rent_due(uuid,date)": {"trust_app"},
     "trust_rent_for_month(date,date,numeric,date)": {"trust_app"},
     "trust_rent_on(uuid,date)": {"trust_app"},

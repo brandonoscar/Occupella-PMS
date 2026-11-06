@@ -25,15 +25,15 @@ answer in the portal for everything that can fail.
 
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
-| [Money and the ledger](#money-and-the-ledger) | 152 | 116 | 8 | 28 | 4 |
-| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 84 | 15 | 65 | 13 |
+| [Money and the ledger](#money-and-the-ledger) | 152 | 117 | 8 | 27 | 4 |
+| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 86 | 15 | 63 | 13 |
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 73 | 30 | 40 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 74 | 8 | 83 | 18 |
 | [Bad files and imports](#bad-files-and-imports) | 152 | 70 | 17 | 65 | 1 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 90 | 11 | 55 | 5 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 75 | 14 | 83 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1161** | **622** | **113** | **426** | **46** |
+| **All** | **1161** | **625** | **113** | **423** | **46** |
 
 ## Open, high risk: the work list
 
@@ -173,7 +173,6 @@ its ten most pressing, each with the test that would close it.
 | M-080 | Staff return a deposit before paying the interest it earned | The return goes ahead with no warning; the interest can never be paid after | Open | `db/migrations/20261022000122_deposit_interest.sql:264` | M |
 | M-090 | A draw, fee or bill payment dated before money that arrived later | Checked against today's balance only; the owner's statement can show a negative balance between those days | Open | `db/migrations/20261010000017_vendor_bills.sql:352` | M |
 | M-094 | A bill at the limit whose markup takes the owner's cost over it | Set aside without approval: only the bill amount is compared, not bill plus markup | Open | `db/migrations/20261024000152_bill_lifecycle.sql:223` | M |
-| M-097 | Bill holds read in the evening, Eastern time | Use the UTC date: a bill dated the company's tomorrow already holds, and tomorrow's reserve applies | Open | `db/migrations/20261104000300_shortfall_keeps_the_reserve.sql:67` | M |
 | M-105 | A recurring bill of a property or owner that was archived | Keeps entering a bill every month: archiving checks running recurring bills only for vendors | Open | `db/migrations/20261024000152_bill_lifecycle.sql:556` | M |
 | M-111 | Bounces in a period larger than its collections | The fee is 0, not negative; the shortfall is not carried on, so the fee taken earlier on the bounced rent stays | Open | `tests/test_owner_money.py::test_a_bounce_in_the_period_counts_against_it` | M |
 | M-026 | A balance autopay when the tenant holds prepaid rent | A founder's decision, not a plain bug: with prepaid rent used by itself on (Company setup, migration 0117, q031) the night uses it before autopay starts, so a balance autopay debits only the rest; with it off, as every company starts, prepaid rent waits for staff and a balance autopay debits the whole balance while the tenant holds it. Whether a balance autopay should count prepaid rent then is the founder's call | Open | tests/test_nightly.py::test_a_balance_autopay_counts_prepaid_rent_only_once_the_company_uses_it_by_itself (pins both); src/pms/nightly.py (use_prepaid_by_itself before autopay.start_due); src/pms/autopay.py to_pay | M |
@@ -238,6 +237,7 @@ its ten most pressing, each with the test that would close it.
 | M-149 | Two roommates' equal payments on one day in one payment file | The second waits as recorded already, for staff | Tested | `tests/api/test_payment_files_api.py::test_a_payment_that_looks_recorded_already_waits` | M |
 | M-135 | A journal entry dated next year | Refused: an entry is dated no later than the company's today (422 in words; the database refuses it too), and the date field offers no later day; one proposed for a later day before migration 20261106110100 posts only on its day or later | Tested | tests/api/test_journal.py::test_an_entry_is_dated_no_later_than_the_companys_today; tests/test_journal_entries.py::test_an_entry_is_dated_no_later_than_the_companys_today; tests/test_journal_entries.py::test_an_entry_dated_after_today_waits_for_its_day_to_post | M |
 | M-112 | Collect fees for a period that hasn't ended yet | Refused in words (422) until the period has ended by the company's today, and the page's rows say from when its fee is collected; a period that ended is collected as before | Tested | tests/api/test_payables.py::test_a_fee_period_is_collected_once_it_has_ended | M |
+| M-097 | Bill holds read in the evening, Eastern time | trust_bill_holds counts the company's day (trust_pmc_day, migration 20261106110200): in the evening Eastern a bill dated the company's tomorrow holds nothing yet, and tomorrow's reserve doesn't apply yet | Tested | tests/test_bill_lifecycle.py::test_holds_count_the_bills_and_reserve_of_the_companys_day | M |
 | M-008 | A charge or bill of $10.005 written by a path other than the API or the CSV parser | Kept: the tables check only amount above 0, not whole cents | Open | `db/migrations/20261010000012_leases_and_charges.sql:66` | L |
 | M-010 | Deposit interest paid monthly instead of once a year | Each payment rounds per deposit, so twelve payments can differ by cents from one; nothing evens it out | Open | `db/migrations/20261022000122_deposit_interest.sql:165` | L |
 | M-014 | The same request id resent with a different check number or method | Taken as a retry: the first payment comes back and the new reference is silently dropped | Open | `src/pms/api/rent.py:362` | L |
@@ -362,8 +362,6 @@ its ten most pressing, each with the test that would close it.
 | D-094 | Autopay's bank account saved in the evening of a due day (after 8 pm Eastern) | Whether this month pays depends on UTC's date of the save, not the company's: the same evening goes either way by the hour | Open | src/pms/autopay.py:371; db/migrations/20261023000151_autopay.sql:146 | M |
 | D-095 | A payments partner's report checked against the server's clock | Refused when signed more than 300 seconds from the server's clock; a server clock off by minutes refuses every report until fixed, and nothing alerts | Open | src/pms/payments.py:445 | M |
 | D-096 | An owner draw dated back before a bill's date | The draw counts bills dated by its own day but today's balance, so it can pay out what a later-dated bill needs | Open | db/migrations/20261010000017_vendor_bills.sql:321; src/pms/api/payables.py:2119 | M |
-| D-098 | A bill dated tomorrow, between 8 pm and midnight Eastern | trust_bill_holds counts bills dated by UTC's today: it holds the money and reads Ready to pay or Short hours early instead of Entered | Open | db/migrations/20261104000300_shortfall_keeps_the_reserve.sql:67 | M |
-| D-099 | A management agreement starting tomorrow, the same evening window | Its reserve already applies to the holds tonight | Open | db/migrations/20261104000300_shortfall_keeps_the_reserve.sql:35 | M |
 | D-103 | A recurring bill added with a first day years back | Every month since is entered at once as a bill to pay; one in a closed year refuses the whole add | Open | db/migrations/20261015000052_expense_accounts_and_income_statement.sql:113 | M |
 | D-104 | Staff record an owner's decline with any date (tomorrow, or before a past draw) | declined_on is not checked against today or the bill; a past day changes what draws on those days could take | Open | src/pms/api/payables.py:1141 | M |
 | D-117 | A payment dated back into last month after that month's statement email went | The email and its PDF stay as sent; nothing tells the owner the month changed | Open | src/pms/notices.py:353 | M |
@@ -409,6 +407,8 @@ its ten most pressing, each with the test that would close it.
 | D-151 | A signing link more than 30 days old | Signs nothing | Tested | tests/test_esign.py::test_a_link_signs_nothing_once_it_ran_out_or_its_offer_was_voided | M |
 | D-155 | An annual certification due a year after 02/29 | 02/28 the next year | Tested | tests/api/test_assistance_api.py::test_a_year_on_is_the_same_day_or_february_28_for_a_29th | M |
 | D-157 | Vendor insurance running out within 30 days | Counted from the company's today | Tested | tests/api/test_vendors.py::test_expiring_insurance_waits_on_today | M |
+| D-098 | A bill dated tomorrow, between 8 pm and midnight Eastern | Holds count the bills dated by the company's day, not UTC's: the bill reads Entered until the company's tomorrow begins (migration 20261106110200) | Tested | tests/test_bill_lifecycle.py::test_holds_count_the_bills_and_reserve_of_the_companys_day | M |
+| D-099 | A management agreement starting tomorrow, the same evening window | The reserve is the agreement's in force on the company's day: one starting tomorrow applies from the company's midnight, not UTC's | Tested | tests/test_bill_lifecycle.py::test_holds_count_the_bills_and_reserve_of_the_companys_day | M |
 | D-005 | The browser's time zone data and the database's disagree after a DST rule change | Default dates come from the browser's Intl data, today's checks from Postgres's tzdata; nothing compares them outside CI | Open | frontend/src/money.ts:38; db/migrations/20261104000900_company_time_zone.sql:39 | L |
 | D-008 | A company moves its zone backwards after UTC midnight (New York to Hawaii at 1 am Eastern) | Its day goes back to yesterday; the scheduler only checks that the day differs from its last run, so it runs yesterday again (parts are once per date) and payments staff record next are dated yesterday | Open | src/pms/nightly.py:293 | L |
 | D-009 | A company moves its zone forwards in its evening (Hawaii to New York at 10 pm Hawaii) | Its day jumps to tomorrow at once: payments recorded tonight are dated tomorrow and the new day's run waits for the next hourly look | Open | src/pms/api/company.py:219 | L |
