@@ -163,10 +163,14 @@ def test_staff_rename_an_expense_account_and_a_charge_type(client, conn, staff):
     renamed = ok(send(client, f"/api/setup/expense-accounts/{ads}/name", name=" Advertising "))
     same = ok(send(client, f"/api/setup/expense-accounts/{ads}/name", name="Advertising"))
     taken = send(client, f"/api/setup/expense-accounts/{ads}/name", name="WATER")
-    ok(send(client, f"/api/setup/charge-types/{keys}/name", name="Key replacement"))
+    retyped = ok(send(client, f"/api/setup/charge-types/{keys}/name", name="Key replacement"))
+    retyped_again = ok(
+        send(client, f"/api/setup/charge-types/{keys}/name", name=" Key replacement ")
+    )
     line = send(client, f"/api/setup/charge-types/{keys}/name", name="Other charges")
 
     assert (renamed, same) == ({"changed": True}, {"changed": False})
+    assert (retyped, retyped_again) == ({"changed": True}, {"changed": False})
     refused(taken, 409, "the company has an expense account named WATER already")
     refused(line, 422, "Other charges is a line of the income statement already")
     assert row(client, expense_account_id=ads)["name"] == "Advertising"
@@ -183,6 +187,9 @@ def test_staff_rename_an_expense_account_and_a_charge_type(client, conn, staff):
         "SELECT name, recorded_by FROM trust_expense_account_names WHERE expense_account_id = %s",
         (ads,),
     ).fetchall() == [("Advertising", staff.person_id)]
+    assert conn.execute(
+        "SELECT name FROM trust_charge_type_names WHERE charge_type_id = %s", (keys,)
+    ).fetchall() == [("Key replacement",)]
 
 
 @pytest.mark.parametrize("name", ["", "   ", "x" * 201])

@@ -3,10 +3,13 @@ staff record from the lease page a deposit the owner keeps outside trust, and at
 owner returned and kept of it. Nothing moves in trust; the lease page, Move-outs and the tenant
 ledger show it."""
 
+import threading
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import psycopg
 import pytest
 from helpers import add_unit, bank_sums, make_pmc, open_lease
 from people import join_as_owner, join_as_staff, join_as_tenant
@@ -142,6 +145,7 @@ def test_at_move_out_staff_record_what_the_owner_returned_and_kept_and_nothing_m
 
     listed = [m for m in ok(client.get("/api/move-out"), 200) if m["lease_id"] == str(lease)]
     short = settle(client, lease, held, returned="1000.00")
+    ahead = settle(client, lease, held, on=str(TODAY + DAY))
     done = ok(settle(client, lease, held, returned="1200.00", kept="300.00", memo="Carpet"))
     twice = settle(client, lease, held)
     after = [m for m in ok(client.get("/api/move-out"), 200) if m["lease_id"] == str(lease)]
@@ -157,6 +161,7 @@ def test_at_move_out_staff_record_what_the_owner_returned_and_kept_and_nothing_m
     assert listed[0]["owner_held"][0]["amount"] == "1500.00"
     assert listed[0]["owner_held"][0]["settled"] is None
     refused(short, 422, "what the owner returned and kept come to the $1,500.00 they held")
+    refused(ahead, 422, "what the owner did is recorded on a day not after today")
     assert done["settled"] == {
         "returned": "1200.00",
         "kept": "300.00",
@@ -167,6 +172,45 @@ def test_at_move_out_staff_record_what_the_owner_returned_and_kept_and_nothing_m
     assert after[0]["owner_held"] == [done]
     assert books(conn, pmc) == before
     assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
+
+
+@pytest.mark.timing
+def test_two_staff_settling_one_deposit_at_once_record_it_once(
+    client, conn, database_url, staff, pmc, lease
+):
+    held = ok(record(client, lease, first_tenant(conn, pmc)))["id"]
+    ok(client.post(f"/api/move-out/{lease}/end", json={"ends_on": str(TODAY - DAY)}), 204)
+
+    with psycopg.connect(database_url) as first:
+        # Another staff member's settle, not committed yet: this one doesn't see it, and waits.
+        first.execute(
+            "INSERT INTO trust_owner_held_deposit_outcomes (held_id, pmc_id, returned, kept,"
+            " on_day) VALUES (%s, %s, 1500.00, 0.00, %s)",
+            (held, pmc.pmc_id, TODAY),
+        )
+        answer: dict = {}
+        thread = threading.Thread(
+            target=lambda: answer.update(
+                it=settle(client, lease, held, returned="1000.00", kept="500.00")
+            )
+        )
+        thread.start()
+        for _ in range(1000):
+            if conn.execute(
+                "SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock'"
+                " AND query LIKE 'INSERT INTO trust_owner_held_deposit_outcomes%%'"
+            ).fetchone():
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("the second settle never waited for the first")
+        first.commit()
+    thread.join(timeout=30)
+
+    refused(answer["it"], 409, "what the owner did with this deposit is recorded already")
+    assert conn.execute(
+        "SELECT returned, kept FROM trust_owner_held_deposit_outcomes WHERE held_id = %s", (held,)
+    ).fetchall() == [(Decimal("1500.00"), Decimal("0.00"))]
 
 
 def test_the_lease_ledger_shows_it_as_memo_lines(client, conn, staff, pmc, lease):

@@ -14,7 +14,16 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import add_agreement, add_unit, bank_sums, make_pmc, open_lease, post_management_fee
+from helpers import (
+    add_agreement,
+    add_tenant,
+    add_unit,
+    bank_sums,
+    make_pmc,
+    open_account,
+    open_lease,
+    post_management_fee,
+)
 from people import join_as_staff
 
 from pms.api import rent
@@ -152,6 +161,44 @@ def test_a_fee_the_company_keeps_goes_to_its_fee_account_and_the_owner_gets_the_
     ).fetchone()[0]
     replayed = pay(client, lease, "1150.00", uuid.UUID(again.removeprefix("payment/")))
     assert replayed == paid
+
+
+def test_a_trust_bank_account_with_no_fee_account_gets_one_for_a_fee_the_company_keeps(
+    client, conn, staff, pmc
+):
+    # Setup opens the company's fee account with every operating trust bank account; this one
+    # was made with only its cash, as books set up by hand may be.
+    bank = conn.execute(
+        "INSERT INTO trust_bank_accounts (pmc_id, kind, display_name)"
+        " VALUES (%s, 'operating', 'Hand-made operating account') RETURNING id",
+        (pmc.pmc_id,),
+    ).fetchone()[0]
+    open_account(conn, pmc.pmc_id, bank, "bank_cash")
+    home = conn.execute(
+        "INSERT INTO trust_properties (pmc_id, display_name) VALUES (%s, 'Property 3')"
+        " RETURNING id",
+        (pmc.pmc_id,),
+    ).fetchone()[0]
+    owners = open_account(conn, pmc.pmc_id, bank, "owner_property", pmc.owners[1].owner_id, home)
+    tenant = add_tenant(conn, pmc.pmc_id, home, "Tenant 3")
+    lease = open_lease(
+        conn, pmc.pmc_id, add_unit(conn, pmc.pmc_id, home), START, None, "900.00", [tenant]
+    )
+    admin = add_type(client, "Admin fee", "company")
+    fee(client, lease, "75.00", "Admin", admin)
+    fee(client, lease, "40.00", "Key copy")
+
+    paid = pay(client, lease, "115.00")
+
+    (fees,) = conn.execute(
+        "SELECT ledger_account_id FROM trust_ledger_accounts"
+        " WHERE bank_account_id = %s AND kind = 'pmc_income'",
+        (bank,),
+    ).fetchone()
+    assert (paid["to_owner"], paid["to_company"]) == ("115.00", "75.00")
+    assert (balance(conn, fees), balance(conn, owners)) == (Decimal("75.00"), Decimal("40.00"))
+    assert balance(conn, pmc.pmc_income) == Decimal("0.00")
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
 
 
 def test_part_of_a_payment_pays_part_of_a_fee_the_company_keeps(client, conn, staff, pmc, lease):

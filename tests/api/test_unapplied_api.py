@@ -4,11 +4,20 @@ owes as Receive payment does) or refund it (a payout, disburse)."""
 
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
-from helpers import add_unit, bank_sums, make_pmc, open_account, open_lease
+from helpers import (
+    add_tenant,
+    add_unit,
+    approve,
+    bank_sums,
+    make_pmc,
+    open_account,
+    open_lease,
+)
 from people import join_as_owner, join_as_staff, join_as_tenant
 
 from pms import email
@@ -104,6 +113,138 @@ def test_staff_record_unapplied_cash_and_see_how_long_it_has_waited(client, conn
     assert conn.execute(
         "SELECT recorded_by FROM trust_unapplied_receipts WHERE id = %s", (made["id"],)
     ).fetchone() == (staff.person_id,)
+
+
+def test_the_same_request_again_is_the_receipt_recorded_and_never_another(client, conn, staff, pmc):
+    request_id = uuid.uuid4()
+    made = receive(client, request_id=request_id)
+    asked = {
+        "request_id": request_id,
+        "amount": "500.00",
+        "received_on": TODAY - 3 * DAY,
+        "payer": "J. Sample",
+        "method": "check",
+    }
+
+    # Sent again described otherwise (another check number, how it came, who it seems to be
+    # from), it is the receipt recorded, as it was recorded.
+    described = ok(
+        send(client, "/api/unapplied", **asked | {"payer": "J. Sample Jr.", "reference": "4411"})
+    )
+    more = send(client, "/api/unapplied", **asked | {"amount": "499.00"})
+    later = send(client, "/api/unapplied", **asked | {"received_on": TODAY - 2 * DAY})
+
+    assert described == made
+    for answer in (more, later):
+        refused(answer, 409, "this request id was used for something else")
+    (listed,) = ok(client.get("/api/unapplied"), 200)
+    assert (listed["payer"], listed["reference"], listed["amount"]) == (
+        "J. Sample",
+        "4410",
+        "500.00",
+    )
+    assert balance(conn, unapplied_account(conn, pmc)) == Decimal("500.00")
+
+
+def test_a_company_with_no_operating_trust_bank_account_holds_none(client, conn, app_conn):
+    pmc_id = conn.execute(
+        "INSERT INTO trust_pmcs (display_name) VALUES ('Synthetic new company') RETURNING pmc_id"
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO trust_company_profiles (pmc_id, time_zone) VALUES (%s, 'UTC')", (pmc_id,)
+    )
+    join_as_staff(client, conn, app_conn, SimpleNamespace(pmc_id=pmc_id))
+
+    answer = send(
+        client,
+        "/api/unapplied",
+        request_id=uuid.uuid4(),
+        amount="5.00",
+        received_on=TODAY,
+        payer="X",
+        method="cash",
+    )
+
+    refused(answer, 409, "the company has no operating trust bank account yet")
+    assert conn.execute(
+        "SELECT count(*) FROM trust_unapplied_receipts WHERE pmc_id = %s", (pmc_id,)
+    ).fetchone() == (0,)
+
+
+def test_unapplied_cash_dated_in_a_month_already_closed_is_refused_in_words(
+    client, conn, staff, pmc, lease
+):
+    def at(day):
+        return datetime.combine(day, time.min, UTC)
+
+    approve(conn, pmc.pmc_id, pmc.operating_bank_id, at(START), at(TODAY - 5 * DAY))
+    closed = "that day is in a period already reconciled and closed: date it in the next open one"
+
+    late = send(
+        client,
+        "/api/unapplied",
+        request_id=uuid.uuid4(),
+        amount="500.00",
+        received_on=TODAY - 10 * DAY,
+        payer="J. Sample",
+        method="check",
+    )
+    made = receive(client, on=TODAY - 3 * DAY)
+    back_dated = send(
+        client,
+        f"/api/unapplied/{made['id']}/apply",
+        request_id=uuid.uuid4(),
+        lease_id=lease,
+        on=TODAY - 10 * DAY,
+    )
+
+    refused(late, 409, closed)
+    refused(back_dated, 409, closed)
+    assert [r["id"] for r in ok(client.get("/api/unapplied"), 200)] == [made["id"]]
+    assert ok(client.get("/api/unapplied"), 200)[0]["left"] == "500.00"
+
+
+def test_applied_to_a_lease_whose_owners_bank_elsewhere_it_is_refused(client, conn, staff, pmc):
+    # A second operating trust bank account, holding another owner's property and its lease.
+    bank = ok(
+        send(client, "/api/setup/bank-accounts", kind="operating", name="Second operating account")
+    )["id"]
+    owner = ok(send(client, "/api/setup/owners", name="Owner 3"))["id"]
+    home = conn.execute(
+        "INSERT INTO trust_properties (pmc_id, display_name) VALUES (%s, 'Property 3')"
+        " RETURNING id",
+        (pmc.pmc_id,),
+    ).fetchone()[0]
+    open_account(conn, pmc.pmc_id, bank, "owner_property", owner, home)
+    tenant = add_tenant(conn, pmc.pmc_id, home, "Tenant 3")
+    lease = open_lease(
+        conn, pmc.pmc_id, add_unit(conn, pmc.pmc_id, home), START, None, "900.00", [tenant]
+    )
+    made = receive(client, bank_account_id=pmc.operating_bank_id)
+
+    def apply():
+        path = f"/api/unapplied/{made['id']}/apply"
+        return send(client, path, request_id=uuid.uuid4(), lease_id=lease)
+
+    # Owing nothing, all of it would be prepaid rent, held in the other account.
+    nothing_owed = apply()
+    ok(send(client, "/api/rent/run", due_on=START, late_fees_as_of=START), 200)
+    owed = apply()
+
+    refused(
+        nothing_owed,
+        409,
+        "this lease's tenants hold prepaid rent in another trust bank account than the one this"
+        " unapplied cash is in",
+    )
+    refused(
+        owed,
+        409,
+        "this lease's owners keep their money in another trust bank account than the one this"
+        " unapplied cash is in",
+    )
+    assert ok(client.get("/api/unapplied"), 200)[0]["left"] == "500.00"
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
 
 
 def test_applied_to_a_lease_it_pays_rent_first_and_the_rest_is_prepaid_rent(
