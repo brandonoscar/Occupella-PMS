@@ -177,6 +177,12 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   Eastern on their policy's last day was refused as if it had run out, because the check counted
   UTC's day. It now counts the company's: covered through the last day, refused from the next.
   Migration `20261106120100`.
+- **Fixed: paying online without seeing the fee, and ending a lease without its break fee.** When
+  Pay online couldn't get the processing fee's quote, the fee line went blank and Pay online
+  stayed on, so a tenant who pays the fee could leave for the partner's page without seeing it.
+  It now waits for the quote and, when it can't be had, says so and stays off. End lease likewise
+  waits for the lease-break fee terms of the day picked; when they couldn't be read it ended the
+  lease with no fee offered, and now it says so and waits.
 - **Fixed: Stripe's answers in an old API version, and a webhook missing its events.** Every
   call to Stripe now names the API version whose shapes the PMS reads (`2024-06-20`), so an
   account whose default is older than `latest_charge` no longer fails every paid report; and
