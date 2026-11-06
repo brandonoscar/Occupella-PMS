@@ -137,3 +137,35 @@ def test_behind_the_proxy_a_visitor_cant_dodge_the_limit_by_naming_another_addre
         # Another visitor, through the same proxy, goes on.
         other = {"X-Forwarded-For": "198.51.100.51"}
         assert proxy.post("/api/sign-in", json=wrong, headers=other).status_code == 401
+
+
+def test_a_proxy_the_server_doesnt_trust_is_said_once_in_its_log(settings, caplog):
+    """docs/edge-cases.md H-067: behind a proxy on another host with PMS_TRUSTED_PROXIES empty,
+    every visitor has the proxy's address, so 20 failed sign-ins by anyone lock the company out
+    and signatures keep the proxy's address. The PMS can't tell which proxy to trust, but it can
+    say what it sees, once: requests naming a forwarded address that it doesn't read."""
+    import logging
+
+    app = create_app(settings)  # trusts no proxy
+    with caplog.at_level(logging.WARNING, logger="pms.api"), TestClient(app) as here:
+        here.get("/api/me")  # a request with no X-Forwarded-For says nothing
+        for _ in range(3):
+            here.get("/api/me", headers={"X-Forwarded-For": "198.51.100.50"})
+
+    said = [r.getMessage() for r in caplog.records if "PMS_TRUSTED_PROXIES" in r.getMessage()]
+    assert len(said) == 1
+    assert said[0] == (
+        "requests name a forwarded address (X-Forwarded-For) but PMS_TRUSTED_PROXIES is empty:"
+        " every visitor has the proxy's address, so the sign-in limit counts them all as one; set"
+        " PMS_TRUSTED_PROXIES to the proxy's address (docs/install.md)"
+    )
+
+
+def test_a_trusted_proxy_is_said_nothing_of(settings, caplog):
+    import logging
+    from dataclasses import replace
+
+    app = create_app(replace(settings, trusted_proxies="127.0.0.1"))
+    with caplog.at_level(logging.WARNING, logger="pms.api"), TestClient(app) as here:
+        here.get("/api/me", headers={"X-Forwarded-For": "198.51.100.50"})
+    assert not [r for r in caplog.records if "PMS_TRUSTED_PROXIES" in r.getMessage()]

@@ -97,7 +97,9 @@ nginx, `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` and
 `proxy_set_header X-Forwarded-Proto $scheme;`). The app takes the visitor's address from it, the
 last one, which the proxy wrote (`PMS_TRUSTED_PROXIES` in `compose.selfhost.yaml`), so the evidence of a lease signed on the PMS's
 page keeps the signer's address, not the proxy's. Keep the app's port on `127.0.0.1`: only a
-proxy on the server itself may name visitors. Sign-in needs HTTPS: the session cookie is never
+proxy on the server itself may name visitors. A proxy on another host or network needs its own
+address in `PMS_TRUSTED_PROXIES`; while it is empty, the app takes the proxy's address for every
+visitor, so 20 failed sign-ins by anyone lock out the whole company, and its log says so once. Sign-in needs HTTPS: the session cookie is never
 sent over plain HTTP.
 
 ## 5. Make your company and its first admin
