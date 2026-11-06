@@ -88,6 +88,36 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   are all positive, with a column saying Debit or Credit (Type, Transaction type, Dr/Cr), went in
   with every check and fee as a deposit. Each line's way now comes from that column; a type saying
   neither is refused with its line, and a bank that signs its amounts keeps its signs.
+- **Fixed: a mid-month switch charged the old system's month again.** Leases brought in after
+  the old system charged and collected the month's rent were charged the whole month again the
+  first night, and a late fee on it once past the grace. The rent run now charges no rent or
+  monthly charge due before the cutover of the trust bank account holding the property's owners'
+  money; from the cutover on, every month is charged as before. A run between bringing the roster
+  in and posting the opening balances still charges it (docs/edge-cases.md M-152). Migration
+  `20261106100000`.
+- **Fixed: one check recorded twice.** Receive payment made a new request id each time its panel
+  opened, so a payment whose answer was lost and recorded again, or one check entered from two
+  tabs, went in twice. A payment like one recorded to the lease (the same amount received the
+  same day, by the same way and check number where both say one) now asks staff to say it is
+  another payment first; the panel says so before it is sent.
+- **Fixed: a payment online with no word stayed "on its way" for good.** A payment whose
+  partner's report never came lowered every later balance autopay, and staff never saw it.
+  After 14 days with no word it no longer counts as on its way, and Banking's Online payments
+  waiting lists it, to look up at the payments partner. An autopay whose payments were never
+  sent two months running stops by itself, with its email, as two failed ones do.
+- **Security: a tenant marked "the same person" by mistake.** Nothing undid a link, so whoever
+  signed in as the first record kept reading and acting on the other's lease. Staff now take it
+  back from either record's Other properties (Not the same person, asked first): the record is
+  its own person again at once, its autopays stop, and it takes an invite of its own. Migration
+  `20261106100100`.
+- **A state's notice on Change rent.** The Change rent panel now warns, as the renewal panel
+  does, when the property's state (California, Oregon, Washington, Nevada, New York) asks more
+  written notice before the increase, counted from the day notice was given: a change from
+  March 1 with notice on February 1 is 28 days, short of California's 30. A warning only.
+- **Security: sign-in limits and IPv6.** An IPv6 visitor counts as their whole /64, so a new
+  address each try no longer gets past the sign-in and reset limits. A request that comes through
+  a proxy `PMS_TRUSTED_PROXIES` doesn't name is logged once, naming the proxy, since every visitor
+  behind it shares its address until it is named.
 - **Fixed: Stripe's answers in an old API version, and a webhook missing its events.** Every
   call to Stripe now names the API version whose shapes the PMS reads (`2024-06-20`), so an
   account whose default is older than `latest_charge` no longer fails every paid report; and
