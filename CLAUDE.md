@@ -548,7 +548,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `trust_prepare_bank_reconciliation`, `trust_approve_bank_reconciliation`,
   `trust_match_cutover_opening`, `trust_return_deposit`, `trust_pay_deposit_interest`, `trust_transfer_lease`, `trust_open_deposit_account`, `trust_propose_journal_entry`,
   `trust_post_journal_entry`, `trust_decline_journal_entry`, `trust_apply_assistance_payment`,
-  `trust_bill_back_utility` and `trust_close_year`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
+  `trust_bill_back_utility`, `trust_refund_unapplied_cash` and `trust_close_year`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
   `trust_run_rent` run with the app's own grants). It can't call pgledger's posting functions: every posting it makes goes through
   `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
   retry: the same key returns the original transfers, and a different posting under it is
@@ -576,7 +576,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Only `bank_cash` accounts may go below zero; a trigger refuses it for every other kind.
   Every transfer stays inside one PMC. No foreign key cascades into trust tables.
 - Every trust bank account ties out: its book cash equals everything held in it (owners,
-  prepaid rent, deposits, vendors, the PMC's fees). A deferred trigger checks it at commit, so
+  prepaid rent, deposits, vendors, the PMC's fees, unapplied cash). A deferred trigger checks it at commit, so
   held money moves to another trust bank account only with its cash, in the same transaction.
   It sums a trust bank account only for a transfer into, out of or across one (migration 0210):
   a transfer between two of one bank account's accounts leaves its sum as it was.
@@ -1351,13 +1351,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   company's chart has a code of our own numbering, four digits, once among its codes today
   (`trust_account_codes`: append-only, the latest holding, naming who; `trust_account_codes_of`).
   1000 trust bank cash; 2000 owner funds, 2100 tenant security deposits, 2110 pet and 2120 key
-  deposits, 2200 prepaid rent, 2300 vendor payables, 2400 the company's fees held in trust; no
-  equity (3000s); 4000 rent, 4100 recurring charges, 4200 late fees, 4300 NSF fees, 4400 other
-  charges, charge types from 4501; 5000 bills in no expense account, then a block of a hundred
-  per Schedule E line (5000 + 100 x the line: 5800 leasing fees, 6100 management fees, 6900
-  security deposit interest), each expense account from the block's next code (6401... for
-  repairs). Kept for a later pass: 2150 owner-held deposits (a memo), 2250 unapplied cash, 4010
-  concessions (a contra to rent). Each control account (`trust_chart_lines`) is one code per kind;
+  deposits, 2150 owner-held deposits (a memo, never in trust), 2200 prepaid rent, 2250 unapplied
+  cash, 2300 vendor payables, 2400 the company's fees held in trust; no equity (3000s); 4000 rent,
+  4010 concessions (a contra to rent), 4100 recurring charges, 4200 late fees, 4300 NSF fees, 4400
+  other charges, charge types from 4501; 5000 bills in no expense account, then a block of a
+  hundred per Schedule E line (5000 + 100 x the line: 5800 leasing fees, 6100 management fees,
+  6900 security deposit interest), each expense account from the block's next code (6401... for
+  repairs). The second pass's three lines came in migration 20261106000243 (no code is kept for
+  later now; no new kind of fee is named Concessions). Each control account (`trust_chart_lines`) is one code per kind;
   a charge type or an expense account takes the next free code as it is added (a trigger). A
   code changes no posting. Staff give any account another code (`POST /api/setup/codes`, in its
   section's range), and rename or archive an expense account or a charge type
@@ -1381,6 +1382,36 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   initiation, renewal, lease change and admin fees; the owner the rest) and 49 starting expense
   accounts. `trust_report_chart_of_accounts` lists the chart (as the owner, so the AI calls no
   helper) and is the page's CSV.
+- Unapplied cash (migration 20261106000240, `src/pms/api/unapplied.py`, Banking's Unapplied cash
+  card, area rent): money that came into an operating trust bank account and can't be matched yet
+  is posted from its cash into that account's unapplied cash account (`trust_ledger_accounts.kind`
+  'unapplied_cash', one per trust bank account, operating only, holding nobody's), under a key of
+  its own, with who it seems to be from, how, the day and a memo (`trust_unapplied_receipts`,
+  naming who). The tie-out counts it as everything held. Staff apply it, all or part, to a lease
+  (`trust_unapplied_applications`: a payment `rent.record_payment` posts from the unapplied account
+  as Receive payment does, rent first, the rest prepaid rent, its tenants emailed its receipt; it
+  never bounces from the lease) or refund it (`trust_refund_unapplied_cash`: out through the cash,
+  a payout taking disburse and the account's signers, `trust_unapplied_refunds`), never past what
+  is left (`trust_unapplied_left`), each safe to retry. `trust_approve_bank_reconciliation` refuses
+  while any is held in the account, and the three-way reconciliation shows it as "of which
+  unapplied cash" after the beneficiary ledgers. Append-only, audited; the AI role reads them.
+- Deposits the owner holds (migration 20261106000241, `src/pms/api/owner_held.py`): a tenant's
+  security, pet or key deposit the owner keeps outside trust, recorded from the lease's ⋯ menu
+  (`trust_owner_held_deposits`: once per lease, tenant and kind, its amount and the day it was held
+  from, naming who; area rent) and, once the lease's last day is set, what the owner returned and
+  kept of it, together what was held, once (`trust_owner_held_deposit_outcomes`, from Move-outs,
+  area move-out). No money moves and no ledger account holds it: the lease's Summary shows it
+  beside what trust holds, the tenant ledger (and the lease's Ledger tab, kind "memo") and the
+  owner's statement as memo lines that change no balance, and Move-outs says "Held by owner: $X —
+  the owner returns it". `trust_return_deposit` knows nothing of it. Append-only; the AI role reads
+  them.
+- Concessions (migration 20261106000242): a credit marked a concession, once
+  (`trust_charges.concession`) or every month (`trust_recurring_charges.concession`, each month's
+  credit then one), only a credit, from Enter charge and a monthly credit. The accrual income
+  statement counts concessions (and a lease end's adjustment of a monthly one) on a line of their
+  own, "income: concessions", right after rent on Schedule E's line 3; the owner's statement lists
+  those given in its period on a memo line after the closing balance (migration 20261106000243).
+  They move no money; rent first takes them off the rent as any credit.
 - Accrual basis (migration 0104, the founder's review q115): `trust_report_income_statement_accrual`
   is the income statement's lines counting what was charged in the days (a credit as less, a lease
   end's adjustment or a waiver as what it changes, a credit on its own as rent, a housing

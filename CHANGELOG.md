@@ -6,6 +6,59 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+The chart of accounts (the founder's pass of 11/05 and its second part of 11/06), migrations
+`20261106000200` to `20261106000243`. No posting is rewritten: every transfer, entry and balance
+stays as it was (a test applies them to a database holding books and checks).
+
+- **Chart of accounts (Settings, Chart of accounts):** every account of the company's chart by
+  section (Assets, Liabilities, Income, Expenses) with a four-digit code of our own numbering:
+  1000 trust bank cash; 2000 owner funds, 2100/2110/2120 tenants' security, pet and key deposits,
+  2150 owner-held deposits (a memo, never in trust), 2200 prepaid rent, 2250 unapplied cash,
+  2300 vendor payables, 2400 the company's fees held in trust; 4000 rent, 4010 concessions (a
+  contra to rent), 4100 to 4400 the other income lines, kinds of fee from 4501; 5000 bills in no
+  expense account, then a block of a hundred per Schedule E line (5800 leasing fees, 6100
+  management fees, 6900 deposit interest). Staff give any account another code in its section's
+  range, rename and archive an expense account or a kind of fee (refused while an open bill or a
+  running monthly charge uses it) and bring one back, and download the chart as CSV
+  (`trust_report_chart_of_accounts`). Migrations `20261106000200` (codes), `20261106000210`
+  (names and archiving), `20261106000230` (the report).
+- **Who keeps a fee:** each kind of fee says whether the owner (the default) or the company keeps
+  its money, from now on (migration `20261106000220`). Receive payment, payment files, payments
+  online, autopay and prepaid rent used pay a fee the company keeps into its fee account in the
+  trust bank account; a bounce takes it back; the owner's statements, year-end and management fee
+  never count it. Known gaps: a deposit kept at move-out still pays such a fee to the owner, and
+  the owner balance sheet counts it among what tenants owe the owner.
+- **A fuller starting chart:** 49 starting expense accounts and twelve starting kinds of fee
+  (migration `20261106000225`; the company keeps the resident benefit package and the lease
+  initiation, renewal, lease change and admin fees). A new company gets them from
+  `python -m pms.admin setup`.
+- **Unapplied cash (Banking):** money that came in and can't be matched to a lease yet is
+  recorded as it came (who it seems to be from, how, the day, a memo) and held in its trust bank
+  account's own unapplied cash account, listed oldest first with how long each has waited (marked
+  after 30 days). Staff apply it, all or part, to a lease they find (it pays what the lease owes
+  as Receive payment does, rent first, the rest prepaid rent; its tenants get a receipt) or
+  refund it after confirming the amount (a payout: the disburse role and the account's signers).
+  **Month-end isn't approved while any is held**, and the three-way reconciliation shows it on a
+  line of its own, "of which unapplied cash" (its lines after it are numbered one more). A payment
+  applied from unapplied cash doesn't bounce from the lease. Migration `20261106000240`.
+- **Deposits the owner holds:** from a lease's ⋯ menu staff record a tenant's security, pet or
+  key deposit the owner keeps outside trust (its amount and the day it was held from); no money
+  moves and no trust balance counts it. The lease's Summary shows it beside what trust holds, its
+  Ledger and the tenant's ledger as a memo line, the owner's statement as a memo line after the
+  closing balance, and Move-outs says "Held by owner: $X — the owner returns it"; once the lease
+  has ended staff record what the owner returned and kept. Migration `20261106000241`.
+- **Concessions:** Enter charge and a monthly credit take "A concession": the owner's accrual
+  income statement counts concessions on a line of their own right after rent (Schedule E line
+  3), and the owner's statement lists those given in its period on a memo line. Migration
+  `20261106000242`; the chart's three new lines, the statement's memo lines and the name
+  "Concessions" kept from new kinds of fee, migration `20261106000243`.
+- **What a company must do:** nothing to upgrade but the migrations, as always. A company made
+  before this release gets the starting expense accounts and kinds of fee it lacks with
+  `python -m pms.admin starting-chart <pmc>`; check on Chart of accounts which kinds of fee the
+  company keeps. Before approving a month, apply or refund any unapplied cash. Record any deposit
+  an owner holds, and mark concessions as they are given (credits entered before stay credits off
+  rent).
+
 Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-two.md`).
 
 - **The owner portal in sections:** Overview, Properties, Statements and reports, Bills, Repairs,
