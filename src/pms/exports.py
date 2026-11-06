@@ -95,7 +95,9 @@ def run_report(conn: psycopg.Connection[Any], report: str, args: Sequence[Any]) 
         raise ExportError(
             f"{report} takes {len(types)} arguments ({', '.join(types)}), not {len(args)}"
         )
-    query = sql.SQL("SELECT * FROM {}({})").format(
+    # Called by its schema, the one the catalog found it in: the search_path (which begins with
+    # a schema named for the role) can't put another function of the same name in its place.
+    query = sql.SQL("SELECT * FROM public.{}({})").format(
         sql.Identifier(function),
         sql.SQL(", ").join(sql.SQL("%s::" + kind) for kind in types),
     )
