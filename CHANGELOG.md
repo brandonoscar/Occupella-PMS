@@ -140,6 +140,10 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
 - **Fixed: the company's deposit for online payments' costs made twice.** Two staff recording it
   at once each deposited what waited, leaving the company's own money in trust. The second now
   waits for the first and is told nothing more is needed.
+- **Fixed: prepaid rent held for a tenant who had just left.** A payment recorded while a tenant
+  was being taken off the lease read the lease's tenants before it waited for the departure, so
+  the part paid ahead could be held for the tenant who left. A payment, and prepaid rent used,
+  now read the lease's tenants and owners once they hold the lease.
 - **Fixed: Stripe's answers in an old API version, and a webhook missing its events.** Every
   call to Stripe now names the API version whose shapes the PMS reads (`2024-06-20`), so an
   account whose default is older than `latest_charge` no longer fails every paid report; and

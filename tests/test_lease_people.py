@@ -7,6 +7,7 @@ renewal keeps the tenants who stayed, and an offer's guarantor signers become th
 guarantors, never its tenants. Occupants, pets, vehicles and guarantors are append-only rows a
 removal takes off once. Every name here is synthetic."""
 
+import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -361,6 +362,50 @@ def test_household_rows_are_checked_taken_off_once_and_kept(conn, pmc, lease):
         " AND row_data ->> 'id' = %s",
         (str(pet),),
     ).fetchone() == (1,)
+
+
+def prepaid_of(conn, tenant):
+    return conn.execute(
+        "SELECT coalesce(sum(a.balance), 0) FROM trust_ledger_accounts AS t"
+        " JOIN pgledger_accounts AS a ON a.id = t.ledger_account_id"
+        " WHERE t.tenant_id = %s AND t.kind = 'prepaid_rent'",
+        (tenant,),
+    ).fetchone()[0]
+
+
+@pytest.mark.timing
+def test_a_payment_waiting_on_a_departure_holds_its_prepaid_rent_for_who_stays(
+    conn, pmc, tenants, lease, database_url
+):
+    # A tenant leaves the lease while a payment waits for the lease's lock (docs/edge-cases.md
+    # C-014): the payment reads the lease's tenants once the departure committed, so the part
+    # paid ahead is held for a tenant who stays, never the one who just left.
+    from pms.api import rent
+
+    first, second, _ = tenants
+    charge(conn, pmc.pmc_id, lease, JAN_1, "1500.00")
+    with psycopg.connect(database_url) as leaving:
+        remove(leaving, pmc.pmc_id, lease, first)  # holds the lease's lock until it commits
+
+        def pay(worker):
+            with worker.transaction():
+                return rent.record_payment(
+                    worker,
+                    pmc.pmc_id,
+                    lease,
+                    uuid.uuid4(),
+                    Decimal("2000.00"),
+                    MAR_31,
+                    account=pmc.owners[0].account,
+                ).to_prepaid
+
+        thread, pid, outcome = in_background(database_url, pay)
+        wait_until_blocked(conn, pid)
+        leaving.commit()
+        thread.join(timeout=30)
+
+    assert outcome == {"result": Decimal("500.00")}
+    assert (prepaid_of(conn, first), prepaid_of(conn, second)) == (0, Decimal("500.00"))
 
 
 @pytest.mark.timing

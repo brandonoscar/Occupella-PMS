@@ -1079,7 +1079,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   first; H-008). The page lists each payment as it came in (its whole amount, prepaid rent
   included), and a bounce moves back what the payment moved, reverses its matches and charges
   the property's NSF fee, once. A
-  lease's rent work takes an advisory lock on the lease. The PMS records what the bank did;
+  lease's rent work takes an advisory lock on the lease, before it reads the lease's tenants and
+  owners, so a departure or a share change waited for counts (C-014). The PMS records what the bank did;
   it sends no money. A payment came by check, cashier's check, money order, EFT or cash. Each has
   a receipt (`src/pms/api/receipts.py`): a PDF saying who paid, for which home, when, how much and
   how, what it paid of each charge, what was held as prepaid rent and, once it bounced, that it

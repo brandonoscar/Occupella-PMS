@@ -27,13 +27,13 @@ answer in the portal for everything that can fail.
 |---|---|---|---|---|---|
 | [Money and the ledger](#money-and-the-ledger) | 152 | 115 | 8 | 29 | 4 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 84 | 15 | 65 | 13 |
-| [Concurrency and retries](#concurrency-and-retries) | 143 | 71 | 30 | 42 | 1 |
+| [Concurrency and retries](#concurrency-and-retries) | 143 | 73 | 30 | 40 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 74 | 8 | 83 | 18 |
 | [Bad files and imports](#bad-files-and-imports) | 152 | 70 | 17 | 65 | 1 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 90 | 11 | 55 | 5 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 75 | 14 | 83 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1161** | **619** | **113** | **429** | **46** |
+| **All** | **1161** | **621** | **113** | **427** | **46** |
 
 ## Open, high risk: the work list
 
@@ -517,7 +517,6 @@ its ten most pressing, each with the test that would close it.
 | C-134 | A deposit return resent | Returned once; another key is refused | Tested | `tests/test_move_out.py::test_the_same_request_again_returns_nothing_twice_and_another_is_refused` | H |
 | C-135 | A deposit paid in while the return runs | The return waits for it | Tested | `tests/test_move_out.py::test_a_deposit_paid_in_meanwhile_waits_for_the_return` | H |
 | C-136 | Move to another unit resent | The same new lease comes back | Tested | `tests/api/test_lease_transfers_api.py::test_the_new_lease_keeps_the_old_one_s_due_day_unless_staff_pick_another` | H |
-| C-014 | A tenant leaves the lease while a payment waits for the lease lock | The tenant list was read before the lock, so the prepaid part can go to the tenant who just left | Open | src/pms/api/rent.py:468 (lease_of before lock_lease at 471) | M |
 | C-029 | The same payment file submitted twice at the same moment | Both pass the read check; the unique key stops the second, answered as a 500, not in words | Open | src/pms/api/payment_files.py:387 | M |
 | C-032 | A tenants file imported by two staff or two tabs at once | Names are looked up with no lock or unique key, so every tenant is added twice | Open | src/pms/api/switching.py:213 (Names.tenant) | M |
 | C-045 | Two staff run Pay bills on overlapping bills listed in different orders | Owner accounts are locked in the order sent; a deadlock is answered as a 500 | Open | src/pms/api/payables.py:1423 | M |
@@ -579,7 +578,7 @@ its ten most pressing, each with the test that would close it.
 | C-133 | End lease with the lease-break fee sent twice at once (two tabs, or a resend while the first runs) | The end takes the lock trust_end_lease takes ('lease days of' the company) before it reads the lease and its fee, so the second waits and reads the lease as the first left it: the same end again answers as the first and charges nothing more, and another end with the fee is refused (409); one lease-break fee a lease | Tested | tests/test_lease_people.py::test_two_ends_with_the_lease_break_fee_at_once_charge_it_once; tests/api/test_lease_people_api.py::test_ending_again_with_the_lease_break_fee_charges_it_once | M |
 | C-081 | A tenant turns autopay off between the still-unsent check and the charge | Each payment is checked, sent and recorded in one transaction under its autopay's advisory lock, which a stop takes too: a stop under way keeps it from being sent, and a stop that comes while it is with the partner waits until it is recorded, so the stop's email is true | Tested | tests/test_autopay.py::test_a_stop_under_way_as_its_payment_is_sent_keeps_it_from_being_sent; tests/test_autopay.py::test_a_stop_while_its_payment_is_sent_waits_until_it_is_recorded | M |
 | C-093 | Two staff record the company's deposit for fees at once under different request ids | Cover takes an advisory lock on the trust bank account before it reads what waits, so the second waits for the first, finds nothing left to cover and is refused (422, what waits needs 0.00); the company's money is deposited once | Tested | tests/api/test_online_payments_api.py::test_two_staff_covering_at_once_deposit_the_companys_money_once | M |
-| C-015 | Ownership shares change while a payment waits for the lease lock | Owners and shares were read before the lock; the payment splits by the old shares | Open | src/pms/api/rent.py:469 (owners_of before lock_lease) | L |
+| C-014 | A tenant leaves the lease while a payment waits for the lease lock | A payment, and prepaid rent used, take the lease's lock before they read its tenants and owners, so a departure waited for has committed: the part paid ahead is held for a tenant who stays | Tested | tests/test_lease_people.py::test_a_payment_waiting_on_a_departure_holds_its_prepaid_rent_for_who_stays | M |
 | C-033 | A history file submitted twice at once | Read check then insert; the unique key stops the second as a 500 | Open | src/pms/api/switching.py:621 | L |
 | C-037 | A bill payment resent with the same request id but a new amount | The first payment comes back as success with no comparison; staff believe the new amount was paid | Open | src/pms/api/payables.py:1271 | L |
 | C-038 | One bill payment with a receipt sent twice at the same moment | The payment posts once but its receipt is kept twice | Open | src/pms/api/payables.py:1296 | L |
@@ -606,6 +605,7 @@ its ten most pressing, each with the test that would close it.
 | C-027 | Waive pressed twice on one charge | The waiver trigger locks the charge; never past what is left of it | Guarded | db/schema.sql:2647 (trust_check_charge_waiver) | L |
 | C-047 | A bill entered while a draw works out what is available | The draw doesn't see the uncommitted bill and pays out; the bill then reads Short (by design, no money moved twice) | Guarded | db/schema.sql:5782 (owner account lock on draws) | L |
 | C-121 | A restart drops the after-request email and autopay work | Picked up by the next hourly look or the next write | Guarded | src/pms/nightly.py:311-313 | L |
+| C-015 | Ownership shares change while a payment waits for the lease lock | The owners and shares are read once the payment holds the lease's lock: one naming an owner's account of a property now owned in shares is refused (422) instead of going to that owner whole; one by shares splits by those in force as it posts (Owners.parts read them then, so the old shares were never used) | Tested | tests/test_ownership_shares.py::test_a_payment_waiting_on_the_lease_reads_the_shares_set_meanwhile | L |
 
 ### Most pressing open, with the test that would close each
 
@@ -613,7 +613,6 @@ its ten most pressing, each with the test that would close it.
 - C-088: the same test for owner payments: returned then paid leaves the owner's account as it was before the payment.
 - C-090: a test that a paid payment with no report after N days is found by a poll of the partner and recorded once, and that a staff-recorded copy and a late report don't double it.
 - C-055: an API test that a second take of a run's ACH file asks for confirmation (or carries a new file id modifier) and is logged as a repeat.
-- C-014: a timing test: a departure holds the lease lock, a payment waits, and its prepaid part goes to the tenant who stays.
 - C-130: a timing test: an archival and a new lease on one unit at once, asserting one of them is refused.
 
 ## Partners and outside services down, slow or wrong

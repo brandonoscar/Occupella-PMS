@@ -520,11 +520,12 @@ def record_payment(
     force that day allows it, in the same transaction. Staff may choose the open charges it pays
     (`chosen`: each charge with how much, in that order); what is left of it pays the rest in the
     usual order. With `alike_refused`, a payment like one recorded to the lease is refused
-    (refuse_alike)."""
+    (refuse_alike). The lease's tenants, owners and shares are read under the lease's lock, once
+    a departure or another payment waited for has committed (docs/edge-cases.md C-014, C-015)."""
+    lock_lease(conn, lease_id)
     lease = lease_of(conn, pmc_id, lease_id)
     owners = owners_of(conn, pmc_id, lease.property_id, received_on, account)
     bank = owners.bank
-    lock_lease(conn, lease_id)
     key = f"payment/{request_id}"
     if alike_refused:
         refuse_alike(conn, pmc_id, lease_id, key, amount, received_on, method, reference)
@@ -668,11 +669,12 @@ def use_prepaid(
     account: str | None = None,
 ) -> Recorded:
     """The lease's tenants' prepaid rent paid to the owner's account for what the lease owes,
-    matched to its rent first, then its other charges, each oldest first."""
+    matched to its rent first, then its other charges, each oldest first. Its tenants and owners
+    are read under the lease's lock, as a payment's are."""
+    lock_lease(conn, lease_id)
     lease = lease_of(conn, pmc_id, lease_id)
     owners = owners_of(conn, pmc_id, lease.property_id, on, account)
     bank = owners.bank
-    lock_lease(conn, lease_id)
     key = f"prepaid/{request_id}"
     metadata = {
         "key": key,
