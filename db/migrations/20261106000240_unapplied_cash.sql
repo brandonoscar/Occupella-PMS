@@ -180,10 +180,10 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_receipt trust_unapplied_receipts;
     v_left numeric;
 BEGIN
-    SELECT r.* INTO v_receipt FROM trust_unapplied_receipts AS r
+    -- Applications and refunds of one receipt wait for each other here.
+    PERFORM FROM trust_unapplied_receipts AS r
     WHERE r.id = NEW.receipt_id AND r.pmc_id = NEW.pmc_id
     FOR NO KEY UPDATE;
     v_left := trust_unapplied_left(NEW.receipt_id);
@@ -192,12 +192,14 @@ BEGIN
             to_char(v_left, 'FM$999,999,990.00'), to_char(NEW.amount, 'FM$999,999,990.00')
             USING ERRCODE = 'check_violation';
     END IF;
-    -- (Each table's own columns are read only in its own branch.)
+    -- An application's payment_key is its own column (a refund has none), read as JSON so the
+    -- refunds table's binding of this trigger never names it.
     IF TG_TABLE_NAME = 'trust_unapplied_applications' THEN
         IF NEW.amount <> coalesce((
             SELECT sum(tr.amount) FROM pgledger_transfers AS tr
-            WHERE tr.metadata ->> 'key' = NEW.payment_key
-              AND tr.from_account_id = v_receipt.ledger_account_id
+            JOIN trust_unapplied_receipts AS r ON r.id = NEW.receipt_id
+            WHERE tr.metadata ->> 'key' = to_jsonb(NEW) ->> 'payment_key'
+              AND tr.from_account_id = r.ledger_account_id
         ), 0) THEN
             RAISE EXCEPTION 'trust: an application of unapplied cash is the payment it posted '
                 'from that account, all of it'

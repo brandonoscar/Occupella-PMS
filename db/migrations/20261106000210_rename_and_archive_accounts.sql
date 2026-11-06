@@ -157,15 +157,17 @@ AS $$
 DECLARE
     v_id uuid;
     v_types boolean := TG_TABLE_NAME IN ('trust_charge_types', 'trust_charge_type_names');
+    -- The row as JSON: each of the four tables names the account by a column of its own, which
+    -- the others lack (plpgsql_check reads NEW.<column> against every table the trigger is on).
+    v_row jsonb := to_jsonb(NEW);
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('chart names of ' || NEW.pmc_id::text, 0));
-    -- Each branch reads only its own table's columns.
     IF TG_TABLE_NAME = 'trust_expense_account_names' THEN
-        v_id := NEW.expense_account_id;
+        v_id := (v_row ->> 'expense_account_id')::uuid;
     ELSIF TG_TABLE_NAME = 'trust_charge_type_names' THEN
-        v_id := NEW.charge_type_id;
+        v_id := (v_row ->> 'charge_type_id')::uuid;
     ELSE
-        v_id := NEW.id;
+        v_id := (v_row ->> 'id')::uuid;
     END IF;
     IF TG_TABLE_NAME IN ('trust_expense_account_names', 'trust_charge_type_names')
        AND NEW.name = (CASE WHEN v_types THEN trust_charge_type_name(v_id)
@@ -206,11 +208,12 @@ DECLARE
     v_id uuid;
     v_name text;
 BEGIN
+    -- Each table names the account by a column the other lacks, so the row is read as JSON.
     IF v_expense THEN
-        v_id := NEW.expense_account_id;
+        v_id := (to_jsonb(NEW) ->> 'expense_account_id')::uuid;
         v_name := trust_expense_account_name(v_id);
     ELSE
-        v_id := NEW.charge_type_id;
+        v_id := (to_jsonb(NEW) ->> 'charge_type_id')::uuid;
         v_name := trust_charge_type_name(v_id);
     END IF;
     -- Waits for bills, splits and charges being put in it (trust_check_chart_choice).
@@ -290,10 +293,11 @@ DECLARE
     );
     v_id uuid;
 BEGIN
+    -- Each table names the account by a column the others lack, so the row is read as JSON.
     IF v_expense THEN
-        v_id := NEW.expense_account_id;
+        v_id := (to_jsonb(NEW) ->> 'expense_account_id')::uuid;
     ELSE
-        v_id := NEW.charge_type_id;
+        v_id := (to_jsonb(NEW) ->> 'charge_type_id')::uuid;
     END IF;
     -- Waits for an archival of it in flight (trust_check_chart_archival).
     PERFORM pg_advisory_xact_lock_shared(hashtextextended('chart account ' || v_id::text, 0));

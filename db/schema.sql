@@ -3027,11 +3027,12 @@ DECLARE
     v_id uuid;
     v_name text;
 BEGIN
+    -- Each table names the account by a column the other lacks, so the row is read as JSON.
     IF v_expense THEN
-        v_id := NEW.expense_account_id;
+        v_id := (to_jsonb(NEW) ->> 'expense_account_id')::uuid;
         v_name := trust_expense_account_name(v_id);
     ELSE
-        v_id := NEW.charge_type_id;
+        v_id := (to_jsonb(NEW) ->> 'charge_type_id')::uuid;
         v_name := trust_charge_type_name(v_id);
     END IF;
     -- Waits for bills, splits and charges being put in it (trust_check_chart_choice).
@@ -3113,10 +3114,11 @@ DECLARE
     );
     v_id uuid;
 BEGIN
+    -- Each table names the account by a column the others lack, so the row is read as JSON.
     IF v_expense THEN
-        v_id := NEW.expense_account_id;
+        v_id := (to_jsonb(NEW) ->> 'expense_account_id')::uuid;
     ELSE
-        v_id := NEW.charge_type_id;
+        v_id := (to_jsonb(NEW) ->> 'charge_type_id')::uuid;
     END IF;
     -- Waits for an archival of it in flight (trust_check_chart_archival).
     PERFORM pg_advisory_xact_lock_shared(hashtextextended('chart account ' || v_id::text, 0));
@@ -3146,15 +3148,17 @@ CREATE FUNCTION public.trust_check_chart_name() RETURNS trigger
 DECLARE
     v_id uuid;
     v_types boolean := TG_TABLE_NAME IN ('trust_charge_types', 'trust_charge_type_names');
+    -- The row as JSON: each of the four tables names the account by a column of its own, which
+    -- the others lack (plpgsql_check reads NEW.<column> against every table the trigger is on).
+    v_row jsonb := to_jsonb(NEW);
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('chart names of ' || NEW.pmc_id::text, 0));
-    -- Each branch reads only its own table's columns.
     IF TG_TABLE_NAME = 'trust_expense_account_names' THEN
-        v_id := NEW.expense_account_id;
+        v_id := (v_row ->> 'expense_account_id')::uuid;
     ELSIF TG_TABLE_NAME = 'trust_charge_type_names' THEN
-        v_id := NEW.charge_type_id;
+        v_id := (v_row ->> 'charge_type_id')::uuid;
     ELSE
-        v_id := NEW.id;
+        v_id := (v_row ->> 'id')::uuid;
     END IF;
     IF TG_TABLE_NAME IN ('trust_expense_account_names', 'trust_charge_type_names')
        AND NEW.name = (CASE WHEN v_types THEN trust_charge_type_name(v_id)
@@ -5175,10 +5179,10 @@ CREATE FUNCTION public.trust_check_unapplied_use() RETURNS trigger
     SET search_path TO 'public', 'pg_temp'
     AS $_$
 DECLARE
-    v_receipt trust_unapplied_receipts;
     v_left numeric;
 BEGIN
-    SELECT r.* INTO v_receipt FROM trust_unapplied_receipts AS r
+    -- Applications and refunds of one receipt wait for each other here.
+    PERFORM FROM trust_unapplied_receipts AS r
     WHERE r.id = NEW.receipt_id AND r.pmc_id = NEW.pmc_id
     FOR NO KEY UPDATE;
     v_left := trust_unapplied_left(NEW.receipt_id);
@@ -5187,12 +5191,14 @@ BEGIN
             to_char(v_left, 'FM$999,999,990.00'), to_char(NEW.amount, 'FM$999,999,990.00')
             USING ERRCODE = 'check_violation';
     END IF;
-    -- (Each table's own columns are read only in its own branch.)
+    -- An application's payment_key is its own column (a refund has none), read as JSON so the
+    -- refunds table's binding of this trigger never names it.
     IF TG_TABLE_NAME = 'trust_unapplied_applications' THEN
         IF NEW.amount <> coalesce((
             SELECT sum(tr.amount) FROM pgledger_transfers AS tr
-            WHERE tr.metadata ->> 'key' = NEW.payment_key
-              AND tr.from_account_id = v_receipt.ledger_account_id
+            JOIN trust_unapplied_receipts AS r ON r.id = NEW.receipt_id
+            WHERE tr.metadata ->> 'key' = to_jsonb(NEW) ->> 'payment_key'
+              AND tr.from_account_id = r.ledger_account_id
         ), 0) THEN
             RAISE EXCEPTION 'trust: an application of unapplied cash is the payment it posted '
                 'from that account, all of it'

@@ -102,7 +102,7 @@ def test_staff_read_every_account_by_section_and_code(client, staff):
 
 
 def test_staff_give_an_account_another_code_and_a_code_taken_is_refused_in_words(
-    client, conn, staff
+    client, conn, pmc, staff
 ):
     pets = kind(client, "Pet rent")
 
@@ -119,8 +119,10 @@ def test_staff_give_an_account_another_code_and_a_code_taken_is_refused_in_words
     refused(kept, 409, "code 4010 is Concessions's already")
     assert row(client, line="rent")["code"] == "4001"
     # One row for the change, naming who made it; the same code again wrote nothing.
+    # This company's rows only: other tests' companies share the database.
     assert conn.execute(
-        "SELECT code, recorded_by FROM trust_account_codes WHERE line = 'rent'"
+        "SELECT code, recorded_by FROM trust_account_codes WHERE pmc_id = %s AND line = 'rent'",
+        (pmc.pmc_id,),
     ).fetchall() == [("4001", staff.person_id)]
 
 
