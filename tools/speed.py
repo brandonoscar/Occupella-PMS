@@ -293,8 +293,9 @@ class Staffer:
         self.company = company
         self.rng = rng
         self.today = today
-        # Each payment's amount its own, as staff's payments are: one like a payment recorded to
-        # its lease would wait for staff to say it is another (docs/edge-cases.md H-008).
+        # Each payment a check of its own number, as staff's are: one like a payment recorded to
+        # its lease would wait for staff to say it is another (docs/edge-cases.md H-008). Each is
+        # $25.00, too little to pay off a month's rent the run leaves owing.
         self.n = n
         self.payments = 0
         b = demo.Builder(conn, company.pmc_id)
@@ -336,8 +337,13 @@ class Staffer:
 
         def payment() -> Request:
             self.payments += 1
-            amount = Decimal(2500 + 100_000 * self.n + self.payments) / 100
-            body = {"request_id": str(uuid.uuid4()), "amount": f"{amount}", "received_on": today}
+            body = {
+                "request_id": str(uuid.uuid4()),
+                "amount": "25.00",
+                "received_on": today,
+                "method": "check",
+                "reference": f"Check {self.n}-{self.payments}",
+            }
             return "POST", f"/api/rent/leases/{rng.choice(c.leases)}/payments", body
 
         return {
