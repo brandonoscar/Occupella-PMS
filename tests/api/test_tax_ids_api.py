@@ -360,3 +360,27 @@ def test_the_1099_export_counts_as_the_reports_do(client, conn, pmc, admin):
 def test_a_1099_export_with_no_payees_is_its_header(client, pmc, admin):
     answer = client.get("/api/tax-ids/1099", params={"year": YEAR})
     assert answer.text == "payee_type,payee,form,amount,tin_type,tin,note\r\n"
+
+
+@pytest.mark.parametrize("fetched_from", ["same-site", "cross-site"])
+def test_a_reveal_another_site_asked_for_is_refused_and_records_nothing(
+    client, conn, pmc, admin, fetched_from
+):
+    # The AI pen test of 11/06: a page on a sibling subdomain (an <img> of the 1099 export) was
+    # sent the session cookie, SameSite=Strict counting it the same site, and recorded the admin
+    # revealing every tax ID. A GET that writes is now the app's own, as a change is.
+    year_of_payments(conn, pmc)
+    kept = ok(keep(client, "vendor", pmc.vendor_id, "EIN", EIN), 201)["tax_id"]
+    asked = {"sec-fetch-site": fetched_from}
+
+    answers = [
+        client.get(f"/api/tax-ids/{kept['id']}/whole", headers=asked),
+        client.get("/api/tax-ids/1099", params={"year": YEAR}, headers=asked),
+    ]
+
+    assert [a.status_code for a in answers] == [403, 403]
+    assert {a.json()["detail"] for a in answers} == {"this request came from another site"}
+    assert reveals(conn, pmc) == []
+    # The app's own page (same-origin) and software that says nothing still get them.
+    ok(client.get(f"/api/tax-ids/{kept['id']}/whole", headers={"sec-fetch-site": "same-origin"}))
+    ok(client.get(f"/api/tax-ids/{kept['id']}/whole"))

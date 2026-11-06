@@ -139,7 +139,16 @@ from pms.api import (
     work_orders,
     year_close,
 )
-from pms.api.deps import COOKIE, DISK_FULL, Conn, Current, Staff, download, refusal
+from pms.api.deps import (
+    COOKIE,
+    CROSS_SITE,
+    DISK_FULL,
+    Conn,
+    Current,
+    Staff,
+    download,
+    refusal,
+)
 from pms.leasing import screening
 
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
@@ -918,9 +927,6 @@ class BodyLimit:
             await JSONResponse({"detail": TOO_BIG}, 413)(scope, receive, send)
 
 
-# What a browser's Sec-Fetch-Site says of a request from another site, or from another origin
-# of this site (a sibling subdomain).
-CROSS_SITE = frozenset({"cross-site", "same-site"})
 # Two years, this host and its subdomains (OWASP's HTTP headers cheat sheet), sent only when
 # the public URL is https; not preloaded, which is the operator's choice.
 STRICT_TRANSPORT = "max-age=63072000; includeSubDomains"

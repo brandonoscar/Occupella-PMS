@@ -15,6 +15,25 @@ from pydantic import BaseModel
 from pms import accounts, exports
 
 COOKIE = "pms_session"
+
+# What a browser's Sec-Fetch-Site says of a request from another site, or from another origin
+# of this site (a sibling subdomain): a change from one is refused (app.guard), and so is a GET
+# that writes (from_this_site).
+CROSS_SITE = frozenset({"cross-site", "same-site"})
+
+
+def from_this_site(request: Request) -> None:
+    """A GET that writes (a tax ID revealed, a payout file taken, each recorded) is the app's
+    own: one a browser says another site asked for is refused, as every change is. The session
+    cookie is SameSite=Strict, which a sibling subdomain's page still counts as the same site, so
+    its <img> of the 1099 export recorded an admin revealing every tax ID (the AI pen test of
+    11/06). Software that says nothing goes on as before; tests/api/test_gets_that_write.py finds
+    every GET that writes and checks it takes this."""
+    if request.headers.get("sec-fetch-site") in CROSS_SITE:
+        raise HTTPException(403, "this request came from another site")
+
+
+FromThisSite = Annotated[None, Depends(from_this_site)]
 MEDIA = {
     "csv": "text/csv; charset=utf-8",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

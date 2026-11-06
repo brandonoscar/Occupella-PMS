@@ -25,7 +25,7 @@ from psycopg import sql
 from pydantic import BaseModel, Field
 
 from pms import exports, sealed
-from pms.api.deps import Conn, Staff, download
+from pms.api.deps import Conn, FromThisSite, Staff, download
 from pms.api.staff import roles_of
 
 router = APIRouter(prefix="/api/tax-ids")
@@ -198,7 +198,7 @@ def seen(conn: psycopg.Connection[Any], pmc_id: UUID, tax_id: UUID, purpose: str
 
 
 @router.get("/{tax_id}/whole")
-def reveal(session: Staff, conn: Conn, tax_id: UUID) -> Whole:
+def reveal(_site: FromThisSite, session: Staff, conn: Conn, tax_id: UUID) -> Whole:
     """A tax ID whole, for an admin: each time is recorded, naming them."""
     refuse_unless_admin(conn, session, "sees a whole tax ID")
     row = conn.execute(
@@ -294,7 +294,10 @@ COLUMNS_1099 = ("payee_type", "payee", "form", "amount", "tin_type", "tin", "not
 
 @router.get("/1099")
 def export_1099(
-    session: Staff, conn: Conn, year: Annotated[int, Query(ge=1900, le=9998)]
+    _site: FromThisSite,
+    session: Staff,
+    conn: Conn,
+    year: Annotated[int, Query(ge=1900, le=9998)],
 ) -> Response:
     """The year's 1099s as CSV, for an admin to give whoever files them: each payee, the form,
     the amount and their tax ID whole (or that none is on file). Every tax ID in it is recorded

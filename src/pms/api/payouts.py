@@ -25,7 +25,7 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from pms import sealed
-from pms.api.deps import Conn, Staff, download
+from pms.api.deps import Conn, FromThisSite, Staff, download
 from pms.payouts import checks, nacha
 
 router = APIRouter(prefix="/api/payouts")
@@ -658,7 +658,9 @@ def take_file(
 
 
 @router.get("/runs/{run_id}/ach")
-def ach_file(session: Staff, conn: Conn, run_id: UUID, again: bool = False) -> Response:
+def ach_file(
+    _site: FromThisSite, session: Staff, conn: Conn, run_id: UUID, again: bool = False
+) -> Response:
     """The run's ACH file (NACHA) for the company to upload to its bank: one credit to each
     payee's bank account, their payouts in the run summed. Taken before, it comes again only
     with `again` (the portal asks first)."""
@@ -727,7 +729,7 @@ ORDER BY c.created_at DESC, c.id DESC LIMIT 1
 
 
 @router.get("/runs/{run_id}/checks")
-def checks_file(session: Staff, conn: Conn, run_id: UUID) -> Response:
+def checks_file(_site: FromThisSite, session: Staff, conn: Conn, run_id: UUID) -> Response:
     """The run's checks, one a page, to print on the company's pre-printed stock: one to each
     payee, its stubs listing what it pays."""
     run = take_file(conn, session, run_id, "check")

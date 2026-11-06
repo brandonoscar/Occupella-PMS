@@ -693,3 +693,26 @@ def test_saving_the_same_way_paid_or_bank_details_again_writes_nothing(client, c
         {"p": pmc.pmc_id},
     ).fetchone()
     assert counts == (1, 1)
+
+
+@pytest.mark.parametrize("fetched_from", ["same-site", "cross-site"])
+def test_a_payout_file_another_site_asked_for_is_refused_and_not_taken(
+    client, conn, staff, pmc, fetched_from
+):
+    # The AI pen test of 11/06: taking a payout file is recorded (and an ACH file, once taken,
+    # comes again only when asked), so a sibling site's page can't take one with the cookie.
+    fund(conn, pmc, "500.00")
+    ach_details(client, pmc)
+    owner_bank(client, pmc)
+    run = ok(pay_owners(client, pmc, "EFT", amount="125.50"), 201)[0]["run_id"]
+    asked = {"sec-fetch-site": fetched_from}
+
+    answers = [
+        client.get(f"/api/payouts/runs/{run}/ach", headers=asked),
+        client.get(f"/api/payouts/runs/{run}/ach?again=true", headers=asked),
+        client.get(f"/api/payouts/runs/{run}/checks", headers=asked),
+    ]
+
+    assert [a.status_code for a in answers] == [403, 403, 403]
+    assert ok(client.get("/api/payouts/runs?kind=owners"))[0]["downloads"] == 0
+    assert client.get(f"/api/payouts/runs/{run}/ach").status_code == 200  # the first take
