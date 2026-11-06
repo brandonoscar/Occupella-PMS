@@ -200,6 +200,33 @@ release the app no longer connects as the database's owner, and it won't start w
 The database changes run before the new app starts. A release is never rolled back once money is
 posted on it: a fix is the next release ([docs/release.md](release.md)).
 
+## A database with its own API
+
+The compose file's database serves nobody but the PMS. A database that serves an HTTP API of its
+own does not: a Supabase project's Data API, or any PostgREST, answers as the roles `anon` and
+`authenticated` (and on Supabase `service_role`), and a Supabase project grants each of them every
+table, sequence and function a migration makes in schema `public`. The anon key is in every
+browser that loads the project's pages, and the books have no row-level security, so through that
+API anyone could read every table and call the write paths that move money.
+
+The app, the nightly run and the webhook courier therefore refuse such a database, naming the
+first thing one of those roles holds and how many more ("the database's own API can reach the
+books: anon holds ..."). Turn the project's Data API off, or keep it off schema `public`, and take
+the grants back, after the migrations and after each upgrade's:
+
+```sql
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated, service_role;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated, service_role;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon, authenticated, service_role;
+```
+
+Run it as the role the migrations run as, so the last three stop the next migration's tables from
+being granted. NOT VERIFIED on a live Supabase project: the PMS's tests make Supabase's roles and
+grants on plain Postgres (`tests/test_api_exposure.py`).
+
 ## Not in this release
 
 - **Texts**, **listing syndication**, **application fees** and **card payments** (rent online is
