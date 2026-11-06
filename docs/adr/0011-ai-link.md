@@ -11,6 +11,25 @@ plan, and then the link proposed below, approved as written:
 How the PMS takes the AI in (keys, drafts, events, the MCP server, the Enable AI button) is
 the second part, below.
 
+## Partly superseded (the founder, 2026-11-05)
+
+AgenticHelixis `docs/decisions/ADR-one-product.md`: Occupella becomes one product built on this
+PMS, with the AI built in. What it changes here:
+
+- **Hosting (decision 2):** there is no `occupella-cloud`. Hosted companies run from a copy of
+  this repository inside AgenticHelixis (`pms/`, by git subtree), on its own Render service and a
+  Supabase project of the books' own, under that repository's rules. Hard rule 4 still holds for
+  this repository and its CI.
+- **Enable AI (decision 3, the link's last part, work items 5 and 6):** not built. The AI is
+  part of the hosted product, with Occupella's consent text and billing; nothing here pairs a
+  self-hosted PMS with it.
+- **Unchanged:** decision 1 (rule 29, reworded); the AI is not open source and nothing of it
+  ships here; and the keys, drafts, events and MCP server, built and open, for any AI. The hosted
+  product's AI reads the books through the same API as `trust_ai_agent`, and staff approve its
+  drafts.
+
+The rest of this record is kept as decided on 2026-10-31.
+
 ## Context
 
 The plan keeps the code apart and makes it one product at the API, the sign-in and the screen:
@@ -81,7 +100,7 @@ stays true whatever the AI is sold as.
   - "Propose" tools that write drafts.
   - Any Claude, or any MCP client, plugs in with a key. The plan makes it the free way to try
     AI on a PMS.
-- **Enable AI** (Settings, AI; admins only).
+- **Enable AI** (Settings, AI; admins only). Not built: superseded on 2026-11-05, above.
   1. The admin presses Enable AI. The PMS makes a key waiting to be paired, and a one-time
      pairing code that lasts ten minutes.
   2. The PMS sends the admin to Occupella's sign-up with the PMS's address and the code. Billing
@@ -100,9 +119,9 @@ The work, in this order, each piece a PR with its tests:
 2. Drafts (built: migration 20261105000300, `src/pms/api/drafts.py`).
 3. Events (built: migration 20261105000500, `src/pms/api/events.py`, `src/pms/webhooks.py`).
 4. The MCP server (built: `src/pms/api/mcp.py`, at `/mcp`).
-5. Enable AI and its screens.
+5. Enable AI and its screens (not built: superseded on 2026-11-05, above).
 6. Then, in `occupella-ai`, the connector to this API. AgenticHelixis is added to a session
-   for that, last.
+   for that, last. (Superseded: the hosted product reads its copy of the PMS through this API.)
 
 ## Not decided here
 
