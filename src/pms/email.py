@@ -520,8 +520,9 @@ def alert_text(kind: Alert, company: str, day: date, what: str, public_url: str)
             " fees, recurring work orders and the emails they send. It is all or nothing, so"
             " nothing was half done.\n\n"
             f"What failed: {what}\n\n"
-            "The next run, tomorrow at 06:00 UTC, tries again. An admin can run it now from"
-            f" Rent roll, Run rent now:\n{public_url.rstrip('/')}/rent-roll\n\n{SUPPORT}\n",
+            "The server tries again within the hour, and each hour after until it runs. An"
+            " admin can run it now from Rent roll, Run rent now:"
+            f"\n{public_url.rstrip('/')}/rent-roll\n\n{SUPPORT}\n",
         )
     return (
         f"{company}: emails are not going out",

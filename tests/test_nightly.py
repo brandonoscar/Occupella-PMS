@@ -281,6 +281,64 @@ def test_the_scheduler_runs_each_company_once_its_day_has_begun(conn, database_u
     assert (date(2026, 11, 1), "rent", "1000.00") in charges(conn, leases[hawaii.pmc_id])
 
 
+def test_a_company_whose_run_failed_is_tried_again_the_next_hour_not_the_next_day(
+    conn, database_url, pmc, monkeypatch
+):
+    """docs/edge-cases.md D-015 and C-071: a run that fails on a passing cause (a deadlock, a lock
+    a staff request held) was marked done for its day, so its rent, late fees, reminders and
+    autopay waited a whole day. The next look, a minute past the next hour, runs it again."""
+    other = make_pmc(conn)
+    leases = {p.pmc_id: lease_since(conn, p, date(2026, 9, 1)) for p in (pmc, other)}
+    real = nightly.run_pmc
+    failing = [pmc.pmc_id]
+
+    def run_pmc(conn, pmc_id, *args):
+        if pmc_id in failing:
+            failing.remove(pmc_id)
+            raise psycopg.errors.DeadlockDetected("deadlock detected")
+        return real(conn, pmc_id, *args)
+
+    monkeypatch.setattr(nightly, "run_pmc", run_pmc)
+    now = [datetime(2026, 11, 1, 5, 1, tzinfo=UTC)]  # a minute past midnight in New York
+    runs = nightly.Scheduler(
+        database_url, "trust_app", URL, None, lambda: now[0], pmcs=[pmc.pmc_id, other.pmc_id]
+    )
+
+    assert [r.pmc_id for r in runs.run_once()] == [other.pmc_id]
+    assert runs.days == {other.pmc_id: date(2026, 11, 1)}  # the failed one's day is not done
+    assert date(2026, 11, 1) not in [day for day, *_ in charges(conn, leases[pmc.pmc_id])]
+
+    now[0] += timedelta(hours=1)
+    (again,) = runs.run_once(begun_only=True)
+    assert (again.pmc_id, again.rents) == (pmc.pmc_id, 1)
+    assert (date(2026, 11, 1), "rent", "1000.00") in charges(conn, leases[pmc.pmc_id])
+    assert runs.days == {pmc.pmc_id: date(2026, 11, 1), other.pmc_id: date(2026, 11, 1)}
+
+    now[0] += timedelta(hours=1)
+    assert runs.run_once(begun_only=True) == []  # each ran once for its day
+
+
+def test_a_scheduler_that_found_the_lock_held_looks_again_the_next_hour(conn, database_url, pmc):
+    """docs/edge-cases.md C-070: a look that found another run holding the lock ran nothing but
+    still marked every company's day as run here, so if the holder ran another day, or died, this
+    server never looked again that day."""
+    lease = lease_since(conn, pmc, date(2026, 9, 1))
+    now = [datetime(2026, 11, 1, 5, 1, tzinfo=UTC)]
+    runs = nightly.Scheduler(
+        database_url, "trust_app", URL, None, lambda: now[0], pmcs=[pmc.pmc_id]
+    )
+    with psycopg.connect(database_url, autocommit=True) as holder:
+        holder.execute("SELECT pg_advisory_lock(hashtextextended(%s, 0))", (nightly.LOCK,))
+        assert runs.run_once() == []
+        holder.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (nightly.LOCK,))
+    assert runs.days == {}
+
+    now[0] += timedelta(hours=1)
+    (ran,) = runs.run_once(begun_only=True)
+    assert (ran.pmc_id, ran.rents) == (pmc.pmc_id, 1)
+    assert (date(2026, 11, 1), "rent", "1000.00") in charges(conn, lease)
+
+
 @pytest.mark.timing
 def test_the_scheduler_runs_at_start_then_waits_for_its_time(conn, database_url, pmc):
     lease = lease_since(conn, pmc, date(2026, 9, 1))

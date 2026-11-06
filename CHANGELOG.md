@@ -162,6 +162,11 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
 - **Fixed: a second ACH file of a day looked like a duplicate.** Every ACH file's File ID Modifier
   was "A", so a bank could refuse the day's second file (Pay owners, then Pay bills) as the first
   sent again. Each run's file now has its own, A, then B, and so on; taken again it keeps it.
+- **Fixed: a nightly run that failed waited a whole day.** A company whose run failed on a passing
+  cause (a deadlock, a lock a staff request held) was marked done for its day, so its rent, late
+  fees, reminders and autopay started a day late; so was every company when another server held
+  the run's lock. The server now runs it again a minute past the next hour, and each hour after
+  until it runs, its admins told once a day as before; the alert email says so.
 - **Fixed: Stripe's answers in an old API version, and a webhook missing its events.** Every
   call to Stripe now names the API version whose shapes the PMS reads (`2024-06-20`), so an
   account whose default is older than `latest_charge` no longer fails every paid report; and
