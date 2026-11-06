@@ -244,6 +244,7 @@ def test_staff_archive_a_charge_type_and_it_takes_no_new_fee(client, conn, staff
         send(
             client,
             f"/api/rent/leases/{lease}/recurring-charges",
+            request_id=uuid.uuid4(),
             kind="fee",
             amount="40.00",
             memo="Space 9",
@@ -259,6 +260,7 @@ def test_staff_archive_a_charge_type_and_it_takes_no_new_fee(client, conn, staff
     fee = send(
         client,
         f"/api/rent/leases/{lease}/charges",
+        request_id=uuid.uuid4(),
         kind="fee",
         amount="10.00",
         due_on=TODAY,

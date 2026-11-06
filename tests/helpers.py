@@ -978,17 +978,18 @@ def staff_named(connection, pmc_id, name, roles=()) -> UUID:
     return staff_id
 
 
-def propose_entry(connection, pmc_id, staff_id, event_on, memo, lines) -> UUID:
-    """A journal entry proposed by a staff member: lines of (from, to, amount)."""
+def propose_entry(connection, pmc_id, staff_id, event_on, memo, lines, request_id=None) -> UUID:
+    """A journal entry proposed by a staff member: lines of (from, to, amount), maybe under the
+    request id of the page that proposed it."""
     rows = sql.SQL(", ").join(sql.SQL("(%s, %s, %s::numeric)::transfer_request") for _ in lines)
     query = sql.SQL(
-        "SELECT trust_propose_journal_entry(%s, %s, %s, ARRAY[{}]::transfer_request[])"
+        "SELECT trust_propose_journal_entry(%s, %s, %s, ARRAY[{}]::transfer_request[], %s::uuid)"
     ).format(rows)
     with acting_as(connection, staff_id):
         return _one(
             connection,
             query,
-            [pmc_id, event_on, memo, *(value for line in lines for value in line)],
+            [pmc_id, event_on, memo, *(value for line in lines for value in line), request_id],
         )
 
 

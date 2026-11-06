@@ -1841,7 +1841,8 @@ class FeeDue(BaseModel):
     owner: str
     property: str
     # Taken: the fee taken for the period already. Otherwise what taking it today would take,
-    # or why it can't be taken.
+    # or why it can't be taken; for a period not ended yet both: what it would take so far, and
+    # that it is collected once the period has ended (M-112).
     taken: bool
     fee: str | None
     refused: str | None
@@ -1864,6 +1865,19 @@ FEE_REFUSALS = (
 )
 
 
+def not_ended(conn: psycopg.Connection[Any], pmc_id: UUID, period_end: date) -> str | None:
+    """Why a fee period can't be collected yet: it hasn't ended by the company's today (up to
+    period_end, not including it). Taken early, the fee counts only what came in so far, and the
+    period takes no fee after (docs/edge-cases.md M-112)."""
+    if period_end <= today(conn, pmc_id):
+        return None
+    return (
+        f"a fee period is collected once it has ended: this one ends"
+        f" {period_end - timedelta(days=1):%m/%d/%Y}, so its fee is collected from"
+        f" {period_end:%m/%d/%Y}"
+    )
+
+
 @router.get("/management-fees")
 def management_fees_due(
     session: Staff,
@@ -1876,6 +1890,7 @@ def management_fees_due(
     trust_post_management_fee itself and rolled back, so it moves nothing."""
     if period_end <= period_start:
         raise HTTPException(422, "a fee period ends after it starts")
+    early = not_ended(conn, session.pmc_id, period_end)
     due = []
     for account, owner, prop in conn.execute(
         FEE_ACCOUNTS, (session.pmc_id, None, None, period_end)
@@ -1915,6 +1930,8 @@ def management_fees_due(
                 raise psycopg.Rollback()
         except FEE_REFUSALS as refusing:
             refused = refusal(refusing)
+        if early is not None:
+            refused = early  # what it would take so far, shown, but not collected yet
         due.append(
             FeeDue(
                 account=account,
@@ -1933,10 +1950,13 @@ def management_fees(session: Staff, conn: Conn, run: FeeRun) -> list[Fee]:
     """Takes the management fee of a period from each owner's account (or one), once per
     period: its percent of the rent and recurring fees (pet rent, parking) collected in it, at
     least the minimum, plus a flat fee. An account the fee can't be taken from says why, and the
-    others are taken."""
+    others are taken. A period is collected once it has ended (not_ended)."""
     not_after_today(conn, session.pmc_id, run.on)
     if run.period_end <= run.period_start:
         raise HTTPException(422, "a fee period ends after it starts")
+    early = not_ended(conn, session.pmc_id, run.period_end)
+    if early is not None:
+        raise HTTPException(422, early)
     if run.account is not None:
         owner_account(conn, session.pmc_id, run.account)
     rows = conn.execute(

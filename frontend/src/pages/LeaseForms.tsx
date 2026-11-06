@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { type ApiError, api } from "../api";
+import { api } from "../api";
 import { Button } from "../components/Button";
-import { useConfirm } from "../components/Confirm";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { RowMenu } from "../components/RowMenu";
@@ -15,6 +14,7 @@ import type { Bounce, DepositKind, Hold, OpenCharge, Payment, PaymentMethod, Rec
 import {
   DEPOSIT_KINDS,
   PAYMENT_METHODS,
+  alikePayment,
   bounceSummary,
   chargeLabel,
   chosenCharges,
@@ -31,17 +31,13 @@ import {
 import { sharesLine } from "../rentals";
 import type { Named, Portfolio } from "../setup";
 import { ChargeTypeSelect, useChargeTypes } from "./ChargeTypes";
+import { latest } from "../latest";
 
 // The forms of a lease's rent work (pages/LeasePage.tsx), each one thing recorded: a payment, a
 // fee or credit, one every month, a new rent, a deposit; and a payment's row, which can bounce,
 // and a monthly charge's, which can stop.
 
-export type Recorder = <T>(path: string, body: object, done: (answer: T) => string,
-  refused?: (failed: ApiError) => boolean) => Promise<boolean>;
-
-// The last sentence of the API's refusal of a payment like one recorded already (src/pms/api/rent.py
-// SECOND_PAYMENT, docs/edge-cases.md H-008): Receive payment then asks before recording it again.
-const SECOND_PAYMENT = "Record it again only if this is a second payment.";
+export type Recorder = <T>(path: string, body: object, done: (answer: T) => string) => Promise<boolean>;
 
 // A payment as a row; It bounced is in its ⋯ menu and asks for the day it came back, naming the
 // amount, before it is recorded, since it moves the money back and charges the property's NSF fee.
@@ -118,13 +114,13 @@ export function PaymentForm({ lease, record, onRecorded }: {
   const [reference, setReference] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("check");
   const [pastHold, setPastHold] = useState(false);
+  const [notDuplicate, setNotDuplicate] = useState(false);
   const [note, setNote] = useState("");
   const [file, setFile] = useState<PaymentFile | null>(null);
   const [picker, setPicker] = useState(0);
   const [choosing, setChoosing] = useState(false);
   const [picked, setPicked] = useState<Record<string, string>>({});
   const another = useRef(false);
-  const { ask, prompt } = useConfirm();
   const hasPrepaid = lease.tenants.some((t) => Number(t.prepaid) > 0);
   // Its property's owners split each payment by their shares (migration 0094); without shares,
   // staff choose the account when there are several.
@@ -137,41 +133,37 @@ export function PaymentForm({ lease, record, onRecorded }: {
   const charges = choosing ? chosenCharges(picked) : [];
   const problem = file === null ? "" : file.type === null
     ? "A file is a PDF, a JPEG or a PNG." : file.size > MAX_BYTES ? "A file is at most 5 MB." : "";
+  // One of this amount received this day is recorded already: the answer lost and the panel
+  // opened again, or the same check from another tab (H-008, U-138). Staff say it is another.
+  const alike = alikePayment(lease.payments ?? [], amount, on, method, reference);
+  const waiting = problem !== "" || (alike !== null && !notDuplicate);
   return (
     <div className="flex flex-col gap-4">
       <Form
         className="flex flex-col gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
-          if (problem) return;
+          if (waiting) return;
           const body = {
             request_id: id, amount, received_on: on, method, reference: reference || null, ...chosen,
             ...(lease.on_hold && pastHold ? { past_hold: true } : {}),
+            ...(alike && notDuplicate ? { not_a_duplicate: true } : {}),
             ...(note.trim() ? { note: note.trim() } : {}),
             ...(file ? { attachment: { title: file.title, content_type: file.type, content_base64: file.base64 } } : {}),
             ...(charges.length > 0 ? { charges } : {}),
           };
-          const send = async (again: boolean) => {
-            const recorded = await record<Payment>(`/api/rent/leases/${lease.id}/payments`,
-              again ? { ...body, again: true } : body, paymentSummary,
-              // One like it is recorded already (its answer lost, say): ask, then record a second.
-              (failed) => {
-                if (again || failed.status !== 409 || !failed.detail.endsWith(SECOND_PAYMENT)) return false;
-                ask(failed.detail, () => send(true), "Record it again");
-                return true;
-              });
-            if (!recorded) return;
+          if (await record<Payment>(`/api/rent/leases/${lease.id}/payments`, body, paymentSummary)) {
             setId(requestId());
             setAmount("");
             setReference("");
+            setNotDuplicate(false);
             setNote("");
             setFile(null);
             setPicker((n) => n + 1);
             setPicked({});
             setChoosing(false);
             onRecorded?.(another.current);
-          };
-          await send(false);
+          }
         }}
       >
         <div className="flex flex-wrap items-end gap-3">
@@ -241,13 +233,24 @@ export function PaymentForm({ lease, record, onRecorded }: {
             Accept this payment past the payment hold
           </label>
         )}
+        {alike && (
+          <div className="flex flex-col gap-2">
+            <Notice tone="info">
+              {`A payment of ${money(alike.amount)} received ${usDate(alike.received_on)} is recorded on this lease already.`}
+            </Notice>
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <input type="checkbox" checked={notDuplicate} onChange={(e) => setNotDuplicate(e.target.checked)} />
+              This is another payment, not that one again
+            </label>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" disabled={problem !== ""} onClick={() => { another.current = false; }}
+          <Button type="submit" disabled={waiting} onClick={() => { another.current = false; }}
             says={`${charges.length > 0 ? "Pays the charges chosen first, then the rest owed" : "Pays what is owed, rent first"}; any extra is held as prepaid rent. Each tenant with an email on file is emailed a receipt.`}>
             Record payment
           </Button>
           {onRecorded && (
-            <Button type="submit" variant="secondary" disabled={problem !== ""}
+            <Button type="submit" variant="secondary" disabled={waiting}
               onClick={() => { another.current = true; }}>
               Save and add another
             </Button>
@@ -267,7 +270,6 @@ export function PaymentForm({ lease, record, onRecorded }: {
           </Button>
         </div>
       )}
-      {prompt}
     </div>
   );
 }
@@ -296,6 +298,8 @@ function ChargeChoice({ charge, amount, onChange }: {
 }
 
 export function ChargeForm({ lease, record }: { lease: RentLease; record: Recorder }) {
+  // Sent again (its answer lost), the same request id charges nothing new (C-025).
+  const [id, setId] = useState(requestId);
   const [kind, setKind] = useState<"fee" | "credit">("fee");
   const [amount, setAmount] = useState("");
   const [due, setDue] = useState(companyDay());
@@ -310,10 +314,11 @@ export function ChargeForm({ lease, record }: { lease: RentLease; record: Record
         event.preventDefault();
         const typed = kind === "fee" && type ? { charge_type_id: type } : {};
         const given = kind === "credit" && concession ? { concession: true } : {};
-        const body = { kind, amount, due_on: due, memo, ...typed, ...given };
+        const body = { request_id: id, kind, amount, due_on: due, memo, ...typed, ...given };
         const word = kind === "fee" ? "Fee" : given.concession ? "Concession" : "Credit";
         const said = () => `${word} of ${money(amount)} added.`;
         if (await record(`/api/rent/leases/${lease.id}/charges`, body, said)) {
+          setId(requestId());
           setAmount("");
           setMemo("");
         }
@@ -388,6 +393,7 @@ function ConcessionBox({ id, checked, onChange }: { id: string; checked: boolean
 }
 
 export function RecurringForm({ lease, record }: { lease: RentLease; record: Recorder }) {
+  const [id, setId] = useState(requestId);  // as Enter charge's (C-026)
   const [kind, setKind] = useState<"fee" | "credit">("fee");
   const [amount, setAmount] = useState("");
   const [from, setFrom] = useState(companyDay());
@@ -402,9 +408,10 @@ export function RecurringForm({ lease, record }: { lease: RentLease; record: Rec
         event.preventDefault();
         const typed = kind === "fee" && type ? { charge_type_id: type } : {};
         const given = kind === "credit" && concession ? { concession: true } : {};
-        const body = { kind, amount, memo, starts_on: from, ...typed, ...given };
+        const body = { request_id: id, kind, amount, memo, starts_on: from, ...typed, ...given };
         const said = () => `${memo} of ${money(amount)} added every month.`;
         if (await record(`/api/rent/leases/${lease.id}/recurring-charges`, body, said)) {
+          setId(requestId());
           setAmount("");
           setMemo("");
         }
@@ -433,14 +440,28 @@ export function RecurringForm({ lease, record }: { lease: RentLease; record: Rec
 }
 
 // A new monthly rent from the first of a month, after written notice of a full month. A lease
-// with an end date names the term that lets its rent change during it. A state or city may ask
-// for more notice, or cap the increase: that stays the company's to check.
+// with an end date names the term that lets its rent change during it. Where the property's state
+// asks more notice before an increase (src/pms/rent_notice.py, docs/law.md), the panel says so,
+// counted from the day notice was given (docs/edge-cases.md D-065, D-066): a warning, not a
+// refusal. A cap, or a city's rule, stays the company's to check.
 export function RentChangeForm({ lease, record }: { lease: RentLease; record: Recorder }) {
   const [from, setFrom] = useState(earliestRentChange(companyDate()));
   const [amount, setAmount] = useState("");
   const [notice, setNotice] = useState(companyDay());
   const [served, setServed] = useState<RentChange["served_by"]>("mail");
   const [terms, setTerms] = useState("");
+  const [warning, setWarning] = useState("");
+  useEffect(() => {
+    const day = /^\d{4}-\d{2}-\d{2}$/;
+    setWarning("");
+    if (!/^\d+(\.\d{1,2})?$/.test(amount.trim()) || Number(amount) <= 0 || !day.test(from) || !day.test(notice)) return;
+    const run = latest();
+    const asked = new URLSearchParams({ effective_on: from, monthly_rent: amount.trim(), notice_given_on: notice });
+    api.get<{ warning: string | null } | null>(`/api/leasing/renewals/${lease.id}/rent-change-notice?${asked}`)
+      .then(run.keep((rule) => setWarning(rule?.warning ?? "")))
+      .catch(() => {});  // the API refuses an unfinished one; the save says why
+    return run.stop;
+  }, [lease.id, amount, from, notice]);
   return (
     <Form
       className="flex flex-wrap items-end gap-3"
@@ -475,6 +496,7 @@ export function RentChangeForm({ lease, record }: { lease: RentLease; record: Re
         <Field label="The lease term that allows it" id={`rent-change-terms-${lease.id}`} required
           maxLength={500} value={terms} onChange={(e) => setTerms(e.target.value)} />
       )}
+      <Notice tone="info">{warning}</Notice>
       <Button type="submit" variant="secondary">
         Change rent
       </Button>

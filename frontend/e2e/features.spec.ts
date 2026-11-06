@@ -1214,15 +1214,20 @@ test("staff take the month's management fees once, find no leasing fee due, and 
   await expect(birch.getByRole("cell").nth(2)).toHaveText("$250.00");
   await expect(birch.getByRole("cell").nth(3)).toHaveText("$250.00");
 
-  // Management fees: nothing was collected yet this month, so Demo Owner A's agreements would
-  // take their $50.00 minimum; looking takes nothing, and Collect fees takes it, once.
+  // Management fees: this month's period hasn't ended, so its fee waits for its end and nothing
+  // can be collected (docs/edge-cases.md M-112).
   await section(page, "Management fees");
-  const nextMonth = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)), 1))
-    .toISOString()
-    .slice(0, 10);
+  const nextMonth = firstOfMonthsAgo(-1);
   await page.getByLabel("Period from").fill(firstOfThisMonth());
   await page.getByLabel("Up to (not including)").fill(nextMonth);
   const fee = page.getByRole("row", { name: "Demo Owner A, Birch Flats", exact: true });
+  await expect(fee).toContainText(`a fee period is collected once it has ended`);
+  await expect(fee).toContainText(`so its fee is collected from ${us(nextMonth)}`);
+  await expect(page.getByRole("button", { name: "Collect fees" })).toBeDisabled();
+  // Nothing was collected the month before the demo's books begin, so Demo Owner A's agreements
+  // would take their $50.00 minimum for it; looking takes nothing, and Collect fees takes it, once.
+  await page.getByLabel("Period from").fill(firstOfMonthsAgo(3));
+  await page.getByLabel("Up to (not including)").fill(firstOfMonthsAgo(2));
   await expect(fee).toContainText("$50.00");
   await expect(fee).toContainText("To collect");
   await page.getByRole("button", { name: "Collect fees" }).click();
@@ -4494,10 +4499,13 @@ test("staff make a tenant a tenant at a second property and lease them a unit th
   await same.getByRole("button", { name: "Find" }).click();
   await same.getByRole("button", { name: /^Same person: Taylor Demo, .*Cedar House/ }).click();
   await expect(page.getByRole("alertdialog")).toContainText(
-    /Link Drew Sample and Taylor Demo \(.*Cedar House\) for good\? They get one portal sign-in/,
+    /Link Drew Sample and Taylor Demo \(.*Cedar House\)\? They get one portal sign-in/,
   );
   await page.getByRole("alertdialog").getByRole("button", { name: "This is them" }).click();
   await expect(same.getByRole("alert")).toContainText("Drew Sample signs in to the portal: link Taylor Demo to them instead");
+  // The refused panel stays open with its reason; staff close it to go on.
+  await same.getByRole("button", { name: "Close" }).click();
+  await expect(same).toBeHidden();
 
   // Taylor signs in once and has both homes; a repair asked for at Aspen Row is theirs there.
   const tenant = await browser.newPage();
@@ -4518,6 +4526,20 @@ test("staff make a tenant a tenant at a second property and lease them a unit th
   await picker.selectOption({ index: 1 });
   await expect(part(tenant, "Your lease").getByText("Cedar House", { exact: true })).toBeVisible();
   await tenant.close();
+
+  // A link made by mistake is taken back from the record linked (docs/edge-cases.md U-099): it is
+  // its own person again, and whoever signs in at Cedar House no longer sees its lease.
+  await section(page, "Tenants");
+  await page.getByRole("row", { name: "Taylor Demo", exact: true }).filter({ hasText: "Aspen Row" })
+    .getByRole("link", { name: "Taylor Demo" }).click();
+  await part(page, "Other properties").getByRole("button", { name: "Actions for Tenant at Cedar House" }).click();
+  await page.getByRole("menuitem", { name: "Not the same person" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    "Taylor Demo isn't the tenant who signs in at Cedar House? Take the link back:",
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: "Not the same person" }).click();
+  await expect(page.getByText("The link is taken back: each record is its own person.")).toBeVisible();
+  await expect(part(page, "Other properties")).toContainText("Renting at another property too?");
 });
 
 test("staff approve last December in each trust bank account, close the year, and a charge dated in it is refused in words", async ({

@@ -9,6 +9,7 @@ from decimal import Decimal
 
 import psycopg
 import pytest
+from fastapi import HTTPException
 from helpers import (
     acting_as,
     add_agreement,
@@ -18,6 +19,7 @@ from helpers import (
     bank_sums,
     charge,
     co_own,
+    in_background,
     make_pmc,
     open_account,
     open_lease,
@@ -25,6 +27,7 @@ from helpers import (
     set_ownership,
     split_by_ownership,
     transfer_batch,
+    wait_until_blocked,
 )
 
 from pms.api import rent as rent_work
@@ -267,6 +270,47 @@ def test_without_shares_kept_money_still_goes_to_the_one_named(conn, app_conn, p
 
     assert return_deposit(app_conn, pmc.pmc_id, lease, "move-out-1", at(JUL_5), second) == 200
     assert (balance(conn, first), balance(conn, second)) == (Decimal(0), Decimal("300.00"))
+
+
+@pytest.mark.timing
+def test_a_payment_waiting_on_the_lease_reads_the_shares_set_meanwhile(
+    conn, pmc, owners, database_url
+):
+    # Shares set while a payment waits for the lease's lock (docs/edge-cases.md C-015): it reads
+    # the property's owners once it holds the lock, so a payment naming one owner's account of a
+    # property now owned in shares is refused, as it would be sent then, instead of going to that
+    # owner whole. (One by shares splits by those in force as it posts: Owners.parts.)
+    first, second = owners
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (pmc.tenant_deposit,),
+    ).fetchone()[0]
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id)
+    lease = open_lease(conn, pmc.pmc_id, unit, JAN_1, None, "1000.00", [tenant])
+    charge(conn, pmc.pmc_id, lease, JUN_1, "1000.00", "rent", "June rent")
+    with psycopg.connect(database_url) as other_rent_work:
+        rent_work.lock_lease(other_rent_work, lease)  # held until it commits
+
+        def pay(worker):
+            with worker.transaction():
+                rent_work.record_payment(
+                    worker, pmc.pmc_id, lease, uuid.uuid4(), Decimal("1000.00"), JUN_1, None, first
+                )
+
+        thread, pid, outcome = in_background(database_url, pay)
+        wait_until_blocked(conn, pid)
+        prop = pmc.owners[0].property_id
+        set_ownership(conn, pmc.pmc_id, prop, JUN_1, [(first, 60), (second, 40)])
+        other_rent_work.commit()
+        thread.join(timeout=30)
+
+    refused = outcome.get("error")
+    assert isinstance(refused, HTTPException), outcome
+    assert (refused.status_code, refused.detail) == (
+        422,
+        "the property's owners own it in shares: its payments split between them",
+    )
+    assert (balance(conn, first), balance(conn, second)) == (0, 0)
 
 
 # --- management fees by share (migration 0115) -------------------------------------------------

@@ -97,6 +97,59 @@ def void(conn, pmc, bill_id, staff, reason="Entered twice"):
 # --- holds ------------------------------------------------------------------------------------
 
 
+def holds_at(conn, pmc, moment):
+    return {
+        bill_id: (held, short)
+        for bill_id, held, short, _ in conn.execute(
+            "SELECT bill_id, held, short, needed FROM trust_bill_holds(%s, %s)",
+            (pmc.pmc_id, moment),
+        ).fetchall()
+    }
+
+
+def test_holds_count_the_bills_and_reserve_of_the_companys_day(conn):
+    # 9 pm Eastern on March 9 is March 10 in UTC (docs/edge-cases.md M-097, D-098, D-099): a bill
+    # dated March 10 holds nothing yet, and an agreement from March 10 keeps no reserve yet, until
+    # the company's March 10 begins.
+    pmc = make_pmc(conn, time_zone="America/New_York")
+    account = pmc.owners[0].account
+    add_agreement(conn, pmc.pmc_id, account, date(2026, 1, 1), approval_limit="1000")
+    add_agreement(
+        conn, pmc.pmc_id, account, date(2026, 3, 10), approval_limit="1000", reserve="200.00"
+    )
+    transfer_batch(conn, [(pmc.operating_cash, account, "500.00")], at(date(2026, 2, 1)))
+    today = enter_bill(
+        conn,
+        pmc.pmc_id,
+        pmc.vendor_id,
+        account,
+        "E-1",
+        date(2026, 3, 9),
+        date(2026, 3, 20),
+        "400.00",
+    )
+    tomorrow = enter_bill(
+        conn,
+        pmc.pmc_id,
+        pmc.vendor_id,
+        account,
+        "E-2",
+        date(2026, 3, 10),
+        date(2026, 3, 15),
+        "50.00",
+    )
+    evening = datetime(2026, 3, 10, 2, 0, tzinfo=UTC)  # 10 pm EDT, March 9
+    midnight = datetime(2026, 3, 10, 4, 30, tzinfo=UTC)  # 12:30 am EDT, March 10
+
+    # The company's March 9: only E-1, against the whole 500.00.
+    assert holds_at(conn, pmc, evening) == {today: (Decimal("400.00"), Decimal("0.00"))}
+    # Its March 10: E-2 (due first) and E-1 against the 300.00 above the new reserve.
+    assert holds_at(conn, pmc, midnight) == {
+        tomorrow: (Decimal("50.00"), Decimal("0.00")),
+        today: (Decimal("250.00"), Decimal("150.00")),
+    }
+
+
 def test_the_balance_is_held_for_the_bill_due_first_and_the_rest_is_short(conn, pmc, owner):
     later = bill(conn, pmc, owner, "300.00", "B-2", due_in=20)
     first = bill(conn, pmc, owner, "350.00", "B-1", due_in=5)

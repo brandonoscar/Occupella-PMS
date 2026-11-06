@@ -247,7 +247,8 @@ class Scheduler:
     """Runs every PMC's run when started, each for its own day, then a minute past each hour the
     run of each PMC whose day has begun since, in a thread of its own with a connection of its
     own, until stopped. A look that fails (the database not up) is tried again `retry` seconds
-    later; a company whose own run failed waits for its next day, as its admins are told. After
+    later; a company whose own run failed, or that another run held the lock over, is looked at
+    again the next hour, its day not done until it runs (its admins told once a day). After
     each look, what waits for the payments partner and the email sender goes to them."""
 
     def __init__(
@@ -306,7 +307,10 @@ class Scheduler:
                 if due
                 else []
             )
-            self.days.update(due)
+            # Only the days that ran are done (D-015, C-070, C-071): a company whose run failed,
+            # or every one when another run held the lock, is looked at again the next hour.
+            ran = {r.pmc_id for r in done}
+            self.days.update({pmc: day for pmc, day in due.items() if pmc in ran})
             conn.autocommit = True
             if self.payments is not None:
                 autopay.submit_waiting(conn, self.payments, now=self.clock())

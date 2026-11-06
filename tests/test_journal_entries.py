@@ -6,7 +6,8 @@ Each step names a staff member (trust.staff_id), as the API does on every staff 
 server's command line, which names nobody, can't propose, post or decline one.
 """
 
-from datetime import UTC, date, datetime
+import uuid
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import psycopg
@@ -284,6 +285,97 @@ def test_an_entry_is_dated_a_day(conn, app_conn, pmc, bookkeeper):
     assert conn.execute(
         "SELECT count(*) FROM trust_journal_entries WHERE pmc_id = %s", (pmc.pmc_id,)
     ).fetchone() == (0,)
+
+
+def test_the_same_request_id_proposes_one_entry(conn, app_conn, pmc, bookkeeper):
+    # Proposed again after its answer was lost (docs/edge-cases.md C-065): one entry waits, so
+    # an approver can't post it twice.
+    request = uuid.uuid4()
+    first = propose_entry(app_conn, pmc.pmc_id, bookkeeper, FEB_10, MEMO, move(pmc), request)
+    again = propose_entry(app_conn, pmc.pmc_id, bookkeeper, FEB_10, MEMO, move(pmc), request)
+
+    assert again == first
+    for other in (
+        (bookkeeper, FEB_10, MEMO, move(pmc, "30.00")),
+        (bookkeeper, JAN_15, MEMO, move(pmc)),
+        (bookkeeper, FEB_10, "Another correction", move(pmc)),
+        (bookkeeper, FEB_10, MEMO, move(pmc) * 2),
+        (staff_named(conn, pmc.pmc_id, "Bookkeeper 2"), FEB_10, MEMO, move(pmc)),
+    ):
+        by, day, memo, lines = other
+        with refused("was used for a different journal entry", psycopg.errors.UniqueViolation):
+            propose_entry(app_conn, pmc.pmc_id, by, day, memo, lines, request)
+    # Another request id is another entry; with none, each proposal is its own, as before.
+    propose_entry(app_conn, pmc.pmc_id, bookkeeper, FEB_10, MEMO, move(pmc), uuid.uuid4())
+    propose_entry(app_conn, pmc.pmc_id, bookkeeper, FEB_10, MEMO, move(pmc))
+    assert conn.execute(
+        "SELECT count(*) FROM trust_journal_entries WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone() == (3,)
+
+
+@pytest.mark.timing
+def test_one_entry_proposed_twice_at_once_is_proposed_once(conn, database_url, pmc, bookkeeper):
+    request = uuid.uuid4()
+    with psycopg.connect(database_url) as first:
+        first.execute("SET ROLE trust_app")
+        made = propose_entry(first, pmc.pmc_id, bookkeeper, FEB_10, MEMO, move(pmc), request)
+
+        def second(worker):
+            worker.execute("SET ROLE trust_app")
+            with worker.transaction():
+                return propose_entry(
+                    worker, pmc.pmc_id, bookkeeper, FEB_10, MEMO, move(pmc), request
+                )
+
+        thread, pid, outcome = in_background(database_url, second)
+        wait_until_blocked(conn, pid)
+        first.commit()
+        thread.join(timeout=30)
+
+    assert outcome == {"result": made}
+    assert conn.execute(
+        "SELECT count(*) FROM trust_journal_entries WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone() == (1,)
+
+
+def company_today(conn, pmc):
+    return conn.execute("SELECT trust_pmc_day(%s, clock_timestamp())", (pmc.pmc_id,)).fetchone()[0]
+
+
+def test_an_entry_is_dated_no_later_than_the_companys_today(conn, app_conn, pmc, bookkeeper):
+    # Dated next year, it moved balances now while reports as of today left it out (M-135).
+    today = company_today(conn, pmc)
+    propose_entry(app_conn, pmc.pmc_id, bookkeeper, today, MEMO, move(pmc))
+    for later in (today + timedelta(days=1), date(today.year + 1, 1, 1)):
+        with refused(
+            "dated no later than the company's today", psycopg.errors.InvalidParameterValue
+        ):
+            propose_entry(app_conn, pmc.pmc_id, bookkeeper, later, MEMO, move(pmc))
+    assert conn.execute(
+        "SELECT count(*) FROM trust_journal_entries WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone() == (1,)
+
+
+def test_an_entry_dated_after_today_waits_for_its_day_to_post(
+    conn, app_conn, pmc, bookkeeper, manager
+):
+    # One proposed for a later day before the rule (written here as the owner) posts on its day
+    # or later, never before it.
+    later = company_today(conn, pmc) + timedelta(days=1)
+    entry = conn.execute(
+        "INSERT INTO trust_journal_entries (pmc_id, event_on, memo, proposed_by)"
+        " VALUES (%s, %s, %s, %s) RETURNING id",
+        (pmc.pmc_id, later, MEMO, bookkeeper),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO trust_journal_entry_lines (entry_id, pmc_id, line, from_account, to_account,"
+        " amount) VALUES (%s, %s, 1, %s, %s, 25.00)",
+        (entry, pmc.pmc_id, pmc.owners[0].account, pmc.owners[1].account),
+    )
+
+    with refused("posts on its day or later"):
+        post_entry(app_conn, pmc.pmc_id, entry, manager)
+    assert decision(conn, entry) is None and transfers_of(conn, entry) == 0
 
 
 def test_an_entry_that_would_take_an_owner_below_zero_is_not_posted(

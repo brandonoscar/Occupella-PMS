@@ -14,11 +14,17 @@ import { NO_HOW_TO_PAY, PAUSED, STATUS, feeLine, payable } from "../payments";
 // A tenant pays a lease online (src/pms/api/online_payments.py): what they choose, the lease's
 // balance to start with, on the payments partner's page, which takes their bank account; the PMS
 // never sees it. The fee, when the tenant pays it, shows before they go. Each payment started is
-// listed with what the bank did; it reaches the lease's payments once the bank paid it.
+// listed with what the bank did; it reaches the lease's payments once the bank paid it. Pay
+// online waits for the fee's quote, and stays off when the quote can't be had (P-058, H-142): the
+// tenant always sees the fee before going to the partner's page.
+const NO_QUOTE =
+  "We couldn't work out the processing fee, so you can't pay online just now. Try again in a few minutes.";
+
 export function PayOnlineCard({ leaseId }: { leaseId: string }) {
   const [view, setView] = useState<PayView | null>(null);
   const [amount, setAmount] = useState("");
-  const [quote, setQuote] = useState<FeeQuote | null>(null);
+  // The fee's quote for the amount: none yet (or none needed), or "failed".
+  const [quote, setQuote] = useState<FeeQuote | "failed" | null>(null);
   const [error, setError] = useState("");
   const show = (failed: unknown) => setError(failed instanceof ApiError ? failed.detail : String(failed));
 
@@ -44,10 +50,11 @@ export function PayOnlineCard({ leaseId }: { leaseId: string }) {
       return run.stop;
     }
     const query = new URLSearchParams({ amount: amount.trim() });
+    setQuote(null); // a quote for another amount is no quote for this one
     api
       .get<FeeQuote>(`/api/payments/leases/${encodeURIComponent(leaseId)}/fee?${query}`)
       .then(run.keep(setQuote))
-      .catch(run.keep(() => setQuote(null)));
+      .catch(run.keep(() => setQuote("failed")));
     return run.stop;
   }, [leaseId, amount, view?.available]);
 
@@ -83,9 +90,11 @@ export function PayOnlineCard({ leaseId }: { leaseId: string }) {
           </p>
           <Field label="Amount" id="pay-amount" inputMode="decimal" value={amount}
             onChange={(e) => setAmount(e.target.value)} />
-          <p className="text-base" data-testid="pay-fee">{quote ? feeLine(quote) : " "}</p>
+          <p className="text-base" data-testid="pay-fee">
+            {quote === "failed" ? NO_QUOTE : quote ? feeLine(quote) : " "}
+          </p>
           <div>
-            <Button type="submit" disabled={!payable(amount)}
+            <Button type="submit" disabled={!payable(amount) || quote === null || quote === "failed"}
               says="Takes you to our payments partner's page to pay by bank. Nothing is paid until you finish there.">
               Pay online
             </Button>

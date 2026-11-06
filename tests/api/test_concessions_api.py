@@ -4,7 +4,7 @@ income statement counts it on a line of its own, a contra to rent."""
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from helpers import add_unit, open_lease
@@ -36,12 +36,14 @@ def ok(answer, status=201):
 
 def credit(client, lease, **more):
     body = {"kind": "credit", "amount": "100.00", "due_on": str(FIRST), "memo": "Move-in special"}
+    body["request_id"] = str(uuid4())  # the panel's own id (C-025)
     return client.post(f"/api/rent/leases/{lease}/charges", json=body | more)
 
 
 def monthly(client, lease, **more):
     body = {"kind": "credit", "amount": "50.00", "memo": "Military discount"}
     body["starts_on"] = str(FIRST)
+    body["request_id"] = str(uuid4())  # the panel's own id (C-026)
     return client.post(f"/api/rent/leases/{lease}/recurring-charges", json=body | more)
 
 

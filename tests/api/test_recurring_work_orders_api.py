@@ -63,7 +63,13 @@ def test_staff_charge_the_tenant_for_a_work_order_and_see_it_on_the_work_order(
     ok(
         client.post(
             f"/api/rent/leases/{home.lease}/charges",
-            json={"kind": "fee", "amount": "15.00", "due_on": str(TODAY), "memo": "Parking"},
+            json={
+                "request_id": str(uuid.uuid4()),
+                "kind": "fee",
+                "amount": "15.00",
+                "due_on": str(TODAY),
+                "memo": "Parking",
+            },
         ),
         201,
     )
@@ -72,6 +78,7 @@ def test_staff_charge_the_tenant_for_a_work_order_and_see_it_on_the_work_order(
         client.post(
             f"/api/rent/leases/{home.lease}/charges",
             json={
+                "request_id": str(uuid.uuid4()),
                 "kind": "fee",
                 "amount": "85.00",
                 "due_on": str(TODAY),
@@ -125,6 +132,7 @@ def test_a_work_order_on_the_whole_property_offers_every_lease_there(client, con
         client.post(
             f"/api/rent/leases/{other}/charges",
             json={
+                "request_id": str(uuid.uuid4()),
                 "kind": "fee",
                 "amount": "40.00",
                 "due_on": str(TODAY),
@@ -147,6 +155,7 @@ def test_a_work_order_on_the_whole_property_offers_every_lease_there(client, con
 def test_a_bad_work_order_charge_is_refused(client, staff, home, change, status, detail):
     order = open_one(client, home)
     body = {
+        "request_id": str(uuid.uuid4()),
         "kind": "fee",
         "amount": "85.00",
         "due_on": str(TODAY),
@@ -171,6 +180,7 @@ def test_a_work_order_is_not_charged_to_a_lease_at_another_unit_or_company(
     )
     order = open_one(client, home)
     body = {
+        "request_id": str(uuid.uuid4()),
         "kind": "fee",
         "amount": "85.00",
         "due_on": str(TODAY),

@@ -24,8 +24,6 @@ from helpers import (
 )
 from people import join_as_owner, join_as_staff, join_as_tenant
 
-from pms.api import rent as rent_api
-
 DAY = timedelta(days=1)
 
 
@@ -168,11 +166,14 @@ def test_the_rent_run_charges_a_lease_starting_later_that_month_its_part_month(
     ]
 
 
-def recur(client, home, amount="35.00", memo="Pet rent", starts_on=None, kind="fee"):
+def recur(
+    client, home, amount="35.00", memo="Pet rent", starts_on=None, kind="fee", request_id=None
+):
     starts_on = START if starts_on is None else starts_on
     return call(
         client,
         f"leases/{home.lease}/recurring-charges",
+        request_id=request_id or uuid.uuid4(),
         kind=kind,
         amount=amount,
         memo=memo,
@@ -191,6 +192,7 @@ def test_the_rent_run_charges_a_lease_starting_later_that_month_its_part_month_o
         call(
             client,
             f"leases/{lease}/recurring-charges",
+            request_id=uuid.uuid4(),
             kind="fee",
             amount="35.00",
             memo="Pet rent",
@@ -385,6 +387,7 @@ def test_a_credit_comes_off_what_is_owed(client, conn, staff, home):
         call(
             client,
             f"leases/{home.lease}/charges",
+            request_id=uuid.uuid4(),
             kind="credit",
             amount="100.00",
             due_on=START,
@@ -403,6 +406,48 @@ def test_a_credit_comes_off_what_is_owed(client, conn, staff, home):
     assert (row["owed"], row["open_charges"]) == ("0.00", [])
 
 
+def test_sending_a_charge_again_records_it_once(client, conn, staff, home):
+    # Enter charge resent after its answer was lost (docs/edge-cases.md C-025): the panel's
+    # request id again returns the charge recorded, and the tenant is charged once.
+    request = uuid.uuid4()
+    body = {"kind": "fee", "amount": "75.00", "due_on": TODAY, "memo": "Lockout"}
+
+    first = ok(call(client, f"leases/{home.lease}/charges", request_id=request, **body))
+    again = ok(call(client, f"leases/{home.lease}/charges", request_id=request, **body))
+    other = call(
+        client, f"leases/{home.lease}/charges", request_id=request, **{**body, "amount": "80.00"}
+    )
+    elsewhere = add_unit(conn, home.pmc.pmc_id, home.pmc.owners[0].property_id, "Unit 2")
+    second = open_lease(conn, home.pmc.pmc_id, elsewhere, START, None, "900.00", [home.tenant])
+    on_another_lease = call(client, f"leases/{second}/charges", request_id=request, **body)
+
+    assert again == first
+    refused(other, 409, "this request id was used for a different charge")
+    refused(on_another_lease, 409, "this request id was used for a different charge")
+    made = conn.execute("SELECT count(*) FROM trust_charges WHERE memo = 'Lockout'").fetchone()
+    assert made == (1,)
+    assert [(c["memo"], c["open"]) for c in lease_row(client, home)["open_charges"]] == [
+        ("Lockout", "75.00")
+    ]
+
+
+def test_sending_a_recurring_charge_again_adds_it_once(client, conn, staff, home):
+    # Add recurring charge resent after its answer was lost (C-026): one pet rent, billed once a
+    # month, never two.
+    request = uuid.uuid4()
+
+    first = ok(recur(client, home, request_id=request))
+    again = ok(recur(client, home, request_id=request))
+    other = recur(client, home, amount="40.00", request_id=request)
+
+    assert again == first
+    refused(other, 409, "this request id was used for a different recurring charge")
+    assert conn.execute(
+        "SELECT count(*) FROM trust_recurring_charges WHERE lease_id = %s", (home.lease,)
+    ).fetchone() == (1,)
+    assert [r["id"] for r in lease_row(client, home)["recurring"]] == [first["id"]]
+
+
 def test_sending_a_payment_again_records_it_once(client, conn, staff, home):
     home.charge(conn, START)
     request = uuid.uuid4()
@@ -417,38 +462,50 @@ def test_sending_a_payment_again_records_it_once(client, conn, staff, home):
     assert lease_row(client, home)["tenants"][0]["prepaid"] == "100.00"
 
 
-def test_a_payment_like_one_recorded_already_asks_before_it_is_recorded_again(
+def test_a_payment_like_one_recorded_waits_for_staff_to_say_it_is_another(
     client, conn, staff, home
 ):
-    # docs/edge-cases.md H-008: a payment's answer is lost, staff close the panel and record it
-    # again; the reopened panel makes a new request id, so it was recorded twice. A payment of the
-    # same amount, day and lease under another request now asks first; said again, it is a second.
+    # docs/edge-cases.md H-008 and U-138: the answer lost and the panel opened again, or the same
+    # check entered from two tabs, makes a new request id each time.
     home.charge(conn, START)
-    first = ok(pay(client, home, "1600.00"))
+    first = ok(pay(client, home, "600.00", reference="2101"))
 
-    asked = pay(client, home, "1600.00")
+    again = pay(client, home, "600.00", reference="2101")
+    other_day = ok(pay(client, home, "600.00", received_on=TODAY - DAY))
+    other_amount = ok(pay(client, home, "601.00"))
+    other_check = ok(pay(client, home, "600.00", reference="2102", method="check"))
+    said = ok(pay(client, home, "600.00", not_a_duplicate=True))
+
     refused(
-        asked,
+        again,
         409,
-        f"A payment of $1,600.00 received {TODAY:%m/%d/%Y} is already recorded to this lease."
-        f" {rent_api.SECOND_PAYMENT}",
+        f"a payment of $600.00 received {TODAY:%m/%d/%Y} is recorded on this lease already:"
+        " refresh the page to see it, and record this one only if it is another payment,"
+        " saying so",
     )
-    assert balance(conn, home.owner) == Decimal("1500.00")  # nothing new
+    assert first["transfers"] != said["transfers"]
+    assert other_day["to_owner"] == "600.00" and other_amount["to_owner"] == "300.00"
+    assert other_check["to_prepaid"] == "600.00"  # another check number: another payment
+    assert balance(conn, home.owner) == Decimal("1500.00")
+    assert len(lease_row(client, home)["payments"]) == 5  # the one refused wrote nothing
+    # The same request id again is a retry: it returns the payment as recorded, whatever is alike.
+    request = uuid.uuid4()
+    third = ok(pay(client, home, "600.00", request_id=request, not_a_duplicate=True))
+    assert ok(pay(client, home, "600.00", request_id=request)) == third
 
-    second = ok(pay(client, home, "1600.00", again=True))
-    other_day = ok(pay(client, home, "1600.00", received_on=TODAY - DAY))
-    other_amount = ok(pay(client, home, "1599.00"))
-    assert second["transfers"] != first["transfers"]
-    assert {other_day["to_prepaid"], other_amount["to_prepaid"]} == {"1600.00", "1599.00"}
 
-
-def test_the_panel_asks_in_the_words_the_api_refuses_with():
-    # The portal's Receive payment recognizes the refusal by its last sentence and asks
-    # "Record it again?" (frontend/src/pages/LeaseForms.tsx); both sides must say the same.
-    import pathlib
-
-    forms = pathlib.Path(__file__).resolve().parents[2] / "frontend/src/pages/LeaseForms.tsx"
-    assert f'"{rent_api.SECOND_PAYMENT}"' in forms.read_text()
+def test_a_payment_alike_to_another_lease_is_its_own(client, conn, staff, home, pmc):
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "Unit 2")
+    other = open_lease(conn, pmc.pmc_id, unit, START, None, "900.00", [home.tenant])
+    ok(pay(client, home, "500.00"))
+    answer = call(
+        client,
+        f"leases/{other}/payments",
+        request_id=uuid.uuid4(),
+        amount="500.00",
+        received_on=TODAY,
+    )
+    assert answer.status_code == 201, answer.text
 
 
 def test_prepaid_rent_pays_the_next_rent(client, conn, staff, home):
@@ -676,6 +733,7 @@ def test_a_charge_names_the_staff_member_in_the_audit_log(client, conn, staff, h
         call(
             client,
             f"leases/{home.lease}/charges",
+            request_id=uuid.uuid4(),
             kind="fee",
             amount="25.00",
             due_on=TODAY,
@@ -699,6 +757,7 @@ def test_another_pmcs_lease_is_not_found(client, conn, staff, home, other_pmc_le
         call(
             client,
             f"leases/{other_pmc_lease.lease}/charges",
+            request_id=uuid.uuid4(),
             kind="fee",
             amount="1.00",
             due_on=TODAY,
@@ -760,6 +819,16 @@ def test_only_staff_do_rent_work(client, conn, app_conn, pmc, caller, method, pa
     assert answer.status_code == (401 if caller == "nobody" else 403)
 
 
+def new_id():
+    """A new request id as each test runs (fresh)."""
+    return str(uuid.uuid4())
+
+
+def today():
+    """Today as each test runs (fresh)."""
+    return str(TODAY)
+
+
 @pytest.mark.parametrize(
     ("path", "body"),
     [
@@ -781,21 +850,53 @@ def test_only_staff_do_rent_work(client, conn, app_conn, pmc, caller, method, pa
                 "received_on": lambda: str(TODAY),
             },
         ),
-        ("charges", {"kind": "rent", "amount": "1.00", "due_on": lambda: str(TODAY), "memo": "x"}),
-        ("charges", {"kind": "fee", "amount": "1.00", "due_on": lambda: str(TODAY), "memo": " "}),
+        # No request id (C-025, C-026).
+        ("charges", {"kind": "fee", "amount": "1.00", "due_on": lambda: str(TODAY), "memo": "x"}),
         (
             "recurring-charges",
-            {"kind": "rent", "amount": "1.00", "starts_on": lambda: str(TODAY), "memo": "x"},
+            {"kind": "fee", "amount": "1.00", "starts_on": lambda: str(TODAY), "memo": "x"},
+        ),
+        # Each with its request id, so it is refused for what it says.
+        (
+            "charges",
+            {"request_id": new_id, "kind": "rent", "amount": "1.00", "due_on": today, "memo": "x"},
+        ),
+        (
+            "charges",
+            {"request_id": new_id, "kind": "fee", "amount": "1.00", "due_on": today, "memo": " "},
+        ),
+        (
+            "charges",
+            {"request_id": "x", "kind": "fee", "amount": "1.00", "due_on": today, "memo": "x"},
         ),
         (
             "recurring-charges",
-            {"kind": "fee", "amount": "0", "starts_on": lambda: str(TODAY), "memo": "x"},
+            {
+                "request_id": new_id,
+                "kind": "rent",
+                "amount": "1.00",
+                "starts_on": today,
+                "memo": "x",
+            },
         ),
         (
             "recurring-charges",
-            {"kind": "fee", "amount": "1.00", "starts_on": lambda: str(TODAY), "memo": " "},
+            {"request_id": new_id, "kind": "fee", "amount": "0", "starts_on": today, "memo": "x"},
         ),
-        ("recurring-charges", {"kind": "fee", "amount": "1.00", "memo": "x"}),  # no first day
+        (
+            "recurring-charges",
+            {
+                "request_id": new_id,
+                "kind": "fee",
+                "amount": "1.00",
+                "starts_on": today,
+                "memo": " ",
+            },
+        ),
+        (
+            "recurring-charges",
+            {"request_id": new_id, "kind": "fee", "amount": "1.00", "memo": "x"},  # no first day
+        ),
         ("use-prepaid", {"request_id": str(uuid.uuid4())}),
     ],
 )

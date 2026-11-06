@@ -2,6 +2,7 @@
 q116): staff see last year's readiness, close it with the approve role, and from then on a charge
 dated in it is refused in words."""
 
+import uuid
 from datetime import UTC, date, datetime
 
 import pytest
@@ -70,7 +71,13 @@ def test_staff_see_last_year_get_ready_close_it_and_then_nothing_is_charged_in_i
     after = ok(client.get("/api/year-close"))
     late = client.post(
         f"/api/rent/leases/{lease}/charges",
-        json={"kind": "fee", "amount": "25.00", "due_on": f"{LAST}-12-20", "memo": "Key"},
+        json={
+            "request_id": str(uuid.uuid4()),
+            "kind": "fee",
+            "amount": "25.00",
+            "due_on": f"{LAST}-12-20",
+            "memo": "Key",
+        },
     )
 
     operating, deposits = sorted(

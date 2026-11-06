@@ -28,7 +28,7 @@ def test_an_amount_with_us_thousands_separators_reads(text, amount):
 
 
 @pytest.mark.parametrize(
-    "text", ["1234,56", "1200,50", "12,5", "1.234,56", "1,2345", "1,23,456.00"]
+    "text", ["1234,56", "1200,50", "12,5", "1.234,56", "1,2345", "1,23,456.00", "1,2,3", "12,50,0"]
 )
 def test_a_decimal_comma_or_a_misplaced_comma_is_refused_saying_so(text):
     with pytest.raises(statements.StatementError) as refused:

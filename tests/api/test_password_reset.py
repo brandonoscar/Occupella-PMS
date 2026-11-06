@@ -4,6 +4,8 @@ through an admin's new invite. The answer never says whether an email has a logi
 staff make is emailed too, its link held only until it is sent. Every name and address here is
 synthetic."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from helpers import make_pmc
 from people import PASSWORD, accept, join_as_owner, join_as_staff, join_as_tenant, tenant_of
@@ -85,6 +87,46 @@ def test_an_owner_resets_a_forgotten_password_from_the_emailed_link(
     assert client.post("/api/sign-in", json=signed).status_code == 401
     renewed = {**signed, "password": NEW_PASSWORD}
     assert client.post("/api/sign-in", json=renewed).status_code == 200
+
+
+def test_a_company_with_a_long_name_still_sends_its_reset_and_invite(
+    client, other_client, conn, app_conn, pmc, kept
+):
+    # A company name of about 180 characters (200 are allowed; docs/edge-cases.md U-144) made
+    # the reset's and the invite's subjects longer than an email's 200: a server error, and on a
+    # reset only for an email with a login, which told who has one.
+    long_name = ("Synthetic Long Name Property Management Company " * 4).strip()[:190]
+    conn.execute(
+        "UPDATE trust_pmcs SET display_name = %s WHERE pmc_id = %s", (long_name, pmc.pmc_id)
+    )
+    owner = join_as_owner(other_client, app_conn, pmc)
+
+    with_login = ask(client, pmc, owner.email)
+    without = ask(client, pmc, "no.login.long@example.com")
+    with app_conn.transaction():
+        email.write_invite(
+            app_conn,
+            pmc.pmc_id,
+            "owner",
+            owner.person_id,
+            owner.email,
+            "http://testserver/invite#synthetic",
+            datetime.now(UTC) + timedelta(days=7),
+        )
+
+    assert (with_login.status_code, with_login.json()) == (202, {"detail": ANSWER})
+    assert (without.status_code, without.json()) == (202, {"detail": ANSWER})
+    subjects = [
+        subject
+        for (subject,) in conn.execute(
+            "SELECT subject FROM trust_emails WHERE pmc_id = %s AND kind IN ('invite',"
+            " 'password_reset') ORDER BY created_at",
+            (pmc.pmc_id,),
+        ).fetchall()
+    ]
+    assert len(subjects) == 2 and all(len(subject) <= 200 for subject in subjects)
+    assert subjects[0].startswith("Set a new password for Synthetic Long Name")
+    assert subjects[1].startswith("Synthetic Long Name")
 
 
 def test_a_tenant_resets_too(client, other_client, conn, app_conn, pmc, kept):

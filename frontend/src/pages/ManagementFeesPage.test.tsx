@@ -76,6 +76,18 @@ describe("ManagementFeesPage", () => {
     expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({ period_start: expect.any(String), period_end: expect.any(String) });
   });
 
+  it("shows a period not ended yet with its fee so far and why it waits, and collects none of it (M-112)", async () => {
+    const waits = "a fee period is collected once it has ended: this one ends 11/30/2026, so its fee is collected from 12/01/2026";
+    server([{ account: "a1", owner: "Owner 1", property: "Property 1", taken: false, fee: "40.00", refused: waits }]);
+    render(<ManagementFeesPage me={ME} />);
+
+    const table = await screen.findByRole("table", { name: "Management fees" });
+    expect(within(table).getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent))).toEqual([
+      ["Owner 1", "Property 1", "$40.00", waits],
+    ]);
+    expect(screen.getByRole("button", { name: "Collect fees" })).toHaveProperty("disabled", true);
+  });
+
   it("asks again for another period, and says when no agreement was in force", async () => {
     server();
     render(<ManagementFeesPage me={ME} />);

@@ -355,7 +355,11 @@ def books(
             conn,
             demo.leases[("Birch Flats", "Unit A")],
             rent.NewRecurringCharge(
-                kind="fee", amount=PET_RENT, memo="Pet rent", starts_on=month_ago
+                request_id=uuid.uuid4(),
+                kind="fee",
+                amount=PET_RENT,
+                memo="Pet rent",
+                starts_on=month_ago,
             ),
         )
 
@@ -543,6 +547,7 @@ def every_page(conn: psycopg.Connection[Any], demo: Demo, today: date) -> None:
             s,
             conn,
             journal.NewEntry(
+                request_id=uuid.uuid4(),
                 event_on=this_month,
                 memo="Reserve moved to Birch Flats, as Demo Owner A asked",
                 lines=[

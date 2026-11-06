@@ -52,7 +52,8 @@ The server writes its log to standard output and standard error. With `compose.y
 - one line per request (uvicorn's access log; a calendar link's token is printed as "…");
 - the traceback of every error answering a request;
 - `the nightly run of PMC <id> failed; the next run tries again`, with the traceback: one
-  company's run failed, the others ran;
+  company's run failed, the others ran; the server tries that company again a minute past the
+  next hour, and each hour after until its day runs;
 - `the nightly run failed; it is tried again in 300 seconds`: the run couldn't start at all
   (usually the database), and it tries again by itself;
 - `the admins of PMC <id> could not be told its nightly run failed` (or `… an email was given up

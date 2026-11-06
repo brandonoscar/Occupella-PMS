@@ -150,6 +150,101 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   are all positive, with a column saying Debit or Credit (Type, Transaction type, Dr/Cr), went in
   with every check and fee as a deposit. Each line's way now comes from that column; a type saying
   neither is refused with its line, and a bank that signs its amounts keeps its signs.
+- **Fixed: a mid-month switch charged the old system's month again.** Leases brought in after
+  the old system charged and collected the month's rent were charged the whole month again the
+  first night, and a late fee on it once past the grace. The rent run now charges no rent or
+  monthly charge due before the cutover of the trust bank account holding the property's owners'
+  money; from the cutover on, every month is charged as before. A run between bringing the roster
+  in and posting the opening balances still charges it (docs/edge-cases.md M-152). Migration
+  `20261106100000`.
+- **Fixed: one check recorded twice.** Receive payment made a new request id each time its panel
+  opened, so a payment whose answer was lost and recorded again, or one check entered from two
+  tabs, went in twice. A payment like one recorded to the lease (the same amount received the
+  same day, by the same way and check number where both say one) now asks staff to say it is
+  another payment first; the panel says so before it is sent.
+- **Fixed: a payment online with no word stayed "on its way" for good.** A payment whose
+  partner's report never came lowered every later balance autopay, and staff never saw it.
+  After 14 days with no word it no longer counts as on its way, and Banking's Online payments
+  waiting lists it, to look up at the payments partner. An autopay whose payments were never
+  sent two months running stops by itself, with its email, as two failed ones do.
+- **Security: a tenant marked "the same person" by mistake.** Nothing undid a link, so whoever
+  signed in as the first record kept reading and acting on the other's lease. Staff now take it
+  back from either record's Other properties (Not the same person, asked first): the record is
+  its own person again at once, its autopays stop, and it takes an invite of its own. Migration
+  `20261106100100`.
+- **A state's notice on Change rent.** The Change rent panel now warns, as the renewal panel
+  does, when the property's state (California, Oregon, Washington, Nevada, New York) asks more
+  written notice before the increase, counted from the day notice was given: a change from
+  March 1 with notice on February 1 is 28 days, short of California's 30. A warning only.
+- **Security: sign-in limits and IPv6.** An IPv6 visitor counts as their whole /64, so a new
+  address each try no longer gets past the sign-in and reset limits. A request that comes through
+  a proxy `PMS_TRUSTED_PROXIES` doesn't name is logged once, naming the proxy, since every visitor
+  behind it shares its address until it is named.
+- **Fixed: a fee or a monthly charge entered twice.** Enter charge and Add recurring charge sent
+  again after their answer was lost (a dropped connection, a second click on a slow page) charged
+  the tenant twice, or billed them twice every month. Each now carries its panel's request id, as
+  Receive payment does: sent again, it charges nothing more. A caller of the API sends a
+  `request_id` with `POST /api/rent/leases/<id>/charges` and `.../recurring-charges` now, as with
+  a payment. Migration `20261106110000`.
+- **Fixed: a journal entry proposed twice, or dated ahead.** A journal entry proposed again after
+  its answer was lost waited twice, and an approver might post both. It now carries its page's
+  request id, so the same proposal again is the one entry. An entry is dated no later than the
+  company's today: one dated next year moved balances at once while every report as of today
+  left it out. One proposed for a later day before this release posts on its day. A caller of
+  `POST /api/journal` sends a `request_id` now. Migration `20261106110100`.
+- **Fixed: a lease-break fee charged twice.** End lease with the lease-break fee sent twice at
+  once (two tabs, or a resend while the first ran) charged the fee twice. A lease is now charged
+  one lease-break fee: the same end again changes nothing, and another end with the fee is
+  refused, saying the fee was charged already.
+- **Fixed: autopay taken just after it was turned off.** A tenant who turned autopay off while
+  the night's payments were being sent could still be debited, though the stop's email said
+  nothing more would be taken. A payment is now checked and sent while its autopay is held, so a
+  stop under way keeps it from being sent, and a stop that comes while it is with the payments
+  partner waits until it is recorded.
+- **Fixed: the company's deposit for online payments' costs made twice.** Two staff recording it
+  at once each deposited what waited, leaving the company's own money in trust. The second now
+  waits for the first and is told nothing more is needed.
+- **Fixed: prepaid rent held for a tenant who had just left.** A payment recorded while a tenant
+  was being taken off the lease read the lease's tenants before it waited for the departure, so
+  the part paid ahead could be held for the tenant who left. A payment, and prepaid rent used,
+  now read the lease's tenants and owners once they hold the lease.
+- **Fixed: management fees collected before their period ended.** Collect fees for a period still
+  running took the fee on what had come in so far and closed the period to later fees, so rent
+  paid after was never counted. A period is now collected once it has ended; the page says when.
+- **Fixed: tomorrow's bills held money in the evening.** From 8 pm Eastern, a bill dated the
+  company's tomorrow already held the owner's money and read Ready to pay or Short, and an
+  agreement starting tomorrow already kept its reserve: holds counted UTC's day. They now count
+  the company's own day. Migration `20261106110200`.
+- **Fixed: a database restart answered with server errors.** After the database restarted, each
+  connection the server had kept failed one request ("the server answered 500"). Each is now
+  checked as a request takes it, and one the database dropped is replaced.
+- **Fixed: a long company name stopped invites and password resets.** With a name of about 180
+  characters, an invite's or a reset's subject passed an email's 200 and the server failed, and a
+  reset failed only for an email with a login, telling who has one. A subject is now cut to fit.
+- **Fixed: a second ACH file of a day looked like a duplicate.** Every ACH file's File ID Modifier
+  was "A", so a bank could refuse the day's second file (Pay owners, then Pay bills) as the first
+  sent again. Each run's file now has its own, A, then B, and so on; taken again it keeps it.
+- **Fixed: a nightly run that failed waited a whole day.** A company whose run failed on a passing
+  cause (a deadlock, a lock a staff request held) was marked done for its day, so its rent, late
+  fees, reminders and autopay started a day late; so was every company when another server held
+  the run's lock. The server now runs it again a minute past the next hour, and each hour after
+  until it runs, its admins told once a day as before; the alert email says so.
+- **Fixed: autopay saved in the evening paid from next month.** Whether an autopay pays this
+  month turned on UTC's date of the bank account's save: a New York tenant who saved it at 9 pm
+  on the due day waited a month, while one who saved it at 6 pm paid. It now turns on the
+  company's day. On a database server whose session time zone is east of UTC, the database's own
+  check was stricter than the app's and failed the company's whole nightly run; both now read the
+  company's day. Migration `20261106120000`.
+- **Fixed: a vendor refused on the last day of their insurance.** Assigning a vendor after 7 pm
+  Eastern on their policy's last day was refused as if it had run out, because the check counted
+  UTC's day. It now counts the company's: covered through the last day, refused from the next.
+  Migration `20261106120100`.
+- **Fixed: paying online without seeing the fee, and ending a lease without its break fee.** When
+  Pay online couldn't get the processing fee's quote, the fee line went blank and Pay online
+  stayed on, so a tenant who pays the fee could leave for the partner's page without seeing it.
+  It now waits for the quote and, when it can't be had, says so and stays off. End lease likewise
+  waits for the lease-break fee terms of the day picked; when they couldn't be read it ended the
+  lease with no fee offered, and now it says so and waits.
 - **Fixed: Stripe's answers in an old API version, and a webhook missing its events.** Every
   call to Stripe now names the API version whose shapes the PMS reads (`2024-06-20`), so an
   account whose default is older than `latest_charge` no longer fails every paid report; and

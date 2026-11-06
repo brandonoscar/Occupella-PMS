@@ -197,9 +197,10 @@ browser = [
 
 [[feature]]
 id = "rent-changes"
-statement = "Staff change a lease's rent from the first of a month after written notice of a full month (a lease with an end date only as its terms allow); the rent run charges the rent in force, and the tenant sees the change coming in the portal."
+statement = "Staff change a lease's rent from the first of a month after written notice of a full month (a lease with an end date only as its terms allow), warned as they fill it in when the property's state asks more notice before the increase, counted from the day notice was given (docs/edge-cases.md D-065, D-066); the rent run charges the rent in force, and the tenant sees the change coming in the portal."
 operations = [
   "POST /api/rent/leases/{lease_id}/rent-changes",
+  "GET /api/leasing/renewals/{lease_id}/rent-change-notice",
 ]
 browser = [
   "features.spec.ts › staff raise a month-to-month rent after a full month's notice, and the tenant sees it coming",
@@ -955,10 +956,11 @@ browser = [
 
 [[feature]]
 id = "tenant-at-two-properties"
-statement = "Staff make a tenant who rents at another property too a tenant there (the same name and contact details, linked to their first record), or say a tenant there is the same person; each record keeps its own leases and money, the person signs in once, and the portal shows and acts on their leases at every property (migration 0105, the founder's review q009)."
+statement = "Staff make a tenant who rents at another property too a tenant there (the same name and contact details, linked to their first record), or say a tenant there is the same person; each record keeps its own leases and money, the person signs in once, and the portal shows and acts on their leases at every property (migration 0105, the founder's review q009). A link made by mistake is taken back, after a question, from the record linked or its first: it is its own person again at once, and its autopays stop (migration 20261106100100, docs/edge-cases.md U-099)."
 operations = [
   "POST /api/tenants/{tenant_id}/elsewhere",
   "POST /api/tenants/{tenant_id}/same-person",
+  "POST /api/tenants/{tenant_id}/not-same-person",
 ]
 browser = [
   "features.spec.ts › staff make a tenant a tenant at a second property and lease them a unit there; they sign in once, see both homes and ask for a repair at the new one",

@@ -2,6 +2,8 @@
 refused for a while whatever email it tries, while other addresses go on; an address asks for only
 so many password resets. Each app keeps its own counts, so these tests lower them on theirs."""
 
+from contextlib import ExitStack
+
 import pytest
 from fastapi.testclient import TestClient
 from people import PASSWORD, join_as_owner
@@ -65,6 +67,35 @@ def test_a_waiting_address_is_told_in_minutes_with_retry_after():
         == "too many failed sign-ins from this address: try again in 10 minutes"
     )
     assert refused.value.headers == {"Retry-After": "600"}
+
+
+def test_an_ipv6_visitor_counts_as_their_whole_64(app, pmc):
+    """docs/edge-cases.md U-032: an IPv6 visitor holds a /64 and may use any address in it, so
+    each address counting alone let one rotate past the limit. A /64 counts as one address; IPv4
+    and an IPv4 address written as IPv6 count as the IPv4 address."""
+    wrong = {"pmc_id": str(pmc.pmc_id), "email": "someone@example.com", "password": "wrong"}
+    hosts = [f"2001:db8:5:7::{n + 1}" for n in range(3)] + [
+        "2001:db8:5:7:ffff::9",
+        "2001:db8:5:8::1",
+    ]
+    with ExitStack() as open_:
+        clients = [open_.enter_context(TestClient(app, client=(h, 50000))) for h in hosts]
+        for here in clients[:3]:
+            assert here.post("/api/sign-in", json=wrong).status_code == 401
+        same_64, next_64 = clients[3:]
+        assert same_64.post("/api/sign-in", json=wrong).status_code == 429
+        assert next_64.post("/api/sign-in", json=wrong).status_code == 401
+
+
+def test_the_address_counted_is_an_ipv6_64_or_the_ipv4_address():
+    def counted(host):
+        return throttle.counted_as(host)
+
+    assert counted("2001:db8:5:7:1:2:3:4") == "2001:db8:5:7::/64"
+    assert counted("2001:DB8:5:7::1") == "2001:db8:5:7::/64"
+    assert counted("::ffff:198.51.100.7") == "198.51.100.7"
+    assert counted("198.51.100.7") == "198.51.100.7"
+    assert counted("testclient") == "testclient"  # not an address: as it came
 
 
 # --- signing in -------------------------------------------------------------------------------
@@ -139,26 +170,33 @@ def test_behind_the_proxy_a_visitor_cant_dodge_the_limit_by_naming_another_addre
         assert proxy.post("/api/sign-in", json=wrong, headers=other).status_code == 401
 
 
-def test_a_proxy_the_server_doesnt_trust_is_said_once_in_its_log(settings, caplog):
-    """docs/edge-cases.md H-067: behind a proxy on another host with PMS_TRUSTED_PROXIES empty,
-    every visitor has the proxy's address, so 20 failed sign-ins by anyone lock the company out
-    and signatures keep the proxy's address. The PMS can't tell which proxy to trust, but it can
-    say what it sees, once: requests naming a forwarded address that it doesn't read."""
+def test_a_proxy_the_app_doesnt_trust_is_named_in_the_log_once(settings, pmc, caplog):
+    """docs/edge-cases.md H-067, C-110, U-034: behind a proxy PMS_TRUSTED_PROXIES doesn't name,
+    every visitor has the proxy's address, so one person's failed sign-ins lock out everyone
+    behind it and signatures keep the proxy's address. The server's log says so, once a proxy,
+    so whoever runs it sees what to set."""
     import logging
 
-    app = create_app(settings)  # trusts no proxy
-    with caplog.at_level(logging.WARNING, logger="pms.api"), TestClient(app) as here:
-        here.get("/api/me")  # a request with no X-Forwarded-For says nothing
+    caplog.set_level(logging.WARNING, logger="pms.api")
+    app = create_app(settings)
+    with (
+        TestClient(app, client=("10.20.30.40", 50000)) as proxied,
+        TestClient(app, client=("198.51.100.60", 50000)) as direct,
+    ):
         for _ in range(3):
-            here.get("/api/me", headers={"X-Forwarded-For": "198.51.100.50"})
+            proxied.get("/api/me", headers={"X-Forwarded-For": "198.51.100.61"})
+        direct.get("/api/me")
 
-    said = [r.getMessage() for r in caplog.records if "PMS_TRUSTED_PROXIES" in r.getMessage()]
-    assert len(said) == 1
-    assert said[0] == (
-        "requests name a forwarded address (X-Forwarded-For) but PMS_TRUSTED_PROXIES is empty:"
-        " every visitor has the proxy's address, so the sign-in limit counts them all as one; set"
-        " PMS_TRUSTED_PROXIES to the proxy's address (docs/install.md)"
-    )
+    said = [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "pms.api" and "PMS_TRUSTED_PROXIES" in r.getMessage()
+    ]
+    assert said == [
+        "requests come through a proxy at '10.20.30.40' that PMS_TRUSTED_PROXIES doesn't name:"
+        " every visitor behind it counts as that one address, for the sign-in limit and in"
+        " signatures' evidence; name it in PMS_TRUSTED_PROXIES"
+    ]
 
 
 def test_a_trusted_proxy_is_said_nothing_of(settings, caplog):

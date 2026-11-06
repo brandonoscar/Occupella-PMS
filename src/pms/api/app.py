@@ -387,8 +387,15 @@ def create_app(settings: Settings) -> FastAPI:
         schema.check(conn)
         conn.commit()
 
+    # Each connection is checked as a request takes it: one the database dropped (a restart, a
+    # failover) is replaced, so no request answers 500 for it (docs/edge-cases.md H-005).
     pool = ConnectionPool(
-        settings.database_url, min_size=1, max_size=10, configure=configure, open=False
+        settings.database_url,
+        min_size=1,
+        max_size=10,
+        configure=configure,
+        check=ConnectionPool.check_connection,
+        open=False,
     )
 
     @asynccontextmanager
@@ -451,8 +458,21 @@ def create_app(settings: Settings) -> FastAPI:
 
     https = urlsplit(settings.public_url).scheme == "https"
     refused_from: set[str] = set()
-    # Whether this process has said, once, that it sees a proxy it doesn't trust (H-067).
-    untrusted_proxy_said: list[bool] = []
+    proxies_named: set[str] = set()
+
+    def log_untrusted_proxy(request: Request) -> None:
+        # Behind a proxy PMS_TRUSTED_PROXIES doesn't name, every visitor has the proxy's address
+        # (docs/edge-cases.md H-067, C-110, U-034): the log names it, each proxy once.
+        peer = request.client.host if request.client is not None else "unknown"
+        if peer in proxies_named or len(proxies_named) >= LOGGED_ORIGINS:
+            return
+        proxies_named.add(peer)
+        log.warning(
+            "requests come through a proxy at %r that PMS_TRUSTED_PROXIES doesn't name: every"
+            " visitor behind it counts as that one address, for the sign-in limit and in"
+            " signatures' evidence; name it in PMS_TRUSTED_PROXIES",
+            peer,
+        )
 
     def log_refused(origin: str) -> None:
         # A server whose PMS_PUBLIC_URL isn't the address people use refuses every change
@@ -472,16 +492,6 @@ def create_app(settings: Settings) -> FastAPI:
     async def guard(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        # Behind a proxy it doesn't trust, every visitor has the proxy's address, so the sign-in
-        # limit counts them all as one and signatures keep the proxy's (docs/edge-cases.md H-067):
-        # the PMS can't tell which proxy is right, so it says what it sees, once a process.
-        if (
-            not settings.trusted_proxies
-            and not untrusted_proxy_said
-            and "x-forwarded-for" in request.headers
-        ):
-            untrusted_proxy_said.append(True)
-            log.warning(UNTRUSTED_PROXY)
         if request.method not in SAFE_METHODS:
             # A browser says where a request comes from (OWASP's CSRF cheat sheet): another
             # site, or another origin of this one, is refused whatever its Origin says. Origin
@@ -496,6 +506,8 @@ def create_app(settings: Settings) -> FastAPI:
                 "application/json"
             ):
                 return JSONResponse({"detail": "send JSON"}, 415)
+        if not settings.trusted_proxies and "x-forwarded-for" in request.headers:
+            log_untrusted_proxy(request)
         outbox.PUBLIC_URL.set(settings.public_url)
         outbox.SENDING.set(request.app.state.email is not None)
         outbox.PARTNER.set(request.app.state.payments)
@@ -952,11 +964,6 @@ class BodyLimit:
             await JSONResponse({"detail": TOO_BIG}, 413)(scope, receive, send)
 
 
-UNTRUSTED_PROXY = (
-    "requests name a forwarded address (X-Forwarded-For) but PMS_TRUSTED_PROXIES is empty:"
-    " every visitor has the proxy's address, so the sign-in limit counts them all as one; set"
-    " PMS_TRUSTED_PROXIES to the proxy's address (docs/install.md)"
-)
 # Two years, this host and its subdomains (OWASP's HTTP headers cheat sheet), sent only when
 # the public URL is https; not preloaded, which is the operator's choice.
 STRICT_TRANSPORT = "max-age=63072000; includeSubDomains"

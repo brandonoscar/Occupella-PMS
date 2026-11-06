@@ -975,7 +975,13 @@ def fill_in(client: TestClient, company: Company, conn: psycopg.Connection[Any])
     staff(
         "POST",
         f"/api/rent/leases/{lease}/charges",
-        {"kind": "fee", "amount": "25.00", "due_on": str(TODAY), "memo": "Cleaning"},
+        {
+            "request_id": str(uuid.uuid4()),
+            "kind": "fee",
+            "amount": "25.00",
+            "due_on": str(TODAY),
+            "memo": "Cleaning",
+        },
     )
     for kind, about, content, content_type in (
         ("lease_document", lease, PDF, "application/pdf"),

@@ -158,6 +158,23 @@ export function requestId(): string {
   return crypto.randomUUID();
 }
 
+// A payment recorded to the lease like the one typed (docs/edge-cases.md H-008, U-138): the same
+// amount received the same day, by the same way and with the same check or reference where both
+// say one, as the API's rent.ALIKE reads it. Receive payment asks whether this is another one
+// before it records it, as the API refuses one alike unless staff say so. An amount typed half
+// way matches nothing.
+export function alikePayment(
+  payments: Paid[], amount: string, on: string, method: string | null = null, reference = "",
+): Paid | null {
+  const typed = amount.trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(typed)) return null;
+  const cents = sumMoney([typed]);
+  const ref = reference.trim().toLowerCase();
+  return payments.find((p) => p.received_on === on && sumMoney([p.amount]) === cents
+    && (p.method === null || method === null || p.method === method)
+    && (p.reference === null || ref === "" || p.reference.trim().toLowerCase() === ref)) ?? null;
+}
+
 // What recording a returned payment did, in a line. A bounce undoes the whole payment: what it
 // paid of the lease's charges is owed again, and what it held as prepaid rent is gone.
 export function bounceSummary(amount: string, bounce: Bounce): string {

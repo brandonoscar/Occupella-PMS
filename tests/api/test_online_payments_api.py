@@ -10,10 +10,12 @@ import json
 import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from uuid import uuid4
 
 import psycopg
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from helpers import (
     add_tenant,
@@ -22,10 +24,12 @@ from helpers import (
     balance,
     charge,
     import_statement,
+    in_background,
     open_account,
     open_lease,
     set_ownership,
     staff_named,
+    wait_until_blocked,
 )
 from people import join_as_staff, join_as_tenant, tenant_of
 
@@ -341,6 +345,55 @@ def test_a_payment_the_tenant_left_unpaid_reads_not_finished_and_moves_nothing(
     assert kinds == ["failed"]
 
 
+def started(conn, pmc, lease, days_ago, amount="400.00"):
+    """A tenant's payment online started some days ago, nothing reported of it since."""
+    return conn.execute(
+        "INSERT INTO trust_online_payments (pmc_id, lease_id, tenant_id, amount, fee_payer, method,"
+        " partner, partner_ref, created_at)"
+        " VALUES (%s, %s, %s, %s, 'company', 'ach', 'fake', %s, %s) RETURNING id",
+        (
+            pmc.pmc_id,
+            lease,
+            tenant_of(conn, pmc),
+            amount,
+            f"fake_{uuid4().hex}",
+            datetime.now(UTC) - days_ago * DAY,
+        ),
+    ).fetchone()[0]
+
+
+def test_staff_see_a_payment_started_weeks_ago_with_no_word_from_the_partner(
+    client, conn, staff, lease, pmc
+):
+    # docs/edge-cases.md P-013: the webhook broken, or the PMS down past the partner's retries;
+    # Waiting listed only payments reported paid, so staff never saw this one.
+    old = started(conn, pmc, lease, 20)
+    started(conn, pmc, lease, 3)  # a bank payment still clearing
+    reported = started(conn, pmc, lease, 30)
+    conn.execute(
+        "INSERT INTO trust_online_payment_events (pmc_id, payment_id, kind, partner_event,"
+        " happened_at) VALUES (%s, %s, 'failed', %s, now())",
+        (pmc.pmc_id, reported, f"evt_{reported.hex}"),
+    )
+
+    (waiting,) = ok(client.get("/api/payments/waiting"))
+
+    assert (waiting["payment_id"], waiting["what"], waiting["amount"]) == (
+        str(old),
+        "no word",
+        "400.00",
+    )
+    assert waiting["started_on"] == (datetime.now(UTC) - 20 * DAY).date().isoformat()
+    assert (waiting["lease_id"], waiting["company_owes"]) == (str(lease), None)
+    assert waiting["bank_account_id"] == str(pmc.operating_bank_id)
+    # Nothing for staff to record: its report, when it comes, brings it into the books.
+    refused(
+        client.post(f"/api/payments/{old}/record", json={}),
+        409,
+        "the payments partner hasn't said this payment was paid",
+    )
+
+
 def test_the_company_covers_the_partners_fee_its_account_cant(
     client, tenant_client, conn, staff, tenant, lease, pmc
 ):
@@ -375,6 +428,51 @@ def test_the_company_covers_the_partners_fee_its_account_cant(
         "this request id was used for something else",
     )
     assert ok(client.get("/api/payments/waiting")) == []
+    assert balance(conn, pmc.pmc_income) == Decimal("0.00")
+
+
+@pytest.mark.timing
+def test_two_staff_covering_at_once_deposit_the_companys_money_once(
+    client, tenant_client, conn, staff, tenant, lease, pmc, database_url
+):
+    # Two staff press Cover at once, each page with its own request id (docs/edge-cases.md
+    # C-093): the second waits for the first and finds nothing left to cover, so the company's
+    # own money is deposited once and none of it sits in trust.
+    turn_on(client, "company")
+    payment = pay(tenant_client, lease, "500.00")["id"]
+    bank_says(tenant_client, payment, "paid")
+    session = SimpleNamespace(pmc_id=pmc.pmc_id)
+
+    def cover(connection):
+        body = op.Cover(
+            bank_account_id=pmc.operating_bank_id, amount=Decimal("4.00"), request_id=uuid4()
+        )
+        return op.cover(session, connection, body)
+
+    with psycopg.connect(database_url) as first:
+        assert cover(first) == op.Covered(still_waiting=0)
+
+        def second(worker):
+            with worker.transaction():
+                return cover(worker)
+
+        thread, pid, outcome = in_background(database_url, second)
+        wait_until_blocked(conn, pid)
+        first.commit()
+        thread.join(timeout=30)
+
+    refusal = outcome.get("error")
+    assert isinstance(refusal, HTTPException), outcome
+    assert (refusal.status_code, refusal.detail) == (
+        422,
+        "what waits here needs 0.00 from the company, no more",
+    )
+    assert conn.execute(
+        "SELECT count(*) FROM pgledger_transfers AS t"
+        " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id"
+        " WHERE a.pmc_id = %s AND t.metadata ->> 'kind' = 'company cover'",
+        (pmc.pmc_id,),
+    ).fetchone() == (1,)
     assert balance(conn, pmc.pmc_income) == Decimal("0.00")
 
 

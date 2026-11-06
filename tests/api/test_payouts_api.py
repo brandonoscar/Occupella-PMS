@@ -375,6 +375,25 @@ def test_owners_paid_by_ach_get_one_file_their_bank_takes(client, conn, staff, p
     )
 
 
+def test_two_ach_files_of_one_day_carry_their_own_file_id_modifier(client, conn, staff, pmc):
+    # Two runs paid by ACH the same day, maybe the same minute (docs/edge-cases.md P-114,
+    # F-137): every file's File ID Modifier was "A", and a bank commonly refuses a second file
+    # with the same one as a duplicate. Each run's file has its own, A then B, and taken again
+    # keeps it.
+    fund(conn, pmc, "500.00")
+    ach_details(client, pmc)
+    owner_bank(client, pmc)
+    first = ok(pay_owners(client, pmc, "EFT", amount="100.00"), 201)[0]["run_id"]
+    second = ok(pay_owners(client, pmc, "EFT", amount="50.00"), 201)[0]["run_id"]
+
+    def modifier(run, again=False):
+        answer = client.get(f"/api/payouts/runs/{run}/ach" + ("?again=true" if again else ""))
+        assert answer.status_code == 200, answer.text
+        return answer.content.decode("ascii").splitlines()[0][33]
+
+    assert (modifier(first), modifier(second), modifier(first, again=True)) == ("A", "B", "A")
+
+
 def test_an_ach_file_taken_again_is_the_one_made_when_the_run_was_paid(client, conn, staff, pmc):
     fund(conn, pmc, "500.00")
     ach_details(client, pmc)

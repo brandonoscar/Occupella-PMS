@@ -192,6 +192,51 @@ tests = [
 ]
 
 [[invariant]]
+id = "rent-from-the-cutover"
+statement = "The rent run charges no rent or monthly charge due before the cutover of the trust bank account holding the lease's property's owners' money (trust_lease_cutover, migration 20261106100000; docs/edge-cases.md M-144): that month is the old system's, collected there or carried over as unpaid, so the first night after a mid-month switch charges nothing again and no late fee on it. A lease due on the first is due then whatever day Run rent now names. From the cutover on every month is charged once and none is missed, and a company with no opening balances is charged as before."
+tests = [
+  "tests/properties/test_rent_from_the_cutover_properties.py::test_rent_is_charged_from_the_cutover_and_never_for_the_old_systems_days",
+  "tests/test_rent_from_the_cutover.py::test_the_first_night_after_a_mid_month_switch_charges_the_old_systems_month_nothing",
+  "tests/test_rent_from_the_cutover.py::test_a_rent_carried_over_as_unpaid_stays_the_months_only_rent",
+  "tests/test_rent_from_the_cutover.py::test_a_rent_due_on_or_after_the_cutover_is_charged",
+  "tests/test_rent_from_the_cutover.py::test_a_lease_due_on_its_own_day_before_the_cutover_is_the_old_systems",
+  "tests/test_rent_from_the_cutover.py::test_run_rent_now_for_a_day_after_the_cutover_still_leaves_its_month_alone",
+  "tests/test_rent_from_the_cutover.py::test_a_property_whose_money_never_switched_is_charged_as_before",
+]
+
+[[invariant]]
+id = "payment-alike-waits-for-staff"
+statement = "Staff's Receive payment refuses a tenant's payment like one recorded to the lease under another request id (the same amount received the same day, by the same way and with the same check or reference where both say one; rent.refuse_alike, docs/edge-cases.md H-008, U-138), recording nothing, unless staff say it is another payment; read under the lease's lock, so the same check from two tabs at once is recorded once. The same request id again returns the payment as recorded; a payment alike to one on another lease is its own; every trust bank account ties out."
+tests = [
+  "tests/properties/test_payment_alike_properties.py::test_a_payment_like_one_recorded_is_recorded_only_when_staff_say_it_is_another",
+  "tests/test_payments_alike.py::test_a_payment_like_one_recorded_is_refused_unless_staff_say_it_is_another",
+  "tests/test_payments_alike.py::test_a_payment_alike_but_by_another_way_or_check_number_is_its_own",
+  "tests/test_payments_alike.py::test_the_same_check_from_two_tabs_at_once_is_recorded_once",
+  "tests/api/test_rent.py::test_a_payment_like_one_recorded_waits_for_staff_to_say_it_is_another",
+  "tests/api/test_rent.py::test_a_payment_alike_to_another_lease_is_its_own",
+]
+
+[[invariant]]
+id = "charge-request-once"
+statement = "Staff's Enter charge and Add recurring charge carry their panel's request id (migration 20261106110000; docs/edge-cases.md C-025, C-026), kept once per company on the charge or recurring charge made: the same request id again returns what it made and charges nothing more, read under the request id's own lock so two sent at once make one; the same request id asking for another charge is refused, making nothing."
+tests = [
+  "tests/properties/test_request_id_properties.py::test_a_request_id_sent_again_makes_one_charge_and_another_under_it_is_refused",
+  "tests/api/test_rent.py::test_sending_a_charge_again_records_it_once",
+  "tests/api/test_rent.py::test_sending_a_recurring_charge_again_adds_it_once",
+  "tests/test_request_ids.py::test_one_request_sent_twice_at_once_is_made_once",
+]
+
+[[invariant]]
+id = "autopay-on-its-way-ages-out"
+statement = "A balance autopay pays what the lease owes by the due date less what is on its way, up to its amount, never below zero; on its way is a payment online not in the books, not failed, come back or expired, that was reported paid (waiting for staff) or started within ON_ITS_WAY_DAYS (14) before the due date (src/pms/autopay.py; docs/edge-cases.md P-067, P-068, H-145): one whose report never came no longer lowers every later month's payment. Staff see each such payment, started that long ago with no word from the partner and not in the books, on Banking's Online payments waiting (online_payments.no_word, P-013); nothing there records it."
+tests = [
+  "tests/properties/test_on_its_way_properties.py::test_a_balance_autopay_counts_on_its_way_only_what_may_still_come",
+  "tests/test_autopay.py::test_a_payment_no_word_came_of_for_weeks_is_not_on_its_way",
+  "tests/test_autopay.py::test_what_is_on_its_way_counts_and_a_failed_payment_does_not",
+  "tests/api/test_online_payments_api.py::test_staff_see_a_payment_started_weeks_ago_with_no_word_from_the_partner",
+]
+
+[[invariant]]
 id = "events-in-order-never-skipped"
 statement = "An event (ADR 0011, migration 20261105000500) is written by the database alone (trust_record_event, as the owner; neither the app nor the AI's role may write one) in the same transaction as the write it tells of, its kind and ids only, and none for a write undone; append-only. A reader with a key reads its company's events after the last it got, in the order their transactions began writing, each only once every transaction that began writing before it has finished, so it gets every committed event exactly once and never a rolled-back one, and never another company's. A webhook goes only to an https address whose every resolved address is public, signed with its sealed secret, retried after each wait up to its last attempt, from when it was added and while it stands; only an admin adds or takes one back."
 tests = [
@@ -276,7 +321,7 @@ tests = [
 
 [[invariant]]
 id = "management-fee-once-per-period"
-statement = "A management fee is the agreement's percent of the rent and recurring fees collected in the period (net of bounced payments), or its minimum if that is more, plus its flat fee. It is taken once per owner account and period, an account's fee periods never overlap, and the same period retried returns the fee taken."
+statement = "A management fee is the agreement's percent of the rent and recurring fees collected in the period (net of bounced payments), or its minimum if that is more, plus its flat fee. It is taken once per owner account and period, an account's fee periods never overlap, and the same period retried returns the fee taken. Staff collect a period once it has ended by the company's today (docs/edge-cases.md M-112): taken early it would count only what came in so far and close the period to every later fee."
 tests = [
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
   "tests/test_owner_money.py::test_the_fee_is_a_percent_of_rent_collected_in_the_period",
@@ -287,6 +332,7 @@ tests = [
   "tests/test_owner_money.py::test_taking_the_fee_again_returns_it_and_posts_once",
   "tests/test_owner_money.py::test_a_period_overlapping_one_taken_is_refused",
   "tests/test_owner_money.py::test_the_same_fee_taken_twice_at_once_posts_once",
+  "tests/api/test_payables.py::test_a_fee_period_is_collected_once_it_has_ended",
 ]
 
 [[invariant]]
@@ -406,10 +452,11 @@ tests = [
 
 [[invariant]]
 id = "bill-holds-the-owners-balance"
-statement = "A bill not yet paid holds its amount and markup of its owner's property account without moving money (ADR 0010): the balance is laid over the open bills dated by today in the order they are due, so holds never come to more than the balance, what is short of each is what the owner must send, money that arrives clears it, a paid or void bill holds nothing (a void releases its hold to the other bills and to draws), and a draw never pays held money."
+statement = "A bill not yet paid holds its amount and markup of its owner's property account without moving money (ADR 0010): the balance is laid over the open bills dated by the company's today (its own day, never UTC's; migration 20261106110200, docs/edge-cases.md M-097, D-098, D-099) in the order they are due, so holds never come to more than the balance, what is short of each is what the owner must send, money that arrives clears it, a paid or void bill holds nothing (a void releases its hold to the other bills and to draws), and a draw never pays held money."
 tests = [
   "tests/properties/test_payables_properties.py::test_payables_invariants_hold_under_random_bills_contributions_and_draws",
   "tests/test_bill_lifecycle.py::test_the_balance_is_held_for_the_bill_due_first_and_the_rest_is_short",
+  "tests/test_bill_lifecycle.py::test_holds_count_the_bills_and_reserve_of_the_companys_day",
   "tests/test_bill_lifecycle.py::test_a_bill_holds_its_markup_and_a_bill_dated_later_holds_nothing_yet",
   "tests/test_bill_lifecycle.py::test_money_that_arrives_clears_what_is_short",
   "tests/test_bill_lifecycle.py::test_a_draw_never_pays_what_is_held",
@@ -1297,6 +1344,19 @@ tests = [
   "tests/test_journal_entries.py::test_the_app_writes_entries_only_through_their_functions",
 ]
 
+[[invariant]]
+id = "a-journal-entry-is-proposed-once-and-never-ahead"
+statement = "A journal entry carries the request id of the page that proposed it (migration 20261106110100; docs/edge-cases.md C-065), once per company: the same request again (the same staff member, day, memo and lines) returns the entry it proposed, read under the request id's own lock so two at once propose one, and the same id with another entry is refused, so a resend never leaves two to post. An entry is dated no later than the company's today when proposed (M-135), and one dated later waits for its day to post: balances never move ahead of the reports."
+tests = [
+  "tests/properties/test_journal_properties.py::test_journal_entries_move_money_only_when_another_approver_posts_them",
+  "tests/test_journal_entries.py::test_the_same_request_id_proposes_one_entry",
+  "tests/test_journal_entries.py::test_one_entry_proposed_twice_at_once_is_proposed_once",
+  "tests/test_journal_entries.py::test_an_entry_is_dated_no_later_than_the_companys_today",
+  "tests/test_journal_entries.py::test_an_entry_dated_after_today_waits_for_its_day_to_post",
+  "tests/api/test_journal.py::test_proposing_again_with_the_same_request_id_leaves_one_entry_waiting",
+  "tests/api/test_journal.py::test_an_entry_is_dated_no_later_than_the_companys_today",
+]
+
 [[report]]
 id = "deposit-return"
 statement = "The itemized statement of a lease's security deposits once returned, as staff send it to the tenants: the property and unit, the tenants and the lease's days, each lease they moved from, each tenant's deposit, what was kept for each charge (naming the home of one of a lease moved from), the totals, what went back to each tenant, and who returned it when. Compared to a checked-in golden file."
@@ -1575,7 +1635,7 @@ tests = [
 
 [[invariant]]
 id = "a-tenant-is-one-record-a-property"
-statement = "Someone renting at two properties at once is a record at each, linked to their first (migration 0105): a record joins a person only while it is linked to nothing, is no one's first, signs in to nothing, and sits at a property where the person has no record yet; only a record linked to nothing takes a portal login, once; trust_tenant_records gives every record its person's records; links are append-only, name who made them, move no money and wait for a login of the same record (and it for them); each record keeps its own leases and money."
+statement = "Someone renting at two properties at once is a record at each, linked to their first (migration 0105): a record joins a person only while it is linked to nothing, is no one's first, signs in to nothing, and sits at a property where the person has no record yet; only a record linked to nothing takes a portal login, once; trust_tenant_records gives every record its person's records; links are append-only, name who made them, move no money and wait for a login of the same record (and it for them); each record keeps its own leases and money. A link made by mistake is taken back once, naming who (trust_tenant_unlinks, migration 20261106100100; docs/edge-cases.md U-099): the record is its own person again at once, signs in on its own and may be linked to, but is never linked again itself, and its autopays stop."
 tests = [
   "tests/properties/test_tenant_record_properties.py::test_a_person_is_one_record_a_property_and_signs_in_once_as_their_first",
   "tests/test_tenant_records.py::test_a_tenant_renting_at_another_property_is_a_record_there_linked_to_their_first",
@@ -1585,6 +1645,11 @@ tests = [
   "tests/test_tenant_records.py::test_a_login_waits_for_a_link_of_its_record_and_then_is_refused",
   "tests/test_tenant_records.py::test_a_link_waits_for_a_login_of_its_record_and_then_is_refused",
   "tests/api/test_tenant_records_api.py::test_the_tenant_acts_on_the_other_propertys_lease_as_their_record_there",
+  "tests/test_tenant_records.py::test_a_link_taken_back_leaves_each_record_its_own_person",
+  "tests/test_tenant_records.py::test_a_link_is_taken_back_once_and_never_rewritten",
+  "tests/test_tenant_records.py::test_a_first_record_whose_links_were_taken_back_is_linked_to_again",
+  "tests/test_tenant_records.py::test_a_login_waits_for_a_link_taken_back_and_then_signs_in",
+  "tests/api/test_tenant_records_api.py::test_staff_take_back_a_link_to_the_wrong_person_and_they_lose_the_lease_at_once",
 ]
 
 [[invariant]]
@@ -1650,12 +1715,13 @@ tests = [
 
 [[invariant]]
 id = "online-payments-recorded-once-trust-whole"
-statement = "Rent paid online (migration 0150): a payment reaches the books, as Receive payment records one, only once its partner reported it paid, at most once however often reported, never a failed one; a return undoes it as a bounce only once it was paid. The partner's fee leaves trust only from the company's fee account and only once that account holds it, and a tenant's fee goes into that account and back out of it with a return: owners' money never pays for it. What the books can't take yet waits for staff, and the company's own deposit to cover it is never more than what waits needs. Every trust bank account ties out. Append-only."
+statement = "Rent paid online (migration 0150): a payment reaches the books, as Receive payment records one, only once its partner reported it paid, at most once however often reported, never a failed one; a return undoes it as a bounce only once it was paid. The partner's fee leaves trust only from the company's fee account and only once that account holds it, and a tenant's fee goes into that account and back out of it with a return: owners' money never pays for it. What the books can't take yet waits for staff, and the company's own deposit to cover it is never more than what waits needs, two at once under different request ids waiting for each other on the trust bank account (docs/edge-cases.md C-093). Every trust bank account ties out. Append-only."
 tests = [
   "tests/properties/test_online_payment_properties.py::test_online_payments_record_what_the_partner_reports_once_and_keep_trust_whole",
   "tests/api/test_online_payments_api.py::test_paid_is_recorded_as_staff_record_a_payment_and_only_once",
   "tests/api/test_online_payments_api.py::test_a_failed_payment_moves_nothing",
   "tests/api/test_online_payments_api.py::test_the_company_covers_the_partners_fee_its_account_cant",
+  "tests/api/test_online_payments_api.py::test_two_staff_covering_at_once_deposit_the_companys_money_once",
   "tests/api/test_online_payments_api.py::test_a_return_is_a_bounce_and_the_tenants_fee_goes_back_out",
   "tests/api/test_online_payments_api.py::test_a_payment_paid_during_a_hold_waits_for_staff_to_accept_it",
   "tests/api/test_online_payments_api.py::test_stripes_signed_report_records_the_payment",
@@ -1677,7 +1743,7 @@ tests = [
 
 [[invariant]]
 id = "autopay-each-due-date-once-by-its-rule"
-statement = "Autopay (migration 0151): each autopay comes to each rent due date at most once, starting a payment of what its rule says (a fixed amount, or what the lease owes by then less what is on its way from payments not yet in the books, never more than the amount the tenant set) or recording why none (a payment hold in force on the due date, nothing owed, payments online off); never before its bank account was saved, never after it stopped, and it stops by itself after two payments in a row didn't go through or when the lease ended or the tenant left. Each payment is sent to the partner under an id fixed by the autopay and the due date, and the partner, asked again (its answer lost, a run that stopped halfway, two runs at once), takes it once; none is sent once something was reported of it or its autopay stopped, and one never sent is given up (expired), so it is no longer on its way. The payment reaches the books only as any payment online does. Append-only."
+statement = "Autopay (migration 0151): each autopay comes to each rent due date at most once, starting a payment of what its rule says (a fixed amount, or what the lease owes by then less what is on its way from payments not yet in the books, never more than the amount the tenant set) or recording why none (a payment hold in force on the due date, nothing owed, payments online off); never before its bank account was saved, never after it stopped, and it stops by itself after two payments in a row didn't go through (failed, came back, or given up before the partner took it and never paid; docs/edge-cases.md P-065) or when the lease ended or the tenant left. Each payment is sent to the partner under an id fixed by the autopay and the due date, and the partner, asked again (its answer lost, a run that stopped halfway, two runs at once), takes it once; none is sent once something was reported of it or its autopay stopped (a stop and a send wait for each other under the autopay's lock, so a stop under way keeps its payment from being sent; docs/edge-cases.md C-081), and one never sent is given up (expired), so it is no longer on its way. The payment reaches the books only as any payment online does. Append-only."
 tests = [
   "tests/properties/test_autopay_properties.py::test_autopay_pays_each_due_date_once_by_its_rule_and_the_partner_takes_each_once",
   "tests/test_autopay.py::test_a_balance_autopay_pays_what_is_owed_on_the_due_day_once",
@@ -1688,6 +1754,10 @@ tests = [
   "tests/test_autopay.py::test_a_stopped_autopays_payment_is_never_sent",
   "tests/test_payments.py::test_stripe_charges_a_saved_account_once_finding_the_payment_it_made_before",
   "tests/api/test_autopay_api.py::test_run_rent_now_starts_the_autopay_payment_which_goes_to_the_partner_and_the_books",
+  "tests/test_autopay.py::test_an_autopay_whose_payments_were_never_sent_two_months_running_stops_by_itself",
+  "tests/test_autopay.py::test_a_payment_given_up_that_the_bank_paid_after_all_went_through",
+  "tests/test_autopay.py::test_a_stop_under_way_as_its_payment_is_sent_keeps_it_from_being_sent",
+  "tests/test_autopay.py::test_a_stop_while_its_payment_is_sent_waits_until_it_is_recorded",
 ]
 
 [[invariant]]

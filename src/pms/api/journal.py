@@ -19,7 +19,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
-from pms import exports
+from pms import days, exports
 from pms.api.deps import Conn, Staff, refusal
 from pms.api.staff import roles_of
 
@@ -167,6 +167,9 @@ class NewLine(BaseModel):
 
 
 class NewEntry(BaseModel):
+    # The page's own id: proposed again (its answer lost), it returns the entry it proposed, so
+    # one entry waits and is posted once (docs/edge-cases.md C-065).
+    request_id: UUID
     event_on: date
     memo: Memo
     lines: list[NewLine] = Field(min_length=1, max_length=20)
@@ -178,24 +181,37 @@ class Created(BaseModel):
 
 @router.post("", status_code=201)
 def propose(session: Staff, conn: Conn, entry: NewEntry) -> Created:
-    """Proposes an entry; nothing moves until another staff member who holds approve posts it."""
+    """Proposes an entry, dated no later than the company's today (M-135); nothing moves until
+    another staff member who holds approve posts it. The same request id again returns the entry
+    it proposed; with another entry it is refused (409)."""
     ours = {a.id for a in accounts_of(conn, session.pmc_id)}
     if any(line.from_account not in ours or line.to_account not in ours for line in entry.lines):
         raise HTTPException(404, "no such ledger account")
-    row = conn.execute(
-        "SELECT trust_propose_journal_entry(%s, %s, %s,"
-        " array(SELECT (f, t, a)::transfer_request"
-        "  FROM unnest(%s::text[], %s::text[], %s::numeric[]) WITH ORDINALITY AS l (f, t, a, n)"
-        "  ORDER BY n))",
-        (
-            session.pmc_id,
-            entry.event_on,
-            entry.memo,
-            [line.from_account for line in entry.lines],
-            [line.to_account for line in entry.lines],
-            [line.amount for line in entry.lines],
-        ),
-    ).fetchone()
+    today = days.today(conn, session.pmc_id)
+    if entry.event_on > today:
+        raise HTTPException(
+            422,
+            f"a journal entry is dated no later than today, {today:%m/%d/%Y}: date it the day"
+            " the money should have moved, or propose it on its day",
+        )
+    try:
+        row = conn.execute(
+            "SELECT trust_propose_journal_entry(%s, %s, %s,"
+            " array(SELECT (f, t, a)::transfer_request"
+            "  FROM unnest(%s::text[], %s::text[], %s::numeric[]) WITH ORDINALITY AS l (f, t, a, n)"
+            "  ORDER BY n), %s)",
+            (
+                session.pmc_id,
+                entry.event_on,
+                entry.memo,
+                [line.from_account for line in entry.lines],
+                [line.to_account for line in entry.lines],
+                [line.amount for line in entry.lines],
+                entry.request_id,
+            ),
+        ).fetchone()
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(409, "this request id was used for a different journal entry") from None
     assert row is not None
     return Created(id=row[0])
 

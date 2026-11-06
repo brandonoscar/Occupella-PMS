@@ -116,11 +116,11 @@ describe("Other properties on a tenant's page", () => {
     const found = await within(panel).findByRole("list", { name: "Tenants found" });
     // Only other tenants: not this record, not an owner.
     expect(within(found).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
-      "Tenant 1 Unit 2, Property 3This is themLinks the two for good: one portal sign-in, and each record keeps its own leases and money.",
+      "Tenant 1 Unit 2, Property 3This is themLinks the two: one portal sign-in, and each record keeps its own leases and money.",
     ]);
     // Linking asks first; Cancel sends nothing.
     const question =
-      "Link Tenant 1 and Tenant 1 (Unit 2, Property 3) for good? They get one portal sign-in; each record keeps its own leases and money.";
+      "Link Tenant 1 and Tenant 1 (Unit 2, Property 3)? They get one portal sign-in; each record keeps its own leases and money.";
     fireEvent.click(within(found).getByRole("button", { name: "Same person: Tenant 1, Unit 2, Property 3" }));
     expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
@@ -132,6 +132,51 @@ describe("Other properties on a tenant's page", () => {
 
     expect(await within(panel).findByText("Tenant 1 signs in to the portal: link Tenant 1 to them instead")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/tenants/t1/same-person", { tenant_id: "t7" }]]);
+  });
+
+  it("takes back a link made by mistake from the record linked, naming what it ends (U-099)", async () => {
+    const fetch = server({
+      "/api/tenants/t9": {
+        ...TENANT, id: "t9", name: "Tenant 9", property: { id: "p2", name: "Property 2" },
+        same_person: [
+          { id: "t1", property: { id: "p1", name: "Property 1" }, first: true },
+          { id: "t5", property: { id: "p3", name: "Property 3" }, first: false },
+        ],
+      },
+    });
+    render(<TenantPage me={ME} id="t9" />);
+
+    const records = within(await card()).getByRole("list", { name: "Tenant 9 at other properties" });
+    // Another record of the person's first is taken back from its own page or the first's.
+    expect(within(records).queryByRole("button", { name: "Actions for Tenant at Property 3" })).toBeNull();
+    fireEvent.click(within(records).getByRole("button", { name: "Actions for Tenant at Property 1" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Not the same person" }));
+    const question = "Tenant 9 isn't the tenant who signs in at Property 1? Take the link back:"
+      + " whoever signs in there no longer sees this record's leases, and its autopays stop.";
+    const asked = await screen.findByRole("alertdialog", { name: question });
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(asked).getByRole("button", { name: "Not the same person" }));
+
+    await vi.waitFor(() => expect(posted(fetch)).toEqual([["/api/tenants/t9/not-same-person", { tenant_id: "t1" }]]));
+  });
+
+  it("takes back each record linked to a first record from the first's page", async () => {
+    const fetch = server({
+      "/api/tenants/t1": {
+        ...TENANT,
+        same_person: [{ id: "t9", property: { id: "p2", name: "Property 2" }, first: false }],
+      },
+    });
+    render(<TenantPage me={ME} id="t1" />);
+
+    const records = within(await card()).getByRole("list", { name: "Tenant 1 at other properties" });
+    fireEvent.click(within(records).getByRole("button", { name: "Actions for Tenant at Property 2" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Not the same person" }));
+    const question = "The tenant at Property 2 isn't Tenant 1? Take the link back: Tenant 1 no longer"
+      + " sees that record's leases, and its autopays stop.";
+    fireEvent.click(within(await screen.findByRole("alertdialog", { name: question })).getByRole("button", { name: "Not the same person" }));
+
+    await vi.waitFor(() => expect(posted(fetch)).toEqual([["/api/tenants/t1/not-same-person", { tenant_id: "t9" }]]));
   });
 
   it("lists their records elsewhere, and a record that isn't their first sends staff to it to invite", async () => {

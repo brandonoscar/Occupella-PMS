@@ -6,8 +6,13 @@ accounts, and post and decline them in random order, as the app (trust_app) nami
 model predicts what each step does; the database must agree, refusing what it refuses with the
 reason it gives.
 
+Since migration 20261106110100 (docs/edge-cases.md C-065, M-135) it also proposes an entry again
+under its request id, the same or changed, and proposes some dated after the company's today.
+
 Invariants checked after every step (ci/registry.toml maps them to this test):
   - every balance is the model's: only posted entries moved money, each once;
+  - the same request id again returns the entry it proposed and proposes nothing more; with
+    another entry it is refused; a day after the company's today is refused;
   - a posted entry was posted by a staff member who held approve and did not propose it, and
     its transfers are its lines, in order, dated its day;
   - a declined or undecided entry moved nothing;
@@ -16,8 +21,9 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
 
+import uuid
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import psycopg
@@ -55,6 +61,7 @@ class Entry:
     lines: list[tuple[int, int, Decimal]]
     decision: str | None = None
     transfers: list[str] | None = None
+    request: uuid.UUID | None = None
 
 
 class JournalMachine(RuleBasedStateMachine):
@@ -117,9 +124,11 @@ class JournalMachine(RuleBasedStateMachine):
             min_size=1,
             max_size=3,
         ),
+        with_request=st.booleans(),
     )
-    def propose(self, by, lines):
+    def propose(self, by, lines, with_request):
         moved = [(f, t, Decimal(cents) * CENTS) for f, t, cents in lines]
+        request = uuid.uuid4() if with_request else None
         entry_id = propose_entry(
             self.app,
             self.pmc,
@@ -127,11 +136,60 @@ class JournalMachine(RuleBasedStateMachine):
             DAY,
             "Adjusting entry",
             [(self.accounts[f], self.accounts[t], str(amount)) for f, t, amount in moved],
+            request,
         )
-        entry = Entry(entry_id, by, moved)
+        entry = Entry(entry_id, by, moved, request=request)
         self.all.append(entry)
         event("entry proposed")
         return entry
+
+    @rule(entry=entries, same=st.booleans())
+    def propose_again(self, entry, same):
+        """The page sends its request again (its answer lost): the same entry, or, changed, a
+        refusal; nothing more is proposed either way."""
+        if entry.request is None:
+            event("proposed with no request id: nothing to send again")
+            return
+        lines = entry.lines if same else [*entry.lines, (1, 2, CENTS)]
+
+        def work():
+            return propose_entry(
+                self.app,
+                self.pmc,
+                self.staff[entry.by],
+                DAY,
+                "Adjusting entry",
+                [(self.accounts[f], self.accounts[t], str(amount)) for f, t, amount in lines],
+                entry.request,
+            )
+
+        if same:
+            event("proposed again: the same entry")
+            assert work() == entry.id
+        else:
+            event("proposed again changed: refused")
+            refusal = self.refused(psycopg.errors.UniqueViolation, work)
+            assert "was used for a different journal entry" in refusal
+
+    @rule(by=WHO, later=st.integers(min_value=1, max_value=400))
+    def propose_later(self, by, later):
+        today = self.conn.execute(
+            "SELECT trust_pmc_day(%s, clock_timestamp())", (self.pmc,)
+        ).fetchone()[0]
+
+        def work():
+            propose_entry(
+                self.app,
+                self.pmc,
+                self.staff[by],
+                today + timedelta(days=later),
+                "Dated ahead",
+                [(self.accounts[1], self.accounts[2], "1.00")],
+            )
+
+        event("proposed for a later day: refused")
+        refusal = self.refused(psycopg.errors.InvalidParameterValue, work)
+        assert "no later than the company's today" in refusal
 
     def outcome(self, lines):
         """What posting these lines does: the balances after, or why it is refused."""
@@ -203,6 +261,12 @@ class JournalMachine(RuleBasedStateMachine):
             ).fetchone()[0]
             for a in self.accounts
         ] == self.balances
+
+    @invariant()
+    def each_proposal_is_one_entry(self):
+        assert self.conn.execute(
+            "SELECT count(*) FROM trust_journal_entries WHERE pmc_id = %s", (self.pmc,)
+        ).fetchone() == (len(self.all),)
 
     @invariant()
     def only_posted_entries_moved_money_by_another_approver(self):
