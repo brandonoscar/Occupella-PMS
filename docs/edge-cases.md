@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1173 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1175 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -31,9 +31,9 @@ answer in the portal for everything that can fail.
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 76 | 8 | 81 | 18 |
 | [Bad files and imports](#bad-files-and-imports) | 154 | 73 | 17 | 64 | 1 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 164 | 99 | 11 | 54 | 5 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 174 | 80 | 14 | 80 | 4 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 176 | 82 | 14 | 80 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1173** | **650** | **113** | **410** | **46** |
+| **All** | **1175** | **652** | **113** | **410** | **46** |
 
 ## Open, high risk: the work list
 
@@ -1178,6 +1178,7 @@ its ten most pressing, each with the test that would close it.
 | H-162 | PMS_PUBLIC_URL with capitals in its host (https://Rentals.Example.com) | Settings.origin writes the scheme and host in lower case, as a browser's Origin does | Tested | tests/test_deployment.py::test_the_origin_is_written_as_a_browser_sends_it; tests/api/test_sign_in.py::test_our_own_site_goes_through_however_its_address_was_written | H |
 | H-167 | PMS_PUBLIC_URL with a user or password in it (https://admin:secret@rentals.test) | The origin check ignores it, so it started, and every emailed link (invites, resets, statements) carried the credentials | Tested | tests/test_deployment.py::test_the_app_refuses_to_start_at_an_address_no_browser_opens_it_at (refused at start, never repeating them) | H |
 | H-008 | A payment's answer is lost, staff close the panel and record it again | Refused with what was recorded (409): a payment like one recorded to the lease under another request id (the same amount received the same day, by the same way and check number where both say one) waits for staff to say it is another; the panel says so first from the lease's payments and holds Record payment until they tick it; the same request id again is a retry | Tested | tests/api/test_rent.py::test_a_payment_like_one_recorded_waits_for_staff_to_say_it_is_another; tests/properties/test_payment_alike_properties.py::test_a_payment_like_one_recorded_is_recorded_only_when_staff_say_it_is_another; frontend/src/pages/LeaseForms.test.tsx ("asks whether a payment like one recorded is another before sending it") | H |
+| H-176 | The books' database is a Supabase project, or any serving PostgREST, whose Data API reaches schema public: anon, authenticated and service_role are granted every table, sequence and function a migration makes | The app's pooled connections, the nightly run and the webhook courier refuse it, naming the first grant and how many more, as a role the API answers as or may act as holds it; docs/install.md says what to revoke. NOT VERIFIED on a live Supabase project: the tests make its roles and grants on plain Postgres | Tested | tests/test_api_exposure.py | H |
 | H-003 | The database is down while staff open pages | Each request waits 30 s for a pool connection, then gets 503 "the PMS is busy just now: try again in a moment": it says busy, not down, and every click takes 30 s | Open | src/pms/api/deps.py:121-132 (PoolTimeout always read as busy); no test of a page with the database down | M |
 | H-004 | The database is down when the portal first loads | Home renders nothing while /api/me waits 30 s (a white page), then shows one error line with no menu, no retry button and no word of what to do | Open | frontend/src/App.tsx:96-109 | M |
 | H-011 | A request waits on a lock (a big company's nightly run, another staff member's lease work, a migration) | No statement or lock timeout in the database session and no timeout on the portal's fetch: the button stays busy or the page says Loading with no end | Open | src/pms/api/app.py:298-306 (configure sets only the role and jit); frontend/src/api.ts:36-50 (no AbortController) | M |
@@ -1252,6 +1253,7 @@ its ten most pressing, each with the test that would close it.
 | H-159 | Ending a lease when the break fee can't be read | End lease waits for the day's lease-break fee terms; when they can't be read it says so and the lease isn't ended | Tested | frontend/src/pages/LeasePeople.test.tsx::won't end the lease while its lease-break fee can't be read (H-159) | M |
 | H-173 | A body just under 10 MB that isn't what the route takes, sent to sign-in with no session (a million empty objects) | 422 saying where and why, without the input refused (it was echoed back: about 4 s of the event loop and a 13 MB answer per request) | Tested | tests/api/test_body_limit.py::test_a_refused_body_is_never_echoed_back; tests/api/test_validation_errors_api.py::test_a_lone_surrogate_is_refused_not_a_server_error | M |
 | H-174 | A webhook receiver that answers a byte every 9 s, or completes TLS and never answers | Given up at DEADLINE (30 s) from connecting to its status, a failed attempt retried as any other; a timer shuts the connection down whatever it waits on (each read's 10 s timeout alone let one receiver hold the one courier thread, and every company's webhooks behind it, for days) | Tested | tests/test_webhooks.py::test_a_receiver_that_answers_too_slowly_is_given_up_at_the_deadline; ::test_giving_up_before_the_connection_is_made_or_after_it_closed_does_nothing_more | M |
+| H-175 | A webhook receiver that answers at once saying Connection: close, then sends its body a byte every 9 s | Given up at DEADLINE (30 s) as a slow status is: the delivery keeps a descriptor of its own for the connection's socket until it finishes, so the deadline still reaches it after http.client lets go of its own (it closed it before reading the body, and the body held the one courier thread for days); a delivery cut off there is a failed attempt, retried, never counted as delivered | Tested | tests/test_webhooks.py::test_a_receiver_that_answers_too_slowly_is_given_up_at_the_deadline (close-trickle); ::test_a_delivery_leaves_no_descriptor_open_however_it_ends | M |
 | H-014 | The portal gets a 503 with Retry-After | Shows the words; never retries by itself, the person clicks again | Open | frontend/src/api.ts:36-50 | L |
 | H-045 | A migration takes a table lock while the app serves | Requests to that table wait with no lock_timeout; pages spin until it finishes | Open | src/pms/api/app.py:298-306 | L |
 | H-082 | The process is killed after an email went out and before its delivery committed | It is sent again later | Open | src/pms/email.py:653-682 | L |

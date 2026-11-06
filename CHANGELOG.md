@@ -6,6 +6,16 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+- **Security: a database whose own API can reach the books is refused.** On a Supabase project
+  (or any database serving PostgREST) the roles its Data API answers as are granted every table
+  and function of schema `public` by default, and through it anyone holding the public anon key
+  could have read the books and called the write paths that move money. The app, the nightly run
+  and the webhook courier now refuse such a database, saying what to revoke (docs/install.md, "A
+  database with its own API"). A self-hosted install on its own Postgres is not affected.
+- **Security: a webhook receiver that answers Connection: close and then sends its body slowly
+  is given up at 30 seconds too,** as one that sends its status slowly already was; a delivery cut
+  off there is retried, never counted as delivered.
+
 Migration `20261106000200` (two-step sign-in for owners and tenants).
 
 - **Two-step sign-in for owners and tenants:** from their Profile, an owner or a tenant sets up an
