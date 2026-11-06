@@ -431,6 +431,21 @@ def create_app(settings: Settings) -> FastAPI:
 
     https = urlsplit(settings.public_url).scheme == "https"
     refused_from: set[str] = set()
+    proxies_named: set[str] = set()
+
+    def log_untrusted_proxy(request: Request) -> None:
+        # Behind a proxy PMS_TRUSTED_PROXIES doesn't name, every visitor has the proxy's address
+        # (docs/edge-cases.md H-067, C-110, U-034): the log names it, each proxy once.
+        peer = request.client.host if request.client is not None else "unknown"
+        if peer in proxies_named or len(proxies_named) >= LOGGED_ORIGINS:
+            return
+        proxies_named.add(peer)
+        log.warning(
+            "requests come through a proxy at %r that PMS_TRUSTED_PROXIES doesn't name: every"
+            " visitor behind it counts as that one address, for the sign-in limit and in"
+            " signatures' evidence; name it in PMS_TRUSTED_PROXIES",
+            peer,
+        )
 
     def log_refused(origin: str) -> None:
         # A server whose PMS_PUBLIC_URL isn't the address people use refuses every change
@@ -464,6 +479,8 @@ def create_app(settings: Settings) -> FastAPI:
                 "application/json"
             ):
                 return JSONResponse({"detail": "send JSON"}, 415)
+        if not settings.trusted_proxies and "x-forwarded-for" in request.headers:
+            log_untrusted_proxy(request)
         outbox.PUBLIC_URL.set(settings.public_url)
         outbox.SENDING.set(request.app.state.email is not None)
         outbox.PARTNER.set(request.app.state.payments)

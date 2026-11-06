@@ -11,13 +11,14 @@ people's emails, and it lets anyone lock out a person whose email they know. So:
   strangers' inboxes through the forgot-password page.
 
 The address is the connection's, or behind a proxy the app trusts (PMS_TRUSTED_PROXIES) the
-visitor's as the proxy names it. Counted per process, like an API key's rate (ai_keys.PER_MINUTE):
-a server running several processes allows that many times as much, still a small number. Each app
-holds its own counts (create_app), so tests don't share them.
+visitor's as the proxy names it; an IPv6 one counts as its whole /64. Counted per process, like an
+API key's rate (ai_keys.PER_MINUTE): a server running several processes allows that many times as
+much, still a small number. Each app holds its own counts (create_app), so tests don't share them.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import math
 import threading
 import time
@@ -79,9 +80,25 @@ class Limiter:
         return times
 
 
+def counted_as(host: str) -> str:
+    """The address a limit counts a host as: an IPv6 address as its /64, which one visitor holds
+    whole and may use any address of (docs/edge-cases.md U-032); an IPv4 address, written as
+    IPv6 or not, as itself; anything else as it came."""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.ipv4_mapped is not None:
+            return str(address.ipv4_mapped)
+        return str(ipaddress.IPv6Network((address, 64), strict=False))
+    return str(address)
+
+
 def address_of(request: Request) -> str:
-    """The address a request came from (behind a proxy the app trusts, the visitor's)."""
-    return request.client.host if request.client is not None else "unknown"
+    """The address a request came from (behind a proxy the app trusts, the visitor's), as a limit
+    counts it (counted_as)."""
+    return counted_as(request.client.host) if request.client is not None else "unknown"
 
 
 def refuse_if_waiting(limiter: Limiter, address: str, what: str) -> None:
