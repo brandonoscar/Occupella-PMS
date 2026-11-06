@@ -1835,7 +1835,8 @@ class FeeDue(BaseModel):
     owner: str
     property: str
     # Taken: the fee taken for the period already. Otherwise what taking it today would take,
-    # or why it can't be taken.
+    # or why it can't be taken; for a period not ended yet both: what it would take so far, and
+    # that it is collected once the period has ended (M-112).
     taken: bool
     fee: str | None
     refused: str | None
@@ -1905,18 +1906,6 @@ def management_fees_due(
                 )
             )
             continue
-        if early is not None:
-            due.append(
-                FeeDue(
-                    account=account,
-                    owner=owner,
-                    property=prop,
-                    taken=False,
-                    fee=None,
-                    refused=early,
-                )
-            )
-            continue
         fee: Decimal | None = None
         refused: str | None = None
         try:
@@ -1935,6 +1924,8 @@ def management_fees_due(
                 raise psycopg.Rollback()
         except FEE_REFUSALS as refusing:
             refused = refusal(refusing)
+        if early is not None:
+            refused = early  # what it would take so far, shown, but not collected yet
         due.append(
             FeeDue(
                 account=account,

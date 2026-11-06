@@ -52,7 +52,8 @@ export function ManagementFeesPage({ me }: { me: Me }) {
     api.get<AutomaticFees>(AUTOMATIC_FEES).then(setAutomatic).catch(() => setAutomatic(null));
   }, []);
 
-  const due = (fees ?? []).filter((f) => !f.taken && f.fee !== null);
+  // A period not ended yet shows what it would take so far, and why it waits (M-112).
+  const due = (fees ?? []).filter((f) => !f.taken && f.fee !== null && f.refused === null);
   const total = sumMoney(due.map((f) => f.fee ?? "0"));
 
   return (
@@ -109,7 +110,7 @@ export function ManagementFeesPage({ me }: { me: Me }) {
                   <td>
                     {fee.taken ? (
                       <Badge tone="positive">Collected</Badge>
-                    ) : fee.fee !== null ? (
+                    ) : fee.fee !== null && fee.refused === null ? (
                       <Badge tone="caution">To collect</Badge>
                     ) : (
                       <span className="text-sm text-danger">{fee.refused}</span>

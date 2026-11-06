@@ -544,7 +544,8 @@ def test_a_fee_period_is_collected_once_it_has_ended(client, conn, staff, pmc):
     preview = ok(client.get("/api/payables/management-fees", params=period), 200)
 
     refused(early, 422, why)
-    assert [(d["taken"], d["fee"], d["refused"]) for d in preview] == [(False, None, why)]
+    # The page shows what it would take so far, and why it waits.
+    assert [(d["taken"], d["fee"], d["refused"]) for d in preview] == [(False, "150.00", why)]
     assert conn.execute(
         "SELECT count(*) FROM trust_management_fees WHERE pmc_id = %s", (pmc.pmc_id,)
     ).fetchone() == (0,)
