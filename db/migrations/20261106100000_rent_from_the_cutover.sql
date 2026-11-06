@@ -483,4 +483,5 @@ BEGIN
 END;
 $$;
 
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_lease_cutover(uuid);

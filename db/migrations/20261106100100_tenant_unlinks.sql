@@ -281,5 +281,7 @@ BEGIN
 END;
 $$;
 
+-- squawk-ignore ban-drop-table
 DROP TABLE trust_tenant_unlinks;
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_check_tenant_unlink();
