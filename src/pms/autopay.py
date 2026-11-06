@@ -75,7 +75,8 @@ def payment_id_for(autopay_id: UUID, due_on: date) -> UUID:
 SAVED = """
 SELECT a.id, a.lease_id, a.tenant_id, a.rule, a.amount, a.partner, acct.saved_at,
        trust_rent_due_on(a.lease_id, %(day)s), l.ends_on,
-       acct.partner_customer, acct.partner_method, acct.partner_mandate, acct.label
+       acct.partner_customer, acct.partner_method, acct.partner_mandate, acct.label,
+       trust_pmc_day(a.pmc_id, acct.saved_at)
 FROM trust_autopay AS a
 JOIN trust_autopay_accounts AS acct ON acct.autopay_id = a.id
 JOIN trust_leases AS l ON l.id = a.lease_id
@@ -105,6 +106,8 @@ class Active:
     method: str
     mandate: str | None
     label: str
+    # The company's day the account was saved (D-094): a save on the due day's evening counts.
+    saved_on: date
 
 
 def active(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> list[Active]:
@@ -393,7 +396,7 @@ def start_due(
         due = autopay.due_on
         # This month's due date, come by the day, and after the account was saved: an autopay set
         # up after this month's due date pays from next month.
-        if due is None or due > day or due < autopay.saved_at.astimezone(UTC).date():
+        if due is None or due > day or due < autopay.saved_on:
             continue
         if autopay.partner != partner:
             continue  # saved at another partner than this server's: it can't be charged here

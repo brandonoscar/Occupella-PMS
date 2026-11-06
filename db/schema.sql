@@ -2262,7 +2262,8 @@ BEGIN
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM trust_autopay_accounts AS a
-        WHERE a.autopay_id = NEW.autopay_id AND a.saved_at::date <= NEW.due_on
+        WHERE a.autopay_id = NEW.autopay_id
+            AND trust_pmc_day(NEW.pmc_id, a.saved_at) <= NEW.due_on
     ) THEN
         RAISE EXCEPTION 'trust: autopay % had no bank account saved by %', NEW.autopay_id,
             NEW.due_on
@@ -35945,4 +35946,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261106100100'),
     ('20261106110000'),
     ('20261106110100'),
-    ('20261106110200');
+    ('20261106110200'),
+    ('20261106120000');

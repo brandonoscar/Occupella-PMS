@@ -101,7 +101,7 @@ def check(conn, app_conn, started, cap):
         event(f"word: {word}, {'fresh' if fresh else 'old'}")
 
     balance = autopay.Active(
-        None, lease, tenant, "balance", cap, "fake", due_at, DUE, None, "c", "m", None, "l"
+        None, lease, tenant, "balance", cap, "fake", due_at, DUE, None, "c", "m", None, "l", DUE
     )
     paid = autopay.to_pay(app_conn, pmc.pmc_id, balance, DUE)
     assert paid == max(min(Decimal("1200.00") - coming, cap), Decimal(0)), (started, coming)

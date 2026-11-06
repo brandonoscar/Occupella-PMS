@@ -2,9 +2,10 @@
 autopay starts its payment once (or records why none), stops by itself when it should, and each
 payment it starts goes to the payments partner once, however often that is tried."""
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import psycopg
 import pytest
@@ -310,6 +311,45 @@ def test_an_autopay_saved_after_this_months_due_date_pays_from_next_month(
     charge(conn, pmc.pmc_id, lease, nxt, "1200.00")
     run(app_conn, pmc, day=nxt)
     assert [r[0] for r in runs(conn, mine)] == [nxt]
+
+
+def test_an_account_saved_the_evening_of_the_due_day_pays_by_the_companys_day(conn, app_conn):
+    """docs/edge-cases.md D-094: whether this month paid turned on UTC's date of the save, so an
+    account a New York tenant saved at 9 pm on the due day (UTC's next day) paid from next month,
+    and one saved at 6 pm paid this month. The company's own day decides, in Python and in the
+    database's check alike."""
+    ny = make_pmc(conn, owners=1, time_zone="America/New_York")
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (ny.prepaid_rent,),
+    ).fetchone()[0]
+    unit = add_unit(conn, ny.pmc_id, ny.owners[0].property_id)
+    lease = open_lease(conn, ny.pmc_id, unit, MONTH - 60 * DAY, None, "1200.00", [tenant])
+    charge(conn, ny.pmc_id, lease, MONTH, "1200.00")
+    online(conn, ny)
+    evening = datetime.combine(MONTH, time(21, 0), ZoneInfo("America/New_York"))
+    assert evening.astimezone(UTC).date() == MONTH + DAY  # UTC's next day
+    mine = set_up(conn, ny, lease, tenant, saved_at=evening)
+
+    assert run(app_conn, ny, day=MONTH).payments == 1
+    assert runs(conn, mine) == [(MONTH, Decimal("1200.00"), None)]
+
+
+def test_a_database_session_in_another_time_zone_counts_the_same_day(
+    conn, app_conn, pmc, lease, tenant
+):
+    """docs/edge-cases.md D-006: the database's check read the day an account was saved in the
+    session's time zone. On a server set to a zone east of UTC it was stricter than the Python
+    check, refused the payment and failed the company's whole nightly run."""
+    online(conn, pmc)
+    evening = datetime.combine(MONTH, time(20, 0), UTC)  # already the next day in Tokyo
+    mine = set_up(conn, pmc, lease, tenant, saved_at=evening)
+    app_conn.execute("SET TIME ZONE 'Asia/Tokyo'")
+    try:
+        assert run(app_conn, pmc, day=MONTH).payments == 1
+    finally:
+        app_conn.execute("SET TIME ZONE 'UTC'")
+    assert runs(conn, mine) == [(MONTH, Decimal("1200.00"), None)]
 
 
 def test_an_unsaved_autopay_starts_nothing(conn, app_conn, pmc, lease, tenant):

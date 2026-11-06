@@ -167,6 +167,12 @@ Migration `20261103000100` (the portals' second version, `docs/adr/0012-portals-
   fees, reminders and autopay started a day late; so was every company when another server held
   the run's lock. The server now runs it again a minute past the next hour, and each hour after
   until it runs, its admins told once a day as before; the alert email says so.
+- **Fixed: autopay saved in the evening paid from next month.** Whether an autopay pays this
+  month turned on UTC's date of the bank account's save: a New York tenant who saved it at 9 pm
+  on the due day waited a month, while one who saved it at 6 pm paid. It now turns on the
+  company's day. On a database server whose session time zone is east of UTC, the database's own
+  check was stricter than the app's and failed the company's whole nightly run; both now read the
+  company's day. Migration `20261106120000`.
 - **Fixed: Stripe's answers in an old API version, and a webhook missing its events.** Every
   call to Stripe now names the API version whose shapes the PMS reads (`2024-06-20`), so an
   account whose default is older than `latest_charge` no longer fails every paid report; and

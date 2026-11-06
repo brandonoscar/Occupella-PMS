@@ -1050,8 +1050,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   sets up autopay of a lease from the portal (Autopay), a fixed amount each month or the balance
   due up to an amount they set (`trust_autopay`), and saves the bank account it pays from on the
   partner's page (`trust_autopay_accounts`: the partner's references and a label, never a number;
-  the fake partner's `/pay/fake-save#<id>`). From the next rent due day after it is saved, the
-  nightly run (and an admin's Run rent now) starts its payment once per due date, as a payment
+  the fake partner's `/pay/fake-save#<id>`). From the first rent due day on or after the company's
+  day it is saved (migration 20261106120000: an evening's save on a due day pays it), the nightly run (and an admin's Run rent now) starts its payment once per due date, as a payment
   online with an id made from the autopay and the date, or records why none (a payment hold on
   the due date, nothing owed, payments online off) (`trust_autopay_runs`); a balance autopay pays
   what is open by the due date less what is on its way from payments online not yet in the books.
