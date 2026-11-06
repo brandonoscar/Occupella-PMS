@@ -53,10 +53,9 @@ describe("PaymentForm", () => {
     fireEvent.click(within(asked).getByRole("button", { name: "Record it again" }));
     await vi.waitFor(() => expect(onRecorded).toHaveBeenCalledTimes(1));
     expect(record).toHaveBeenCalledTimes(2);
-    const [first, second] = record.mock.calls.map((call) => call[1] as Body);
-    expect(first.again).toBeUndefined();
-    expect(second.again).toBe(true);
-    expect(second.request_id).toBe(first.request_id);  // the same payment, now said to be a second
+    const bodies = record.mock.calls.map((call) => call[1] as Body);
+    expect(bodies.map((body) => body.again)).toEqual([undefined, true]);
+    expect(bodies[1]?.request_id).toBe(bodies[0]?.request_id);  // the same payment, now a second
   });
 
   it("shows any other refusal as before, asking nothing", async () => {
