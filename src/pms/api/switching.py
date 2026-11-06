@@ -39,6 +39,10 @@ router = APIRouter(prefix="/api/switching")
 
 Content = Annotated[str, StringConstraints(min_length=1, max_length=2_000_000)]
 MAX_ROWS = 20000
+# Each row is read as every column of the header (a short row's missing cells empty), so a
+# file's rows times its columns is what it costs to read: a header of 150,000 names over a few
+# thousand short rows held gigabytes (the AI pen test of 11/06). 20,000 rows of 50 columns fit.
+MAX_CELLS = 1_000_000
 CENT = Decimal("0.01")
 
 
@@ -114,6 +118,11 @@ def rows(
         raise Bad(f"line 1: no {', '.join(missing)} column")
     if len(found) - 1 > MAX_ROWS:
         raise Bad(f"a file has at most {MAX_ROWS} rows")
+    if (len(found) - 1) * len(headers) > MAX_CELLS:
+        raise Bad(
+            f"a file has at most {MAX_CELLS:,} cells (its rows times its columns): this one has"
+            f" {len(found) - 1:,} rows of {len(headers):,} columns"
+        )
     cells = [
         (n, {h: (r[i] if i < len(r) else "") for i, h in enumerate(headers)})
         for n, r in enumerate(found[1:], start=2)
