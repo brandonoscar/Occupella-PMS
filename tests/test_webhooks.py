@@ -449,6 +449,103 @@ def test_a_post_to_a_name_its_certificate_doesnt_carry_is_refused(receiver):
     assert got == []
 
 
+@pytest.fixture
+def slow_receiver(tmp_path, monkeypatch):
+    """An HTTPS receiver that takes the request, then answers its status line one byte every
+    0.3 s (`trickle`) or never (`silent`): what the courier's deadline is for."""
+    import ssl
+    import threading
+    import time
+
+    files = certificate_for(tmp_path, "hooks.example.com")
+    serving = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    serving.minimum_version = ssl.TLSVersion.TLSv1_2
+    serving.load_cert_chain(files["server.pem"], files["server.key"])
+    listening = socket.create_server(("127.0.0.1", 0))
+    mode = {"answer": "trickle"}
+    stop = threading.Event()
+
+    def serve():
+        listening.settimeout(0.2)
+        while not stop.is_set():
+            try:
+                raw, _ = listening.accept()
+            except TimeoutError:
+                continue
+            try:
+                with serving.wrap_socket(raw, server_side=True) as tls:
+                    tls.settimeout(5)
+                    tls.recv(65536)  # the request
+                    if mode["answer"] == "trickle":
+                        for byte in b"HTTP/1.1 202 Accepted\r\n\r\n":
+                            if stop.is_set():
+                                break
+                            tls.sendall(bytes([byte]))
+                            time.sleep(0.3)
+                    else:
+                        stop.wait(15)
+            except OSError:
+                pass
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    trusting = ssl.create_default_context(cafile=files["ca.pem"])
+    trusting.minimum_version = ssl.TLSVersion.TLSv1_2
+    monkeypatch.setattr(webhooks.ssl, "create_default_context", lambda: trusting)
+    monkeypatch.setattr(webhooks, "public", lambda address: True)
+    monkeypatch.setattr(webhooks, "DEADLINE", 1.0)
+    port = listening.getsockname()[1]
+
+    def resolve(host, port_asked, **kind):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))]
+
+    try:
+        yield port, resolve, mode
+    finally:
+        stop.set()
+        thread.join(5)
+        listening.close()
+
+
+@pytest.mark.timing
+@pytest.mark.parametrize("answer", ["trickle", "silent"])
+def test_a_receiver_that_answers_too_slowly_is_given_up_at_the_deadline(slow_receiver, answer):
+    # The AI pen test of 11/06: TIMEOUT bounds each read, not the delivery, so a receiver that
+    # answers a byte every 9 s held the one courier thread, and every company's webhooks behind
+    # it, for as long as it liked. A delivery now has DEADLINE in all.
+    import time
+
+    port, resolve, mode = slow_receiver
+    mode["answer"] = answer
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="didn't answer within 1 s"):
+        webhooks.post(f"https://hooks.example.com:{port}/x", b"{}", {}, resolve)
+    assert time.monotonic() - started < webhooks.TIMEOUT  # cut at the deadline, not a read's
+
+
+def test_giving_up_before_the_connection_is_made_or_after_it_closed_does_nothing_more():
+    # The deadline may pass while the connection is being made, or just as it closes: the first
+    # connects nothing more, the second shuts down nothing (its descriptor may be another's now).
+    listening = socket.create_server(("127.0.0.1", 0))
+    try:
+        port = listening.getsockname()[1]
+        early = webhooks._Pinned("hooks.example.com", "127.0.0.1", port, None)
+        early.give_up()
+        with pytest.raises(TimeoutError, match="given up before the connection was made"):
+            early.connect()
+        early.close()
+        early.give_up()  # closed: nothing to shut down
+        unconnected = socket.socket()
+        late = webhooks._Pinned("hooks.example.com", "127.0.0.1", port, None)
+        late._fd = unconnected.fileno()
+        late.give_up()  # shutting down a socket that never connected raises, and is let be
+        assert late.gave_up
+        assert unconnected.fileno() != -1  # still open: give_up never closes what it shuts
+        unconnected.close()
+    finally:
+        listening.close()
+
+
 # --- what a delivery records ----------------------------------------------------------------
 
 

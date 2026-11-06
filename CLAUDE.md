@@ -504,7 +504,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   once, `trust_event_subscription_revocations`); each event from then on goes to it signed
   (`Occupella-Signature: t=,v1=` HMAC-SHA256, `Occupella-Event-Id`), its address checked each
   time (https, no credentials, every resolved address public, the request sent to the address
-  checked, no redirect), retried after 1 and 5 minutes, half an hour, 2 and 12 hours, six attempts
+  checked, no redirect, 30 seconds in all, `webhooks.DEADLINE`), retried after 1 and 5 minutes, half an hour, 2 and 12 hours, six attempts
   in all and seven days at most (`trust_event_deliveries`), by the API's own thread every 30
   seconds (`PMS_WEBHOOKS`, on unless "off") or `python -m pms.webhooks deliver`. Events and
   deliveries are not audited (each repeats an audited write); the AI role reads the events, never

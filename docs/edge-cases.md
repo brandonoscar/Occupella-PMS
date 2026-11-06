@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1165 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1166 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -31,9 +31,9 @@ answer in the portal for everything that can fail.
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 70 | 8 | 87 | 21 |
 | [Bad files and imports](#bad-files-and-imports) | 154 | 68 | 16 | 70 | 1 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 158 | 89 | 10 | 59 | 6 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 173 | 74 | 14 | 85 | 5 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 174 | 75 | 14 | 85 | 5 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1165** | **601** | **110** | **454** | **53** |
+| **All** | **1166** | **602** | **110** | **454** | **53** |
 
 ## Open, high risk: the work list
 
@@ -1242,6 +1242,7 @@ its ten most pressing, each with the test that would close it.
 | H-054 | PMS_DATA_KEY changed, and the company entered its own Stripe keys | No payment online; it never falls back to the server's keys | Tested | tests/api/test_payment_keys_api.py::test_keys_that_dont_open_here_take_no_payment_and_never_fall_back | M |
 | H-075 | The PMS restarting behind the proxy | 502 reads "the server answered 502", with no word that it is restarting | Tested | frontend/src/api.test.ts > names the status when the answer has no reason | M |
 | H-173 | A body just under 10 MB that isn't what the route takes, sent to sign-in with no session (a million empty objects) | 422 saying where and why, without the input refused (it was echoed back: about 4 s of the event loop and a 13 MB answer per request) | Tested | tests/api/test_body_limit.py::test_a_refused_body_is_never_echoed_back; tests/api/test_validation_errors_api.py::test_a_lone_surrogate_is_refused_not_a_server_error | M |
+| H-174 | A webhook receiver that answers a byte every 9 s, or completes TLS and never answers | Given up at DEADLINE (30 s) from connecting to its status, a failed attempt retried as any other; a timer shuts the connection down whatever it waits on (each read's 10 s timeout alone let one receiver hold the one courier thread, and every company's webhooks behind it, for days) | Tested | tests/test_webhooks.py::test_a_receiver_that_answers_too_slowly_is_given_up_at_the_deadline; ::test_giving_up_before_the_connection_is_made_or_after_it_closed_does_nothing_more | M |
 | H-014 | The portal gets a 503 with Retry-After | Shows the words; never retries by itself, the person clicks again | Open | frontend/src/api.ts:36-50 | L |
 | H-045 | A migration takes a table lock while the app serves | Requests to that table wait with no lock_timeout; pages spin until it finishes | Open | src/pms/api/app.py:298-306 | L |
 | H-082 | The process is killed after an email went out and before its delivery committed | It is sent again later | Open | src/pms/email.py:653-682 | L |

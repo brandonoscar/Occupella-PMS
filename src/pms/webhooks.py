@@ -62,6 +62,10 @@ BACKOFF = [
 KEPT = timedelta(days=7)
 INTERVAL = 30.0
 TIMEOUT = 10.0
+# A delivery's whole time, from connecting to its status: TIMEOUT bounds each read, so without it a
+# receiver answering a byte every 9 s held the one courier thread, and every company's webhooks
+# behind it, as long as it liked (the AI pen test of 11/06).
+DEADLINE = 30.0
 USER_AGENT = "Occupella-PMS-Webhooks/1"
 KEEPS = "webhook secrets"
 NAMES_NOT_OUT = (".localhost", ".local", ".internal", ".lan", ".home.arpa")
@@ -143,10 +147,40 @@ class _Pinned(http.client.HTTPSConnection):
         super().__init__(host, port, timeout=TIMEOUT, context=context)
         self._address = address
         self._context_used = context
+        # The connection's file descriptor while it is open, so give_up can shut it down from
+        # another thread whatever it is waiting on (the TLS handshake included); the lock keeps
+        # a descriptor closed and reused from being shut down.
+        self._fd: int | None = None
+        self._lock = threading.Lock()
+        self.gave_up = False
 
     def connect(self) -> None:
         raw = socket.create_connection((self._address, self.port), self.timeout)
+        with self._lock:
+            self._fd = raw.fileno()
+            if self.gave_up:
+                raw.close()
+                raise TimeoutError("given up before the connection was made")
         self.sock = self._context_used.wrap_socket(raw, server_hostname=self.host)
+
+    def give_up(self) -> None:
+        """Ends the delivery now: a read or a handshake waiting on the receiver returns."""
+        with self._lock:
+            self.gave_up = True
+            if self._fd is None:
+                return
+            same = socket.socket(fileno=self._fd)
+            try:
+                same.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # closed already
+            finally:
+                same.detach()  # the connection still owns the descriptor
+
+    def close(self) -> None:
+        with self._lock:
+            self._fd = None
+        super().close()
 
 
 def post(
@@ -156,12 +190,20 @@ def post(
     host, port, path = parts_of(url)
     address = addresses_of(host, port, resolve)[0]
     connection = _Pinned(host, address, port, ssl.create_default_context())
+    deadline = threading.Timer(DEADLINE, connection.give_up)
+    deadline.daemon = True
+    deadline.start()
     try:
         connection.request("POST", path, body=body, headers=headers)
         answer = connection.getresponse()
         answer.read(65536)  # not kept
         return int(answer.status)
+    except (OSError, http.client.HTTPException):
+        if connection.gave_up:
+            raise TimeoutError(f"the webhook didn't answer within {DEADLINE:.0f} s") from None
+        raise
     finally:
+        deadline.cancel()
         connection.close()
 
 
