@@ -48,6 +48,46 @@ def today(conn: psycopg.Connection[Any], pmc_id: UUID) -> date:
     return days.today(conn, pmc_id)
 
 
+# A tenant's payment of an amount on a day already recorded to a lease, under another request.
+RECORDED = """
+SELECT 1 FROM pgledger_transfers AS t
+JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id
+WHERE a.pmc_id = %(pmc)s AND t.event_at = %(at)s
+  AND t.metadata ->> 'kind' = 'tenant payment' AND t.metadata ->> 'lease_id' = %(lease)s
+  AND t.metadata ->> 'amount' = %(amount)s AND t.metadata ->> 'key' <> %(key)s
+LIMIT 1
+"""
+
+# What Receive payment is told when a payment like it is recorded already (docs/edge-cases.md
+# H-008): the panel asks by this sentence (frontend/src/pages/LeaseForms.tsx), then sends `again`.
+SECOND_PAYMENT = "Record it again only if this is a second payment."
+
+
+def recorded_already(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    lease_id: UUID,
+    amount: Decimal,
+    received_on: date,
+    request_id: UUID,
+) -> bool:
+    """Whether a tenant's payment of this amount, received that day, is recorded to the lease
+    under another request: the same request again records nothing new by itself."""
+    return (
+        conn.execute(
+            RECORDED,
+            {
+                "pmc": pmc_id,
+                "at": at(received_on),
+                "lease": str(lease_id),
+                "amount": cents(amount),
+                "key": f"payment/{request_id}",
+            },
+        ).fetchone()
+        is not None
+    )
+
+
 def at(day: date) -> datetime:
     """A day's postings are dated at its start, UTC, as every report reads them."""
     return datetime.combine(day, time(0), UTC)
@@ -1701,6 +1741,8 @@ class NewPayment(BaseModel):
     charges: Annotated[list[ChargePart], Field(min_length=1, max_length=100)] | None = None
     # Its file, kept with it (about its lease too, so the lease's Files tab lists it).
     attachment: PaymentFile | None = None
+    # A second payment of the amount, day and lease of one recorded already: said, not guessed.
+    again: bool = False
 
 
 class Payment(BaseModel):
@@ -1728,6 +1770,14 @@ def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
     wrote about it and its file; each tenant of the lease is emailed its receipt while the server
     sends email (once per payment, ADR 0010)."""
     not_after_today(conn, session.pmc_id, new.received_on)
+    if not new.again and recorded_already(
+        conn, session.pmc_id, lease_id, new.amount, new.received_on, new.request_id
+    ):
+        raise HTTPException(
+            409,
+            f"A payment of ${new.amount:,.2f} received {new.received_on:%m/%d/%Y} is already"
+            f" recorded to this lease. {SECOND_PAYMENT}",
+        )
     try:
         recorded = record_payment(
             conn,

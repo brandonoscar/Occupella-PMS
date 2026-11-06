@@ -8,7 +8,10 @@ export function useRecord(refresh: () => void, say?: (said: string) => void) {
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
   const tell = say ?? setSaid;
-  async function record<T>(path: string, body: unknown, done: (answer: T) => string) {
+  // `refused`, when given, may take a refusal itself (true): a form that asks something first
+  // (Receive payment's "Record it again?") rather than showing the refusal as an error.
+  async function record<T>(path: string, body: unknown, done: (answer: T) => string,
+    refused?: (failed: ApiError) => boolean) {
     setError("");
     tell("");
     try {
@@ -16,6 +19,7 @@ export function useRecord(refresh: () => void, say?: (said: string) => void) {
       refresh();
       return true;
     } catch (failed) {
+      if (failed instanceof ApiError && refused?.(failed)) return false;
       setError(failed instanceof ApiError ? failed.detail : String(failed));
       return false;
     }

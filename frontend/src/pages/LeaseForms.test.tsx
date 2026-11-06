@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../api";
 import type { Paid, RentLease } from "../rent";
 import { PaymentForm, PaymentRow } from "./LeaseForms";
 
@@ -29,6 +30,48 @@ function recorder() {
 }
 
 describe("PaymentForm", () => {
+  it("asks before recording a payment like one recorded already, then records a second", async () => {
+    // docs/edge-cases.md H-008: the answer to a payment was lost, the panel was closed and opened
+    // again, and the payment was recorded twice. The API refuses one like it (src/pms/api/rent.py
+    // SECOND_PAYMENT); the panel asks, and records it again only when staff say so.
+    const said = "A payment of $60.00 received 11/06/2026 is already recorded to this lease."
+      + " Record it again only if this is a second payment.";
+    const record = vi.fn(async (_path: string, body: object, _done: (answer: never) => string,
+      refused?: (failed: ApiError) => boolean) => {
+      if ((body as Body).again) return true;
+      refused?.(new ApiError(409, said));
+      return false;
+    });
+    const onRecorded = vi.fn();
+    render(<PaymentForm lease={LEASE} record={record} onRecorded={onRecorded} />);
+    fireEvent.change(screen.getByLabelText("Payment received"), { target: { value: "60.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record payment" }));
+
+    const asked = await screen.findByRole("alertdialog");
+    expect(within(asked).getByText(said)).toBeTruthy();
+    expect(onRecorded).not.toHaveBeenCalled();
+    fireEvent.click(within(asked).getByRole("button", { name: "Record it again" }));
+    await vi.waitFor(() => expect(onRecorded).toHaveBeenCalledTimes(1));
+    expect(record).toHaveBeenCalledTimes(2);
+    const [first, second] = record.mock.calls.map((call) => call[1] as Body);
+    expect(first.again).toBeUndefined();
+    expect(second.again).toBe(true);
+    expect(second.request_id).toBe(first.request_id);  // the same payment, now said to be a second
+  });
+
+  it("shows any other refusal as before, asking nothing", async () => {
+    const record = vi.fn(async (_path: string, _body: object, _done: (answer: never) => string,
+      refused?: (failed: ApiError) => boolean) => {
+      expect(refused?.(new ApiError(409, "this lease is on a payment hold"))).toBe(false);
+      return false;
+    });
+    render(<PaymentForm lease={LEASE} record={record} />);
+    fireEvent.change(screen.getByLabelText("Payment received"), { target: { value: "60.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record payment" }));
+    await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
   it("sends the note, the check's photo and the charges chosen with the payment, then starts the next", async () => {
     const record = recorder();
     const onRecorded = vi.fn();

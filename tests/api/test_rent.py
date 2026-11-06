@@ -24,6 +24,8 @@ from helpers import (
 )
 from people import join_as_owner, join_as_staff, join_as_tenant
 
+from pms.api import rent as rent_api
+
 DAY = timedelta(days=1)
 
 
@@ -413,6 +415,40 @@ def test_sending_a_payment_again_records_it_once(client, conn, staff, home):
     refused(other, 409, "this request id was used for a different payment")
     assert balance(conn, home.owner) == Decimal("1500.00")
     assert lease_row(client, home)["tenants"][0]["prepaid"] == "100.00"
+
+
+def test_a_payment_like_one_recorded_already_asks_before_it_is_recorded_again(
+    client, conn, staff, home
+):
+    # docs/edge-cases.md H-008: a payment's answer is lost, staff close the panel and record it
+    # again; the reopened panel makes a new request id, so it was recorded twice. A payment of the
+    # same amount, day and lease under another request now asks first; said again, it is a second.
+    home.charge(conn, START)
+    first = ok(pay(client, home, "1600.00"))
+
+    asked = pay(client, home, "1600.00")
+    refused(
+        asked,
+        409,
+        f"A payment of $1,600.00 received {TODAY:%m/%d/%Y} is already recorded to this lease."
+        f" {rent_api.SECOND_PAYMENT}",
+    )
+    assert balance(conn, home.owner) == Decimal("1500.00")  # nothing new
+
+    second = ok(pay(client, home, "1600.00", again=True))
+    other_day = ok(pay(client, home, "1600.00", received_on=TODAY - DAY))
+    other_amount = ok(pay(client, home, "1599.00"))
+    assert second["transfers"] != first["transfers"]
+    assert {other_day["to_prepaid"], other_amount["to_prepaid"]} == {"1600.00", "1599.00"}
+
+
+def test_the_panel_asks_in_the_words_the_api_refuses_with():
+    # The portal's Receive payment recognizes the refusal by its last sentence and asks
+    # "Record it again?" (frontend/src/pages/LeaseForms.tsx); both sides must say the same.
+    import pathlib
+
+    forms = pathlib.Path(__file__).resolve().parents[2] / "frontend/src/pages/LeaseForms.tsx"
+    assert f'"{rent_api.SECOND_PAYMENT}"' in forms.read_text()
 
 
 def test_prepaid_rent_pays_the_next_rent(client, conn, staff, home):

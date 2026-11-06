@@ -31,9 +31,9 @@ answer in the portal for everything that can fail.
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 70 | 8 | 87 | 21 |
 | [Bad files and imports](#bad-files-and-imports) | 154 | 68 | 16 | 70 | 1 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 160 | 91 | 10 | 59 | 6 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 174 | 76 | 14 | 84 | 4 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 174 | 77 | 14 | 83 | 3 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1168** | **605** | **110** | **453** | **52** |
+| **All** | **1168** | **606** | **110** | **452** | **51** |
 
 ## Open, high risk: the work list
 
@@ -108,7 +108,6 @@ its ten most pressing, each with the test that would close it.
 
 **Hosting, operations and the portal's failure states**
 
-- H-008: A payment's answer is lost, staff close the panel and record it again
 - H-031: The daily backup fails (password changed, pg_dump error, disk)
 - H-055: PMS_DATA_KEY changed while bank payments are on their way
 - H-089: The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st)
@@ -1148,10 +1147,10 @@ its ten most pressing, each with the test that would close it.
 
 | ID | Edge case | What the PMS does | Status | Evidence | Risk |
 |---|---|---|---|---|---|
-| H-008 | A payment's answer is lost, staff close the panel and record it again | The reopened panel makes a new request id, so the payment is recorded twice; Receive payment has no same lease, day and amount warning (payment files have one) | Open | frontend/src/pages/LeaseForms.tsx:109; src/pms/api/payment_files.py:161 has the check, src/pms/api/rent.py none | H |
 | H-031 | The daily backup fails (password changed, pg_dump error, disk) | "FAIL" in the backup container's log, and since this fix the backup service reads unhealthy in `docker compose ps` once no good dump is less than 26 hours old (tested); still no admin email and nothing on the Dashboard: the founder deferred emailing anyone (11/05): it touches self-hosting only, and the hosted product's backups are Supabase's | Open | tests/tools/test_backup_daily.py::test_healthy_while_a_good_dump_is_less_than_26_hours_old; scripts/backup-daily.sh (healthy); docs/support.md | H |
 | H-055 | PMS_DATA_KEY changed while bank payments are on their way | The company's webhook answers 404, Stripe retries then stops; rent the bank paid never reaches the books; one log line | Open | src/pms/api/online_payments.py:680-683; src/pms/payments.py:551-556 | H |
 | H-089 | The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st) | The next run charges only the new month, so that rent is never charged by itself, and nothing says so | Open | src/pms/nightly.py:116-118; db/schema.sql:1688-1720 (only the run's month) | H |
+| H-008 | A payment's answer is lost, staff close the panel and record it again | Receive payment asks first: a payment of the same amount, day and lease recorded under another request is refused (409) until staff say it is a second one (again); the panel asks 'Record it again' | Tested | tests/api/test_rent.py::test_a_payment_like_one_recorded_already_asks_before_it_is_recorded_again; ::test_the_panel_asks_in_the_words_the_api_refuses_with; frontend/src/pages/LeaseForms.test.tsx (asks before recording a payment like one recorded already) | H |
 | H-016 | The mail server is slow or down | Delivery after a write, and autopay's submissions, run one at a time in a process (outbox.OneAtATime): a write while one runs returns at once and makes it run once more after, so a hung mail server or partner holds one pooled connection, never the pool | Tested | tests/api/test_outbox.py::test_many_writes_at_once_lend_the_slow_partner_one_connection | H |
 | H-020 | The nightly run fails on a server that sends no email (compose sets none by default) | A run failing every night leaves no rent run (one transaction a company), so after two days Needs attention says rent isn't posting; one night's failure that the next night makes up is still only in the log | Tested | tests/api/test_today.py::test_rent_not_posted_for_two_days_is_noted_with_the_last_day_it_did | H |
 | H-021 | The nightly hasn't run for days (its thread died, it fails every night, or it is off) | Needs attention says first, with the last day rent posted, when no rent run ran in two days while the company has leases (today.rent_not_posted) | Tested | tests/api/test_today.py::test_rent_not_posted_for_two_days_is_noted_with_the_last_day_it_did; frontend/src/pages/PortalsTwo.test.tsx (says in Needs attention when rent stopped posting) | H |

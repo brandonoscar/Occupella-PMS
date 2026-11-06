@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { type ApiError, api } from "../api";
 import { Button } from "../components/Button";
+import { useConfirm } from "../components/Confirm";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { RowMenu } from "../components/RowMenu";
@@ -35,7 +36,12 @@ import { ChargeTypeSelect, useChargeTypes } from "./ChargeTypes";
 // fee or credit, one every month, a new rent, a deposit; and a payment's row, which can bounce,
 // and a monthly charge's, which can stop.
 
-export type Recorder = <T>(path: string, body: object, done: (answer: T) => string) => Promise<boolean>;
+export type Recorder = <T>(path: string, body: object, done: (answer: T) => string,
+  refused?: (failed: ApiError) => boolean) => Promise<boolean>;
+
+// The last sentence of the API's refusal of a payment like one recorded already (src/pms/api/rent.py
+// SECOND_PAYMENT, docs/edge-cases.md H-008): Receive payment then asks before recording it again.
+const SECOND_PAYMENT = "Record it again only if this is a second payment.";
 
 // A payment as a row; It bounced is in its ⋯ menu and asks for the day it came back, naming the
 // amount, before it is recorded, since it moves the money back and charges the property's NSF fee.
@@ -118,6 +124,7 @@ export function PaymentForm({ lease, record, onRecorded }: {
   const [choosing, setChoosing] = useState(false);
   const [picked, setPicked] = useState<Record<string, string>>({});
   const another = useRef(false);
+  const { ask, prompt } = useConfirm();
   const hasPrepaid = lease.tenants.some((t) => Number(t.prepaid) > 0);
   // Its property's owners split each payment by their shares (migration 0094); without shares,
   // staff choose the account when there are several.
@@ -144,7 +151,16 @@ export function PaymentForm({ lease, record, onRecorded }: {
             ...(file ? { attachment: { title: file.title, content_type: file.type, content_base64: file.base64 } } : {}),
             ...(charges.length > 0 ? { charges } : {}),
           };
-          if (await record<Payment>(`/api/rent/leases/${lease.id}/payments`, body, paymentSummary)) {
+          const send = async (again: boolean) => {
+            const recorded = await record<Payment>(`/api/rent/leases/${lease.id}/payments`,
+              again ? { ...body, again: true } : body, paymentSummary,
+              // One like it is recorded already (its answer lost, say): ask, then record a second.
+              (failed) => {
+                if (again || failed.status !== 409 || !failed.detail.endsWith(SECOND_PAYMENT)) return false;
+                ask(failed.detail, () => send(true), "Record it again");
+                return true;
+              });
+            if (!recorded) return;
             setId(requestId());
             setAmount("");
             setReference("");
@@ -154,7 +170,8 @@ export function PaymentForm({ lease, record, onRecorded }: {
             setPicked({});
             setChoosing(false);
             onRecorded?.(another.current);
-          }
+          };
+          await send(false);
         }}
       >
         <div className="flex flex-wrap items-end gap-3">
@@ -250,6 +267,7 @@ export function PaymentForm({ lease, record, onRecorded }: {
           </Button>
         </div>
       )}
+      {prompt}
     </div>
   );
 }

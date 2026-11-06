@@ -1064,7 +1064,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`trust_open_charges`, so a credit counts), and the rest is
   the first tenant's prepaid rent; prepaid rent is used the same way. Each record carries a
   request id the page makes (its key in `trust_post_transfers`), so sending it again records
-  nothing new. The page lists each payment as it came in (its whole amount, prepaid rent
+  nothing new; one of the same amount, day and lease under another request asks first
+  (`rent.SECOND_PAYMENT`, 409 until it says `again`: docs/edge-cases.md H-008). The page lists each payment as it came in (its whole amount, prepaid rent
   included), and a bounce moves back what the payment moved, reverses its matches and charges
   the property's NSF fee, once. A
   lease's rent work takes an advisory lock on the lease. The PMS records what the bank did;

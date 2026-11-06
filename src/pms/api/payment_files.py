@@ -158,16 +158,6 @@ WHERE l.pmc_id = %(pmc)s AND lower(btrim(t.display_name)) = lower(%(payer)s)
   )
 """
 
-# A tenant's payment of an amount on a day already recorded to a lease (another key's).
-RECORDED = """
-SELECT 1 FROM pgledger_transfers AS t
-JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id
-WHERE a.pmc_id = %(pmc)s AND t.event_at = %(at)s
-  AND t.metadata ->> 'kind' = 'tenant payment' AND t.metadata ->> 'lease_id' = %(lease)s
-  AND t.metadata ->> 'amount' = %(amount)s AND t.metadata ->> 'key' <> %(key)s
-LIMIT 1
-"""
-
 
 @dataclass(frozen=True)
 class Found:
@@ -193,16 +183,9 @@ def find(conn: psycopg.Connection[Any], pmc_id: UUID, line: Line, line_id: UUID)
             None, f"{len(leases)} leases in effect on {us(line.received_on)} at {where}{more}"
         )
     lease_id = cast(UUID, leases[0][0])
-    already = conn.execute(
-        RECORDED,
-        {
-            "pmc": pmc_id,
-            "at": rent.at(line.received_on),
-            "lease": str(lease_id),
-            "amount": rent.cents(line.amount),
-            "key": f"payment/{request_id(line_id)}",
-        },
-    ).fetchone()
+    already = rent.recorded_already(
+        conn, pmc_id, lease_id, line.amount, line.received_on, request_id(line_id)
+    )
     if already is not None:
         return Found(
             lease_id,
