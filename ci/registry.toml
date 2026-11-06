@@ -192,6 +192,19 @@ tests = [
 ]
 
 [[invariant]]
+id = "rent-from-the-cutover"
+statement = "The rent run charges no rent or monthly charge due before the cutover of the trust bank account holding the lease's property's owners' money (trust_lease_cutover, migration 20261106100000; docs/edge-cases.md M-144): that month is the old system's, collected there or carried over as unpaid, so the first night after a mid-month switch charges nothing again and no late fee on it. A lease due on the first is due then whatever day Run rent now names. From the cutover on every month is charged once and none is missed, and a company with no opening balances is charged as before."
+tests = [
+  "tests/properties/test_rent_from_the_cutover_properties.py::test_rent_is_charged_from_the_cutover_and_never_for_the_old_systems_days",
+  "tests/test_rent_from_the_cutover.py::test_the_first_night_after_a_mid_month_switch_charges_the_old_systems_month_nothing",
+  "tests/test_rent_from_the_cutover.py::test_a_rent_carried_over_as_unpaid_stays_the_months_only_rent",
+  "tests/test_rent_from_the_cutover.py::test_a_rent_due_on_or_after_the_cutover_is_charged",
+  "tests/test_rent_from_the_cutover.py::test_a_lease_due_on_its_own_day_before_the_cutover_is_the_old_systems",
+  "tests/test_rent_from_the_cutover.py::test_run_rent_now_for_a_day_after_the_cutover_still_leaves_its_month_alone",
+  "tests/test_rent_from_the_cutover.py::test_a_property_whose_money_never_switched_is_charged_as_before",
+]
+
+[[invariant]]
 id = "events-in-order-never-skipped"
 statement = "An event (ADR 0011, migration 20261105000500) is written by the database alone (trust_record_event, as the owner; neither the app nor the AI's role may write one) in the same transaction as the write it tells of, its kind and ids only, and none for a write undone; append-only. A reader with a key reads its company's events after the last it got, in the order their transactions began writing, each only once every transaction that began writing before it has finished, so it gets every committed event exactly once and never a rolled-back one, and never another company's. A webhook goes only to an https address whose every resolved address is public, signed with its sealed secret, retried after each wait up to its last attempt, from when it was added and while it stands; only an admin adds or takes one back."
 tests = [

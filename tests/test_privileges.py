@@ -581,6 +581,8 @@ FUNCTIONS = {
     "trust_charge_recurring_on_due_days(uuid,date,date)": {"trust_app"},
     "trust_rent_due_day(uuid,date)": {"trust_app"},
     "trust_rent_due_on(uuid,date)": {"trust_app"},
+    # The day a lease's money starts in the PMS, which the rent run charges from (M-144).
+    "trust_lease_cutover(uuid)": {"trust_app"},
     "trust_assess_late_fees(uuid,date)": {"trust_app"},
     "trust_charge_nsf_fee(uuid,text)": {"trust_app"},
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)": {"trust_app"},

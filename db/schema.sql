@@ -1562,6 +1562,9 @@ BEGIN
             AND c.due_on >= date_trunc('month', p_due_on::timestamp)::date
             AND c.due_on < (date_trunc('month', p_due_on::timestamp) + interval '1 month')::date
       )
+      -- Due by the PMS's books, not the old system's before the cutover, as rent is.
+      AND greatest(date_trunc('month', p_due_on::timestamp)::date, l.starts_on, r.starts_on)
+          >= coalesce(trust_lease_cutover(l.id), '-infinity'::date)
     ORDER BY r.id
     ON CONFLICT (recurring_charge_id, due_on) WHERE recurring_charge_id IS NOT NULL DO NOTHING;
     GET DIAGNOSTICS v_charged = ROW_COUNT;
@@ -1586,6 +1589,7 @@ BEGIN
             AND date_trunc('month', c.due_on::timestamp)
                 = date_trunc('month', l.starts_on::timestamp)
       )
+      AND l.starts_on >= coalesce(trust_lease_cutover(l.id), '-infinity'::date)
     ORDER BY r.id
     ON CONFLICT (recurring_charge_id, due_on) WHERE recurring_charge_id IS NOT NULL DO NOTHING;
     GET DIAGNOSTICS v_first = ROW_COUNT;
@@ -1631,6 +1635,8 @@ BEGIN
             AND date_trunc('month', c.due_on::timestamp)
                 = date_trunc('month', p_month::timestamp)
       )
+      -- Due by the PMS's books, not the old system's before the cutover.
+      AND d.due_on >= coalesce(trust_lease_cutover(l.id), '-infinity'::date)
     ORDER BY r.id
     ON CONFLICT (recurring_charge_id, due_on) WHERE recurring_charge_id IS NOT NULL DO NOTHING;
     GET DIAGNOSTICS v_charged = ROW_COUNT;
@@ -1680,6 +1686,10 @@ BEGIN
             AND c.due_on >= date_trunc('month', p_due_on::timestamp)::date
             AND c.due_on < (date_trunc('month', p_due_on::timestamp) + interval '1 month')::date
       )
+      -- The month's rent was due (on its first, or the lease's first day) by the PMS's books,
+      -- not the old system's before the cutover.
+      AND greatest(date_trunc('month', p_due_on::timestamp)::date, l.starts_on)
+          >= coalesce(trust_lease_cutover(l.id), '-infinity'::date)
     ORDER BY l.id
     ON CONFLICT (lease_id, due_on) WHERE kind = 'rent' DO NOTHING;
     GET DIAGNOSTICS v_charged = ROW_COUNT;
@@ -1702,6 +1712,7 @@ BEGIN
             AND date_trunc('month', c.due_on::timestamp)
                 = date_trunc('month', l.starts_on::timestamp)
       )
+      AND l.starts_on >= coalesce(trust_lease_cutover(l.id), '-infinity'::date)
     ORDER BY l.id
     ON CONFLICT (lease_id, due_on) WHERE kind = 'rent' DO NOTHING;
     GET DIAGNOSTICS v_first = ROW_COUNT;
@@ -1745,6 +1756,8 @@ BEGIN
             AND date_trunc('month', c.due_on::timestamp)
                 = date_trunc('month', p_month::timestamp)
       )
+      -- Due by the PMS's books, not the old system's before the cutover.
+      AND d.due_on >= coalesce(trust_lease_cutover(l.id), '-infinity'::date)
     ORDER BY l.id
     ON CONFLICT (lease_id, due_on) WHERE kind = 'rent' DO NOTHING;
     GET DIAGNOSTICS v_charged = ROW_COUNT;
@@ -5584,6 +5597,24 @@ CREATE FUNCTION public.trust_lease_billed(p_lease_id uuid, p_utility text, p_day
         ORDER BY u.starts_on DESC, u.created_at DESC, u.id DESC
         LIMIT 1
     ), false)
+$$;
+
+
+--
+-- Name: trust_lease_cutover(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_lease_cutover(p_lease_id uuid) RETURNS date
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT max(o.opened_on)
+    FROM trust_leases AS l
+    JOIN trust_units AS u ON u.id = l.unit_id
+    JOIN trust_ledger_accounts AS a
+      ON a.property_id = u.property_id AND a.kind = 'owner_property'
+    JOIN trust_opening_balances AS o ON o.bank_account_id = a.bank_account_id
+    WHERE l.id = p_lease_id;
 $$;
 
 
@@ -35720,4 +35751,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261105000900'),
     ('20261105001000'),
     ('20261105001100'),
-    ('20261105001200');
+    ('20261105001200'),
+    ('20261106100000');

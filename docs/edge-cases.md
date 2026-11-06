@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1160 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1161 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -25,7 +25,7 @@ answer in the portal for everything that can fail.
 
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
-| [Money and the ledger](#money-and-the-ledger) | 151 | 113 | 7 | 31 | 4 |
+| [Money and the ledger](#money-and-the-ledger) | 152 | 114 | 7 | 31 | 4 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 82 | 15 | 67 | 15 |
 | [Concurrency and retries](#concurrency-and-retries) | 143 | 65 | 30 | 48 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 69 | 8 | 88 | 22 |
@@ -33,7 +33,7 @@ answer in the portal for everything that can fail.
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 156 | 87 | 10 | 59 | 6 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 172 | 73 | 14 | 85 | 5 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1160** | **595** | **110** | **455** | **54** |
+| **All** | **1161** | **596** | **110** | **455** | **54** |
 
 ## Open, high risk: the work list
 
@@ -45,7 +45,7 @@ its ten most pressing, each with the test that would close it.
 - M-049: Late fee terms added with a start day in the past
 - M-072: Prepaid rent left over at move-out
 - M-073: A renewal while the old lease still owes
-- M-144: A cutover mid-month for leases already paid for the month in the old system
+- M-152: The roster brought in days before the opening balances are posted, mid-month
 
 **Dates, time zones and calendars**
 
@@ -122,11 +122,12 @@ its ten most pressing, each with the test that would close it.
 | M-049 | Late fee terms added with a start day in the past | The next night charges a late fee on every rent since then not paid within its grace, even ones paid late since; nothing limits backdating | Open | `src/pms/api/setup.py:751` | H |
 | M-072 | Prepaid rent left over at move-out | Not used for what the lease owes before the deposit is kept, and never refunded by the return | Open | `db/migrations/20261019000094_ownership_shares.sql:190` | H |
 | M-073 | A renewal while the old lease still owes | New payments don't pay it, and the final return keeps only the renewal's debt; whichever lease is returned first takes the whole deposit | Open | `db/migrations/20261018000091_lease_transfers.sql:62` | H |
-| M-144 | A cutover mid-month for leases already paid for the month in the old system | The first nightly run charges every imported lease the whole month again, and late fees if past grace | Open | `src/pms/nightly.py:115`; `src/pms/api/switching.py:399` | H |
+| M-152 | The roster brought in days before the operating trust bank account's opening balances are posted, mid-month | A nightly run in between has no cutover on file to charge from, so it charges the month the old system charged; the opening balances, posted after, write no credit for it | Open | `src/pms/api/switching.py` (the roster and the cutover are separate steps); `db/migrations/20261106100000_rent_from_the_cutover.sql` trust_lease_cutover | H |
 | M-013 | Two payments with the same request id, then the same id with another amount | Recorded once; the different amount is refused 409 | Tested | `tests/api/test_rent.py::test_sending_a_payment_again_records_it_once` | H |
 | M-015 | Two payments to one charge at the same moment | The second waits and never overpays the charge | Tested | `tests/test_leases_and_charges.py::test_two_payments_at_once_cannot_overpay_a_charge` | H |
 | M-017 | A payment dated inside an approved month-end | Refused; nothing written | Tested | `tests/api/test_rent.py::test_a_closed_period_refuses_a_payment_dated_in_it` | H |
 | M-018 | A payment dated before the trust bank account's cutover | Refused | Tested | `tests/test_cutover.py::test_nothing_is_dated_before_the_cutover_once_opened` | H |
+| M-144 | A cutover mid-month for leases already paid for the month in the old system | The rent run charges no rent or monthly charge due before the cutover of the trust bank account holding the lease's property's owners' money (trust_lease_cutover, migration 20261106100000): that month is the old system's, so the first night charges nothing again and no late fee on it; from the cutover on every month is charged as before | Tested | `tests/test_rent_from_the_cutover.py::test_the_first_night_after_a_mid_month_switch_charges_the_old_systems_month_nothing`; `tests/test_rent_from_the_cutover.py::test_run_rent_now_for_a_day_after_the_cutover_still_leaves_its_month_alone`; `tests/properties/test_rent_from_the_cutover_properties.py::test_rent_is_charged_from_the_cutover_and_never_for_the_old_systems_days` | H |
 | M-033 | Two rent runs at the same moment | Each lease is charged once | Tested | `tests/test_rent_automation.py::test_two_runs_at_once_charge_each_lease_once` | H |
 | M-034 | Run rent now with a mid-month due date (the 15th) after the 1st was charged | Charged once a month whatever day the run is for: a month with any of its rent due already is not charged again (migration 20261105000400) | Tested | `tests/test_rent_once_a_month.py::test_a_mid_month_run_charges_no_month_twice`; `tests/properties/test_rent_once_a_month_properties.py` | H |
 | M-035 | The same mid-month run for recurring charges (pet rent, parking) | Each monthly charge is charged once a month whatever day the run is for (migration 20261105000400) | Tested | `tests/test_rent_once_a_month.py::test_a_mid_month_run_charges_no_month_twice`; `tests/properties/test_rent_once_a_month_properties.py` | H |
