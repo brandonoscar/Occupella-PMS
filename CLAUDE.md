@@ -125,7 +125,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   busy for 30 s is told so (503, `deps.BUSY`), never a server error, as is a full disk
   (`deps.DISK_FULL`, logged). An address that failed 20
   sign-ins in 15 minutes is refused (429, Retry-After) whatever email it tries, and an address asks
-  for at most 10 password resets an hour (`src/pms/api/throttle.py`, counted per process). No
+  for at most 10 password resets an hour (`src/pms/api/throttle.py`, counted per process; an IPv6
+  address counts as its whole /64, and a request from a proxy not in `PMS_TRUSTED_PROXIES` is
+  logged once per proxy, U-032, H-067). No
   request sends more than 10 MB (`app.MAX_BODY`, 413, counted as it streams too): a 5 MB file as
   base64 fits. A comma in an amount from a file only separates thousands (`statements.read_amount`:
   "1234,56" is refused, never 123,456.00; a bank CSV whose amounts are all positive reads each
@@ -821,8 +823,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   before and how it was served; a lease with an end date names the term that allows it, and a
   month already charged keeps its rent. `trust_rent_on` is the rent in force on a day: the rent
   run charges it, `trust_end_lease` adjusts at it, the rent roll, lease expirations, tenant
-  directory and vacancy reports show it. Staff record one on the rent page; the tenant sees it
-  coming in the portal.
+  directory and vacancy reports show it. Staff record one on the rent page, which warns of the
+  written notice the property's state asks, counted from the day notice was given
+  (`GET /api/leasing/renewals/<lease>/rent-change-notice`, `src/pms/rent_notice.py`; a warning,
+  never a refusal; D-065); the tenant sees it coming in the portal.
 - Rent due day (migration 0081, the founder's review q013): a lease's rent is due on the first
   unless it picks another day, 1 to 28, from the first of a month (`trust_rent_due_days`,
   append-only, one per lease and month, naming who recorded it), within the lease's months and
@@ -864,7 +868,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   it held in the old system, from its cash at the start of the cutover date (UTC), checked
   against the old book cash. Once per account, before any posting or reconciliation in it, safe
   to retry; then nothing touching it is dated before the cutover, and its first reconciliation
-  starts there. Tenants' unpaid charges carry over as charges with their own due dates.
+  starts there. Tenants' unpaid charges carry over as charges with their own due dates, and the
+  rent run charges no rent or monthly charge due before the cutover of the trust bank account
+  holding the lease's property's owners' money (`trust_lease_cutover`, migration 20261106100000,
+  M-144): that month is the old system's.
 - Audit: every write to a trust table or `pgledger_transfers` is logged in `trust_audit_log`
   (append-only, written only by the `trust_audit` trigger): when, the row (and the row before an
   update), the database role, and the staff member the app names with
@@ -1006,7 +1013,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   payment paid during a hold (Accept past the hold), one whose property has several owner accounts
   and no shares (Record it, naming whose; such a lease takes none online), a return an owner can't cover (Try again),
   and what the company's fee account can't (Record the company's deposit, never more than what
-  waits needs, area rent). Each posting has a key of its own (`metadata ->> 'key'`, indexed), so
+  waits needs, area rent), and a payment the partner has said nothing of for 14 days
+  (`online_payments.NO_WORD_DAYS`; "no word", to look up with the partner; until then it counts as
+  on its way, and one reported paid counts however old). Each posting has a key of its own (`metadata ->> 'key'`, indexed), so
   a partner reporting twice moves nothing twice. The AI role reads these tables; it moves no money.
   While a tenant or owner can't pay online, the API says why as a word ("off", or "paused" on a
   payment hold), never in the server's words, and their Pay online and Add money show the
@@ -1050,7 +1059,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   sends email, the tenant is emailed of each payment before the bank is debited. It stops (`trust_autopay_stops`, once) when the tenant or
   staff turn it off (Lease page, Autopay; area rent, naming who), when a new one replaces it, and
   by itself, with an email, when the lease ended, the tenant left it, or two payments in a row
-  didn't go through or came back. The AI role never reads the saved accounts (`AI_NEVER_READS`).
+  didn't go through, came back or were given up before the partner took them. The AI role never reads the saved accounts (`AI_NEVER_READS`).
   An online payment, autopay's or by hand, waits for staff during a payment hold even when it
   would all be prepaid rent.
 - Rent work (`src/pms/api/rent.py`): a tenant's payment recorded by staff pays the owner's
@@ -1058,7 +1067,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`trust_open_charges`, so a credit counts), and the rest is
   the first tenant's prepaid rent; prepaid rent is used the same way. Each record carries a
   request id the page makes (its key in `trust_post_transfers`), so sending it again records
-  nothing new. The page lists each payment as it came in (its whole amount, prepaid rent
+  nothing new; a payment like one already recorded to the lease under another request id (the
+  same amount, day and way, and check number where both give one) is refused, 409, under the
+  lease's lock, until staff say it is another (`not_a_duplicate`, which Receive payment asks
+  first; H-008). The page lists each payment as it came in (its whole amount, prepaid rent
   included), and a bounce moves back what the payment moved, reverses its matches and charges
   the property's NSF fee, once. A
   lease's rent work takes an advisory lock on the lease. The PMS records what the bank did;
@@ -1459,7 +1471,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   record there already). Money and leases stay each record's own. Only a record linked to nothing
   takes a portal login; `trust_tenant_records` gives a person's records, and the tenant portal,
   receipts, calendar, renewals and emails read every one of them (a request or a policy filed
-  under a lease is the record on it). The AI role reads the links.
+  under a lease is the record on it). The AI role reads the links. A link made to the wrong person
+  is taken back once (Not the same person in the tenant's row menu,
+  `POST /api/tenants/<id>/not-same-person`, `trust_tenant_unlinks`, migration 20261106100100,
+  append-only, naming who; U-099): the record is its own person again, never linked again itself,
+  and the autopays set up under it stop in the same transaction.
 - Vendor insurance and inspections (migration 0058): a vendor's policies
   (`trust_vendor_insurance`: coverage, carrier, number, the days it runs, a limit; a renewal is
   a new policy), and a lease's move-in and move-out inspections (`trust_inspections`, their
