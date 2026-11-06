@@ -781,3 +781,66 @@ describe("LeasePage", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("no such lease");
   });
 });
+
+// A deposit the owner keeps outside trust (migration 20261106000241): recorded from the ⋯ menu,
+// shown on the Summary beside what trust holds, and as a memo on the Ledger that opens nothing.
+const OWNER_HOLDS = {
+  id: "h1", tenant_id: "t1", tenant: "Tenant 1", kind: "security" as const, amount: "1500.00",
+  held_since: "2026-01-01", memo: null, settled: null,
+};
+
+describe("a deposit the owner holds", () => {
+  it("is recorded from the menu, naming whose and what kind; no money moves", async () => {
+    const fetch = server(LEASE, { "/api/rent/leases/l1/owner-held-deposits": OWNER_HOLDS });
+    await open();
+    const form = await panel("Record a deposit the owner holds", true);
+    fireEvent.change(within(form).getByLabelText("Whose deposit"), { target: { value: "t2" } });
+    fireEvent.change(within(form).getByLabelText("Kind of deposit"), { target: { value: "pet" } });
+    fireEvent.change(within(form).getByLabelText("Amount the owner holds"), { target: { value: "250.00" } });
+    fireEvent.change(within(form).getByLabelText("Held since"), { target: { value: "2026-01-01" } });
+    fireEvent.change(within(form).getByLabelText("Memo (optional)"), { target: { value: "In the owner's account" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Record what the owner holds" }));
+
+    expect(await screen.findByText("Pet deposit of $250.00 recorded as held by the owner.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/rent/leases/l1/owner-held-deposits", {
+      tenant_id: "t2", kind: "pet", amount: "250.00", held_since: "2026-01-01", memo: "In the owner's account",
+    }]]);
+  });
+
+  it("shows on the Summary beside what trust holds, and what the owner did at move-out", async () => {
+    server({ ...LEASE, owner_held: [OWNER_HOLDS, {
+      ...OWNER_HOLDS, id: "h2", kind: "key", amount: "50.00",
+      settled: { returned: "40.00", kept: "10.00", on: "2026-06-30", memo: null },
+    }] });
+    await open();
+    const card = screen.getByRole("list", { name: `Held by the owner, ${LEASE.unit}` });
+    const lines = within(card).getAllByRole("listitem").map((li) => li.textContent);
+    expect(lines).toEqual([
+      "Tenant 1's security deposit: $1,500.00, since 01/01/2026Owner holds it",
+      "Tenant 1's key deposit: $50.00, since 01/01/2026The owner returned $40.00 and kept $10.00 on 06/30/2026.",
+    ]);
+    // Trust's deposit is as it was: what the owner holds is never in it.
+    expect(screen.getByTestId("deposit-held").textContent).toBe("$1,500.00");
+  });
+
+  it("is a memo on the Ledger that changes no balance and opens nothing", async () => {
+    const memo = "Tenant 1's security deposit, held by the owner (not in trust): 1,500.00";
+    server(LEASE, {}, {});
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => {
+      if (path === "/api/leases/l1") return new Response(JSON.stringify(LEASE));
+      if (path === "/api/leases/l1/ledger") {
+        return new Response(JSON.stringify({ ...LEDGER, lines: [{ on: "2026-01-01", kind: "memo", memo, charged: null,
+          paid: null, balance: "0.00", bounced: false, charge_id: null, transfer_id: null }, ...LEDGER.lines] }));
+      }
+      if (path.startsWith("/api/notes")) return new Response("[]");
+      return new Response(JSON.stringify({ detail: "no such page" }), { status: 404 });
+    }));
+    await open();
+    fireEvent.click(screen.getByRole("tab", { name: "Ledger" }));
+    const row = await screen.findByRole("row", { name: `Memo: ${memo}` });
+    expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual(["01/01/2026", "Memo", memo, "", "", "$0.00"]);
+    expect(within(row).queryByRole("button")).toBeNull();
+    fireEvent.click(row);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});

@@ -106,6 +106,7 @@ from pms.api import (
     online_payments,
     outbox,
     owner,
+    owner_held,
     owner_payments,
     owner_portal,
     payables,
@@ -794,6 +795,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(setup.router)
     app.include_router(chart.router)
     app.include_router(unapplied.router)
+    app.include_router(owner_held.router)
     app.include_router(go_live.router)
     app.include_router(payment_files.router)
     app.include_router(rent.router)

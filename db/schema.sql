@@ -3846,6 +3846,67 @@ $$;
 
 
 --
+-- Name: trust_check_owner_held_deposit(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_owner_held_deposit() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NEW.held_since > trust_pmc_day(NEW.pmc_id) THEN
+        RAISE EXCEPTION 'trust: a deposit the owner holds is recorded from a day not after today, '
+            'not %', NEW.held_since
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_owner_held_outcome(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_owner_held_outcome() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_held trust_owner_held_deposits;
+    v_ends date;
+BEGIN
+    SELECT h.* INTO v_held FROM trust_owner_held_deposits AS h
+    WHERE h.id = NEW.held_id AND h.pmc_id = NEW.pmc_id;
+    IF NOT FOUND THEN
+        RETURN NEW;  -- the foreign key refuses it
+    END IF;
+    SELECT l.ends_on INTO v_ends FROM trust_leases AS l WHERE l.id = v_held.lease_id;
+    IF v_ends IS NULL THEN
+        RAISE EXCEPTION 'trust: what the owner did with a deposit they hold is recorded at '
+            'move-out, once its last day is set'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.returned + NEW.kept <> v_held.amount THEN
+        RAISE EXCEPTION 'trust: what the owner returned and kept come to the % they held, not %',
+            v_held.amount, NEW.returned + NEW.kept
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.on_day < v_held.held_since THEN
+        RAISE EXCEPTION 'trust: % is before it was held (%)', NEW.on_day, v_held.held_since
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.on_day > trust_pmc_day(NEW.pmc_id) THEN
+        RAISE EXCEPTION 'trust: what the owner did is recorded on a day not after today, not %',
+            NEW.on_day
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_owner_online_payment(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12509,6 +12570,27 @@ BEGIN
         SELECT 1, e.on_date, e.step, e.at, e.id, e.item, e.detail, e.charged, e.paid
         FROM entries AS e
         UNION ALL
+        -- A deposit the owner holds, never in trust (migration 20261106000241): a memo line that
+        -- changes no balance; and what the owner returned and kept of it at move-out.
+        SELECT 1, h.held_since, 4, h.created_at, h.id::text, 'owner-held deposit',
+               t.display_name || '''s ' || h.deposit_kind
+               || ' deposit, held by the owner (not in trust): '
+               || to_char(h.amount, 'FM999,999,990.00'),
+               NULL::numeric, NULL::numeric
+        FROM trust_owner_held_deposits AS h
+        JOIN trust_tenants AS t ON t.id = h.tenant_id
+        WHERE h.lease_id = p_lease_id AND h.held_since <= p_as_of
+        UNION ALL
+        SELECT 1, o.on_day, 5, o.created_at, h.id::text, 'owner-held deposit settled',
+               t.display_name || '''s ' || h.deposit_kind || ' deposit the owner held: '
+               || to_char(o.returned, 'FM999,999,990.00') || ' returned, '
+               || to_char(o.kept, 'FM999,999,990.00') || ' kept',
+               NULL::numeric, NULL::numeric
+        FROM trust_owner_held_deposit_outcomes AS o
+        JOIN trust_owner_held_deposits AS h ON h.id = o.held_id
+        JOIN trust_tenants AS t ON t.id = h.tenant_id
+        WHERE h.lease_id = p_lease_id AND o.on_day <= p_as_of
+        UNION ALL
         SELECT 2, p_as_of, 0, NULL, NULL, 'balance', 'end of day UTC',
                coalesce((SELECT sum(e.charged) FROM entries AS e), 0),
                coalesce((SELECT sum(e.paid) FROM entries AS e), 0)
@@ -18128,6 +18210,46 @@ CREATE TABLE public.trust_owner_fees (
 
 
 --
+-- Name: trust_owner_held_deposit_outcomes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_owner_held_deposit_outcomes (
+    held_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    returned numeric NOT NULL,
+    kept numeric NOT NULL,
+    on_day date NOT NULL,
+    memo text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_owner_held_deposit_outcomes_kept_check CHECK (((kept >= (0)::numeric) AND (kept = round(kept, 2)))),
+    CONSTRAINT trust_owner_held_deposit_outcomes_memo_check CHECK (((memo = btrim(memo)) AND ((char_length(memo) >= 1) AND (char_length(memo) <= 500)))),
+    CONSTRAINT trust_owner_held_deposit_outcomes_returned_check CHECK (((returned >= (0)::numeric) AND (returned = round(returned, 2))))
+);
+
+
+--
+-- Name: trust_owner_held_deposits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_owner_held_deposits (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    deposit_kind text NOT NULL,
+    amount numeric NOT NULL,
+    held_since date NOT NULL,
+    memo text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_owner_held_deposits_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_owner_held_deposits_deposit_kind_check CHECK ((deposit_kind = ANY (ARRAY['security'::text, 'pet'::text, 'key'::text]))),
+    CONSTRAINT trust_owner_held_deposits_memo_check CHECK (((memo = btrim(memo)) AND ((char_length(memo) >= 1) AND (char_length(memo) <= 500))))
+);
+
+
+--
 -- Name: trust_owner_online_payment_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -22004,6 +22126,38 @@ ALTER TABLE ONLY public.trust_owner_fees
 
 
 --
+-- Name: trust_owner_held_deposit_outcomes trust_owner_held_deposit_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_held_deposit_outcomes
+    ADD CONSTRAINT trust_owner_held_deposit_outcomes_pkey PRIMARY KEY (held_id);
+
+
+--
+-- Name: trust_owner_held_deposits trust_owner_held_deposits_lease_id_tenant_id_deposit_kind_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_held_deposits
+    ADD CONSTRAINT trust_owner_held_deposits_lease_id_tenant_id_deposit_kind_key UNIQUE (lease_id, tenant_id, deposit_kind);
+
+
+--
+-- Name: trust_owner_held_deposits trust_owner_held_deposits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_held_deposits
+    ADD CONSTRAINT trust_owner_held_deposits_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_owner_held_deposits trust_owner_held_deposits_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_held_deposits
+    ADD CONSTRAINT trust_owner_held_deposits_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_owner_online_payment_events trust_owner_online_payment_events_payment_id_kind_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25023,6 +25177,41 @@ CREATE INDEX trust_owner_fees_recorded_by ON public.trust_owner_fees USING btree
 
 
 --
+-- Name: trust_owner_held_deposit_outcomes_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_held_deposit_outcomes_pmc ON public.trust_owner_held_deposit_outcomes USING btree (pmc_id, held_id);
+
+
+--
+-- Name: trust_owner_held_deposit_outcomes_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_held_deposit_outcomes_recorded_by ON public.trust_owner_held_deposit_outcomes USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_owner_held_deposits_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_held_deposits_lease ON public.trust_owner_held_deposits USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_owner_held_deposits_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_held_deposits_recorded_by ON public.trust_owner_held_deposits USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_owner_held_deposits_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_held_deposits_tenant ON public.trust_owner_held_deposits USING btree (tenant_id);
+
+
+--
 -- Name: trust_owner_online_payments_account; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -27179,6 +27368,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_owner_held_deposit_outcomes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_owner_held_deposit_outcomes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_owner_held_deposits trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_owner_held_deposits FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_owner_online_payment_events trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28894,6 +29097,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owne
 
 
 --
+-- Name: trust_owner_held_deposit_outcomes trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owner_held_deposit_outcomes FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_owner_held_deposits trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owner_held_deposits FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_owner_online_payment_events trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -30189,6 +30406,20 @@ CREATE TRIGGER trust_opened_at BEFORE INSERT OR UPDATE OF opened_at ON public.tr
 
 
 --
+-- Name: trust_owner_held_deposits trust_owner_held_deposit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_owner_held_deposit BEFORE INSERT ON public.trust_owner_held_deposits FOR EACH ROW EXECUTE FUNCTION public.trust_check_owner_held_deposit();
+
+
+--
+-- Name: trust_owner_held_deposit_outcomes trust_owner_held_outcome; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_owner_held_outcome BEFORE INSERT ON public.trust_owner_held_deposit_outcomes FOR EACH ROW EXECUTE FUNCTION public.trust_check_owner_held_outcome();
+
+
+--
 -- Name: trust_ownership_share_lines trust_ownership_share_line; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -30739,6 +30970,20 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_owner_draw_settin
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_owner_fees FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_owner_held_deposit_outcomes trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_owner_held_deposit_outcomes FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_owner_held_deposits trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_owner_held_deposits FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -35364,6 +35609,54 @@ ALTER TABLE ONLY public.trust_owner_fees
 
 
 --
+-- Name: trust_owner_held_deposit_outcomes trust_owner_held_deposit_outcomes_pmc_id_held_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_held_deposit_outcomes
+    ADD CONSTRAINT trust_owner_held_deposit_outcomes_pmc_id_held_id_fkey FOREIGN KEY (pmc_id, held_id) REFERENCES public.trust_owner_held_deposits(pmc_id, id);
+
+
+--
+-- Name: trust_owner_held_deposit_outcomes trust_owner_held_deposit_outcomes_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_held_deposit_outcomes
+    ADD CONSTRAINT trust_owner_held_deposit_outcomes_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_owner_held_deposits trust_owner_held_deposits_lease_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_held_deposits
+    ADD CONSTRAINT trust_owner_held_deposits_lease_id_tenant_id_fkey FOREIGN KEY (lease_id, tenant_id) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_owner_held_deposits trust_owner_held_deposits_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_held_deposits
+    ADD CONSTRAINT trust_owner_held_deposits_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_owner_held_deposits trust_owner_held_deposits_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_held_deposits
+    ADD CONSTRAINT trust_owner_held_deposits_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_owner_held_deposits trust_owner_held_deposits_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_held_deposits
+    ADD CONSTRAINT trust_owner_held_deposits_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_owner_online_payment_events trust_owner_online_payment_events_pmc_id_payment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -37627,4 +37920,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261106000220'),
     ('20261106000225'),
     ('20261106000230'),
-    ('20261106000240');
+    ('20261106000240'),
+    ('20261106000241');

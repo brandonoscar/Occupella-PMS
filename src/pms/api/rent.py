@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from pms import autopay, days, exports, notices
 from pms.api import outbox
 from pms.api.deps import Conn, Staff, refusal
+from pms.api.owner_held import OwnerHeld, held_by_owner
 
 router = APIRouter(prefix="/api/rent")
 
@@ -1077,6 +1078,8 @@ class RentLease(BaseModel):
     # The security deposit its signed lease offer asked, what is held of it and what is still to
     # receive; None when no offer asked one, or once its deposits were returned.
     deposit_asked: DepositAsked | None = None
+    # Its tenants' deposits the owner holds, outside trust (migration 20261106000241).
+    owner_held: list[OwnerHeld] = []
 
 
 # The security deposit each lease's signed offer asked, and the security deposits held for its
@@ -1363,6 +1366,7 @@ def built(
         carried[new] = owing
     insured = renters_insurance(conn, pmc, day)
     asked = deposits_asked(conn, pmc, only)
+    owners_hold = held_by_owner(conn, pmc, only)
     found = []
     for i, prop, unit, starts, ends, rent, due_day, due, on_hold in conn.execute(
         LEASES, names
@@ -1393,6 +1397,7 @@ def built(
                 recurring=recurring.get(i, []),
                 renters_insurance=insured.get(i),
                 deposit_asked=asked.get(i),
+                owner_held=owners_hold.get(i, []),
             )
         )
     return found

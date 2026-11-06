@@ -99,6 +99,8 @@ const KEEP: [string, string, Why][] = [
   ["pages/LeasingFeeForm.tsx", "Take leasing fee", "money"],
   ["pages/MoveOutPage.tsx", "Email the statement", "sends"],
   ["pages/MoveOutPage.tsx", "Return the deposit", "money"],
+  ["pages/OwnerHeldForms.tsx", "Record what the owner holds", "more than said"],
+  ["pages/OwnerHeldForms.tsx", "Record what the owner did", "more than said"],
   ["pages/OwnerPayCard.tsx", "Pay by bank", "more than said"],
   ["pages/OwnersPage.tsx", "Take fee", "money"],
   ["pages/PayBillsPage.tsx", '{picked.length === 0 ? "Choose bills to pay"', "money"],

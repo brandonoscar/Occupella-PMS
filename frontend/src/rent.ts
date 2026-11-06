@@ -1,4 +1,5 @@
 // Staff's rent work as the API sends it (src/pms/api/rent.py), and how it reads.
+import type { OwnerHeld } from "./ownerHeld";
 import { day, money, sumMoney, usDate, usDatesIn } from "./money";
 
 export type OpenCharge = {
@@ -124,6 +125,8 @@ export type RentLease = {
   // The security deposit its signed lease offer asked, what is held of it and what is still to
   // receive; null when no offer asked one, or once its deposits were returned.
   deposit_asked?: DepositAsked | null;
+  // Its tenants' deposits the owner holds, outside trust (migration 20261106000241).
+  owner_held?: OwnerHeld[];
 };
 // Asking holds nothing: staff record the deposit when it comes in (migration 0071, q036).
 export type DepositAsked = { asked: string; held: string; to_receive: string };

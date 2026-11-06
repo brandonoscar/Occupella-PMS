@@ -650,6 +650,7 @@ FEATURES = (
     "charge-types",
     "chart-of-accounts",
     "unapplied-cash",
+    "owner-held-deposits",
     "phone",
     "quickbooks",
     "two-homes",

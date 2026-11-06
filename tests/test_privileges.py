@@ -124,6 +124,10 @@ TABLES = {
     "trust_unapplied_receipts": {"SELECT", "INSERT"},
     "trust_unapplied_applications": {"SELECT", "INSERT"},
     "trust_unapplied_refunds": {"SELECT"},
+    # Deposits the owner holds, outside trust (migration 20261106000241), and what the owner did
+    # with each at move-out: records the app writes; no money moves.
+    "trust_owner_held_deposits": {"SELECT", "INSERT"},
+    "trust_owner_held_deposit_outcomes": {"SELECT", "INSERT"},
     # QuickBooks names (migration 0102): staff name a ledger account for QuickBooks; the latest
     # row holds, so a change is an insert. The ids order the rows.
     "trust_quickbooks_accounts": {"SELECT", "INSERT"},
@@ -590,6 +594,8 @@ FUNCTIONS = {
     "trust_check_unapplied_receipt()": set(),
     "trust_check_unapplied_use()": set(),
     "trust_refund_unapplied_cash(uuid,uuid,numeric,text,text,text,timestamptz)": {"trust_app"},
+    "trust_check_owner_held_deposit()": set(),
+    "trust_check_owner_held_outcome()": set(),
     # A company's time zone and its day (migration 20261104000900): read from its profile, which
     # the AI role never reads.
     "trust_pmc_time_zone(uuid)": {"trust_app"},

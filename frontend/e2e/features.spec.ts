@@ -4778,6 +4778,53 @@ test("staff read the chart of accounts by section and code, give an account anot
   await expectAccessible(page);
 });
 
+test("staff record a deposit the owner holds outside trust on the lease page, see it on the ledger and at move-out, and record that the owner returned it with nothing moving in trust", async ({
+  page,
+}) => {
+  const people = seed.features["owner-held-deposits"]!;
+  await joinAsStaff(page, people.manager);
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+
+  // Drew Sample's landlord keeps a $1,000.00 security deposit in their own account.
+  await openLease(page, "Aspen Row, Unit 1");
+  const trustHeld = await page.getByTestId("deposit-held").textContent();
+  const panel = await leasePanel(page, "Record a deposit the owner holds");
+  await panel.getByLabel("Amount the owner holds").fill("1000.00");
+  await panel.getByLabel("Held since").fill(yesterday);
+  await panel.getByRole("button", { name: "Record what the owner holds" }).click();
+  await expect(page.getByText("Security deposit of $1,000.00 recorded as held by the owner.")).toBeVisible();
+  const card = page.getByRole("list", { name: "Held by the owner, Unit 1" });
+  await expect(card).toContainText(`Drew Sample's security deposit: $1,000.00, since ${us(yesterday)}`);
+  await expect(card).toContainText("Owner holds it");
+  // Never in trust: what the trust account holds for the lease is as it was.
+  await expect(page.getByTestId("deposit-held")).toHaveText(trustHeld ?? "");
+  await leaseTab(page, "Ledger");
+  await expect(page.getByRole("row", {
+    name: "Memo: Drew Sample's security deposit, held by the owner (not in trust): 1,000.00",
+  })).toBeVisible();
+
+  // At move-out it shows beside what trust holds; once the lease has ended, the owner returns it.
+  await section(page, "Move-outs");
+  const lease = page.getByRole("region", { name: "Aspen Row / Unit 1: Drew Sample" });
+  const held = lease.getByRole("group", { name: "Held by the owner, Aspen Row / Unit 1: Drew Sample" });
+  await expect(held.getByTestId("owner-held")).toHaveText("Held by owner: $1,000.00 — the owner returns it");
+  const trustLine = (await lease.getByText(/deposits held \$/).textContent()) ?? "";
+  await lease.getByText("Move-out for Unit 1").click();
+  await lease.getByLabel("Last day").fill(yesterday);
+  await lease.getByRole("button", { name: "End the lease" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "End the lease" }).click();
+  await expect(lease).toContainText(`The lease ends on ${us(yesterday)}.`);
+  await held.getByRole("button", { name: "Record what the owner did" }).click();
+  await expect(page.getByText("Recorded: the owner returned $1,000.00 and kept $0.00.")).toBeVisible();
+  await expect(held).toContainText(`The owner returned $1,000.00 and kept $0.00 on ${us(today())}.`);
+  await expect(held.getByTestId("owner-held")).toHaveCount(0);
+  // What trust holds for the lease's tenants didn't move.
+  const trustHeldThen = trustLine.match(/deposits held \$[\d,.]+/)?.[0];
+  expect(trustHeldThen).toBeTruthy();
+  await expect(lease.getByText(/deposits held \$/)).toContainText(trustHeldThen ?? "");
+  await expectAccessible(page);
+});
+
 test("staff record money they can't match yet as unapplied cash, month-end waits for it, and they apply part to a lease and refund the rest", async ({
   page,
 }) => {
