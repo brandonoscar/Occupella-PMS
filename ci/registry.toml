@@ -948,9 +948,12 @@ tests = [
 
 [[invariant]]
 id = "fee-goes-to-whoever-keeps-its-type"
-statement = "A charge type says who keeps its fees' money, the owner unless the company says it does, as it was when each fee was charged (migration 20261106000220). A tenant's payment, a payment file's, one paid online or by autopay, and prepaid rent used pay a fee the company keeps into the company's fee account in the trust bank account that holds the owner's money, and the rest of what pays the lease's charges into the owner's account; a bounce moves both back. The owner's cash and accrual income statements, year-end and management fee never count the company's part. Every trust bank account ties out. A deposit kept at move-out still pays the owner's account (a known gap)."
+statement = "A charge type says who keeps its fees' money, the owner unless the company says it does, as it was when each fee was charged (migration 20261106000220). A tenant's payment, a payment file's, one paid online or by autopay, and prepaid rent used pay a fee the company keeps into the company's fee account in the trust bank account that holds the owner's money, and the rest of what pays the lease's charges into the owner's account; a bounce moves both back. The owner's cash and accrual income statements, year-end and management fee never count the company's part. Every trust bank account ties out. A deposit kept at move-out pays a fee the company keeps into its fee account too, and a lease end's credit on a monthly fee the company keeps comes off that fee, never the owner's rent (migration 20261107000100)."
 tests = [
   "tests/properties/test_fee_payee_properties.py::test_a_fee_goes_to_whoever_keeps_its_type_as_it_was_charged_and_the_books_tie_out",
+  "tests/properties/test_fee_payee_properties.py::test_a_lease_ends_credit_on_a_fee_the_company_keeps_comes_off_that_fee",
+  "tests/api/test_fee_payees_api.py::test_a_lease_ends_credit_for_a_fee_the_company_keeps_comes_off_that_fee",
+  "tests/test_move_out.py::test_what_is_kept_for_the_companys_fees_goes_to_the_company",
   "tests/api/test_fee_payees_api.py::test_before_this_every_fee_a_payment_pays_goes_to_the_owner",
   "tests/api/test_fee_payees_api.py::test_a_fee_the_company_keeps_goes_to_its_fee_account_and_the_owner_gets_the_rest",
   "tests/api/test_fee_payees_api.py::test_part_of_a_payment_pays_part_of_a_fee_the_company_keeps",
@@ -1548,7 +1551,7 @@ tests = [
 
 [[invariant]]
 id = "rent-first"
-statement = "A credit, a tenant's payment, prepaid rent used and a deposit kept pay a lease's rent and monthly charges before its other charges, each oldest first, a tie by when charged then id (migration 0093; Washington's RCW 59.18.283, the strictest state found), so a late fee no longer depends on random ids; a moved tenant pays the rent of every lease they moved through before any of their fees, each owner still paid what was owed to them."
+statement = "A credit, a tenant's payment, prepaid rent used and a deposit kept pay a lease's rent and monthly charges before its other charges, each oldest first, a tie by when charged then id (migration 0093; Washington's RCW 59.18.283, the strictest state found), so a late fee no longer depends on random ids; a moved tenant pays the rent of every lease they moved through before any of their fees, each owner still paid what was owed to them. A lease end's credit on a monthly fee the company keeps comes off that fee first, as a waiver does (migration 20261107000100)."
 tests = [
   "tests/test_rent_first.py::test_a_late_fee_no_longer_depends_on_chance",
   "tests/test_rent_first.py::test_credits_come_off_the_rent_before_an_older_fee",

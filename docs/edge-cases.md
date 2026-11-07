@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1175 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1182 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -25,15 +25,15 @@ answer in the portal for everything that can fail.
 
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
-| [Money and the ledger](#money-and-the-ledger) | 152 | 117 | 8 | 27 | 4 |
+| [Money and the ledger](#money-and-the-ledger) | 157 | 120 | 8 | 29 | 6 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 90 | 15 | 59 | 13 |
-| [Concurrency and retries](#concurrency-and-retries) | 143 | 75 | 30 | 38 | 1 |
-| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 165 | 76 | 8 | 81 | 18 |
+| [Concurrency and retries](#concurrency-and-retries) | 144 | 76 | 30 | 38 | 1 |
+| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 166 | 76 | 8 | 82 | 18 |
 | [Bad files and imports](#bad-files-and-imports) | 154 | 73 | 17 | 64 | 1 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 164 | 99 | 11 | 54 | 5 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 176 | 82 | 14 | 80 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1175** | **652** | **113** | **410** | **46** |
+| **All** | **1182** | **656** | **113** | **413** | **48** |
 
 ## Open, high risk: the work list
 
@@ -46,6 +46,8 @@ its ten most pressing, each with the test that would close it.
 - M-072: Prepaid rent left over at move-out
 - M-073: A renewal while the old lease still owes
 - M-152: The roster brought in days before the opening balances are posted, mid-month
+- M-153: A lease ends mid-month after its tenant paid a monthly fee the company keeps in full
+- M-154: A journal entry moves money out of (or into) unapplied cash
 
 **Dates, time zones and calendars**
 
@@ -115,6 +117,8 @@ its ten most pressing, each with the test that would close it.
 | M-072 | Prepaid rent left over at move-out | Not used for what the lease owes before the deposit is kept, and never refunded by the return | Open | `db/migrations/20261019000094_ownership_shares.sql:190` | H |
 | M-073 | A renewal while the old lease still owes | New payments don't pay it, and the final return keeps only the renewal's debt; whichever lease is returned first takes the whole deposit | Open | `db/migrations/20261018000091_lease_transfers.sql:62` | H |
 | M-152 | The roster brought in days before the operating trust bank account's opening balances are posted, mid-month | A nightly run in between has no cutover on file to charge from, so it charges the month the old system charged; the opening balances, posted after, write no credit for it | Open | `src/pms/api/switching.py` (the roster and the cutover are separate steps); `db/migrations/20261106100000_rent_from_the_cutover.sql` trust_lease_cutover | H |
+| M-153 | A lease ends mid-month after its tenant paid a monthly fee the company keeps in full | The lease end's credit can't come off the fee, so it comes off the rent (rent first, as what a waiver can't take does): the company keeps the whole fee and the owner gets that much less rent. Nothing moves the company's part of the credit to the owner or back to the tenant | Open | `db/migrations/20261107000100_deposit_kept_company_fees.sql` trust_open_charges (`spare`) | H |
+| M-154 | A journal entry moves money out of (or into) unapplied cash | Allowed (`src/pms/api/journal.py` KINDS has `unapplied_cash`), but no receipt's left changes (`trust_unapplied_left` counts applications and refunds only): the receipt the entry meant still reads as held, so refunding it pays out another receipt's money, which then waits forever; an entry into unapplied cash holds money no receipt can apply or refund, and month-end refuses the account. How staff should resolve unapplied cash that was an owner's (or anyone's but a tenant's) is the founder's call | Open | `src/pms/api/journal.py:58`; `db/migrations/20261106000240_unapplied_cash.sql:131` trust_unapplied_left; the review of 11/07 (probe reproduced) | H |
 | M-013 | Two payments with the same request id, then the same id with another amount | Recorded once; the different amount is refused 409 | Tested | `tests/api/test_rent.py::test_sending_a_payment_again_records_it_once` | H |
 | M-015 | Two payments to one charge at the same moment | The second waits and never overpays the charge | Tested | `tests/test_leases_and_charges.py::test_two_payments_at_once_cannot_overpay_a_charge` | H |
 | M-017 | A payment dated inside an approved month-end | Refused; nothing written | Tested | `tests/api/test_rent.py::test_a_closed_period_refuses_a_payment_dated_in_it` | H |
@@ -162,6 +166,8 @@ its ten most pressing, each with the test that would close it.
 | M-141 | Opening balances that don't tie out to the old book cash | Refused | Tested | `tests/api/test_switch.py::test_opening_balances_that_dont_tie_out_are_refused` | H |
 | M-146 | The payments partner reports one payment paid twice | Recorded once; trust ties out | Tested | `tests/properties/test_online_payment_properties.py::test_online_payments_record_what_the_partner_reports_once_and_keep_trust_whole` | H |
 | M-150 | The same payment file brought in twice | Comes in once | Tested | `tests/api/test_payment_files_api.py::test_a_file_comes_in_once` | H |
+| M-155 | A lease ends mid-month after its month was charged, with a monthly fee the company keeps, then the tenant pays | The lease end's credit on the fee comes off that fee first, as a waiver does, never off the owner's rent (trust_open_charges, the delinquency report and the owner balance sheet, migration 20261107000100): the payment pays the company the fee's net and the owner the rent's. Before, the credit came off the rent and the company got the whole fee | Tested | `tests/api/test_fee_payees_api.py::test_a_lease_ends_credit_for_a_fee_the_company_keeps_comes_off_that_fee`; `tests/properties/test_fee_payee_properties.py::test_a_lease_ends_credit_on_a_fee_the_company_keeps_comes_off_that_fee`; `tests/golden/cases/trust_report_delinquency/company_kept_lease_end.sql` | H |
+| M-156 | A deposit kept at move-out for a fee the company keeps | What is kept for it goes into the company's fee account in the trust bank account holding the owner's money, its cash with it, and is matched to that fee; the owner's account gets the rest (migration 20261107000100). Before, all of it went to the owner | Tested | `tests/test_move_out.py::test_what_is_kept_for_the_companys_fees_goes_to_the_company`; `tests/properties/test_deposit_return_properties.py::test_a_deposit_return_keeps_what_is_owed_and_gives_back_the_rest` | H |
 | M-023 | A tenant left the lease holding prepaid rent under their name | Use prepaid rent spends it on the staying tenants' later rent; the departure neither moves nor refunds it | Open | `src/pms/api/rent.py:626` | M |
 | M-025 | A tenant holds enough prepaid rent but the company left prepaid rent by itself off (the default) | Rent stays open and a late fee is charged after grace | Open | `db/migrations/20261031000200_late_fees_skip_paid_rents.sql:139` | M |
 | M-027 | Refunding a tenant's overpayment while the lease runs | No refund action; only a journal entry by two staff moves prepaid rent out, with no receipt | Open | `src/pms/api/journal.py:178` | M |
@@ -238,6 +244,7 @@ its ten most pressing, each with the test that would close it.
 | M-135 | A journal entry dated next year | Refused: an entry is dated no later than the company's today (422 in words; the database refuses it too), and the date field offers no later day; one proposed for a later day before migration 20261106110100 posts only on its day or later | Tested | tests/api/test_journal.py::test_an_entry_is_dated_no_later_than_the_companys_today; tests/test_journal_entries.py::test_an_entry_is_dated_no_later_than_the_companys_today; tests/test_journal_entries.py::test_an_entry_dated_after_today_waits_for_its_day_to_post | M |
 | M-097 | Bill holds read in the evening, Eastern time | trust_bill_holds counts the company's day (trust_pmc_day, migration 20261106110200): in the evening Eastern a bill dated the company's tomorrow holds nothing yet, and tomorrow's reserve doesn't apply yet | Tested | tests/test_bill_lifecycle.py::test_holds_count_the_bills_and_reserve_of_the_companys_day | M |
 | M-112 | Collect fees for a period that hasn't ended yet | Refused in words (422) until the period has ended by the company's today; the page's rows show what it would take so far beside from when it is collected, and Collect fees takes none of it; a period that ended is collected as before | Tested | tests/api/test_payables.py::test_a_fee_period_is_collected_once_it_has_ended; frontend/src/pages/ManagementFeesPage.test.tsx ("a period not ended yet") | M |
+| M-157 | An owner's balance sheet while the lease owes fees the company keeps | "Owed by tenants" leaves them out, as the accrual income statement does (migration 20261107000100); before, it counted them as the owner's and overstated the owner's equity | Tested | `tests/golden/cases/trust_report_owner_balance_sheet/company_kept_fees.sql` | M |
 | M-008 | A charge or bill of $10.005 written by a path other than the API or the CSV parser | Kept: the tables check only amount above 0, not whole cents | Open | `db/migrations/20261010000012_leases_and_charges.sql:66` | L |
 | M-010 | Deposit interest paid monthly instead of once a year | Each payment rounds per deposit, so twelve payments can differ by cents from one; nothing evens it out | Open | `db/migrations/20261022000122_deposit_interest.sql:165` | L |
 | M-014 | The same request id resent with a different check number or method | Taken as a retry: the first payment comes back and the new reference is silently dropped | Open | `src/pms/api/rent.py:362` | L |
@@ -579,6 +586,7 @@ its ten most pressing, each with the test that would close it.
 | C-014 | A tenant leaves the lease while a payment waits for the lease lock | A payment, and prepaid rent used, take the lease's lock before they read its tenants and owners, so a departure waited for has committed: the part paid ahead is held for a tenant who stays | Tested | tests/test_lease_people.py::test_a_payment_waiting_on_a_departure_holds_its_prepaid_rent_for_who_stays | M |
 | C-070 | A scheduler that found the lock held by another run | Runs nothing and marks no company's day as run here, so it looks again a minute past the next hour; a day the holder already ran charges nothing new | Tested | tests/test_nightly.py::test_a_scheduler_that_found_the_lock_held_looks_again_the_next_hour | M |
 | C-071 | One company's run fails on a passing cause (a deadlock, a lock a staff request held) | Logged and admins told once a day; its day is not marked done, and the next hour's look runs it again for the same day | Tested | tests/test_nightly.py::test_a_company_whose_run_failed_is_tried_again_the_next_hour_not_the_next_day | M |
+| C-144 | Staff apply an unapplied receipt to a lease while another refunds it | Both take the receipt's lock first (`unapplied.lock_receipt`), so the second waits having posted nothing, then is refused or takes what is left. Before, the application locked the unapplied account then the receipt and the refund the other way round: a deadlock, one answering a server error | Tested | `tests/api/test_unapplied_api.py::test_applying_and_refunding_one_receipt_wait_for_each_other_first` | M |
 | C-033 | A history file submitted twice at once | Read check then insert; the unique key stops the second as a 500 | Open | src/pms/api/switching.py:621 | L |
 | C-037 | A bill payment resent with the same request id but a new amount | The first payment comes back as success with no comparison; staff believe the new amount was paid | Open | src/pms/api/payables.py:1271 | L |
 | C-038 | One bill payment with a receipt sent twice at the same moment | The payment posts once but its receipt is kept twice | Open | src/pms/api/payables.py:1296 | L |
@@ -699,6 +707,7 @@ its ten most pressing, each with the test that would close it.
 | P-160 | The company's fees in trust fail to load on Banking | Hidden, so fees past their day to take out don't show | Open | frontend/src/pages/ReconcilePage.tsx:71 | M |
 | P-161 | A return reported before paid, and paid never lands (its report keeps failing on the fee lookup, 502) | The return answers 409 until the partner gives up (about three days, NOT VERIFIED), then it is lost as before | Open | src/pms/api/online_payments.py refuse_too_soon | M |
 | P-165 | A bank CSV of positive amounts with no Type column at all, holding checks and fees | Read as all money in, as before; a CSV needs no closing balance, so only month-end's missing lines show it | Open | src/pms/statements.py (read_csv) | M |
+| P-166 | An online payment that paid a fee the company keeps is returned after the company took its fees out of trust | The return can't take the company's part back from its empty fee account, so it waits on Banking as a return (`company_owes` none, "0.00" needed), and Record the company's deposit refuses to cover it ("needs 0.00 from the company"): the books keep money the bank took back until other fees land and staff press Try again | Open | `src/pms/api/online_payments.py:922` (a return waits as `("return", None)`); `src/pms/api/online_payments.py:1057` cover; the review of 11/07 (probe reproduced) | M |
 | P-119 | The same ACH file downloaded and uploaded twice | The same file each time, logged "Taken N times"; the bank's duplicate check is all that stops a second upload | Guarded | src/pms/api/payouts.py:621-624; tests/api/test_payouts_api.py::test_an_ach_file_taken_again_is_the_one_made_when_the_run_was_paid | M |
 | P-025 | A paid ACH payment comes back (charge.dispute.created) | Undone as a bounce with the NSF fee, the tenant's fee back out of the company's account | Tested | tests/api/test_online_payments_api.py::test_a_return_is_a_bounce_and_the_tenants_fee_goes_back_out; tests/test_payments.py::test_stripe_reports_a_failure_a_return_and_nothing_else | M |
 | P-050 | PMS_DATA_KEY lost or changed, so the company's keys don't open | Never falls back to the server's account; tenants see How to pay; admins see "Your keys can't be read on this server. Enter them again." | Tested | tests/api/test_payment_keys_api.py::test_keys_that_dont_open_here_take_no_payment_and_never_fall_back; frontend/src/pages/PaymentKeysCard.test.tsx > says keys that can't be read here need entering again | M |

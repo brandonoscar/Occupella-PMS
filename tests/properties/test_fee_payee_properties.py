@@ -13,6 +13,11 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
   - the owner's management fee base counts none of the company's fees;
   - what the lease owes is the model's, and every trust bank account ties out.
 
+And, for a lease ended on any day of a month already charged (migration 20261107000100):
+  - each lease end's credit comes off the charge it adjusts when that is a monthly fee the
+    company keeps, so a payment of any part of what is owed pays the company exactly what it
+    reaches of that fee's net, rent first, and the owner the rest.
+
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
 
@@ -23,7 +28,7 @@ from decimal import Decimal
 import psycopg
 from fastapi import HTTPException
 from helpers import add_tenant, add_unit, bank_sums, make_pmc, open_lease
-from hypothesis import event
+from hypothesis import event, given
 from hypothesis import strategies as st
 from hypothesis.stateful import (
     RuleBasedStateMachine,
@@ -237,3 +242,102 @@ def test_a_fee_goes_to_whoever_keeps_its_type_as_it_was_charged_and_the_books_ti
 ):
     with psycopg.connect(database_url, autocommit=True) as conn:
         run_state_machine_as_test(lambda: FeePayeeMachine(conn))
+
+
+@given(
+    last_day=st.integers(min_value=0, max_value=27),  # days after the first of the month
+    company_fee=CENTS,
+    owner_fee=CENTS,
+    percent=st.integers(min_value=0, max_value=120),  # of what is owed, paid
+)
+def check_a_lease_ended_mid_month(conn, last_day, company_fee, owner_fee, percent):
+    pmc = make_pmc(conn)
+    prop = pmc.owners[0].property_id
+    tenant = add_tenant(conn, pmc.pmc_id, prop, "Tenant 1")
+    unit = add_unit(conn, pmc.pmc_id, prop, "Unit 1")
+    first = TODAY.replace(day=1) - DAY
+    first = first.replace(day=1)  # last month's first: charged, then ended
+    lease = open_lease(conn, pmc.pmc_id, unit, first, None, "1000.00", [tenant])
+    kept_by = {}
+    for name, payee, amount in (
+        ("Benefits", "company", company_fee),
+        ("Parking", "owner", owner_fee),
+    ):
+        kind = conn.execute(
+            "INSERT INTO trust_charge_types (pmc_id, name) VALUES (%s, %s) RETURNING id",
+            (pmc.pmc_id, name),
+        ).fetchone()[0]
+        if payee == "company":  # a type's fees go to the owner unless the company says
+            conn.execute(
+                "INSERT INTO trust_charge_type_payees (pmc_id, charge_type_id, payee)"
+                " VALUES (%s, %s, 'company')",
+                (pmc.pmc_id, kind),
+            )
+        recurring = conn.execute(
+            "INSERT INTO trust_recurring_charges (pmc_id, lease_id, kind, amount, memo,"
+            " starts_on, charge_type_id) VALUES (%s, %s, 'fee', %s, %s, %s, %s) RETURNING id",
+            (pmc.pmc_id, lease, amount, name, first, kind),
+        ).fetchone()[0]
+        kept_by[recurring] = payee
+    conn.execute("SELECT trust_charge_rent_due(%s, %s)", (pmc.pmc_id, first))
+    conn.execute("SELECT trust_charge_recurring_due(%s, %s)", (pmc.pmc_id, first))
+    conn.execute("SELECT trust_end_lease(%s, %s, %s)", (pmc.pmc_id, lease, first + last_day * DAY))
+
+    # What is open of each charge, as the rule says: a lease end's credit on a fee the company
+    # keeps comes off that fee; every other credit, and what such a credit can't take, comes off
+    # the charges in the order money pays them (rent, then the monthly charges due the same day
+    # by when charged and id).
+    charges = conn.execute(
+        "SELECT c.id, c.kind, c.amount, c.recurring_charge_id, c.created_at, x.charge_id"
+        " FROM trust_charges AS c"
+        " LEFT JOIN trust_lease_end_adjustments AS x ON x.adjustment_charge_id = c.id"
+        " WHERE c.lease_id = %s",
+        (lease,),
+    ).fetchall()
+    payee = {c[0]: kept_by.get(c[3], "owner") for c in charges if c[1] != "credit"}
+    order = sorted(
+        (c for c in charges if c[1] != "credit"),
+        key=lambda c: (c[3] is not None, c[4], str(c[0])),
+    )
+    left = {c[0]: c[2] for c in order}
+    pool = ZERO
+    for c in charges:
+        if c[1] != "credit":
+            continue
+        if c[5] is not None and payee.get(c[5]) == "company":
+            take = min(left[c[5]], c[2])
+            left[c[5]] -= take
+            pool += c[2] - take
+        else:
+            pool += c[2]
+    for c in order:
+        take = min(left[c[0]], pool)
+        left[c[0]] -= take
+        pool -= take
+    owed = sum(left.values(), ZERO)
+    amount = cents(owed * percent / 100)
+    event("all paid" if amount >= owed else "part paid" if amount else "nothing paid")
+    if amount <= 0:
+        return
+    rest, to_company = amount, ZERO
+    for c in order:
+        part = min(rest, left[c[0]])
+        rest -= part
+        if payee[c[0]] == "company":
+            to_company += part
+
+    with conn.transaction():
+        recorded = rent.record_payment(conn, pmc.pmc_id, lease, uuid.uuid4(), amount, TODAY)
+
+    # to_owner is all that paid the lease's charges, to_company the part that was the company's.
+    assert recorded.to_company == to_company
+    assert recorded.to_owner == min(amount, owed)
+    held = rent.balances(conn, [pmc.pmc_income, pmc.owners[0].account])
+    assert held[pmc.pmc_income] == to_company
+    assert held[pmc.owners[0].account] == min(amount, owed) - to_company
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {ZERO}
+
+
+def test_a_lease_ends_credit_on_a_fee_the_company_keeps_comes_off_that_fee(database_url):
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        check_a_lease_ended_mid_month(conn)

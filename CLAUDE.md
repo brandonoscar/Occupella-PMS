@@ -1415,9 +1415,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   bank account that holds the owner's money, and a bounce takes it back
   (`trust_apply_payment`, `trust_charge_nsf_fee` allow it). The owner's cash statement, year-end
   and management fee count what reached the owner's account, so never the company's part; the
-  accrual statement leaves company-kept fees out. Known gaps: a deposit kept at move-out
-  (`trust_return_deposit`) still pays a company-kept fee to the owner's account, and the owner
-  balance sheet counts such a fee among what tenants owe the owner. Twelve starting kinds of fee
+  accrual statement leaves company-kept fees out. Since migration 20261107000100 a deposit kept
+  at move-out (`trust_return_deposit`) pays a company-kept fee into the company's fee account too,
+  the owner balance sheet leaves such a fee out of what tenants owe the owner, and a lease end's
+  credit on one comes off that fee first, as a waiver does, never the owner's rent
+  (`trust_open_charges` and the reports that write it out); what it can't take off a fee already
+  paid still comes off the rent (docs/edge-cases.md, M-153). Twelve starting kinds of fee
   (migration 20261106000225: the company keeps the resident benefit package and the lease
   initiation, renewal, lease change and admin fees; the owner the rest) and 49 starting expense
   accounts. `trust_report_chart_of_accounts` lists the chart (as the owner, so the AI calls no
@@ -1432,7 +1435,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   as Receive payment does, rent first, the rest prepaid rent, its tenants emailed its receipt; it
   never bounces from the lease) or refund it (`trust_refund_unapplied_cash`: out through the cash,
   a payout taking disburse and the account's signers, `trust_unapplied_refunds`), never past what
-  is left (`trust_unapplied_left`), each safe to retry. `trust_approve_bank_reconciliation` refuses
+  is left (`trust_unapplied_left`), each safe to retry, the two waiting for each other on the
+  receipt's lock (`unapplied.lock_receipt`). `trust_approve_bank_reconciliation` refuses
   while any is held in the account, and the three-way reconciliation shows it as "of which
   unapplied cash" after the beneficiary ledgers. Append-only, audited; the AI role reads them.
 - Deposits the owner holds (migration 20261106000241, `src/pms/api/owner_held.py`): a tenant's
