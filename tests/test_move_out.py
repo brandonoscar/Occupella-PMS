@@ -196,6 +196,56 @@ def test_what_is_kept_for_the_companys_fees_goes_to_the_company(conn, app_conn, 
     assert set(bank_sums(conn, pmc.pmc_id).values()) == {0}
 
 
+def test_a_deposit_kept_for_the_companys_fee_opens_its_fee_account_where_there_is_none(
+    conn, app_conn, pmc
+):
+    # Setup opens the company's fee account with every operating trust bank account; this one
+    # was made with only its cash, as books set up by hand may be. What a deposit keeps for a fee
+    # the company keeps goes to a fee account opened in it, beside the owner's money.
+    bank = conn.execute(
+        "INSERT INTO trust_bank_accounts (pmc_id, kind, display_name)"
+        " VALUES (%s, 'operating', 'Hand-made operating account') RETURNING id",
+        (pmc.pmc_id,),
+    ).fetchone()[0]
+    open_account(conn, pmc.pmc_id, bank, "bank_cash")
+    home = conn.execute(
+        "INSERT INTO trust_properties (pmc_id, display_name) VALUES (%s, 'Property 3')"
+        " RETURNING id",
+        (pmc.pmc_id,),
+    ).fetchone()[0]
+    owners = open_account(conn, pmc.pmc_id, bank, "owner_property", pmc.owners[1].owner_id, home)
+    tenant = add_tenant(conn, pmc.pmc_id, home, "Tenant 3")
+    deposit = open_account(
+        conn, pmc.pmc_id, pmc.deposit_bank_id, "tenant_deposit", tenant_id=tenant
+    )
+    transfer_batch(conn, [(pmc.deposit_cash, deposit, "500.00")], at(JAN_1))
+    lease = open_lease(
+        conn, pmc.pmc_id, add_unit(conn, pmc.pmc_id, home), JAN_1, JUN_30, "900.00", [tenant]
+    )
+    conn.execute(
+        "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo,"
+        " charge_type_id) VALUES (%s, %s, %s, 'fee', 75.00, 'Admin fee', %s)",
+        (pmc.pmc_id, lease, JUN_1, company_kept(conn, pmc, "Admin fee")),
+    )
+    charge(conn, pmc.pmc_id, lease, JUN_1, "40.00", "fee", "Key copy")
+    assert conn.execute(
+        "SELECT count(*) FROM trust_ledger_accounts WHERE bank_account_id = %s"
+        " AND kind = 'pmc_income'",
+        (bank,),
+    ).fetchone() == (0,)
+
+    assert return_deposit(app_conn, pmc.pmc_id, lease, "move-out-1", at(JUL_5)) == Decimal("385.00")
+
+    (fees,) = conn.execute(
+        "SELECT ledger_account_id FROM trust_ledger_accounts WHERE bank_account_id = %s"
+        " AND kind = 'pmc_income'",
+        (bank,),
+    ).fetchone()
+    assert (balance(conn, fees), balance(conn, owners)) == (Decimal("75.00"), Decimal("40.00"))
+    assert balance(conn, pmc.pmc_income) == 0
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {0}
+
+
 def test_when_the_lease_owes_more_than_is_held_all_is_kept(conn, app_conn, pmc, lease):
     charge(conn, pmc.pmc_id, lease, JUN_1, "1000.00", "rent", "June rent")
     charge(conn, pmc.pmc_id, lease, JUL_1, "900.00", "fee", "Damage")
