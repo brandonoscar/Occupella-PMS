@@ -3,11 +3,13 @@ record money they can't match yet, see how long it has waited, apply it to a lea
 owes as Receive payment does) or refund it (a payout, disburse)."""
 
 import json
+import threading
 import uuid
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
+import psycopg
 import pytest
 from helpers import (
     add_tenant,
@@ -376,6 +378,53 @@ def test_part_of_it_applied_and_the_rest_refunded_never_past_what_is_left(
     refused(nothing, 409, "nothing is left of this unapplied cash to apply")
     assert balance(conn, unapplied_account(conn, pmc)) == Decimal("0.00")
     assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
+
+
+def waiting_on_an_advisory_lock(conn):
+    for _ in range(1000):
+        if conn.execute(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
+        ).fetchone()[0]:
+            return True
+        threading.Event().wait(0.01)
+    return False
+
+
+@pytest.mark.timing
+@pytest.mark.parametrize("step", ["apply", "refund"])
+def test_applying_and_refunding_one_receipt_wait_for_each_other_first(
+    client, conn, database_url, staff, pmc, lease, step
+):
+    """An application posts its payment, locking the unapplied cash account, and then locks the
+    receipt; a refund locks the receipt and then the account. Both at once deadlocked, one a
+    server error (the review of 11/07). Each now takes the receipt's own lock before anything
+    else, so the second waits there, having posted nothing."""
+    made = receive(client, amount="500.00")
+    held = balance(conn, unapplied_account(conn, pmc))
+    holder = psycopg.connect(database_url)  # as a request on the receipt would hold it
+    holder.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        (f"unapplied receipt {made['id']}",),
+    )
+    body = (
+        {"lease_id": str(lease)} if step == "apply" else {"paid_to": "J. Sample", "method": "check"}
+    )
+    answer: dict = {}
+    thread = threading.Thread(
+        target=lambda: answer.update(
+            it=send(client, f"/api/unapplied/{made['id']}/{step}", request_id=uuid.uuid4(), **body)
+        )
+    )
+    thread.start()
+    try:
+        assert waiting_on_an_advisory_lock(conn)
+        assert balance(conn, unapplied_account(conn, pmc)) == held  # nothing moved yet
+    finally:
+        holder.rollback()
+        holder.close()
+        thread.join(timeout=30)
+    ok(answer["it"])
+    assert balance(conn, unapplied_account(conn, pmc)) == Decimal("0.00")
 
 
 def test_a_refund_takes_the_disburse_role(client, other_client, conn, app_conn, staff, pmc):

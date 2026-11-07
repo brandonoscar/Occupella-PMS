@@ -210,6 +210,17 @@ class Apply(BaseModel):
     account: Annotated[str, StringConstraints(min_length=1, max_length=100)] | None = None
 
 
+def lock_receipt(conn: psycopg.Connection[Any], receipt_id: UUID) -> None:
+    """Applying and refunding one receipt wait for each other here, before either reads what is
+    left of it or posts a transfer. An application locks the unapplied cash account by posting
+    its payment and then the receipt (its trigger), a refund the receipt and then the account, so
+    the two at once deadlocked: one answered a server error (the review of 11/07)."""
+    conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        (f"unapplied receipt {receipt_id}",),
+    )
+
+
 def receipt_row(conn: psycopg.Connection[Any], pmc_id: UUID, receipt_id: UUID) -> Any:
     row = conn.execute(
         "SELECT ledger_account_id, bank_account_id, method, reference,"
@@ -227,6 +238,7 @@ def apply(session: Staff, conn: Conn, receipt_id: UUID, new: Apply) -> rent.Paym
     rent first, and holds the rest as the first tenant's prepaid rent; its tenants are emailed
     its receipt while the server sends email. The same request id again returns the payment as it
     was recorded."""
+    lock_receipt(conn, receipt_id)
     account, bank, method, reference, left = receipt_row(conn, session.pmc_id, receipt_id)
     on = new.on or rent.today(conn, session.pmc_id)
     rent.not_after_today(conn, session.pmc_id, on)
@@ -290,6 +302,7 @@ class Refunded(BaseModel):
 def refund(session: Staff, conn: Conn, receipt_id: UUID, new: Refund) -> Refunded:
     """Refunds unapplied cash, all that is left unless said, out through the trust bank account's
     cash to whom it is paid: a payout (disburse). The same request id again returns it."""
+    lock_receipt(conn, receipt_id)
     *_, left = receipt_row(conn, session.pmc_id, receipt_id)
     on = new.on or rent.today(conn, session.pmc_id)
     rent.not_after_today(conn, session.pmc_id, on)
