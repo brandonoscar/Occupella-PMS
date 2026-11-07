@@ -9,10 +9,10 @@ mypy==2.4.0
 # Python mutation testing, nightly (BSD-3-Clause; mutation.yml, pyproject.toml [tool.mutmut]).
 mutmut==3.8.0
 pip-licenses==5.5.5
-pytest==9.1.1
+pytest==9.2.0
 ruff==0.17.2
 # Generated requests against the API's own OpenAPI schema (MIT; tests/api/test_api_fuzz.py).
-schemathesis==4.32.4
+schemathesis==4.33.0
 squawk-cli==2.70.0
 # Moves the clock while the tests load, to replay a run that crossed midnight UTC (MIT;
 # tools/started_yesterday.py).
