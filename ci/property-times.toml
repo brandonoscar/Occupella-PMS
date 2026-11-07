@@ -57,6 +57,7 @@ nightly_factor = 60
 "tests/properties/test_fee_payee_properties.py::test_a_lease_ends_credit_on_a_fee_the_company_keeps_comes_off_that_fee" = 10.1
 "tests/properties/test_held_money_properties.py::test_held_money_ties_out_and_owner_held_deposits_are_never_in_trust" = 43.3
 "tests/properties/test_history_properties.py::test_history_holds_each_files_lines_once_under_their_person_and_moves_nothing" = 10.8
+"tests/properties/test_host_admin_properties.py::test_the_hosts_admins_are_the_books_admins_and_a_company_keeps_one" = 55.3
 "tests/properties/test_id_helpers.py::test_malformed_ulid_is_refused" = 0.2
 "tests/properties/test_id_helpers.py::test_ulid_text_sorts_like_the_uuid_bytes" = 0.4
 "tests/properties/test_id_helpers.py::test_uuid_to_ulid_and_back_is_exact" = 0.6

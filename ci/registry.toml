@@ -1958,3 +1958,17 @@ tests = [
   "tests/test_concessions.py::test_the_owner_statement_says_the_concessions_given_in_the_period_on_a_memo_line",
   "tests/api/test_concessions_api.py::test_staff_mark_a_credit_once_or_every_month_a_concession_and_the_statement_counts_it",
 ]
+
+[[invariant]]
+id = "host-sign-in-keeps-the-books-checks"
+statement = "A host app that mounts the PMS signs people in through its own verifier (migration 20261107000200, docs/adr/0013-sign-in-through-a-host.md). A staff member signs in only to a company the host says they are staff of today, after its second step; a login disabled here or a company not active signs no one in; an owner or a tenant joins only through their invite, at its own email. Each person is one login per company, linked once. The host's admins are the books' admins at each sign-in, and a company never loses its last admin. With password sign-in off, nothing here sets, resets or proves a password."
+tests = [
+  "tests/properties/test_host_admin_properties.py::test_the_hosts_admins_are_the_books_admins_and_a_company_keeps_one",
+  "tests/api/test_external_sign_in_api.py::test_an_admins_first_sign_in_opens_the_books_and_makes_them_its_admin",
+  "tests/api/test_external_sign_in_api.py::test_staff_sign_in_through_the_hosts_second_step",
+  "tests/api/test_external_sign_in_api.py::test_staff_the_host_no_longer_counts_sign_in_no_more",
+  "tests/api/test_external_sign_in_api.py::test_an_invite_is_used_only_at_its_own_email",
+  "tests/api/test_external_sign_in_api.py::test_the_admin_role_follows_the_hosts_and_the_company_keeps_one",
+  "tests/test_external_identities.py::test_a_host_changes_the_admin_role_only_of_staff_it_signs_in",
+  "tests/test_external_identities.py::test_every_query_that_reads_a_password_counts_a_hosts_sign_in_too",
+]
