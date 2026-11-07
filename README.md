@@ -50,8 +50,9 @@ Rentvine and DoorLoop. [Try the demo](#try-the-demo) · [Install it](docs/instal
 Built with Python 3.11, FastAPI, PostgreSQL 16 (plain SQL), React 19, Vite and Tailwind CSS.
 Apache License 2.0 (see `LICENSE`). Third-party code and its licenses: `THIRD_PARTY_NOTICES.md`.
 
-Occupella's AI is sold separately and connects through the PMS's own API with a key that cannot
-move money (`docs/adr/0011-ai-link.md`).
+Occupella, the hosted version, is built on this PMS with its AI included. A self-hosted PMS can
+connect any AI through its own API and MCP server, with a key that cannot move money
+(`docs/adr/0011-ai-link.md`).
 
 ## Status
 

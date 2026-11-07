@@ -10,7 +10,7 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from helpers import make_pmc
-from people import PASSWORD, join_as_staff, join_as_tenant
+from people import PASSWORD, accept, invite_token, join_as_staff, join_as_tenant, tenant_of
 
 from pms import accounts, admin, nightly
 from pms.api import create_app
@@ -114,6 +114,38 @@ def test_nobody_signs_in_to_a_company_that_isnt_active(
 
     set_status(database_url, monkeypatch, capsys, pmc, "active", "put right")
     assert sign_in(other_client, pmc, tenant).status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("status", "detail"),
+    [
+        ("suspended", "this company's account is suspended: ask whoever runs this server"),
+        ("closed", "this company's account is closed"),
+    ],
+)
+def test_an_invite_of_a_company_that_isnt_active_is_refused_in_words(
+    client, conn, app_conn, pmc, database_url, monkeypatch, capsys, status, detail
+):
+    # The AI pen test of 11/06: an invite made before the company was suspended still opened,
+    # and accepting it set the password, then failed making the session (a server error).
+    tenant = tenant_of(conn, pmc)
+    token = invite_token(app_conn, pmc.pmc_id, "tenant", tenant, "tenant.status@example.com")
+    set_status(database_url, monkeypatch, capsys, pmc, status)
+
+    answers = [
+        client.post("/api/invites/view", json={"token": token}),
+        client.post("/api/invites/accept", json=accept(token)),
+    ]
+
+    assert [a.status_code for a in answers] == [403, 403]
+    assert {a.json()["detail"] for a in answers} == {detail}
+    assert conn.execute(
+        "SELECT count(*) FROM trust_login_secrets AS s JOIN trust_logins AS l ON l.id = s.login_id"
+        " WHERE l.tenant_id = %s",
+        (tenant,),
+    ).fetchone() == (0,)
+    set_status(database_url, monkeypatch, capsys, pmc, "active", "put right")
+    assert client.post("/api/invites/accept", json=accept(token)).status_code == 200
 
 
 def test_a_suspended_company_sends_no_password_reset(

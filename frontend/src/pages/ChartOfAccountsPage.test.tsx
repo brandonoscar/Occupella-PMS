@@ -124,14 +124,16 @@ describe("ChartOfAccountsPage", () => {
     fireEvent.click(within(panel).getByRole("button", { name: "Save name" }));
     expect(await screen.findByText("Renamed to Plumbing.")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Actions for Plumbing repairs" }));
+    // A panel closes a tick after its toast shows, and hides the page until it has: each click
+    // after one waits for its button (e2e's vitest run of 11/06 clicked too soon and failed).
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for Plumbing repairs" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
     const asked = screen.getByRole("alertdialog");
     expect(asked.textContent).toContain("Archive Plumbing repairs?");
     fireEvent.click(within(asked).getByRole("button", { name: "Archive" }));
     expect(await screen.findByText("Plumbing repairs is archived.")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Actions for Roof repairs" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for Roof repairs" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Bring back" }));
     expect(await screen.findByText("Roof repairs is back.")).toBeTruthy();
 
@@ -157,14 +159,14 @@ describe("ChartOfAccountsPage", () => {
     fireEvent.click(within(payee).getByRole("button", { name: /Save who keeps it/ }));
     expect(await screen.findByText("Admin fee's fees go to the owner from now on.")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add charge type" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add charge type" }));
     const kind = screen.getByRole("dialog", { name: "Add charge type" });
     fireEvent.change(within(kind).getByLabelText(/Charge type/), { target: { value: "Pool key" } });
     fireEvent.change(within(kind).getByLabelText("Who keeps its fees"), { target: { value: "company" } });
     fireEvent.click(within(kind).getByRole("button", { name: "Add charge type" }));
     expect(await screen.findByText("Added Pool key.")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add expense account" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add expense account" }));
     const bills = screen.getByRole("dialog", { name: "Add expense account" });
     fireEvent.change(within(bills).getByLabelText(/Expense account/), { target: { value: "Gutters" } });
     fireEvent.change(within(bills).getByLabelText(/Schedule E line/), { target: { value: "14" } });

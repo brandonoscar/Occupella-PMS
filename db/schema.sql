@@ -2839,6 +2839,17 @@ BEGIN
                 'the portal', v_bill.reference
                 USING ERRCODE = 'check_violation';
         END IF;
+        -- In the portal an owner decides the bills over their approval limit, no others: one
+        -- within it is paid without them, and a decline would stop it for good (the AI pen test
+        -- of 11/06). A decision staff record, or one the switching tool carries over, says how
+        -- it was made (`method`) and keeps its own rules.
+        IF (to_jsonb(NEW) ->> 'method') IS NULL AND v_bill.amount <= coalesce(
+            (trust_agreement_on(v_bill.ledger_account_id, v_bill.bill_date)).approval_limit, 0
+        ) THEN
+            RAISE EXCEPTION 'trust: bill % is %, within its owner''s approval limit; it is paid '
+                'without the owner''s decision', v_bill.reference, v_bill.amount
+                USING ERRCODE = 'check_violation';
+        END IF;
     END IF;
     RETURN NEW;
 END;
@@ -17431,6 +17442,7 @@ CREATE TABLE public.trust_invites (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     accepted_at timestamp with time zone,
+    asked_for boolean DEFAULT false NOT NULL,
     CONSTRAINT trust_invites_check CHECK ((expires_at > created_at)),
     CONSTRAINT trust_invites_token_hash_check CHECK ((length(token_hash) = 32))
 );
@@ -38218,6 +38230,8 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261105001000'),
     ('20261105001100'),
     ('20261105001200'),
+    ('20261106000100'),
+    ('20261106000200'),
     ('20261106000205'),
     ('20261106000210'),
     ('20261106000220'),

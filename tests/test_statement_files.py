@@ -309,6 +309,16 @@ def test_an_amount_is_read_to_the_cent(text, amount):
     assert statements.read_amount(text, "line 2") == amount
 
 
+@pytest.mark.parametrize("text", ["1E30", "-1E30", "(9E999999)", "1E-30", "1E9"])
+def test_an_amount_too_large_or_too_fine_is_refused_with_its_line(text):
+    # The AI pen test of 11/06: "1E30" reached Decimal.quantize, whose InvalidOperation nothing
+    # caught, so an import answered a server error instead of naming the line.
+    with pytest.raises(
+        StatementError, match=f"^line 2: {re.escape(repr(text))} is not an amount in cents$"
+    ):
+        statements.read_amount(text, "line 2")
+
+
 @pytest.mark.parametrize("text", ["(12.05", "12.05)", "()"])
 def test_parentheses_mark_money_out_only_when_they_close(text):
     with pytest.raises(StatementError, match=f"^line 2: {re.escape(repr(text))} is not an amount$"):

@@ -4405,6 +4405,59 @@ test("a tenant changes their own phone and email in the portal, and staff see th
   await staff.close();
 });
 
+test("a tenant turns two-step sign-in on from their Profile, turns it off with a code, sets it up again and signs in with its code; an owner's Profile offers it too", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["portal-two-step"]!;
+  await joinPortal(page, people.drew);
+  await portalSection(page, "Profile", "Your profile");
+  const card = part(page, "Two-step sign-in");
+  await expect(card).toContainText("Two-step sign-in is off: signing in asks for your password alone.");
+
+  // Set up: the app scans the QR code or takes the key; its first code turns it on.
+  const setUp = async (): Promise<string> => {
+    await card.getByRole("button", { name: "Set up two-step sign-in" }).click();
+    await expect(card.getByRole("img", { name: "Authenticator setup code" })).toBeVisible();
+    const secret = (await card.locator("code").textContent()) ?? "";
+    await card.getByLabel("Code from your authenticator app").fill("000000");
+    await card.getByRole("button", { name: "Turn on two-step sign-in" }).click();
+    await expect(card.getByRole("alert")).toHaveText("that code is wrong or was already used: try the next one");
+    await card.getByLabel("Code from your authenticator app").fill(totp(secret));
+    await card.getByRole("button", { name: "Turn on two-step sign-in" }).click();
+    await expect(card).toContainText("Two-step sign-in is on: signing in asks for a code from your authenticator app too.");
+    return secret;
+  };
+  const first = await setUp();
+  // Turning it off takes a code: the app's next one, as this window's turned it on.
+  await card.getByLabel("Code from your authenticator app").fill(totp(first, Date.now() + 30_000));
+  await card.getByRole("button", { name: "Turn off two-step sign-in" }).click();
+  await expect(card).toContainText("Two-step sign-in is off: signing in asks for your password alone.");
+
+  // A new phone: a new authenticator, then signing in asks for its code.
+  const second = await setUp();
+  expect(second).not.toBe(first);
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  await page.getByLabel("Email").fill(people.emails.drew!);
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("alert")).toHaveText("enter the code from your authenticator app");
+  await page.getByLabel("Code from your authenticator app").fill(totp(second, Date.now() + 30_000));
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("navigation", { name: "Sections" })).toBeVisible();
+  await portalSection(page, "Profile", "Your profile");
+  await expect(card).toContainText("Two-step sign-in is on");
+
+  const owner = await browser.newPage();
+  await joinPortal(owner, people.owner_a);
+  await portalSection(owner, "Profile", "Your profile");
+  await expect(part(owner, "Two-step sign-in"))
+    .toContainText("Two-step sign-in is off: signing in asks for your password alone.");
+  await expect(part(owner, "Two-step sign-in").getByRole("button", { name: "Set up two-step sign-in" })).toBeVisible();
+  await owner.close();
+});
+
 test("staff make a tenant a tenant at a second property and lease them a unit there; they sign in once, see both homes and ask for a repair at the new one", async ({
   browser,
   page,

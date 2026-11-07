@@ -27,7 +27,10 @@ def test_a_lone_surrogate_is_refused_not_a_server_error(client, staff):
         "/api/property-groups", content=raw, headers={"Content-Type": "application/json"}
     )
     assert answer.status_code == 422
-    assert "\\ud800" in answer.text  # escaped, as ASCII JSON writes it
+    # ASCII JSON, and the input refused is not echoed back (the AI pen test of 11/06): where and
+    # why, which is what the portal reads.
+    assert answer.content.isascii()
+    assert "ud800" not in answer.text
     assert json.loads(answer.text)["detail"][0]["loc"] == ["body", "name"]
 
 

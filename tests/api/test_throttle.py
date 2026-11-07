@@ -197,3 +197,13 @@ def test_a_proxy_the_app_doesnt_trust_is_named_in_the_log_once(settings, pmc, ca
         " every visitor behind it counts as that one address, for the sign-in limit and in"
         " signatures' evidence; name it in PMS_TRUSTED_PROXIES"
     ]
+
+
+def test_a_trusted_proxy_is_said_nothing_of(settings, caplog):
+    import logging
+    from dataclasses import replace
+
+    app = create_app(replace(settings, trusted_proxies="127.0.0.1"))
+    with caplog.at_level(logging.WARNING, logger="pms.api"), TestClient(app) as here:
+        here.get("/api/me", headers={"X-Forwarded-For": "198.51.100.50"})
+    assert not [r for r in caplog.records if "PMS_TRUSTED_PROXIES" in r.getMessage()]

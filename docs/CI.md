@@ -407,6 +407,12 @@ plpgsql_check's own figure for every function before the shards are added up, so
 exactly what one run of the whole suite would measure. `coverage` is the required check: it runs
 even when the lint or a shard failed, and fails then.
 
+plpgsql_check keys what it counted for a function by the version of its catalog row, and any
+GRANT or REVOKE on a function writes a new one, even one that changes nothing: a test that grants
+or revokes on functions in the shared test database wipes the coverage of everything counted
+before it in its shard. Such a test runs in a database of its own (`helpers.migrated_database`;
+`tests/test_api_exposure.py`, which checks that the shared database's functions kept their rows).
+
 Running it locally needs Postgres started with `shared_preload_libraries=plpgsql_check`;
 `ci/postgres-coverage.Dockerfile` builds one. `scripts/check.sh` then runs the same steps as the
 workflow, the two shards one after the other.

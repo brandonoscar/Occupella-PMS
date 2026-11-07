@@ -67,3 +67,15 @@ def test_a_client_that_goes_away_mid_request_is_not_answered_413():
     with pytest.raises(ClientDisconnect):
         asyncio.run(limited(scope, receive, send))
     assert sent == []
+
+
+def test_a_refused_body_is_never_echoed_back(client):
+    # The AI pen test of 11/06: a body just under the limit that isn't what the route takes was
+    # answered with the whole body again, as each error's "input", so one unauthenticated sign-in
+    # kept the server busy encoding and sending megabytes back.
+    body = json.dumps([{}] * 1_000_000).encode()
+    answer = client.post("/api/sign-in", content=body, headers={"Content-Type": "application/json"})
+
+    assert answer.status_code == 422
+    assert len(answer.content) < 2_000
+    assert all(set(error) <= {"loc", "msg", "type", "ctx"} for error in answer.json()["detail"])

@@ -480,6 +480,29 @@ def test_a_file_has_at_most_so_many_rows(client, staff, monkeypatch):
     refused(imported(client, "owners", "Name", "Owner A", "Owner B"), 422, "at most 1 rows")
 
 
+def test_a_file_wider_than_its_cells_allow_is_refused_before_it_is_read(client, staff):
+    # The AI pen test of 11/06: each row was padded to every column of the header, so a header
+    # of 150,000 names over a few thousand short rows (well under the 2 MB a file may send) held
+    # gigabytes of empty cells and took the server down for every company on it.
+    header = "Name," + ",".join(f"c{i}" for i in range(60_000))
+    lines = [f"Owner {i}" for i in range(20)]
+
+    refused(
+        imported(client, "owners", header, *lines),
+        422,
+        "a file has at most 1,000,000 cells (its rows times its columns): this one has"
+        " 20 rows of 60,001 columns",
+    )
+
+
+def test_cells_are_counted_before_any_row_is_built():
+    header = "date,amount," + ",".join(f"c{i}" for i in range(10_000))
+    content = "\n".join([header, *(["2026-01-05,1.00"] * 101)])
+
+    with pytest.raises(switching.Bad, match="this one has 101 rows of 10,002 columns"):
+        switching.rows(content, ("date", "amount"))
+
+
 # --- unpaid bills carried over ---------------------------------------------------------------
 
 BILLS = "Vendor,Owner,Property,Reference,Bill date,Due on,Amount,Memo,Approved by,Approved on"

@@ -29,7 +29,7 @@ import logging
 import os
 import secrets
 import tempfile
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -134,6 +134,7 @@ from pms.api import (
     tenant,
     throttle,
     today,
+    two_step,
     unapplied,
     unit_details,
     utilities,
@@ -142,7 +143,16 @@ from pms.api import (
     work_orders,
     year_close,
 )
-from pms.api.deps import COOKIE, DISK_FULL, Conn, Current, Staff, download, refusal
+from pms.api.deps import (
+    COOKIE,
+    CROSS_SITE,
+    DISK_FULL,
+    Conn,
+    Current,
+    Staff,
+    download,
+    refusal,
+)
 from pms.leasing import screening
 
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
@@ -208,23 +218,25 @@ class Settings:
     trusted_proxies: str = ""
 
     @classmethod
-    def from_env(cls) -> Settings:
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
+        """The settings in `environ`, the process's own environment unless another is given: an
+        app the PMS is mounted in hands it the books' settings alone (AgenticHelixis
+        docs/decisions/ADR-one-product.md, phase 3), so a DATABASE_URL of its own never leaks in."""
+        env = os.environ if environ is None else environ
         return cls(
-            database_url=os.environ["DATABASE_URL"],
-            public_url=os.environ.get("PMS_PUBLIC_URL", cls.public_url),
-            cookie_secure=os.environ.get("PMS_COOKIE_SECURE", "true").lower() != "false",
-            db_role=os.environ.get("PMS_DB_ROLE", cls.db_role),
-            static_dir=Path(os.environ["PMS_STATIC_DIR"])
-            if "PMS_STATIC_DIR" in os.environ
-            else None,
-            screening_partner=os.environ.get("PMS_SCREENING_PARTNER", ""),
-            email_sender=os.environ.get("PMS_EMAIL_SENDER", ""),
-            geocoder=os.environ.get("PMS_GEOCODER", ""),
-            payments=os.environ.get("PMS_PAYMENTS", ""),
-            nightly=os.environ.get("PMS_NIGHTLY", "on").lower() != "off",
-            webhooks=os.environ.get("PMS_WEBHOOKS", "on").lower() != "off",
-            fake_partners=os.environ.get("PMS_FAKE_PARTNERS", ""),
-            trusted_proxies=os.environ.get("PMS_TRUSTED_PROXIES", "").strip(),
+            database_url=env["DATABASE_URL"],
+            public_url=env.get("PMS_PUBLIC_URL", cls.public_url),
+            cookie_secure=env.get("PMS_COOKIE_SECURE", "true").lower() != "false",
+            db_role=env.get("PMS_DB_ROLE", cls.db_role),
+            static_dir=Path(env["PMS_STATIC_DIR"]) if "PMS_STATIC_DIR" in env else None,
+            screening_partner=env.get("PMS_SCREENING_PARTNER", ""),
+            email_sender=env.get("PMS_EMAIL_SENDER", ""),
+            geocoder=env.get("PMS_GEOCODER", ""),
+            payments=env.get("PMS_PAYMENTS", ""),
+            nightly=env.get("PMS_NIGHTLY", "on").lower() != "off",
+            webhooks=env.get("PMS_WEBHOOKS", "on").lower() != "off",
+            fake_partners=env.get("PMS_FAKE_PARTNERS", ""),
+            trusted_proxies=env.get("PMS_TRUSTED_PROXIES", "").strip(),
         )
 
     @property
@@ -294,6 +306,8 @@ class AcceptInvite(InviteToken):
     # of the founder's review of 11/03); staff give neither.
     phone: Annotated[str, Field(max_length=40)] | None = None
     texts_ok: bool = False
+    # A reset an owner or a tenant asked for while their two-step sign-in is on: its code.
+    code: Code | None = None
 
 
 class ConfirmInvite(InviteToken):
@@ -335,6 +349,9 @@ class InviteDetails(BaseModel):
     expires_at: datetime
     # The words beside "OK to text me", for a tenant or an owner; none for staff.
     text_consent: str | None = None
+    # Setting the password takes the code from their authenticator app too (a reset an owner or
+    # a tenant asked for while their two-step sign-in is on).
+    two_step: bool = False
 
 
 class Enroll(BaseModel):
@@ -537,9 +554,15 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def invalid(request: Request, error: RequestValidationError) -> Response:
-        # FastAPI's own answer, in ASCII JSON: what it can't encode as UTF-8 (a lone surrogate,
-        # echoed back as the input refused) is escaped instead of failing as a server error.
-        body = json.dumps({"detail": jsonable_encoder(error.errors())}, ensure_ascii=True)
+        # FastAPI's own answer, in ASCII JSON (what it can't encode as UTF-8, a lone surrogate, is
+        # escaped instead of failing as a server error), without the input refused: echoed back,
+        # a body just under MAX_BODY made one unauthenticated request cost the server seconds and
+        # megabytes (the AI pen test of 11/06). Where and why is what the portal reads.
+        said = [
+            {key: value for key, value in found.items() if key in ("loc", "msg", "type", "ctx")}
+            for found in error.errors()
+        ]
+        body = json.dumps({"detail": jsonable_encoder(said)}, ensure_ascii=True)
         return Response(body, status_code=422, media_type="application/json")
 
     @app.exception_handler(psycopg.DataError)
@@ -700,7 +723,7 @@ def create_app(settings: Settings) -> FastAPI:
                 phone = phones.e164(body.phone or "")
             except phones.BadPhone as bad:
                 raise HTTPException(422, str(bad)) from None
-        done = accounts.accept_invite(conn, body.token, body.password)
+        done = accounts.accept_invite(conn, body.token, body.password, body.code)
         if isinstance(done, accounts.Enrollment):
             return Enroll(totp_uri=done.totp_uri)
         if phone is not None and invited.text_consent is not None:
@@ -874,6 +897,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(dashboard.router)
     app.include_router(tax_ids.router)
     app.include_router(applicant_details.router)
+    app.include_router(two_step.router)
     # Software with an API key (ADR 0011): its own header, never a session's cookie.
     app.include_router(ai_keys.router)
     app.include_router(drafts.router)
@@ -940,9 +964,6 @@ class BodyLimit:
             await JSONResponse({"detail": TOO_BIG}, 413)(scope, receive, send)
 
 
-# What a browser's Sec-Fetch-Site says of a request from another site, or from another origin
-# of this site (a sibling subdomain).
-CROSS_SITE = frozenset({"cross-site", "same-site"})
 # Two years, this host and its subdomains (OWASP's HTTP headers cheat sheet), sent only when
 # the public URL is https; not preloaded, which is the operator's choice.
 STRICT_TRANSPORT = "max-age=63072000; includeSubDomains"

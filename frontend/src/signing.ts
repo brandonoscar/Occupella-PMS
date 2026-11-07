@@ -6,7 +6,22 @@ import type { BadgeTone } from "./components/Badge";
 // withdrawn.
 export type SigningStatus = "open" | "signed" | "paper" | "expired" | "void";
 
-export type SigningView = {
+// What a link that signs nothing any more says (its offer voided, its 30 days run out): whose it
+// was and why, never the lease (src/pms/api/signing.py ClosedSigning).
+export type ClosedSigning = {
+  company: string;
+  terms_url: string | null;
+  privacy_url: string | null;
+  status: "expired" | "void";
+};
+
+export type SigningView = ClosedSigning | OpenSigning;
+
+export function isClosed(view: SigningView): view is ClosedSigning {
+  return view.status === "void" || view.status === "expired";
+}
+
+export type OpenSigning = {
   company: string;
   // The company's own terms of use and privacy notice, as links (migration 0210).
   terms_url: string | null;
@@ -21,7 +36,7 @@ export type SigningView = {
   document_sha256: string;
   disclosure: string;
   disclosure_sha256: string;
-  status: SigningStatus;
+  status: Exclude<SigningStatus, "expired" | "void">;
   consented: boolean;
   opened: boolean;
   signed_at: string | null;

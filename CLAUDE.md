@@ -1,9 +1,11 @@
 # CLAUDE.md
 
-Free trust-accounting PMS for property management companies (PMCs). Built standalone now and
-merged into Occupella later, so it follows Occupella's conventions from day one. Phase 0 built
-the ledger schema and its tests; the app (exports, portals, leasing) now grows on top of it.
-Background: AgenticHelixis `docs/decisions/ADR-free-pms-placement.md` and
+Free trust-accounting PMS for property management companies (PMCs), and since 2026-11-05 the
+core of the hosted product: Occupella is built from a copy of this repo inside AgenticHelixis
+(`pms/`, by git subtree; AgenticHelixis `docs/decisions/ADR-one-product.md`), while this repo
+stays the free self-hosted PMS. The package keeps its name and layout so a commit applies to
+both. Phase 0 built the ledger schema and its tests; the app (exports, portals, leasing) grew on
+top of it. Background: AgenticHelixis `docs/decisions/ADR-free-pms-placement.md` and
 `docs/research/free-pms-gaps.md`. CI: `docs/CI.md`. The law each feature follows, the floor
 every state shares and the strictest state found: `docs/law.md` (founder, 2026-10-15).
 
@@ -18,8 +20,8 @@ every state shares and the strictest state found: `docs/law.md` (founder, 2026-1
 3. The repo is public under Apache-2.0 (`LICENSE`). Every dependency's license must be on the
    allowlist in `ci/licenses.toml`; never a non-commercial or source-available one.
 4. No hosted database, Supabase project, Render service or deploy from this repo. CI uses a
-   throwaway Postgres. Hosted companies run from the private `occupella-cloud` repo, under its
-   own rules, on this repo's published image unchanged (`docs/adr/0011-ai-link.md`).
+   throwaway Postgres. Hosted companies run from the private AgenticHelixis repo's copy of this
+   one (`pms/`), under that repo's rules (the founder, 2026-11-05; `docs/adr/0011-ai-link.md`).
 5. No secrets exist in Phase 0. Never put a credential on a command line or print one. No secret
    in any workflow a PR can trigger, and never `pull_request_target`.
 6. Say what you measured and what you didn't. Write NOT VERIFIED when that's the truth.
@@ -56,9 +58,10 @@ owners and vendors paid by ACH file and printed check, state and city rules from
 address, balance notices, announcements, staff to-dos, texts, listing syndication and homeowner
 associations, built in three lanes with their own migration numbers (the ADR). Since 2026-10-31
 (`docs/adr/0011-ai-link.md`): the link the AI plugs into, through this API alone: API keys that
-run as `trust_ai_agent`, drafts that staff approve before the PMS acts, events, an MCP server and
-Enable AI, which pairs a self-hosted PMS with Occupella AI once the company pays for it. The AI
-itself (prompts, models, connectors, billing, chat) is not open source and never ships here.
+run as `trust_ai_agent`, drafts that staff approve before the PMS acts, events and an MCP server,
+for any AI. Enable AI is not built (the founder, 2026-11-05): Occupella's AI comes with the
+hosted product. The AI itself (prompts, models, connectors, billing, chat) is not open source and
+never ships here.
 Since 2026-11-03 (`docs/adr/0012-portals-two.md`): the portals' second version, in sections, with
 an owner's units, tenants and repairs, messages, notices to move out, announcements and a tenant's
 own documents. Still out of scope: 1099 filing, a mailing service, selling renters insurance, reporting rent to credit
@@ -106,10 +109,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   parse (`deps.Rows`) and the audit log's rows keep the ledger's own words. Every PDF prints in
   IBM Plex Sans, embedded (`src/pms/pdf_fonts.py`): names as people wrote them (Nguyễn, O’Brien,
   Дмитрий); a letter it lacks (Arabic, Chinese...) reads "?".
-- The API (`src/pms/api`, `python -m pms.api`, FastAPI) runs every request in one transaction
-  as `trust_app` (the planner's JIT off: it cost more than it saved), on a pooled connection
-  checked as the request takes it, so one a database restart dropped is replaced (H-005),
-  committed before the answer is sent; a staff member's request names them to the audit log. Behind a proxy it trusts
+- The API (`src/pms/api`, `python -m pms.api`, FastAPI; its settings from the environment, or
+  from the one an app it is mounted in hands it, `Settings.from_env`) runs every request in one
+  transaction as `trust_app` (the planner's JIT off: it cost more than it saved), on a pooled
+  connection checked as the request takes it, so one a database restart dropped is replaced
+  (H-005), committed before the answer is sent; a staff member's request names them to the audit log. Behind a proxy it trusts
   (`PMS_TRUSTED_PROXIES`, as `compose.selfhost.yaml` sets it) a visitor's address is the one the
   proxy names, as a signature's evidence keeps it (trusting "*", the last X-Forwarded-For
   address, the one the proxy wrote: `app.NearestProxy`). It refuses to start at `.env.example`'s
@@ -144,6 +148,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
   password. Staff invite from the person's own page (staff from the staff page) and disable a
   login from Settings, Logins, for good: its sessions end and it takes no new invite. `trust_login_secrets` is never audited.
+  Since migration 20261106000200 (the founder's scope of 2026-10-22) an owner or a tenant turns
+  two-step sign-in on from their Profile (`src/pms/api/two_step.py`, `pages/TwoStepCard.tsx`): an
+  authenticator of their own, on once its first code proves it, which ends their other sessions;
+  then signing in asks for its code and turning it off takes one (a wrong code counts as a failed
+  sign-in). A reset they ask for keeps it (`trust_invites.asked_for`) and takes its code before
+  the password changes; any other invite, staff's or the operator's, turns it off. Opt-in; no
+  backup codes.
   Since migration 20261104000700 (the founder's review of 11/03, item 14) an owner or a tenant
   setting their password gives a phone, kept as E.164 (`src/pms/phones.py`) and as their contact
   phone, and says whether the company may text them, unchecked unless they check it
@@ -473,7 +484,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   never inherits it), naming no staff member. A key unknown, taken back or malformed is one 401;
   a key opens no cookie endpoint and a session no key endpoint; a key makes at most
   `ai_keys.PER_MINUTE` (120) requests a minute in a process (429, Retry-After). The everything
-  export leaves its hash out, and the AI role reads neither table. Enable AI comes later.
+  export leaves its hash out, and the AI role reads neither table. Enable AI is not built.
 - Drafts (ADR 0011's second piece, migration 20261105000300, `src/pms/api/drafts.py`): software
   with a key proposes (`POST /api/ai/drafts`, as `trust_ai_agent`, whose one write is that INSERT
   into `trust_drafts`) an email to tenants, owners or vendors, a notice from a notice template for
@@ -504,7 +515,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   once, `trust_event_subscription_revocations`); each event from then on goes to it signed
   (`Occupella-Signature: t=,v1=` HMAC-SHA256, `Occupella-Event-Id`), its address checked each
   time (https, no credentials, every resolved address public, the request sent to the address
-  checked, no redirect), retried after 1 and 5 minutes, half an hour, 2 and 12 hours, six attempts
+  checked, no redirect, 30 seconds in all, its body included, `webhooks.DEADLINE`; one cut off
+  at it is retried, never counted), retried after 1 and 5 minutes, half an hour, 2 and 12 hours, six attempts
   in all and seven days at most (`trust_event_deliveries`), by the API's own thread every 30
   seconds (`PMS_WEBHOOKS`, on unless "off") or `python -m pms.webhooks deliver`. Events and
   deliveries are not audited (each repeats an audited write); the AI role reads the events, never
@@ -530,7 +542,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Migrations use dbmate: plain SQL files in `db/migrations/`, applied ones recorded in
   `schema_migrations`. The app's pooled connections, the nightly run and the webhook courier
   refuse a database migrated by a newer PMS or missing one of the code's migrations
-  (`src/pms/schema.py`, `trust_schema_versions()`, migration 20261105001100). A committed migration is never edited (`tools/check_upgrade.py` fails the
+  (`src/pms/schema.py`, `trust_schema_versions()`, migration 20261105001100), and one whose own
+  HTTP API can reach the books: anything `anon`, `authenticated`, `authenticator` or a role they
+  may act as holds in schema public, as a Supabase project grants by default (`schema.exposed`,
+  `tests/test_api_exposure.py`; docs/install.md, "A database with its own API"). A committed migration is never edited (`tools/check_upgrade.py` fails the
   PR). Commit a new one together with `db/schema.sql` regenerated by `scripts/dump_schema.sh`;
   CI fails if it drifts.
 - Work on a branch and open a PR. Every required check (docs/CI.md) must be green before merge.
@@ -639,7 +654,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and the staff member from the session (`recorded_by`; migration 20261104000200): the database
   refuses one a named staff member records without them. A bill takes one owner's decision (migration 0041): an approval or a decline
   (`trust_bill_declines`, with a reason), a decline only before it is set aside, and one taken
-  in the owner portal only by the owner of its property account. A declined bill is never set
+  in the owner portal only by the owner of its property account and only for a bill over their
+  limit (migration 20261106000100: one within it is paid without them; a decision staff record or
+  the switching tool carries over keeps its own rules). A declined bill is never set
   aside or paid, and from the day it was declined it holds nothing back from draws and is not
   unpaid in the reports.
 - A bill's life (migration 0152, `docs/adr/0010-design-pass.md`, the founder's design pass):

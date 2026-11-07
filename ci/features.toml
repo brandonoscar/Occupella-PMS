@@ -1398,3 +1398,16 @@ operations = [
 browser = [
   "features.spec.ts › an admin enters the company's own Stripe keys in Company setup: only the last four show, and removing them goes back to the server's partner",
 ]
+
+[[feature]]
+id = "portal-two-step"
+statement = "An owner or a tenant turns two-step sign-in on from their Profile (the founder's scope of 2026-10-22): an authenticator app of their own, shown as a QR code and its key, on once its first code proves it, which signs them out everywhere else. From then on signing in asks for its code, and turning it off takes one. A password reset they ask for keeps it and asks for its code before the password changes; any other invite (staff's, the operator's) turns it off, which is how a manager vouches for someone who lost their phone. Staff keep the authenticator from their invite and reach none of it."
+operations = [
+  "GET /api/me/two-step",
+  "POST /api/me/two-step/start",
+  "POST /api/me/two-step/confirm",
+  "POST /api/me/two-step/off",
+]
+browser = [
+  "features.spec.ts › a tenant turns two-step sign-in on from their Profile, turns it off with a code, sets it up again and signs in with its code; an owner's Profile offers it too",
+]

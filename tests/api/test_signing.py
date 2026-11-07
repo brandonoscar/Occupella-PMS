@@ -93,7 +93,9 @@ def post(browser, step, token, **more):
 
 def agree(browser, token):
     seen = post(browser, "view", token).json()
-    return post(browser, "consent", token, disclosure_sha256=seen["disclosure_sha256"])
+    # A link that signs nothing shows no disclosures: what it is sent is never compared.
+    shown = seen.get("disclosure_sha256", "0" * 64)
+    return post(browser, "consent", token, disclosure_sha256=shown)
 
 
 def sign(browser, token, name="Applicant A", **more):
@@ -374,6 +376,10 @@ def test_a_link_that_ran_out_or_whose_offer_was_voided_signs_nothing(
     certificate = client.get(f"/api/leasing/offers/{made.offer}/certificate")
 
     assert old["status"] == "expired"
+    # The AI pen test of 11/06: a link that signs nothing any more still showed the home, the rent,
+    # the term and every signer's name. It now says whose it was and why, never the lease.
+    assert set(old) == set(voided) == {"company", "terms_url", "privacy_url", "status"}
+    assert old["company"] == voided["company"] != ""
     assert (ran_out.status_code, ran_out.json()["detail"]) == (
         409,
         "this signing link has run out; ask for a new one",

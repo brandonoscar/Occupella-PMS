@@ -418,6 +418,27 @@ def your_bill(conn: psycopg.Connection[Any], session: accounts.Session, bill_id:
     return str(row[0])
 
 
+def over_your_limit(conn: psycopg.Connection[Any], bill_id: UUID) -> None:
+    """An owner decides the bills over their approval limit, no others: one within it is paid
+    without asking them (the database refuses it too, migration 20261106000100)."""
+    # The agreement in force on the bill's date, as trust_agreement_on reads it (0 without one).
+    row = conn.execute(
+        "SELECT b.amount, coalesce((SELECT g.approval_limit FROM trust_management_agreements AS g"
+        " WHERE g.ledger_account_id = b.ledger_account_id AND g.starts_on <= b.bill_date"
+        " ORDER BY g.starts_on DESC LIMIT 1), 0)"
+        " FROM trust_bills AS b WHERE b.id = %s",
+        (bill_id,),
+    ).fetchone()
+    assert row is not None  # your_bill found it
+    amount, limit = row
+    if amount <= limit:
+        raise HTTPException(
+            409,
+            f"This bill is within your approval limit of ${limit:,.2f}, so your manager pays it"
+            " without asking you.",
+        )
+
+
 def decide(conn: psycopg.Connection[Any], query: str, params: tuple[Any, ...]) -> None:
     try:
         conn.execute(query, params)
@@ -434,6 +455,7 @@ def approve_bill(session: Owner, conn: Conn, bill_id: UUID, approval: Approval) 
     """The owner approves one of their bills: staff may then pay it. Over the company's amount
     (with its markup), the owner types their full name, which must be theirs."""
     name = your_bill(conn, session, bill_id)
+    over_your_limit(conn, bill_id)
     total = conn.execute(
         "SELECT b.amount + coalesce(m.amount, 0) FROM trust_bills AS b"
         " LEFT JOIN trust_bill_markups AS m ON m.bill_id = b.id WHERE b.id = %s",
@@ -467,6 +489,7 @@ def approve_bill(session: Owner, conn: Conn, bill_id: UUID, approval: Approval) 
 def decline_bill(session: Owner, conn: Conn, bill_id: UUID, decline: Decline) -> None:
     """The owner declines one of their bills: it is never paid from their money."""
     name = your_bill(conn, session, bill_id)
+    over_your_limit(conn, bill_id)
     decide(
         conn,
         "INSERT INTO trust_bill_declines"

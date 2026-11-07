@@ -87,6 +87,16 @@ class SigningView(BaseModel):
     signers: list[Cosigner]
 
 
+class ClosedSigning(BaseModel):
+    """What a link that signs nothing any more (its offer voided, its 30 days run out) says:
+    whose it was and why, never the lease, its rent or its signers (the AI pen test of 11/06)."""
+
+    company: str
+    terms_url: str | None
+    privacy_url: str | None
+    status: Literal["expired", "void"]
+
+
 @dataclass(frozen=True)
 class Link:
     id: UUID
@@ -245,9 +255,19 @@ def view_of(conn: psycopg.Connection[Any], link: Link) -> SigningView:
 
 
 @router.post("/view")
-def view(conn: Conn, asked: SigningToken) -> SigningView:
-    """The lease offer a link signs, the disclosures to agree to, and where the signer stands."""
-    return view_of(conn, link_of(conn, asked.token))
+def view(conn: Conn, asked: SigningToken) -> SigningView | ClosedSigning:
+    """The lease offer a link signs, the disclosures to agree to, and where the signer stands;
+    for a link that signs nothing any more, only whose it was and why."""
+    link = link_of(conn, asked.token)
+    if link.status == "void" or link.status == "expired":
+        legal = company.legal_of(conn, link.pmc_id)
+        return ClosedSigning(
+            company=company.name_of(conn, link.pmc_id),
+            terms_url=legal.terms_url,
+            privacy_url=legal.privacy_url,
+            status=link.status,
+        )
+    return view_of(conn, link)
 
 
 @router.post("/consent")

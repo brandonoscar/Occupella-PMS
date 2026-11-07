@@ -686,6 +686,7 @@ FEATURES = (
     "signup-phone",
     "payment-keys",
     "time-zone",
+    "portal-two-step",
 )
 
 

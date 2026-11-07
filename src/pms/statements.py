@@ -89,7 +89,9 @@ def read_amount(text: str, where: str) -> Decimal:
         amount = Decimal(cleaned)
     except InvalidOperation:
         raise StatementError(f"{where}: {text.strip()!r} is not an amount") from None
-    if not amount.is_finite() or amount != amount.quantize(CENT) or abs(amount) >= 10**9:
+    # Its size first: a value like 1E30 has more digits than quantize can hold, and raises
+    # where every other bad amount is refused with its line.
+    if not amount.is_finite() or abs(amount) >= 10**9 or amount != amount.quantize(CENT):
         raise StatementError(f"{where}: {text.strip()!r} is not an amount in cents")
     return -amount if negative else amount
 

@@ -1183,16 +1183,25 @@ def running_balance_breaks(connection, accounts) -> list[tuple]:
 
 
 @contextmanager
+def migrated_database(database_url, prefix, icu_locale=None) -> Iterator[str]:
+    """The URL of a fresh, fully migrated database on the test server, dropped afterwards."""
+    with scratch_database(database_url, prefix, icu_locale=icu_locale) as url:
+        migrated = Dbmate(shutil.which("dbmate"), MIGRATIONS, url).run("--no-dump-schema", "up")
+        assert migrated.returncode == 0, migrated.stderr
+        yield url
+
+
+@contextmanager
 def language_sorted_database(database_url) -> Iterator[psycopg.Connection]:
     """A connection to a fresh, fully migrated database that sorts text by English rules (ICU
     en-US), as most servers do: "owner a" sorts before "Owner b" there, and after it in byte
     order. The test database itself may sort either way, so a report's ordering is checked here."""
-    with scratch_database(database_url, "pms_icu", icu_locale="en-US") as url:
-        migrated = Dbmate(shutil.which("dbmate"), MIGRATIONS, url).run("--no-dump-schema", "up")
-        assert migrated.returncode == 0, migrated.stderr
-        with psycopg.connect(url, autocommit=True) as conn:
-            assert conn.execute("SELECT 'owner a' < 'Owner b'").fetchone() == (True,)
-            yield conn
+    with (
+        migrated_database(database_url, "pms_icu", icu_locale="en-US") as url,
+        psycopg.connect(url, autocommit=True) as conn,
+    ):
+        assert conn.execute("SELECT 'owner a' < 'Owner b'").fetchone() == (True,)
+        yield conn
 
 
 def wait_until_blocked(conn, pid):

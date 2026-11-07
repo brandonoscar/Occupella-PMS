@@ -6,6 +6,25 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+- **Security: a database whose own API can reach the books is refused.** On a Supabase project
+  (or any database serving PostgREST) the roles its Data API answers as are granted every table
+  and function of schema `public` by default, and through it anyone holding the public anon key
+  could have read the books and called the write paths that move money. The app, the nightly run
+  and the webhook courier now refuse such a database, saying what to revoke (docs/install.md, "A
+  database with its own API"). A self-hosted install on its own Postgres is not affected.
+- **Security: a webhook receiver that answers Connection: close and then sends its body slowly
+  is given up at 30 seconds too,** as one that sends its status slowly already was; a delivery cut
+  off there is retried, never counted as delivered.
+
+Migration `20261106000200` (two-step sign-in for owners and tenants).
+
+- **Two-step sign-in for owners and tenants:** from their Profile, an owner or a tenant sets up an
+  authenticator app (a QR code, or its key to type in) and turns two-step sign-in on with its
+  first code; anywhere else they were signed in, they are signed out. Signing in then asks for a
+  code, and turning it off takes one. A password reset they ask for keeps it and asks for the
+  code before the password changes, so an email alone gets no one in; a new invite from staff
+  turns it off, for someone who lost their phone. It is theirs to turn on: nothing requires it.
+
 The chart of accounts (the founder's pass of 11/05 and its second part of 11/06), migrations
 `20261106000205` to `20261106000243`. No posting is rewritten: every transfer, entry and balance
 stays as it was (a test applies them to a database holding books and checks).

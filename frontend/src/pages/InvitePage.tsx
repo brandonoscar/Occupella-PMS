@@ -19,6 +19,8 @@ type Details = {
   expires_at: string;
   // A tenant or an owner gives a phone and may say texts are OK, beside these words; staff neither.
   text_consent: string | null;
+  // A reset they asked for while their two-step sign-in is on: the code from their app too.
+  two_step?: boolean;
 };
 
 // An authenticator app reads the setup link as a QR code; the key is shown too, to type in.
@@ -72,6 +74,7 @@ export function InvitePage() {
         token,
         password,
         ...(details?.text_consent ? { phone, texts_ok: textsOk } : {}),
+        ...(details?.two_step ? { code } : {}),
       });
       if ("totp_uri" in done) setTotpUri(done.totp_uri);
       else signedIn(done);
@@ -124,6 +127,11 @@ export function InvitePage() {
                 <span>{details.text_consent}</span>
               </label>
             </>
+          )}
+          {details.two_step && (
+            <Field label="Code from your authenticator app" id="code" inputMode="numeric"
+              autoComplete="one-time-code" pattern="[0-9]{6}" value={code}
+              onChange={(e) => setCode(e.target.value)} required />
           )}
           <Notice tone="error">{error}</Notice>
           <Button type="submit" disabled={busy}>

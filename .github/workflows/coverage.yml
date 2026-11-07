@@ -88,9 +88,11 @@ jobs:
     # (shard 1 on main fab8ebd: 35 minutes of tests, its last 18 on the property tests dealt
     # to it), when a slower runner took #180's past 40; 46 by 11/04 (shard 2 on main 0c14a06:
     # 44 minutes of tests, its last 24 on its property tests), when slower runners stopped
-    # #210's and #211's at 50, 98% through with only the property tests left. The limit stops
-    # a hang; it is no check of the code.
-    timeout-minutes: 60
+    # #210's and #211's at 50, 98% through with only the property tests left; 59 by 11/06 (shard
+    # 2 on #215's a3df7ae, after main's chart of accounts: all 4,860 of its tests passed in 58:49,
+    # the last 31 on its property tests, and the job was stopped at 60 writing their coverage).
+    # The limit stops a hang; it is no check of the code.
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
