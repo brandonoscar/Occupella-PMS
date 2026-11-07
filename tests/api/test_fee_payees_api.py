@@ -19,6 +19,7 @@ from helpers import (
     add_tenant,
     add_unit,
     bank_sums,
+    end_lease,
     make_pmc,
     open_account,
     open_lease,
@@ -310,6 +311,54 @@ def test_the_owners_statements_and_management_fee_leave_the_companys_fees_out(
         assert income == {"income: rent": "1000.00", "income: Parking": "50.00"}, name
         assert lines["total income"] == "1050.00", name
     assert balance(conn, pmc.pmc_income) == Decimal("200.00")  # 20 + 75 + the fee of 105
+
+
+def test_a_lease_ends_credit_for_a_fee_the_company_keeps_comes_off_that_fee(
+    client, conn, staff, pmc, lease
+):
+    """A lease ended mid-month after its month was charged is credited the days after its end
+    on each charge (trust_end_lease). The credit on a monthly fee the company keeps is the
+    company's (trust_charge_payee), so it comes off that fee, never the owner's rent: before
+    migration 20261107000100 it came off the rent first, and a payment of what was owed paid the
+    company the whole fee and the owner that much less."""
+    benefit = add_type(client, "Resident benefit package", "company")
+    ok(
+        send(
+            client,
+            f"/api/rent/leases/{lease}/recurring-charges",
+            request_id=uuid.uuid4(),
+            kind="fee",
+            amount="100.00",
+            memo="Benefits",
+            starts_on=START,
+            charge_type_id=benefit,
+        )
+    )
+    ok(send(client, "/api/rent/run", due_on=START, late_fees_as_of=START), 200)
+    end_lease(conn, pmc.pmc_id, lease, START + 14 * DAY)
+    net = dict(
+        conn.execute(
+            "SELECT CASE WHEN c.recurring_charge_id IS NULL THEN 'rent' ELSE 'fee' END,"
+            " c.amount - coalesce(sum(a.amount), 0) FROM trust_charges AS c"
+            " LEFT JOIN trust_lease_end_adjustments AS x ON x.charge_id = c.id"
+            " LEFT JOIN trust_charges AS a ON a.id = x.adjustment_charge_id AND a.kind = 'credit'"
+            " WHERE c.lease_id = %s AND c.kind <> 'credit' GROUP BY c.id",
+            (lease,),
+        ).fetchall()
+    )
+    assert Decimal("0") < net["fee"] < Decimal("100.00")  # 15 days of the month
+
+    paid = pay(client, lease, str(net["rent"] + net["fee"]))
+
+    # to_owner is all that paid the lease's charges; to_company the part of it that was the fee.
+    assert (Decimal(paid["to_owner"]), Decimal(paid["to_company"])) == (
+        net["rent"] + net["fee"],
+        net["fee"],
+    )
+    assert balance(conn, pmc.pmc_income) == net["fee"]
+    assert balance(conn, pmc.owners[0].account) == net["rent"]
+    assert rent.owed(conn, lease) == 0
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
 
 
 def test_another_companys_fee_type_is_never_its_payee(client, conn, staff, pmc):

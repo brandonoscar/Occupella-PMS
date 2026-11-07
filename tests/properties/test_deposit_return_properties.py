@@ -7,6 +7,8 @@ model works out what the lease owed; the database must agree:
     owner's account matched to what is open of the rent first, then of the other charges, each
     oldest first and paid in full before the next, the lease's credits coming off the rent
     first too (migration 0093);
+  - what is kept for a fee whose type the company keeps went into the company's fee account
+    instead, and the owner's account got only the rest (migration 20261107000100);
   - what goes back is the rest, to the tenants whose deposits it was, kept from in name order;
   - every deposit is emptied, every trust bank account still ties out, and the lease owes what it
     owed less what was kept;
@@ -41,7 +43,7 @@ MONEY = st.integers(min_value=1, max_value=200_000).map(lambda c: Decimal(c) / 1
 
 CHARGES = st.lists(
     st.tuples(
-        st.sampled_from(["rent", "fee", "credit"]),
+        st.sampled_from(["rent", "fee", "company fee", "credit"]),
         MONEY,
         st.integers(min_value=0, max_value=180),  # days after Jan 1
         st.integers(min_value=0, max_value=100),  # percent of it paid (not for a credit)
@@ -74,6 +76,16 @@ def check(conn, app, deposits, charges):
         tenants.append(tenant)
         accounts.append(account)
     lease = open_lease(conn, pmc.pmc_id, unit, JAN_1, JUN_30, "1000.00", tenants)
+    company_type = conn.execute(
+        "INSERT INTO trust_charge_types (pmc_id, name) VALUES (%s, 'Admin fee') RETURNING id",
+        (pmc.pmc_id,),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO trust_charge_type_payees (pmc_id, charge_type_id, payee)"
+        " VALUES (%s, %s, 'company')",
+        (pmc.pmc_id, company_type),
+    )
+    company_fees = set()
 
     owed = Decimal(0)
     credits = Decimal(0)
@@ -85,7 +97,15 @@ def check(conn, app, deposits, charges):
             kind = "fee"  # rent is charged once per due date
         if kind == "rent":
             rent_days.add(due)
-        made = charge(conn, pmc.pmc_id, lease, due, amount, kind, f"Charge {n}")
+        if kind == "company fee":
+            made = conn.execute(
+                "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo,"
+                " charge_type_id) VALUES (%s, %s, %s, 'fee', %s, %s, %s) RETURNING id",
+                (pmc.pmc_id, lease, due, amount, f"Charge {n}", company_type),
+            ).fetchone()[0]
+            company_fees.add(made)
+        else:
+            made = charge(conn, pmc.pmc_id, lease, due, amount, kind, f"Charge {n}")
         if kind == "credit":
             owed -= amount
             credits += amount
@@ -93,7 +113,9 @@ def check(conn, app, deposits, charges):
         paid = (amount * percent / 100).quantize(Decimal("0.01"))
         if paid:
             (moved,) = transfer_batch(
-                conn, [(pmc.operating_cash, owner, paid)], datetime(2026, 1, 1, tzinfo=UTC)
+                conn,
+                [(pmc.operating_cash, pmc.pmc_income if made in company_fees else owner, paid)],
+                datetime(2026, 1, 1, tzinfo=UTC),
             )
             apply_payment(conn, pmc.pmc_id, made, moved, paid)
         owed += amount - paid
@@ -104,6 +126,7 @@ def check(conn, app, deposits, charges):
     event("all kept" if kept == held else "all returned" if kept == 0 else "kept and returned")
     event(f"{len(deposits)} tenants")
     owner_before = balance(conn, owner)
+    company_before = balance(conn, pmc.pmc_income)
 
     back = return_deposit(app, pmc.pmc_id, lease, "move-out", MOVE_OUT)
 
@@ -112,7 +135,6 @@ def check(conn, app, deposits, charges):
         "SELECT held, kept, returned FROM trust_deposit_returns WHERE lease_id = %s", (lease,)
     ).fetchone() == (held, kept, held - kept)
     assert [balance(conn, a) for a in accounts] == [0] * len(accounts)
-    assert balance(conn, owner) - owner_before == kept
     assert set(bank_sums(conn, pmc.pmc_id).values()) == {0}
     assert conn.execute("SELECT trust_lease_owed(%s)", (lease,)).fetchone() == (owed - kept,)
 
@@ -150,10 +172,26 @@ def check(conn, app, deposits, charges):
         still[made] = unpaid - min(unpaid, left)
         left -= unpaid - still[made]
     rest = kept
+    for_company = Decimal(0)
     for _, _, made, _ in bills:
         due_part = min(rest, still[made])
         assert paid_of.get(made, Decimal(0)) == due_part
         rest -= due_part
+        if made in company_fees:
+            for_company += due_part
+    # What was kept for the company's fees is the company's; the owner gets the rest.
+    assert balance(conn, pmc.pmc_income) - company_before == for_company
+    assert balance(conn, owner) - owner_before == kept - for_company
+    went_to = conn.execute(
+        "SELECT x.charge_id, a.kind FROM trust_deposit_return_lines AS x"
+        " JOIN pgledger_transfers AS t ON t.id = x.transfer_id"
+        " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id"
+        " WHERE x.lease_id = %s AND x.charge_id IS NOT NULL",
+        (lease,),
+    ).fetchall()
+    for made, kind in went_to:
+        assert kind == ("pmc_income" if made in company_fees else "owner_property"), made
+    event("kept for the company" if for_company else "nothing kept for the company")
     event("kept for a fee" if any(paid_of.get(b[2]) for b in bills if b[0]) else "no fee kept for")
 
     # The same request again: nothing more.

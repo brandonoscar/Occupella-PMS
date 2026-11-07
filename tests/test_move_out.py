@@ -126,6 +126,76 @@ def test_a_deposit_pays_what_the_lease_owes_and_the_rest_goes_back(conn, app_con
     assert set(bank_sums(conn, pmc.pmc_id).values()) == {0}
 
 
+def company_kept(conn, pmc, name):
+    """A kind of fee the company keeps (migration 20261106000220)."""
+    kind = conn.execute(
+        "INSERT INTO trust_charge_types (pmc_id, name) VALUES (%s, %s) RETURNING id",
+        (pmc.pmc_id, name),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO trust_charge_type_payees (pmc_id, charge_type_id, payee)"
+        " VALUES (%s, %s, 'company')",
+        (pmc.pmc_id, kind),
+    )
+    return kind
+
+
+def test_what_is_kept_for_the_companys_fees_goes_to_the_company(conn, app_conn, pmc, lease):
+    """A deposit kept for fees whose types the company keeps pays them into the company's fee
+    account, in the trust bank account holding the owner's money, never the owner's account
+    (migration 20261107000100): a monthly one, which counts with the rent, and a one-time one."""
+    package = company_kept(conn, pmc, "Resident benefit package")
+    admin = company_kept(conn, pmc, "Admin fee")
+    conn.execute(
+        "INSERT INTO trust_recurring_charges (pmc_id, lease_id, kind, amount, memo, starts_on,"
+        " charge_type_id) VALUES (%s, %s, 'fee', 25.00, 'Resident benefit package', %s, %s)",
+        (pmc.pmc_id, lease, JUN_1, package),
+    )
+    conn.execute("SELECT trust_charge_rent_due(%s, %s)", (pmc.pmc_id, JUN_1))
+    conn.execute("SELECT trust_charge_recurring_due(%s, %s)", (pmc.pmc_id, JUN_1))
+    charge(conn, pmc.pmc_id, lease, date(2026, 6, 10), "75.00", "fee", "Key replacement")
+    conn.execute(
+        "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo,"
+        " charge_type_id) VALUES (%s, %s, '2026-06-20', 'fee', 150.00, 'Admin fee', %s)",
+        (pmc.pmc_id, lease, admin),
+    )
+    charge(conn, pmc.pmc_id, lease, date(2026, 6, 25), "300.00", "fee", "Carpet cleaning")
+    owner = pmc.owners[0].account
+    cash = balance(conn, pmc.operating_cash)
+
+    assert return_deposit(app_conn, pmc.pmc_id, lease, "move-out-1", at(JUL_5)) == 0
+
+    # Owed 1550.00, all 1500.00 held kept: the rent and the package with it (rent first), then
+    # the fees oldest first, the carpet cleaning getting what is left.
+    assert lines(conn, lease) == [
+        (1, "Tenant 1", "Resident benefit package due 2026-06-01", Decimal("25.00")),
+        (2, "Tenant 1", "Rent due 2026-06-01", Decimal("1000.00")),
+        (3, "Tenant 1", "Admin fee", Decimal("150.00")),
+        (4, "Tenant 1", "Key replacement", Decimal("75.00")),
+        (5, "Tenant 1", "Carpet cleaning", Decimal("250.00")),
+    ]
+    went_to = conn.execute(
+        "SELECT c.memo, a.kind FROM trust_deposit_return_lines AS x"
+        " JOIN trust_charges AS c ON c.id = x.charge_id"
+        " JOIN pgledger_transfers AS t ON t.id = x.transfer_id"
+        " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id"
+        " WHERE x.lease_id = %s ORDER BY x.line_no",
+        (lease,),
+    ).fetchall()
+    assert dict(went_to) == {
+        "Resident benefit package due 2026-06-01": "pmc_income",
+        "Rent due 2026-06-01": "owner_property",
+        "Admin fee": "pmc_income",
+        "Key replacement": "owner_property",
+        "Carpet cleaning": "owner_property",
+    }
+    assert balance(conn, pmc.pmc_income) == Decimal("175.00")
+    assert balance(conn, owner) == Decimal("1325.00")
+    assert balance(conn, pmc.tenant_deposit) == 0
+    assert cash - balance(conn, pmc.operating_cash) == Decimal("1500.00")
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {0}
+
+
 def test_when_the_lease_owes_more_than_is_held_all_is_kept(conn, app_conn, pmc, lease):
     charge(conn, pmc.pmc_id, lease, JUN_1, "1000.00", "rent", "June rent")
     charge(conn, pmc.pmc_id, lease, JUL_1, "900.00", "fee", "Damage")

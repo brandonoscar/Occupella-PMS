@@ -6950,16 +6950,32 @@ CREATE FUNCTION public.trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at t
                    WHERE r.charge_id = c.id AND t.event_at < p_at
                ), 0) AS left_owing,
                EXISTS (SELECT 1 FROM trust_charge_waivers AS w
-                       WHERE w.credit_charge_id = c.id) AS waiver
+                       WHERE w.credit_charge_id = c.id) AS waiver,
+               -- A lease end's credit for a fee the company keeps (migration 20261107000100).
+               c.kind = 'credit' AND EXISTS (
+                   SELECT 1 FROM trust_lease_end_adjustments AS x
+                   JOIN trust_charges AS o ON o.id = x.charge_id
+                   WHERE x.adjustment_charge_id = c.id AND trust_charge_payee(o) = 'company'
+               ) AS company_end
         FROM mine AS c
     ),
-    -- What waivers due before the moment's day take off the charge each one names.
+    -- What waivers due before the moment's day take off the charge each one names, and so do a
+    -- lease end's credits for fees the company keeps: the company's, never the owner's rent
+    -- (migration 20261107000100).
     waived AS (
-        SELECT w.waived_charge_id AS id, sum(k.amount) AS amount
-        FROM charged AS k
-        JOIN trust_charge_waivers AS w ON w.credit_charge_id = k.id
-        WHERE k.due_on < (p_at AT TIME ZONE 'UTC')::date
-        GROUP BY w.waived_charge_id
+        SELECT x.id, sum(x.amount) AS amount
+        FROM (
+            SELECT w.waived_charge_id AS id, k.amount
+            FROM charged AS k
+            JOIN trust_charge_waivers AS w ON w.credit_charge_id = k.id
+            WHERE k.due_on < (p_at AT TIME ZONE 'UTC')::date
+            UNION ALL
+            SELECT a.charge_id, k.amount
+            FROM charged AS k
+            JOIN trust_lease_end_adjustments AS a ON a.adjustment_charge_id = k.id
+            WHERE k.company_end AND k.due_on < (p_at AT TIME ZONE 'UTC')::date
+        ) AS x
+        GROUP BY x.id
     ),
     -- Each charge after its own waivers, and what of them it could not take.
     settled AS (
@@ -6977,7 +6993,7 @@ CREATE FUNCTION public.trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at t
         SELECT x.lease_id, sum(x.amount) AS amount
         FROM (
             SELECT k.lease_id, k.amount FROM charged AS k
-            WHERE k.kind = 'credit' AND NOT k.waiver
+            WHERE k.kind = 'credit' AND NOT k.waiver AND NOT k.company_end
               AND k.due_on < (p_at AT TIME ZONE 'UTC')::date
             UNION ALL
             SELECT s.lease_id, s.spare FROM settled AS s WHERE s.spare > 0
@@ -10089,12 +10105,32 @@ BEGIN
         WHERE c.pmc_id = p_pmc_id
     ),
     waived AS (
-        -- What waivers due by the day take off the charge each one names (migration 0079).
-        SELECT w.waived_charge_id AS id, sum(k.amount) AS amount
-        FROM trust_charge_waivers AS w
-        JOIN trust_charges AS k ON k.id = w.credit_charge_id
-        WHERE w.pmc_id = p_pmc_id AND k.due_on <= p_as_of
-        GROUP BY w.waived_charge_id
+        -- What waivers due by the day take off the charge each one names (migration 0079), and
+        -- so do a lease end's credits for fees the company keeps: the company's, never the
+        -- owner's rent (migration 20261107000100; who keeps a fee is its type's payee when it
+        -- was charged, as trust_charge_payee has it, written out: the AI role runs this report).
+        SELECT g.id, sum(g.amount) AS amount
+        FROM (
+            SELECT w.waived_charge_id AS id, k.amount
+            FROM trust_charge_waivers AS w
+            JOIN trust_charges AS k ON k.id = w.credit_charge_id
+            WHERE w.pmc_id = p_pmc_id AND k.due_on <= p_as_of
+            UNION ALL
+            SELECT a.charge_id, k.amount
+            FROM trust_lease_end_adjustments AS a
+            JOIN trust_charges AS k ON k.id = a.adjustment_charge_id
+            JOIN trust_charges AS src ON src.id = a.charge_id
+            LEFT JOIN trust_recurring_charges AS rc ON rc.id = src.recurring_charge_id
+            WHERE k.pmc_id = p_pmc_id AND k.kind = 'credit' AND k.due_on <= p_as_of
+              AND coalesce((
+                  SELECT py.payee FROM trust_charge_type_payees AS py
+                  WHERE py.charge_type_id = coalesce(src.charge_type_id, rc.charge_type_id)
+                    AND py.created_at <= src.created_at
+                  ORDER BY py.id DESC
+                  LIMIT 1
+              ), 'owner') = 'company'
+        ) AS g
+        GROUP BY g.id
     ),
     settled AS (
         -- Each charge less what was paid of it and what its own waivers take (up to what was
@@ -10143,6 +10179,22 @@ BEGIN
                sum(CASE WHEN c.kind = 'credit' AND c.due_on <= p_as_of
                          AND NOT EXISTS (SELECT 1 FROM trust_charge_waivers AS w
                                          WHERE w.credit_charge_id = c.id)
+                         -- nor a lease end's credit for a fee the company keeps (above)
+                         AND NOT EXISTS (
+                             SELECT 1 FROM trust_lease_end_adjustments AS x
+                             JOIN trust_charges AS src ON src.id = x.charge_id
+                             LEFT JOIN trust_recurring_charges AS rc
+                                 ON rc.id = src.recurring_charge_id
+                             WHERE x.adjustment_charge_id = c.id
+                               AND coalesce((
+                                   SELECT py.payee FROM trust_charge_type_payees AS py
+                                   WHERE py.charge_type_id
+                                         = coalesce(src.charge_type_id, rc.charge_type_id)
+                                     AND py.created_at <= src.created_at
+                                   ORDER BY py.id DESC
+                                   LIMIT 1
+                               ), 'owner') = 'company'
+                         )
                         THEN c.amount ELSE 0 END)
                + sum(CASE WHEN c.kind <> 'credit' AND c.due_on > p_as_of THEN p.amount ELSE 0 END)
                + coalesce(sum(s.spare), 0)
@@ -11456,12 +11508,32 @@ BEGIN
         WHERE c.pmc_id = p_pmc_id
     ),
     waived AS (
-        -- What waivers due by the day take off the charge each one names (migration 0079).
-        SELECT w.waived_charge_id AS id, sum(k.amount) AS amount
-        FROM trust_charge_waivers AS w
-        JOIN trust_charges AS k ON k.id = w.credit_charge_id
-        WHERE w.pmc_id = p_pmc_id AND k.due_on <= p_as_of
-        GROUP BY w.waived_charge_id
+        -- What waivers due by the day take off the charge each one names (migration 0079), and
+        -- so do a lease end's credits for fees the company keeps: the company's, never the
+        -- owner's rent (migration 20261107000100; who keeps a fee is its type's payee when it
+        -- was charged, as trust_charge_payee has it, written out: the AI role runs this report).
+        SELECT g.id, sum(g.amount) AS amount
+        FROM (
+            SELECT w.waived_charge_id AS id, k.amount
+            FROM trust_charge_waivers AS w
+            JOIN trust_charges AS k ON k.id = w.credit_charge_id
+            WHERE w.pmc_id = p_pmc_id AND k.due_on <= p_as_of
+            UNION ALL
+            SELECT a.charge_id, k.amount
+            FROM trust_lease_end_adjustments AS a
+            JOIN trust_charges AS k ON k.id = a.adjustment_charge_id
+            JOIN trust_charges AS src ON src.id = a.charge_id
+            LEFT JOIN trust_recurring_charges AS rc ON rc.id = src.recurring_charge_id
+            WHERE k.pmc_id = p_pmc_id AND k.kind = 'credit' AND k.due_on <= p_as_of
+              AND coalesce((
+                  SELECT py.payee FROM trust_charge_type_payees AS py
+                  WHERE py.charge_type_id = coalesce(src.charge_type_id, rc.charge_type_id)
+                    AND py.created_at <= src.created_at
+                  ORDER BY py.id DESC
+                  LIMIT 1
+              ), 'owner') = 'company'
+        ) AS g
+        GROUP BY g.id
     ),
     settled AS (
         -- Each charge less what was paid of it and what its own waivers take (up to what was
@@ -11493,7 +11565,7 @@ BEGIN
     ),
     open_charges AS (
         -- Each charge due by the day with what is left of it, rent first (migration 0093).
-        SELECT s.lease_id, s.due_on, s.left_owing,
+        SELECT s.id, s.lease_id, s.due_on, s.left_owing,
                sum(s.left_owing) OVER (
                    PARTITION BY s.lease_id
                    ORDER BY s.pay_rank = 2, s.due_on, s.pay_rank, s.created_at, s.id
@@ -11510,6 +11582,22 @@ BEGIN
                sum(CASE WHEN c.kind = 'credit' AND c.due_on <= p_as_of
                          AND NOT EXISTS (SELECT 1 FROM trust_charge_waivers AS w
                                          WHERE w.credit_charge_id = c.id)
+                         -- nor a lease end's credit for a fee the company keeps (above)
+                         AND NOT EXISTS (
+                             SELECT 1 FROM trust_lease_end_adjustments AS x
+                             JOIN trust_charges AS src ON src.id = x.charge_id
+                             LEFT JOIN trust_recurring_charges AS rc
+                                 ON rc.id = src.recurring_charge_id
+                             WHERE x.adjustment_charge_id = c.id
+                               AND coalesce((
+                                   SELECT py.payee FROM trust_charge_type_payees AS py
+                                   WHERE py.charge_type_id
+                                         = coalesce(src.charge_type_id, rc.charge_type_id)
+                                     AND py.created_at <= src.created_at
+                                   ORDER BY py.id DESC
+                                   LIMIT 1
+                               ), 'owner') = 'company'
+                         )
                         THEN c.amount ELSE 0 END)
                + sum(CASE WHEN c.kind <> 'credit' AND c.due_on > p_as_of THEN p.amount ELSE 0 END)
                + coalesce(sum(s.spare), 0)
@@ -11522,7 +11610,7 @@ BEGIN
     ),
     aged AS (
         -- What is still owed of each charge once the offsets are used up on the ones before it.
-        SELECT o.lease_id, o.due_on,
+        SELECT o.id, o.lease_id, o.due_on,
                o.left_owing - least(
                    o.left_owing,
                    greatest(coalesce(f.amount, 0) - coalesce(o.owing_before, 0), 0)
@@ -11537,6 +11625,25 @@ BEGIN
         JOIN trust_leases AS l ON l.id = g.lease_id
         JOIN trust_units AS u ON u.id = l.unit_id
         WHERE u.property_id IN (SELECT a.property_id FROM accounts AS a)
+          -- A fee the company keeps is owed to the company, never the owner (migration
+          -- 20261107000100): who keeps it is its type's payee when it was charged, as
+          -- trust_charge_payee has it (written out here: the AI role runs this report and calls
+          -- no function but the reports).
+          AND coalesce((
+              SELECT py.payee
+              FROM trust_charges AS src
+              LEFT JOIN trust_recurring_charges AS rc ON rc.id = src.recurring_charge_id
+              JOIN trust_charge_type_payees AS py
+                  ON py.charge_type_id = coalesce(src.charge_type_id, rc.charge_type_id)
+                 AND py.created_at <= src.created_at
+              WHERE src.id = coalesce(
+                  (SELECT x.charge_id FROM trust_lease_end_adjustments AS x
+                   WHERE x.adjustment_charge_id = g.id),
+                  g.id
+              )
+              ORDER BY py.id DESC
+              LIMIT 1
+          ), 'owner') = 'owner'
         UNION ALL
         SELECT u.property_id, ac.due_on,
                ac.amount
@@ -11546,12 +11653,7 @@ BEGIN
                - coalesce((SELECT sum(p.amount)
                            FROM trust_assistance_payments AS p
                            JOIN pgledger_transfers AS tr ON tr.id = p.transfer_id
-                           WHERE p.assistance_charge_id = ac.id AND tr.event_at < v_cutoff), 0)
-               -- What of it bounced back is owed again (migration 0116).
-               + coalesce((SELECT sum(r.amount)
-                           FROM trust_assistance_payment_reversals AS r
-                           JOIN pgledger_transfers AS tr ON tr.id = r.reversal_id
-                           WHERE r.assistance_charge_id = ac.id AND tr.event_at < v_cutoff), 0),
+                           WHERE p.assistance_charge_id = ac.id AND tr.event_at < v_cutoff), 0),
                2
         FROM trust_assistance_charges AS ac
         JOIN trust_leases AS l ON l.id = ac.lease_id
@@ -13835,6 +13937,12 @@ DECLARE
     v_property uuid;
     v_split boolean;
     v_pay record;
+    -- What of a lease's part pays fees the company keeps, and where it goes (migration
+    -- 20261107000100).
+    v_company numeric;
+    v_cum numeric;
+    v_bank uuid;
+    v_fee_account text;
 BEGIN
     -- What the lease owes must count every payment that committed while this waited.
     IF current_setting('transaction_isolation') <> 'read committed' THEN
@@ -13984,15 +14092,99 @@ BEGIN
             WHILE v_rest > 0 AND i <= cardinality(v_leases) LOOP
                 v_piece := least(v_rest, CASE WHEN v_fees_pass THEN v_fees[i] ELSE v_rent[i] END);
                 IF v_piece > 0 THEN
-                    -- This lease's part goes to its owners by their shares, a lease moved from
-                    -- to the owner's account its move names.
+                    -- Of this lease's part, what pays fees the company keeps (trust_charge_payee,
+                    -- migration 20261106000220) goes into the company's fee account in the trust
+                    -- bank account that holds the owner's money for the lease's property, as a
+                    -- tenant's payment does (rent.split), never into an owner's account
+                    -- (migration 20261107000100): those the part reaches in the order it pays.
+                    v_company := 0;
+                    v_cum := 0;
+                    FOR v_charge IN
+                        SELECT o.open, trust_charge_payee(c) AS payee
+                        FROM trust_open_charges(p_pmc_id, v_leases[i], 'infinity') AS o
+                        JOIN trust_charges AS c ON c.id = o.charge_id
+                        WHERE (trust_pay_rank(c) = 2) = v_fees_pass
+                        ORDER BY c.due_on, trust_pay_rank(c), c.created_at, c.id
+                    LOOP
+                        EXIT WHEN v_cum >= v_piece;
+                        CONTINUE WHEN v_charge.open <= 0;
+                        v_part := least(v_piece - v_cum, v_charge.open);
+                        IF v_charge.payee = 'company' THEN
+                            v_company := v_company + v_part;
+                        END IF;
+                        v_cum := v_cum + v_part;
+                    END LOOP;
+                    IF v_company > 0 THEN
+                        -- The trust bank account of the lease's owner's account: the one its
+                        -- move names for a lease moved from, else the property's (its owners'
+                        -- shares are in one trust bank account).
+                        SELECT t.bank_account_id INTO v_bank
+                        FROM trust_ledger_accounts AS t
+                        WHERE t.pmc_id = p_pmc_id AND t.kind = 'owner_property'
+                          AND t.ledger_account_id = coalesce(
+                              v_accounts[i],
+                              (SELECT s.ledger_account_id
+                               FROM trust_ownership_on(v_property, v_day) AS s
+                               ORDER BY s.ledger_account_id COLLATE "C"
+                               LIMIT 1)
+                          );
+                        SELECT t.ledger_account_id INTO v_fee_account
+                        FROM trust_ledger_accounts AS t
+                        WHERE t.pmc_id = p_pmc_id AND t.bank_account_id = v_bank
+                          AND t.kind = 'pmc_income';
+                        IF NOT FOUND THEN
+                            v_fee_account := trust_open_ledger_account(
+                                p_pmc_id, v_bank, 'pmc_income'
+                            );
+                        END IF;
+                        SELECT t.ledger_account_id INTO v_owner_cash
+                        FROM trust_ledger_accounts AS t
+                        WHERE t.bank_account_id = v_bank AND t.kind = 'bank_cash';
+                        SELECT t.id INTO v_transfer
+                        FROM pgledger_create_transfers(
+                            ARRAY[
+                                (v_deposit.account, v_fee_account, v_company)::transfer_request,
+                                (v_owner_cash, v_deposit.cash, v_company)::transfer_request
+                            ],
+                            p_event_at,
+                            jsonb_build_object('memo', 'Security deposit kept')
+                        ) AS t
+                        WHERE t.from_account_id = v_deposit.account;
+                        v_left := v_company;
+                        FOR v_charge IN
+                            SELECT c.id, o.open
+                            FROM trust_open_charges(p_pmc_id, v_leases[i], 'infinity') AS o
+                            JOIN trust_charges AS c ON c.id = o.charge_id
+                            WHERE (trust_pay_rank(c) = 2) = v_fees_pass
+                              AND trust_charge_payee(c) = 'company'
+                            ORDER BY c.due_on, trust_pay_rank(c), c.created_at, c.id
+                        LOOP
+                            EXIT WHEN v_left <= 0;
+                            CONTINUE WHEN v_charge.open <= 0;
+                            v_part := least(v_left, v_charge.open);
+                            PERFORM trust_apply_payment(
+                                p_pmc_id, v_charge.id, v_transfer, v_part
+                            );
+                            v_line := v_line + 1;
+                            INSERT INTO trust_deposit_return_lines (
+                                lease_id, line_no, pmc_id, tenant_id, charge_id, amount,
+                                transfer_id
+                            ) VALUES (
+                                p_lease_id, v_line, p_pmc_id, v_deposit.tenant_id, v_charge.id,
+                                v_part, v_transfer
+                            );
+                            v_left := v_left - v_part;
+                        END LOOP;
+                    END IF;
+                    -- The rest of it goes to its owners by their shares, a lease moved from to
+                    -- the owner's account its move names.
                     FOR v_pay IN
                         SELECT s.ledger_account_id COLLATE "C" AS account, s.amount
-                        FROM trust_split_by_ownership(v_property, v_day, v_piece) AS s
-                        WHERE v_split AND i = cardinality(v_leases)
+                        FROM trust_split_by_ownership(v_property, v_day, v_piece - v_company) AS s
+                        WHERE v_split AND i = cardinality(v_leases) AND v_piece > v_company
                         UNION ALL
-                        SELECT v_accounts[i] COLLATE "C", v_piece
-                        WHERE NOT (v_split AND i = cardinality(v_leases))
+                        SELECT v_accounts[i] COLLATE "C", v_piece - v_company
+                        WHERE NOT (v_split AND i = cardinality(v_leases)) AND v_piece > v_company
                         ORDER BY account
                     LOOP
                         SELECT t.* INTO v_owner FROM trust_ledger_accounts AS t
@@ -14020,6 +14212,7 @@ BEGIN
                             FROM trust_open_charges(p_pmc_id, v_leases[i], 'infinity') AS o
                             JOIN trust_charges AS c ON c.id = o.charge_id
                             WHERE (trust_pay_rank(c) = 2) = v_fees_pass
+                              AND trust_charge_payee(c) <> 'company'
                             ORDER BY c.due_on, trust_pay_rank(c), c.created_at, c.id
                         LOOP
                             EXIT WHEN v_left <= 0;
@@ -38247,4 +38440,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261106110100'),
     ('20261106110200'),
     ('20261106120000'),
-    ('20261106120100');
+    ('20261106120100'),
+    ('20261107000100');
