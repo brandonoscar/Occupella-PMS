@@ -35,6 +35,50 @@ function server(reset: boolean) {
 }
 
 describe("SignInPage", () => {
+  it("says where to sign in instead of asking for a password when the server takes none", async () => {
+    window.history.replaceState(null, "", "/sign-in?pmc=p1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) =>
+        new Response(
+          JSON.stringify(
+            path === "/api/sign-in"
+              ? { pmc_id: "p1", name: "Company A", password: false }
+              : { available: false },
+          ),
+          { status: 200 },
+        ),
+      ),
+    );
+    render(<SignInPage />);
+    expect(
+      await screen.findByText(
+        "You sign in to these books through the app they are part of. Sign in there to go on.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText("Password")).toBeNull();
+  });
+
+  it("asks for a password when the server takes one", async () => {
+    window.history.replaceState(null, "", "/sign-in?pmc=p1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) =>
+        new Response(
+          JSON.stringify(
+            path === "/api/sign-in"
+              ? { pmc_id: "p1", name: "Company A", password: true }
+              : { available: false },
+          ),
+          { status: 200 },
+        ),
+      ),
+    );
+    render(<SignInPage />);
+    expect(await screen.findByLabelText("Password")).toBeTruthy();
+    expect(screen.queryByText(/through the app they are part of/)).toBeNull();
+  });
+
   it("says why when a session ended and sent the person back here (H-115)", async () => {
     window.history.replaceState(null, "", "/sign-in?pmc=p1&ended=1");
     server(false);

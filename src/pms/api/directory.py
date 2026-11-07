@@ -672,7 +672,11 @@ ORDER BY g.ledger_account_id, g.starts_on DESC
 """
 OWNER_PORTAL = """
 LEFT JOIN trust_logins AS g ON g.pmc_id = o.pmc_id AND g.owner_id = o.id
-LEFT JOIN trust_login_secrets AS s ON s.login_id = g.id
+LEFT JOIN LATERAL (
+    SELECT g.id AS login_id
+    WHERE EXISTS (SELECT 1 FROM trust_login_secrets AS x WHERE x.login_id = g.id)
+       OR EXISTS (SELECT 1 FROM trust_external_identities AS e WHERE e.login_id = g.id)
+) AS s ON true
 """
 
 

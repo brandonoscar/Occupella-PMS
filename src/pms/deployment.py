@@ -79,6 +79,29 @@ def refuse_public_url(public_url: str) -> None:
     )
 
 
+def refuse_invite_url(invite_url: str) -> None:
+    """Raise unless `invite_url` (PMS_INVITE_URL, docs/adr/0013-sign-in-through-a-host.md) is an
+    http or https address a browser opens: an invite's token is added to it as its fragment, so
+    it carries none of its own, nor a query, a user or a password, which every invite would
+    carry."""
+    parts = urlsplit(invite_url.strip())
+    if parts.username is not None or parts.password is not None:
+        why = "names a user or password, which every invite link would carry"
+    elif parts.scheme.lower() not in ("https", "http"):
+        why = "doesn't start with https:// or http://"
+    elif not parts.hostname:
+        why = "names no host"
+    elif parts.query or parts.fragment or invite_url.strip().endswith(("?", "#")):
+        why = "has a query or a fragment: an invite's token is added as the fragment"
+    else:
+        return
+    # The address itself isn't repeated: it may name a password.
+    raise PublicUrlRefused(
+        f"PMS_INVITE_URL {why}. Set it to the page people accept an invite at, like"
+        " https://app.example.com/invited, or leave it unset for the PMS's own /invite."
+    )
+
+
 class FakePartnerRefused(ValueError):
     """A fake partner named on a server reached over https, which real people use."""
 

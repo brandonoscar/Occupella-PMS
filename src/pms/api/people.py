@@ -25,6 +25,9 @@ WITH people AS (
 SELECT p.kind, p.id, p.display_name, l.email, l.id,
        CASE WHEN l.id IS NULL THEN 'no login'
             WHEN l.disabled_at IS NOT NULL THEN 'disabled'
+            -- A host app signs it in (pms.external): no password; its second step is the host's.
+            WHEN EXISTS (SELECT 1 FROM trust_external_identities AS e WHERE e.login_id = l.id)
+                THEN 'active'
             WHEN s.login_id IS NULL OR (p.kind = 'staff' AND s.totp_confirmed_at IS NULL)
                 THEN 'invited'
             ELSE 'active' END

@@ -16,8 +16,10 @@ export function pmcToSignIn(search: string, stored: string | null, server: strin
   return new URLSearchParams(search).get("pmc") ?? stored ?? server ?? "";
 }
 
-// The company the server signs in to, when it holds exactly one; both empty otherwise.
-type ServerCompany = { pmc_id: string | null; name: string | null };
+// The company the server signs in to, when it holds exactly one; both empty otherwise. And
+// whether people sign in here with a password: a server a host app signs people in to
+// (PMS_PASSWORD_SIGN_IN off, docs/adr/0013-sign-in-through-a-host.md) says no.
+type ServerCompany = { pmc_id: string | null; name: string | null; password?: boolean };
 
 export function SignInPage() {
   const [server, setServer] = useState<ServerCompany | null>(null);
@@ -75,7 +77,11 @@ export function SignInPage() {
       {new URLSearchParams(window.location.search).get("ended") === "1" && (
         <Notice tone="info">You were signed out after a while away. Sign in again to go on.</Notice>
       )}
-      {pmcId ? (
+      {server?.password === false ? (
+        <Notice tone="info">
+          You sign in to these books through the app they are part of. Sign in there to go on.
+        </Notice>
+      ) : pmcId ? (
         <Form className="flex flex-col gap-4" onSubmit={submit}>
           <Field label="Email" id="email" type="email" autoComplete="username" value={email}
             onChange={(e) => setEmail(e.target.value)} required />

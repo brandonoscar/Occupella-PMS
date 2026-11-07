@@ -421,6 +421,9 @@ EXEMPT = {
     " alone, and an id of another's is refused (tests/api/test_events.py)",
     "POST /mcp": "an MCP client calls it with an API key: every tool reads and proposes for the"
     " key's company, and another's record is refused (tests/api/test_mcp.py)",
+    "POST /api/external-sign-in": "a host app's frontend calls it after its own sign-in, with no"
+    " session here, and this app has no host (it answers 404); a company the host doesn't say"
+    " the person is staff of is refused (tests/api/test_external_sign_in_api.py)",
 }
 # Where a route refuses another company's record in its path otherwise than as not found, and
 # why (none does today).

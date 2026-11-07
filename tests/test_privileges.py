@@ -285,6 +285,10 @@ TABLES = {
     "trust_tenant_links": {"SELECT", "INSERT"},
     # A link taken back (docs/edge-cases.md U-099): staff insert it; it names who.
     "trust_tenant_unlinks": {"SELECT", "INSERT"},
+    # A login linked to the person a host app signs in (docs/adr/0013-sign-in-through-a-host.md):
+    # the app inserts it at that sign-in, through an owner's or a tenant's invite or a staff
+    # member's first sign-in.
+    "trust_external_identities": {"SELECT", "INSERT"},
     # Years closed (migration 0106): written only by trust_close_year.
     "trust_year_closes": {"SELECT"},
     # The old system's past transactions (migration 0107), never posted.
@@ -445,6 +449,8 @@ AI_NEVER_READS = {
     "trust_tenant_applicants",
     "trust_vendor_link_revocations",
     "trust_logins",
+    # Who a host app signs in as each login (docs/adr/0013-sign-in-through-a-host.md): credentials.
+    "trust_external_identities",
     "trust_invites",
     "trust_sessions",
     "trust_session_activity",

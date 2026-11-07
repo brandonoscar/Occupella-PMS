@@ -155,6 +155,27 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   sign-in). A reset they ask for keeps it (`trust_invites.asked_for`) and takes its code before
   the password changes; any other invite, staff's or the operator's, turns it off. Opt-in; no
   backup codes.
+  Since migration 20261107000200 (`docs/adr/0013-sign-in-through-a-host.md`, the founder,
+  11/07) an app that mounts the PMS may sign people in for it: it hands `Settings.verifier`
+  (`src/pms/external.py`: a `Person`, the host's id of them, a checked email, the companies they
+  are staff of and admin of, and whether a staff member passed its second step), and its
+  frontend sends its token to `POST /api/external-sign-in` (404 with no verifier; a token it
+  doesn't know is a wrong password, counted toward the same limit; a verifier that fails is a
+  503 naming only its failure's kind). The PMS still checks the company is one the host says
+  they are staff of today, after its second step, the login not disabled and the company
+  active; an owner or a tenant joins only through their invite, at its own email, which it uses
+  up. A person is linked to one login per company (`trust_external_identities`, append-only,
+  audited; the AI role never reads it), which has no password. Staff join on their first
+  sign-in as the staff login with their email or a new staff member; an admin's first sign-in
+  opens the company's books (the host's id, the starting chart and kinds of fee); and each
+  staff sign-in gives or takes the admin role as the host says (`trust_staff_roles.host_issuer`,
+  the admin role alone, of staff it signs in), never the company's last admin. Every page and
+  email asking whether a login signs in counts a host's link as a password
+  (`tests/test_external_identities.py` reads every query). `PMS_PASSWORD_SIGN_IN=off` (on unless
+  set; any other word refuses to start) turns off password sign-in, resets, accepting an invite
+  by password, staff authenticators, owners' and tenants' own two-step sign-in and staff
+  invites (403), and the sign-in page says to sign in through the app instead; `PMS_INVITE_URL`
+  (an http(s) address with no query or fragment) is where owners' and tenants' invite links go.
   Since migration 20261104000700 (the founder's review of 11/03, item 14) an owner or a tenant
   setting their password gives a phone, kept as E.164 (`src/pms/phones.py`) and as their contact
   phone, and says whether the company may text them, unchecked unless they check it

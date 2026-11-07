@@ -143,6 +143,16 @@ BUSY = "the PMS is busy just now: try again in a moment"
 # Postgres refuses every write once its disk is full (docs/edge-cases.md H-027): said in words, with
 # whom to tell, never as a server error.
 DISK_FULL = "the PMS's database is out of disk space, so nothing was saved: tell whoever runs it"
+# What a server whose password sign-in is off answers (PMS_PASSWORD_SIGN_IN; a host app signs
+# people in instead, docs/adr/0013-sign-in-through-a-host.md).
+NO_PASSWORDS_HERE = "this server signs people in through the app it is part of: sign in there"
+
+
+def passwords_on(request: Request) -> None:
+    """Refuses (403) what sets, resets or proves a password here, on a server whose password
+    sign-in is off."""
+    if not request.app.state.settings.password_sign_in:
+        raise HTTPException(403, NO_PASSWORDS_HERE)
 
 
 def connection(request: Request) -> Iterator[psycopg.Connection[Any]]:

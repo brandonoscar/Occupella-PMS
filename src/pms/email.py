@@ -331,9 +331,11 @@ BILL = """
 SELECT b.amount, g.approval_limit, v.display_name, p.display_name, b.memo, b.reference,
        b.bill_date, b.due_on, o.display_name, m.display_name,
        (SELECT l.email FROM trust_logins AS l
-        JOIN trust_login_secrets AS s ON s.login_id = l.id
         WHERE l.pmc_id = b.pmc_id AND l.kind = 'owner' AND l.owner_id = o.id
-          AND l.disabled_at IS NULL),
+          AND l.disabled_at IS NULL
+          AND (EXISTS (SELECT 1 FROM trust_login_secrets AS x WHERE x.login_id = l.id)
+               OR EXISTS (SELECT 1 FROM trust_external_identities AS e
+                          WHERE e.login_id = l.id))),
        mk.amount, mk.percent
 FROM trust_bills AS b
 JOIN trust_ledger_accounts AS t ON t.ledger_account_id = b.ledger_account_id
@@ -493,13 +495,15 @@ def write_signing_request(
 
 # --- what failed, to the company's admins ------------------------------------------------------
 
-# A staff member's active login: accepted (a password set) and not disabled.
+# A staff member's active login: one that signs in (a password set, or a host app's) and isn't
+# disabled.
 STAFF_LOGIN = """
 SELECT s.display_name, l.email
 FROM trust_staff AS s
 JOIN trust_logins AS l ON l.pmc_id = s.pmc_id AND l.kind = 'staff' AND l.staff_id = s.id
-JOIN trust_login_secrets AS x ON x.login_id = l.id
 WHERE s.pmc_id = %s AND s.id = %s AND l.disabled_at IS NULL
+  AND (EXISTS (SELECT 1 FROM trust_login_secrets AS x WHERE x.login_id = l.id)
+       OR EXISTS (SELECT 1 FROM trust_external_identities AS e WHERE e.login_id = l.id))
 """
 ADMINS = """
 SELECT s.id FROM trust_staff AS s

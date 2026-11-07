@@ -6,7 +6,20 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
-Migration `20261107000100` (fees the company keeps, the review of 11/07).
+Migrations `20261107000100` (fees the company keeps, the review of 11/07) and `20261107000200`
+(signing in through a host app).
+
+- **Signing in through a host app** (docs/adr/0013-sign-in-through-a-host.md). An app that mounts
+  the PMS, such as the hosted Occupella, may hand it a check of its own sign-in; its frontend then
+  sends `POST /api/external-sign-in` and the person gets the PMS's own session. Staff join on
+  their first sign-in, while the host says they are staff of the company and after its second
+  step; an admin's first sign-in opens a company's books; the host's admins are the books'
+  admins. Owners and tenants join through the invite staff sent them, at its own email. A server
+  of its own is unchanged: it has no host, and the endpoint answers 404.
+- **Password sign-in can be turned off** with `PMS_PASSWORD_SIGN_IN=off`, for a server a host app
+  signs people in to: no password sign-in, reset, invite password or two-step setup here, and no
+  staff invites. `PMS_INVITE_URL` sends owners' and tenants' invite links to the host's page. Both
+  are unset on a self-hosted install, which keeps signing in with passwords.
 
 - **A lease ended mid-month no longer moves the owner's rent to the company.** When a lease's end
   credited the days after it on a monthly fee the company keeps (the starting resident benefit
