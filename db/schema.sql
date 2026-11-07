@@ -4905,7 +4905,25 @@ BEGIN
           AND NOT EXISTS (SELECT 1 FROM trust_logins AS l
                           WHERE l.staff_id = s.id AND l.disabled_at IS NOT NULL)
     );
-    IF NEW.changed_by IS NULL THEN
+    IF NEW.host_issuer IS NOT NULL THEN
+        -- The host's admins are the books' admins: it changes the admin role alone, naming no
+        -- staff member, of a staff member whose login it signs in.
+        IF NEW.changed_by IS NOT NULL OR NEW.role <> 'admin' THEN
+            RAISE EXCEPTION 'trust: a host app changes only the admin role, and names no staff member'
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM trust_external_identities AS e
+            JOIN trust_logins AS l ON l.pmc_id = e.pmc_id AND l.id = e.login_id
+            WHERE e.pmc_id = NEW.pmc_id AND e.issuer = NEW.host_issuer
+              AND l.kind = 'staff' AND l.staff_id = NEW.staff_id AND l.disabled_at IS NULL
+        ) THEN
+            RAISE EXCEPTION 'trust: % signs in no login of staff member %', NEW.host_issuer,
+                NEW.staff_id
+                USING ERRCODE = 'insufficient_privilege',
+                      HINT = 'A host app changes the roles only of the staff it signs in.';
+        END IF;
+    ELSIF NEW.changed_by IS NULL THEN
         IF v_has_admin OR NEW.role <> 'admin' OR NOT NEW.granted THEN
             RAISE EXCEPTION 'trust: name the admin who changes a role'
                 USING ERRCODE = 'insufficient_privilege',
@@ -17489,6 +17507,22 @@ CREATE TABLE public.trust_expense_accounts (
 
 
 --
+-- Name: trust_external_identities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_external_identities (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    login_id uuid NOT NULL,
+    issuer text NOT NULL,
+    subject text NOT NULL,
+    linked_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_external_identities_issuer_check CHECK ((issuer ~ '^[a-z][a-z0-9_-]{0,31}$'::text)),
+    CONSTRAINT trust_external_identities_subject_check CHECK (((length(subject) >= 1) AND (length(subject) <= 255)))
+);
+
+
+--
 -- Name: trust_history_files; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19694,6 +19728,8 @@ CREATE TABLE public.trust_staff_roles (
     granted boolean NOT NULL,
     changed_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    host_issuer text,
+    CONSTRAINT trust_staff_roles_host_issuer_check CHECK ((host_issuer ~ '^[a-z][a-z0-9_-]{0,31}$'::text)),
     CONSTRAINT trust_staff_roles_role_check CHECK ((role = ANY (ARRAY['admin'::text, 'approve'::text, 'disburse'::text])))
 );
 
@@ -21599,6 +21635,30 @@ ALTER TABLE ONLY public.trust_expense_accounts
 
 ALTER TABLE ONLY public.trust_expense_accounts
     ADD CONSTRAINT trust_expense_accounts_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_external_identities trust_external_identities_login_id_issuer_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_external_identities
+    ADD CONSTRAINT trust_external_identities_login_id_issuer_key UNIQUE (login_id, issuer);
+
+
+--
+-- Name: trust_external_identities trust_external_identities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_external_identities
+    ADD CONSTRAINT trust_external_identities_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_external_identities trust_external_identities_pmc_id_issuer_subject_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_external_identities
+    ADD CONSTRAINT trust_external_identities_pmc_id_issuer_subject_key UNIQUE (pmc_id, issuer, subject);
 
 
 --
@@ -24911,6 +24971,13 @@ CREATE INDEX trust_expense_account_names_recorded_by ON public.trust_expense_acc
 
 
 --
+-- Name: trust_external_identities_pmc_login; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_external_identities_pmc_login ON public.trust_external_identities USING btree (pmc_id, login_id);
+
+
+--
 -- Name: trust_history_files_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -27382,6 +27449,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_external_identities trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_external_identities FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_history_files trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -29101,6 +29175,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_expe
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_expense_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_external_identities trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_external_identities FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -34421,6 +34502,22 @@ ALTER TABLE ONLY public.trust_expense_accounts
 
 
 --
+-- Name: trust_external_identities trust_external_identities_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_external_identities
+    ADD CONSTRAINT trust_external_identities_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_external_identities trust_external_identities_pmc_id_login_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_external_identities
+    ADD CONSTRAINT trust_external_identities_pmc_id_login_id_fkey FOREIGN KEY (pmc_id, login_id) REFERENCES public.trust_logins(pmc_id, id);
+
+
+--
 -- Name: trust_history_files trust_history_files_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -38441,4 +38538,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261106110200'),
     ('20261106120000'),
     ('20261106120100'),
-    ('20261107000100');
+    ('20261107000100'),
+    ('20261107000200');

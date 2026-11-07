@@ -57,6 +57,7 @@ from pms import (
     deployment,
     email,
     exports,
+    external,
     geocoding,
     nightly,
     payments,
@@ -216,6 +217,16 @@ class Settings:
     # the server itself reaches the app). Then a signature's evidence keeps the signer's address,
     # not the proxy's. Empty trusts no proxy: each address is the connection's.
     trusted_proxies: str = ""
+    # The books' own password sign-in, invites that set a password and password resets. "off"
+    # (PMS_PASSWORD_SIGN_IN) where a host app signs people in instead (pms.external,
+    # docs/adr/0013-sign-in-through-a-host.md); on by default.
+    password_sign_in: bool = True
+    # Where an owner's or a tenant's invite link goes, its token in the fragment: PMS_INVITE_URL
+    # (a host app's own sign-up page, ADR 0013), else PMS_PUBLIC_URL's /invite.
+    invite_url: str = ""
+    # A host app's check of its own sign-in (pms.external), handed over by the app the PMS is
+    # mounted in; a server of its own has none, and POST /api/external-sign-in answers 404.
+    verifier: external.Verifier | None = None
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -237,7 +248,16 @@ class Settings:
             webhooks=env.get("PMS_WEBHOOKS", "on").lower() != "off",
             fake_partners=env.get("PMS_FAKE_PARTNERS", ""),
             trusted_proxies=env.get("PMS_TRUSTED_PROXIES", "").strip(),
+            password_sign_in=on_or_off("PMS_PASSWORD_SIGN_IN", env.get("PMS_PASSWORD_SIGN_IN")),
+            invite_url=env.get("PMS_INVITE_URL", "").strip(),
         )
+
+    def invite_link(self, token: str) -> str:
+        """An invite's link: the token rides in the fragment, so it never reaches a server log
+        or a referrer."""
+        if self.invite_url:
+            return f"{self.invite_url}#{token}"
+        return f"{self.public_url.rstrip('/')}/invite#{token}"
 
     @property
     def origin(self) -> str:
@@ -251,6 +271,23 @@ class Settings:
         port = parts.port
         default = {"https": 443, "http": 80}.get(scheme)
         return f"{scheme}://{host}" + (f":{port}" if port is not None and port != default else "")
+
+
+def on_or_off(name: str, value: str | None) -> bool:
+    """A switch that is on unless set "off", and refused as anything else: a setting that guards
+    sign-in never reads a typo as its default."""
+    word = (value or "on").strip().lower()
+    if word not in ("on", "off"):
+        raise ValueError(f"{name} is {value!r}: set it to on or off")
+    return word == "on"
+
+
+# A server whose password sign-in is off (PMS_PASSWORD_SIGN_IN, ADR 0013) refuses staff invites.
+STAFF_FROM_HOST = (
+    "staff join through the app this server is part of: they sign in there, and aren't invited here"
+)
+NO_HOST = "this server signs in no one through another app"
+HOST_UNAVAILABLE = "your sign-in can't be checked right now: try again in a minute"
 
 
 # --- request and answer shapes ------------------------------------------------------------
@@ -278,12 +315,24 @@ class InviteToken(BaseModel):
     token: Token
 
 
+class ExternalSignIn(BaseModel):
+    # The host app's own sign-in's token (pms.external), as its frontend holds it; never logged.
+    token: Annotated[str, Field(min_length=1, max_length=8192)]
+    # The company to sign in to, when the person may sign in to more than one here.
+    pmc_id: UUID | None = None
+    # An owner's or a tenant's invite, used up by this sign-in (its link's fragment).
+    invite: Token | None = None
+
+
 class ServerCompany(BaseModel):
     # The company this server signs in to, when it holds exactly one (a company's own server, or
     # its own stack when hosted), so its sign-in page needs no ?pmc= link. Both empty on a server
     # with more companies, which names none of them.
     pmc_id: UUID | None
     name: str | None
+    # Whether people sign in here with a password (PMS_PASSWORD_SIGN_IN); when not, the sign-in
+    # page says where they sign in instead.
+    password: bool = True
 
 
 class ResetRequest(BaseModel):
@@ -364,6 +413,10 @@ class Enroll(BaseModel):
 def create_app(settings: Settings) -> FastAPI:
     # An address no browser opens it at refuses every change (pms.deployment).
     deployment.refuse_public_url(settings.public_url)
+    if settings.invite_url:
+        deployment.refuse_invite_url(settings.invite_url)
+    if settings.verifier is not None:
+        external.refuse_issuer(settings.verifier.issuer)
     # A server at an https address is one real people use: it refuses the test partners.
     deployment.refuse_fakes(
         settings.public_url,
@@ -549,6 +602,8 @@ def create_app(settings: Settings) -> FastAPI:
             accounts.SignInRefused: 401,
             accounts.CodeNeeded: 401,
             accounts.CompanyNotActive: 403,
+            external.SecondStepNeeded: 403,
+            external.BooksNotOpen: 403,
         }.get(type(error), 422)
         return JSONResponse({"detail": str(error)}, status)
 
@@ -628,16 +683,49 @@ def create_app(settings: Settings) -> FastAPI:
         rows = conn.execute(
             "SELECT pmc_id, display_name FROM trust_pmcs ORDER BY pmc_id LIMIT 2"
         ).fetchall()
+        password = settings.password_sign_in
         if len(rows) != 1:
-            return ServerCompany(pmc_id=None, name=None)
-        return ServerCompany(pmc_id=rows[0][0], name=rows[0][1])
+            return ServerCompany(pmc_id=None, name=None, password=password)
+        return ServerCompany(pmc_id=rows[0][0], name=rows[0][1], password=password)
+
+    def passwords_on() -> None:
+        if not settings.password_sign_in:
+            raise HTTPException(403, deps.NO_PASSWORDS_HERE)
 
     @app.post("/api/sign-in")
     def sign_in(body: SignIn, request: Request, response: Response, conn: Conn) -> Me:
+        passwords_on()
         address = throttle.address_of(request)
         throttle.refuse_if_waiting(app.state.sign_in_failures, address, "failed sign-ins")
         try:
             signed = accounts.sign_in(conn, body.pmc_id, body.email, body.password, body.code)
+        except accounts.SignInRefused:
+            app.state.sign_in_failures.hit(address)
+            raise
+        return signed_in(response, signed, conn)
+
+    @app.post("/api/external-sign-in")
+    def external_sign_in(
+        body: ExternalSignIn, request: Request, response: Response, conn: Conn
+    ) -> Me:
+        """A session for the person a host app signed in (pms.external, ADR 0013): its token
+        checked by the host's own verifier, then as a sign-in here is. Throttled with the
+        password sign-ins: a token refused counts as a failed sign-in."""
+        verifier = settings.verifier
+        if verifier is None:
+            raise HTTPException(404, NO_HOST)
+        address = throttle.address_of(request)
+        throttle.refuse_if_waiting(app.state.sign_in_failures, address, "failed sign-ins")
+        try:
+            person = verifier.verify(body.token)
+        except Exception as failed:  # noqa: BLE001 -- the host's own code; never a server error
+            # Its kind alone: the message might carry the token.
+            log.warning("the host's verifier failed: %s", type(failed).__name__)
+            raise HTTPException(503, HOST_UNAVAILABLE, headers={"Retry-After": "30"}) from None
+        try:
+            if person is None:
+                raise accounts.SignInRefused()
+            signed = external.sign_in(conn, verifier.issuer, person, body.pmc_id, body.invite)
         except accounts.SignInRefused:
             app.state.sign_in_failures.hit(address)
             raise
@@ -656,11 +744,12 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.post("/api/invites", status_code=201)
     def invite(body: NewInvite, session: Staff, conn: Conn) -> InviteLink:
+        if body.kind == "staff" and not settings.password_sign_in:
+            raise HTTPException(403, STAFF_FROM_HOST)
         made = accounts.create_invite(
             conn, session.pmc_id, body.kind, body.person_id, body.email, session.person_id
         )
-        # The token rides in the fragment, so it never reaches a server log or a referrer.
-        url = f"{settings.public_url.rstrip('/')}/invite#{made.token}"
+        url = settings.invite_link(made.token)
         # Emailed too when the server sends email (ADR 0007); the link is never kept in the
         # outbox, so the page still shows it once, in case the email doesn't arrive.
         emailed = app.state.email is not None
@@ -680,13 +769,14 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/api/password-reset")
     def reset_available() -> ResetAvailable:
-        return ResetAvailable(available=app.state.email is not None)
+        return ResetAvailable(available=app.state.email is not None and settings.password_sign_in)
 
     @app.post("/api/password-reset", status_code=202)
     def ask_reset(body: ResetRequest, request: Request, conn: Conn) -> ResetAsked:
         """Emails an owner or a tenant a link to set a new password (ADR 0007). The answer is the
         same whether or not the email has a login, so it tells no one who does. An address asks
         at most throttle.RESETS times an hour."""
+        passwords_on()
         address = throttle.address_of(request)
         throttle.refuse_if_waiting(app.state.resets_asked, address, "password resets")
         app.state.resets_asked.hit(address)
@@ -714,6 +804,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.post("/api/invites/accept", response_model=None)
     def accept_invite(body: AcceptInvite, response: Response, conn: Conn) -> Me | Enroll:
+        passwords_on()
         invited = accounts.view_invite(conn, body.token)
         phone = None
         if invited.text_consent is not None:
@@ -742,6 +833,7 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.post("/api/invites/confirm")
     def confirm_invite(body: ConfirmInvite, response: Response, conn: Conn) -> Me:
+        passwords_on()
         return signed_in(response, accounts.confirm_invite(conn, body.token, body.code), conn)
 
     @app.post("/api/logins/{login_id}/disable", status_code=204)

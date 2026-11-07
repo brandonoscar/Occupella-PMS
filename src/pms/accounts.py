@@ -306,6 +306,23 @@ def _open_invite(conn: psycopg.Connection[Any], token: str, lock: bool) -> Any:
     return row
 
 
+def open_invite(conn: psycopg.Connection[Any], token: str) -> Any:
+    """The invite's row, locked, if it can still be used (_open_invite): its id, PMC, login,
+    kind, email, expiry and whether the person asked for it. For a host app's sign-in
+    (pms.external), which uses an owner's or a tenant's invite up without a password."""
+    return _open_invite(conn, token, lock=True)
+
+
+def finish_invite(conn: psycopg.Connection[Any], invite_id: UUID, login_id: UUID) -> Signed:
+    """The invite used up, the login's other sessions ended, and a new one (pms.external)."""
+    return _finish_invite(conn, invite_id, login_id)
+
+
+def new_session(conn: psycopg.Connection[Any], login_id: UUID) -> Signed:
+    """A new session for the login (pms.external: the host signed the person in)."""
+    return _new_session(conn, login_id)
+
+
 def names(conn: psycopg.Connection[Any], login_id: UUID) -> tuple[str, str]:
     """The person's name and their PMC's."""
     name, pmc_name = _one(

@@ -41,11 +41,17 @@ def test_a_server_with_one_company_names_it(one_company_server, monkeypatch, cap
     )
     with TestClient(create_app(settings)) as browser:
         # A server that holds no company yet names none.
-        assert browser.get("/api/sign-in").json() == {"pmc_id": None, "name": None}
+        assert browser.get("/api/sign-in").json() == {
+            "pmc_id": None,
+            "name": None,
+            "password": True,
+        }
         company = setup_company(one_company_server, monkeypatch, capsys)
         assert browser.get("/api/sign-in").json() == {
             "pmc_id": company,
             "name": "Synthetic Solo PM",
+            # People sign in here with a password (PMS_PASSWORD_SIGN_IN, ADR 0013).
+            "password": True,
         }
 
 
@@ -68,13 +74,13 @@ def test_a_server_with_many_companies_names_none(client, conn):
     make_pmc(conn), make_pmc(conn)
     answer = client.get("/api/sign-in")
     assert answer.status_code == 200
-    assert answer.json() == {"pmc_id": None, "name": None}
+    assert answer.json() == {"pmc_id": None, "name": None, "password": True}
 
 
 def test_a_signed_in_person_gets_the_same_answer(client, conn, app_conn, pmc):
     make_pmc(conn)
     join_as_staff(client, conn, app_conn, pmc)
-    assert client.get("/api/sign-in").json() == {"pmc_id": None, "name": None}
+    assert client.get("/api/sign-in").json() == {"pmc_id": None, "name": None, "password": True}
 
 
 def test_it_only_answers_reads(client):

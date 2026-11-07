@@ -359,9 +359,11 @@ class SetOnCall(BaseModel):
 ON_CALL = """
 SELECT s.id, s.display_name, coalesce(o.on_call, false),
        EXISTS (SELECT 1 FROM trust_logins AS l
-               JOIN trust_login_secrets AS x ON x.login_id = l.id
                WHERE l.pmc_id = s.pmc_id AND l.kind = 'staff' AND l.staff_id = s.id
-                 AND l.disabled_at IS NULL)
+                 AND l.disabled_at IS NULL
+                 AND (EXISTS (SELECT 1 FROM trust_login_secrets AS x WHERE x.login_id = l.id)
+                      OR EXISTS (SELECT 1 FROM trust_external_identities AS e
+                                 WHERE e.login_id = l.id)))
 FROM trust_staff AS s
 LEFT JOIN LATERAL (
     SELECT o.on_call FROM trust_on_call_staff AS o

@@ -11,13 +11,16 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
 from pms import accounts
-from pms.api.deps import COOKIE, Conn, Portal
+from pms.api.deps import COOKIE, Conn, Portal, passwords_on
 
 router = APIRouter(prefix="/api/me/two-step")
+# A server whose password sign-in is off (PMS_PASSWORD_SIGN_IN) leaves the second step to the host
+# app people sign in through (docs/adr/0013-sign-in-through-a-host.md): nothing here changes it.
+NO_PASSWORDS = [Depends(passwords_on)]
 
 # Six digits, as an authenticator app shows them (the sign-in's own Code).
 Code = Annotated[str, Field(pattern=r"^\s*\d{6}\s*$")]
@@ -45,18 +48,18 @@ def two_step(session: Portal, conn: Conn) -> TwoStep:
     return TwoStep(on=accounts.two_step_on(conn, session))
 
 
-@router.post("/start")
+@router.post("/start", dependencies=NO_PASSWORDS)
 def start(body: Nothing, session: Portal, conn: Conn) -> Started:
     return Started(uri=accounts.start_two_step(conn, session))
 
 
-@router.post("/confirm")
+@router.post("/confirm", dependencies=NO_PASSWORDS)
 def confirm(body: WithCode, request: Request, session: Portal, conn: Conn) -> TwoStep:
     accounts.confirm_two_step(conn, session, body.code, request.cookies.get(COOKIE, ""))
     return TwoStep(on=True)
 
 
-@router.post("/off")
+@router.post("/off", dependencies=NO_PASSWORDS)
 def off(body: WithCode, session: Portal, conn: Conn) -> TwoStep:
     accounts.stop_two_step(conn, session, body.code)
     return TwoStep(on=False)

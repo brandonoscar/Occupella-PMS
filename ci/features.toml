@@ -15,6 +15,7 @@
 "GET /health" = "the server's health check: the self-host image and the browser run wait for it, and no person uses it"
 "POST /api/payments/webhook/{name}" = "the payments partner's server reports what the bank did; no person calls it, and the browser run uses the fake partner's page instead (tests/api/test_online_payments_api.py signs reports as Stripe does)"
 "POST /api/payments/webhook/{name}/{pmc_id}" = "a company's own Stripe account reports what the bank did; no person calls it, and the browser run uses the fake partner's page instead (tests/api/test_payment_keys_api.py signs reports as Stripe does)"
+"POST /api/external-sign-in" = "a host app's frontend calls it after its own sign-in (docs/adr/0013-sign-in-through-a-host.md); the PMS's own pages never do, and the browser run has no host (tests/api/test_external_sign_in_api.py signs in through a stand-in host)"
 
 [[feature]]
 id = "logins"
