@@ -6,6 +6,21 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+Migration `20261107000100` (fees the company keeps, the review of 11/07).
+
+- **A lease ended mid-month no longer moves the owner's rent to the company.** When a lease's end
+  credited the days after it on a monthly fee the company keeps (the starting resident benefit
+  package), the credit came off the owner's rent instead of the fee, and the tenant's next payment
+  paid the company the whole fee and the owner that much less. The credit now comes off the fee,
+  in payments, prepaid rent used, a deposit kept, the delinquency report and the owner's balance
+  sheet.
+- **A deposit kept at move-out for a fee the company keeps goes to the company,** into its fee
+  account in the trust bank account holding the owner's money, as a tenant's payment of it does;
+  before, all of what a deposit kept went to the owner's account.
+- **An owner's balance sheet leaves fees the company keeps out of what tenants owe the owner.**
+- **Applying and refunding the same unapplied cash at once wait for each other,** where they
+  could deadlock and answer a server error.
+
 - **Security: a database whose own API can reach the books is refused.** On a Supabase project
   (or any database serving PostgREST) the roles its Data API answers as are granted every table
   and function of schema `public` by default, and through it anyone holding the public anon key
