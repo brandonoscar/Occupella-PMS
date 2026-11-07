@@ -451,7 +451,7 @@ def test_the_admin_role_follows_the_hosts_and_the_company_keeps_one(hosted, host
         kept = sign_in(hosted, "second")
     assert kept.status_code == 200
     assert "admin" in kept.json()["roles"]
-    assert "they are its last" in caplog.text
+    assert "their company's last" in caplog.text
 
 
 # --- owners and tenants, through their invite -----------------------------------------------
@@ -702,3 +702,27 @@ def test_an_invite_url_a_browser_cant_take_a_token_at_is_refused(settings, url):
 
 def test_an_invite_url_with_a_path_is_taken(settings):
     create_app(dataclasses.replace(settings, invite_url="https://host.test/invited"))
+
+
+def test_nothing_a_person_or_a_request_says_reaches_the_log(hosted, host, caplog):
+    """CodeQL's log injection (alerts 60 and 61): a name, an email, a company's name or a token
+    with a line break in it would write a log line of its own. The log carries fixed words and
+    the ids the database made, never those."""
+    company = uuid.uuid4()
+    forged = "Company A\nINFO forged: an admin signed in"
+    host.signs_in(
+        "t\nforged-token", email_for("admin"), {company: admin_of(forged)}, name="Staff\nforged"
+    )
+    second = host.signs_in("second", email_for("staff"), {company: staff_of(forged)})
+    with caplog.at_level(logging.DEBUG):
+        assert sign_in(hosted, "t\nforged-token").status_code == 200
+        assert sign_in(hosted, "second").status_code == 200
+        host.people["t"] = host.people.pop("t\nforged-token")
+        host.people["t"] = dataclasses.replace(host.people["t"], staff_of={company: staff_of()})
+        host.people["second"] = dataclasses.replace(second, staff_of={company: staff_of()})
+        assert sign_in(hosted, "t").status_code == 200  # the company's last admin, kept
+
+    said = [record.getMessage() for record in caplog.records]
+    assert any("opened the books of company" in line for line in said)
+    assert any("their company's last" in line for line in said)
+    assert not [line for line in said if "forged" in line or "\n" in line]

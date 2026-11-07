@@ -137,7 +137,7 @@ def sign_in(
             _sync_admin(conn, issuer, pmc_id, staff_id, membership.admin)
         return accounts.new_session(conn, login_id)
     membership = _staff_of(person, pmc_id)
-    if _books_open(conn, issuer, pmc_id, membership):
+    if _books_open(conn, pmc_id, membership):
         _active(conn, pmc_id)
     login_id, staff_id = _staff_login(conn, issuer, person, email, pmc_id)
     conn.execute(
@@ -188,22 +188,23 @@ def _active(conn: psycopg.Connection[Any], pmc_id: UUID) -> None:
         raise accounts.CompanyNotActive(accounts.NOT_ACTIVE[status])
 
 
-def _books_open(
-    conn: psycopg.Connection[Any], issuer: str, pmc_id: UUID, membership: Membership
-) -> bool:
+def _books_open(conn: psycopg.Connection[Any], pmc_id: UUID, membership: Membership) -> bool:
     """Whether the company's books were open already. Its admin's first sign-in opens them."""
     conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"open books {pmc_id}",))
     if conn.execute("SELECT 1 FROM trust_pmcs WHERE pmc_id = %s", (pmc_id,)).fetchone():
         return True
     if not membership.admin:
         raise BooksNotOpen(NOT_OPEN)
-    conn.execute(
-        "INSERT INTO trust_pmcs (pmc_id, display_name) VALUES (%s, %s)",
+    opened = _value(
+        conn,
+        "INSERT INTO trust_pmcs (pmc_id, display_name) VALUES (%s, %s) RETURNING pmc_id",
         (pmc_id, membership.company_name.strip() or COMPANY),
     )
     books.add_starting_chart(conn, pmc_id)
     books.add_starting_charge_types(conn, pmc_id)
-    log.info("opened the books of company %s for %s", pmc_id, issuer)
+    # Fixed words and the id the database stored: nothing the request or the host's person said
+    # (a name or an id with a line break would forge a log line).
+    log.info("opened the books of company %s at its admin's first sign-in", opened)
     return False
 
 
@@ -251,12 +252,12 @@ def _sync_admin(
                 (pmc_id, staff_id, admin, issuer),
             )
     except psycopg.errors.CheckViolation:
+        # Fixed words and the staff member's id, which the database made: nothing the request or
+        # the host's person said.
         log.warning(
-            "%s says staff member %s of company %s is no admin, but they are its last: the books"
-            " keep them an admin until another is",
-            issuer,
+            "the host says staff member %s is no admin, but they are their company's last: the"
+            " books keep them an admin until another is",
             staff_id,
-            pmc_id,
         )
 
 
