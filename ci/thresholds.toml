@@ -140,3 +140,15 @@ download_p95_ms_max = 10000
 # 2026-10-25 on 4 cores: 48 points in 227 s (3.5 to 6.7 s each), well inside the job's 30
 # minutes.
 nightly_bases = 50
+
+[enterprise]
+# PLACEHOLDER: set from the first measured run (tools/enterprise.py).
+import_seconds_max = 99999
+opening_seconds_max = 99999
+nightly_run_seconds_max = 99999
+report_seconds_max = 99999
+back_up_seconds_max = 99999
+restore_seconds_max = 99999
+soak_p95_growth_max = 99
+soak_memory_growth_max = 99
+soak_connections_growth_max = 99
