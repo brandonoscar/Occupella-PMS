@@ -22,16 +22,21 @@ PMS_PUBLIC_URL is the address people open the PMS at (docs/install.md, step 2). 
 browser sends is refused unless it comes from that origin, and every emailed link starts with it,
 so a server at the wrong one lets nobody sign in and emails links that go nowhere
 (docs/edge-cases.md H-059, H-060). A server refuses to start at .env.example's placeholder, or at
-anything but an http or https origin: the portal is served at the root, so a path, a query or a
-fragment never works either.
+anything but an http or https address. It may carry a path, where an app mounts the PMS
+(Occupella's hosted app serves it at https://app.occupella.com/books, and the portal is built for
+that path, frontend/src/base.ts), but never a query or a fragment: every link is the address and
+then a path of its own.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from urllib.parse import urlsplit
 
 FAKE = "fake"
+# A path an app mounts the PMS at, like /books or /pms/portal: words between single slashes.
+PLAIN_PATH = re.compile(r"(/[A-Za-z0-9_~-]+(\.[A-Za-z0-9_~-]+)*)*/?")
 ALLOW = "allow"
 
 # Each setting that may name a fake partner.
@@ -48,7 +53,8 @@ class PublicUrlRefused(ValueError):
 
 
 def refuse_public_url(public_url: str) -> None:
-    """Raise unless `public_url` is an http or https origin other than the example's."""
+    """Raise unless `public_url` is an http or https address other than the example's: an
+    origin, maybe with a plain path (/books), never a query or a fragment."""
     url = public_url.strip()
     if url.rstrip("/").lower() == PLACEHOLDER:
         raise PublicUrlRefused(
@@ -68,13 +74,15 @@ def refuse_public_url(public_url: str) -> None:
         why = "starts with https:// or http://"
     elif not parts.hostname:
         why = "names no host"
-    elif parts.path not in ("", "/") or parts.query or parts.fragment:
-        why = "is served at the root"
+    elif parts.query or parts.fragment or "#" in url or url.rstrip().endswith("?"):
+        why = "carries a query or a fragment, which every link would be cut by"
+    elif not PLAIN_PATH.fullmatch(parts.path):
+        why = "has a path that isn't plain words between slashes"
     else:
         return
     raise PublicUrlRefused(
         f"PMS_PUBLIC_URL {public_url!r} is not an address a browser opens the PMS at: it"
-        f" {why}. Set it to the origin people open it at, like https://rentals.example.com"
+        f" {why}. Set it to the address people open it at, like https://rentals.example.com"
         " (docs/install.md, step 2)."
     )
 

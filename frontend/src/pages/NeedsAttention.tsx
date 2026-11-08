@@ -16,6 +16,7 @@ import { ApproveDrawsForm, ReminderForm, approveQuestion } from "./AttentionActi
 import { PayForm } from "./BillForms";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
+import { withBase } from "../base";
 
 type Panel = { title: string; action: Action };
 
@@ -120,7 +121,7 @@ export function GoLink({
 }) {
   return (
     <a
-      href={href}
+      href={withBase(href)}
       className={className}
       onClick={(event) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;

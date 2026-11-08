@@ -4,6 +4,7 @@ import type { Me } from "../api";
 import { api } from "../api";
 import { navigate, usePath } from "../router";
 import { SearchBox } from "./SearchBox";
+import { withBase } from "../base";
 
 // The name, set as occupella.com and Occupella's app set it: lowercase "occupella" in Fraunces.
 export function Wordmark() {
@@ -214,7 +215,7 @@ function RailLink({
   const Icon = item.icon;
   return (
     <a
-      href={item.href}
+      href={withBase(item.href)}
       aria-current={active ? "page" : undefined}
       className={`${inset ? INSET_ROW : RAIL_ROW} ${active ? ACTIVE_ROW : IDLE_ROW}`}
       onClick={(event) => {

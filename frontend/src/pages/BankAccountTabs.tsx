@@ -19,6 +19,7 @@ import { companyDate, companyDay, day, money, usDate } from "../money";
 import type { Paged } from "../rentals";
 import { navigate } from "../router";
 import { GoLink } from "./NeedsAttention";
+import { withBase } from "../base";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -261,7 +262,7 @@ export function DepositsTab({ bankId }: { bankId: string }) {
                     <td className="text-ink-muted">{d.recorded_by}</td>
                     <td>{d.matched ? <Badge tone="positive">Matched</Badge> : <Badge tone="info">Not matched yet</Badge>}</td>
                     <td className="text-right">
-                      <a href={`/api/bank-accounts/deposits/${d.id}/slip`} className={LINK}>Slip (PDF)</a>
+                      <a href={withBase(`/api/bank-accounts/deposits/${d.id}/slip`)} className={LINK}>Slip (PDF)</a>
                     </td>
                   </tr>
                 ))}

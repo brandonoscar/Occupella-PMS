@@ -33,6 +33,7 @@ import { Form } from "../components/Form";
 import { OwnerHeldOutcomeForm } from "./OwnerHeldForms";
 import { ownerHeldLine, settledLine, stillHeldCents } from "../ownerHeld";
 import { fromCents } from "../reconcile";
+import { withBase } from "../base";
 
 // Staff's move-outs: end the lease, inspect it on the way in and out, charge what the tenants
 // owe for cleaning or damage with its receipts, and return their deposits by the day they are
@@ -294,7 +295,7 @@ function FeeRow({ leaseId, fee, record }: { leaseId: string; fee: Fee; record: R
         <span>{feeLabel(fee)}: {money(fee.amount)}</span>
         {needsReceipt(fee) && <Badge tone="caution">Receipt needed</Badge>}
         {fee.receipts.map((r) => (
-          <a key={r.id} className="text-link underline" href={`/api/documents/${r.id}/file`}>{r.title}</a>
+          <a key={r.id} className="text-link underline" href={withBase(`/api/documents/${r.id}/file`)}>{r.title}</a>
         ))}
       </div>
       <Form

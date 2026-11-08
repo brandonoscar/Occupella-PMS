@@ -20,6 +20,7 @@ import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
+import { withBase } from "../base";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 const TEXTAREA = "rounded-sm border border-line-strong bg-sunken px-3 py-2 text-base text-ink";
@@ -135,11 +136,11 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
             <Item label="Renews"><GoLink href={`/leases/${found.renews_lease_id}`} className={LINK}>The lease</GoLink></Item>
           )}
           <Item label="Document">
-            <a className={LINK} href={`/api/leasing/offers/${encodeURIComponent(id)}/document`}>{found.document_title} (PDF)</a>
+            <a className={LINK} href={withBase(`/api/leasing/offers/${encodeURIComponent(id)}/document`)}>{found.document_title} (PDF)</a>
           </Item>
           {found.sent && (
             <Item label="Signing certificate">
-              <a className={LINK} href={`/api/leasing/offers/${encodeURIComponent(id)}/certificate`}>Signing certificate (PDF)</a>
+              <a className={LINK} href={withBase(`/api/leasing/offers/${encodeURIComponent(id)}/certificate`)}>Signing certificate (PDF)</a>
             </Item>
           )}
         </dl>

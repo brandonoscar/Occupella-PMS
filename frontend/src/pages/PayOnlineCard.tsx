@@ -10,6 +10,7 @@ import { latest } from "../latest";
 import { money, usDate } from "../money";
 import type { FeeQuote, PayView, Started } from "../payments";
 import { NO_HOW_TO_PAY, PAUSED, STATUS, feeLine, payable } from "../payments";
+import { leave } from "../router";
 
 // A tenant pays a lease online (src/pms/api/online_payments.py): what they choose, the lease's
 // balance to start with, on the payments partner's page, which takes their bank account; the PMS
@@ -65,7 +66,7 @@ export function PayOnlineCard({ leaseId }: { leaseId: string }) {
       const started = await api.post<Started>(`/api/payments/leases/${encodeURIComponent(leaseId)}/checkout`, {
         amount: amount.trim(),
       });
-      window.location.assign(started.url);
+      leave(started.url);
     } catch (failed) {
       show(failed);
     }

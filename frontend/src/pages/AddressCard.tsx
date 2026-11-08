@@ -9,6 +9,7 @@ import { SidePanel } from "../components/SidePanel";
 import type { Location, PropertyAddress } from "../rentals";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
+import { withBase } from "../base";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -45,7 +46,7 @@ export function AddressCard({ propertyId, address, location, canLocate, onChange
         {location !== null && (
           <p className="text-sm text-ink-muted" data-testid="property-location">
             {`On the map at ${location.latitude}, ${location.longitude}, as the geocoder matched it: ${location.matched}. `}
-            <a className={LINK} href={location.map_url} target="_blank" rel="noopener noreferrer">
+            <a className={LINK} href={withBase(location.map_url)} target="_blank" rel="noopener noreferrer">
               Open in OpenStreetMap
             </a>
           </p>

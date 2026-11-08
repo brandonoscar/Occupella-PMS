@@ -590,7 +590,7 @@ def create_app(settings: Settings) -> FastAPI:
         response.headers["Permissions-Policy"] = PERMISSIONS_POLICY
         if https:
             response.headers["Strict-Transport-Security"] = STRICT_TRANSPORT
-        if request.url.path.startswith("/api/"):
+        if deps.app_path(request).startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
         return response
 

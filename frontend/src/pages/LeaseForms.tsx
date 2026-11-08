@@ -32,6 +32,7 @@ import { sharesLine } from "../rentals";
 import type { Named, Portfolio } from "../setup";
 import { ChargeTypeSelect, useChargeTypes } from "./ChargeTypes";
 import { latest } from "../latest";
+import { withBase } from "../base";
 
 // The forms of a lease's rent work (pages/LeasePage.tsx), each one thing recorded: a payment, a
 // fee or credit, one every month, a new rent, a deposit; and a payment's row, which can bounce,
@@ -55,10 +56,10 @@ export function PaymentRow({ payment, record }: { payment: RentLease["payments"]
         )}
         {payment.note && <span className="block text-sm text-ink-muted">{`Note: ${payment.note}`}</span>}
         <span className="flex flex-wrap gap-3">
-          <a href={`/api/rent/payments/${encodeURIComponent(payment.transfer_id)}/receipt`}
+          <a href={withBase(`/api/rent/payments/${encodeURIComponent(payment.transfer_id)}/receipt`)}
             className="text-sm text-iris hover:text-iris-hover hover:underline">Receipt (PDF)</a>
           {(payment.attachments ?? []).map((file) => (
-            <a key={file} href={`/api/documents/${file}/file`}
+            <a key={file} href={withBase(`/api/documents/${file}/file`)}
               className="text-sm text-iris hover:text-iris-hover hover:underline">Check photo or PDF</a>
           ))}
         </span>

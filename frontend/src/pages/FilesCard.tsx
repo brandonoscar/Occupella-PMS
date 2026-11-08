@@ -12,6 +12,7 @@ import { useRecord } from "./useRecord";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
 import { AskFirst } from "../components/Confirm";
+import { withBase } from "../base";
 
 type Chosen = { type: ContentType | null; size: number; base64: string };
 
@@ -88,7 +89,7 @@ export function FilesCard({ kind, also = [], listed = [], aboutId, name, note }:
         <ul className="flex flex-col gap-2 text-base" aria-label={`Files, ${name}`}>
           {files.map((d) => (
             <li key={d.id} className="flex flex-wrap items-center gap-3">
-              <a className="font-medium text-iris hover:text-iris-hover hover:underline" href={`/api/documents/${d.id}/file`}>
+              <a className="font-medium text-iris hover:text-iris-hover hover:underline" href={withBase(`/api/documents/${d.id}/file`)}>
                 {d.title}
               </a>
               <span className="text-ink-muted">

@@ -9,6 +9,7 @@ import { Notice } from "../components/Notice";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { STAFF_NAV } from "./staffNav";
+import { withBase } from "../base";
 
 // One conversation in the inbox: its latest message, and whether it waits for an answer.
 export type Thread = {
@@ -60,7 +61,7 @@ export function MessagesPage({ me }: { me: Me }) {
                   <tr key={`${t.about}-${t.person_id}`} className="border-t border-line">
                     <td className={CELL}>
                       <a className="font-medium text-iris hover:text-iris-hover hover:underline"
-                        href={`/messages/${t.about}/${t.person_id}`}>{t.name}</a>
+                        href={withBase(`/messages/${t.about}/${t.person_id}`)}>{t.name}</a>
                       <span className="block text-sm text-ink-subtle">{t.about === "tenant" ? "Tenant" : "Owner"}</span>
                     </td>
                     <td className={`${CELL} text-ink-muted`}>
@@ -95,8 +96,8 @@ export function ConversationPage({ me, about, id }: { me: Me; about: "tenant" | 
       <PageHeader title={name ?? "Messages"}
         description={about === "tenant" ? "A tenant's conversation with the company." : "An owner's conversation with the company."} />
       <p className="mb-4 flex gap-4 text-sm">
-        <a className="text-iris hover:text-iris-hover hover:underline" href="/messages">All messages</a>
-        <a className="text-iris hover:text-iris-hover hover:underline" href={`/${about}s/${id}`}>
+        <a className="text-iris hover:text-iris-hover hover:underline" href={withBase("/messages")}>All messages</a>
+        <a className="text-iris hover:text-iris-hover hover:underline" href={withBase(`/${about}s/${id}`)}>
           {about === "tenant" ? "Tenant's page" : "Owner's page"}
         </a>
       </p>

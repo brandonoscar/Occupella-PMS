@@ -2,6 +2,7 @@ import { Loader2 } from "lucide-react";
 import type { ButtonHTMLAttributes, MouseEvent } from "react";
 import { useId, useState } from "react";
 import { useFormBusy } from "./Form";
+import { withBase } from "../base";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 
@@ -92,7 +93,7 @@ export function LinkButton({
 }) {
   return (
     <a
-      href={href}
+      href={withBase(href)}
       className="inline-flex h-9 items-center rounded-sm border border-line-strong bg-canvas px-3.5 text-base font-medium text-ink hover:bg-raised"
     >
       {children}

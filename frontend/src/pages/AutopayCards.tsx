@@ -14,6 +14,7 @@ import { usDate } from "../money";
 import type { Autopay, AutopayRule, AutopayView, Started } from "../payments";
 import { STATUS, autopayLine, autopayRule, autopayRunLine, payable } from "../payments";
 import { useRecord } from "./useRecord";
+import { leave } from "../router";
 
 // A tenant's autopay of a lease (src/pms/api/autopay.py): set up with what it pays, the bank
 // account saved on the payments partner's page (the PMS never sees its number); then it pays on
@@ -76,7 +77,7 @@ function SetUpForm({ path, view, fail }: { path: string; view: AutopayView; fail
     fail("");
     try {
       const started = await api.post<Started>(path, { rule, amount: amount.trim() });
-      window.location.assign(started.url);
+      leave(started.url);
     } catch (failed) {
       fail(failed instanceof ApiError ? failed.detail : String(failed));
     }

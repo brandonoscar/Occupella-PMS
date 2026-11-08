@@ -8,6 +8,7 @@ import { PageHeader, Wordmark } from "../components/Shell";
 import type { Vacancies } from "../leasing";
 import { money } from "../money";
 import { sizeLine } from "../unitDetails";
+import { withBase } from "../base";
 
 // A PMC's public vacancy page: /listings?pmc=<PMC id>, the units its staff listed, each with a
 // way to apply. No login, and nothing here is sent to listing sites.
@@ -59,7 +60,7 @@ export function ListingsPage() {
                     <ul className="flex gap-2 overflow-x-auto" aria-label={`Photos, ${listing.property}, ${listing.unit}`}>
                       {listing.photos.map((photo, n) => (
                         <li key={photo} className="shrink-0">
-                          <img src={`/api/listings/${encodeURIComponent(pmc)}/photos/${photo}`}
+                          <img src={withBase(`/api/listings/${encodeURIComponent(pmc)}/photos/${photo}`)}
                             alt={`${listing.property}, ${listing.unit}, ${n + 1} of ${listing.photos.length}`} loading="lazy"
                             className="h-32 w-48 rounded-sm object-cover" />
                         </li>

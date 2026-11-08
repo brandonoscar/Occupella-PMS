@@ -152,9 +152,13 @@ def test_the_app_refuses_to_start_at_the_example_address(url):
         ("ftp://rentals.example.com", "starts with https:// or http://"),
         ("https://", "names no host"),
         ("https:///invite", "names no host"),
-        ("https://rentals.example.com/pms", "is served at the root"),
-        ("https://rentals.example.com/?from=email", "is served at the root"),
-        ("https://rentals.example.com/#top", "is served at the root"),
+        ("https://rentals.example.com/?from=email", "carries a query or a fragment"),
+        ("https://rentals.example.com/#top", "carries a query or a fragment"),
+        ("https://rentals.example.com/books?", "carries a query or a fragment"),
+        ("https://rentals.example.com/books#", "carries a query or a fragment"),
+        ("https://rentals.example.com/books/../admin", "isn't plain words between slashes"),
+        ("https://rentals.example.com//books", "isn't plain words between slashes"),
+        ("https://rentals.example.com/my books", "isn't plain words between slashes"),
         # docs/edge-cases.md H-167: every emailed link would carry them.
         ("https://admin:synthetic@rentals.test", "names a user or password"),
         ("https://admin@rentals.test", "names a user or password"),
@@ -179,6 +183,10 @@ def test_the_app_refuses_to_start_at_an_address_no_browser_opens_it_at(url, says
         "https://rentals.example.com",
         "https://rentals.example.com/",
         "https://pms.example.net:8443",
+        # Where an app mounts the PMS: Occupella's hosted app at /books (frontend/src/base.ts).
+        "https://app.example.com/books",
+        "https://app.example.com/books/",
+        "https://app.example.com/pms/portal",
     ],
 )
 def test_an_origin_starts(url):

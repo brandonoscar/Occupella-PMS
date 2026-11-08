@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { Found } from "../rentals";
 import { navigate } from "../router";
+import { withBase } from "../base";
 
 const KIND: Record<Found["kind"], string> = {
   property: "Property",
@@ -85,7 +86,7 @@ export function SearchBox() {
           {found.map((item, n) => (
             <li key={`${item.kind}-${item.id}`}>
               <a
-                href={item.href}
+                href={withBase(item.href)}
                 className="flex items-baseline justify-between gap-3 px-3 py-2 text-sm text-ink hover:bg-raised"
                 onClick={(event) => {
                   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;

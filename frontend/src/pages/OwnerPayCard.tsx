@@ -10,6 +10,7 @@ import { Card } from "../components/Shell";
 import { money, usDate } from "../money";
 import type { OwnerPayView, Started } from "../payments";
 import { STATUS, payable } from "../payments";
+import { leave } from "../router";
 
 // An owner adds money to one of their property accounts online (src/pms/api/owner_payments.py):
 // what they choose, starting with what brings the account back up to its reserve, on the payments
@@ -50,7 +51,7 @@ export function OwnerPayCard() {
         account_id: account,
         amount: amount.trim(),
       });
-      window.location.assign(started.url);
+      leave(started.url);
     } catch (failed) {
       show(failed);
     }

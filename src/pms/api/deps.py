@@ -263,6 +263,18 @@ def area_of(path: str) -> str | None:
     return next((area for prefix, area in AREA_PATHS if path.startswith(prefix)), None)
 
 
+def app_path(request: Request) -> str:
+    """The request's path within the PMS: without the path an app mounted it at. Occupella's
+    hosted app serves it at /books, where Starlette keeps the whole path (/books/api/rent/...)
+    in the request and the mount's in root_path, so every rule that reads a path reads this one
+    (/api/rent/...), or a custom role would hold nothing under a mount."""
+    path: str = request.scope["path"]
+    root: str = request.scope.get("root_path", "")
+    if root and (path == root or path.startswith(f"{root}/")):
+        return path[len(root) :] or "/"
+    return path
+
+
 def may(conn: psycopg.Connection[Any], session: accounts.Session, area: str) -> bool:
     row = conn.execute(
         "SELECT trust_staff_may(%s, %s, %s)", (session.pmc_id, session.person_id, area)
@@ -274,7 +286,7 @@ def _only(kind: str, who: str) -> Any:
     def check(request: Request, session: Current, conn: Conn) -> accounts.Session:
         if session.kind != kind:
             raise HTTPException(403, f"only {who} may do this")
-        area = None if request.method in READS else area_of(request.url.path)
+        area = None if request.method in READS else area_of(app_path(request))
         if kind == "staff" and area is not None and not may(conn, session, area):
             raise HTTPException(
                 403, f"your roles don't let you change {AREAS[area]}: an admin can add it"

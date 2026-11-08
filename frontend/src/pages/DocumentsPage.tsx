@@ -26,6 +26,7 @@ import { uploadSays } from "./FilesCard";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
+import { withBase } from "../base";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 const FILTER = "h-9 rounded-sm border border-line-strong bg-canvas px-2 text-sm text-ink";
@@ -96,7 +97,7 @@ export function DocumentsPage({ me }: { me: Me }) {
                 {page.items.map((d) => (
                   <tr key={d.id} aria-label={d.title}>
                     <td>
-                      <a className={LINK} href={`/api/documents/${d.id}/file`}>{d.title}</a>
+                      <a className={LINK} href={withBase(`/api/documents/${d.id}/file`)}>{d.title}</a>
                       <span className="ml-2 text-sm text-ink-muted">{sizeLabel(d.size)}</span>
                     </td>
                     <td><GoLink href={d.about_path} className={LINK}>{d.about}</GoLink></td>

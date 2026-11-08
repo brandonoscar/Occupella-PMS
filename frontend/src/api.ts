@@ -1,7 +1,8 @@
+import { withBase } from "./base";
 import { notify } from "./toast";
 
-// Calls to the API on the same origin. The session is an HttpOnly cookie the browser sends by
-// itself; every change goes as JSON, which the API requires (it refuses anything else, so a
+// Calls to the API on the same origin, under the portal's path (src/base.ts: /books/api/... in
+// Occupella's hosted app). The session is an HttpOnly cookie the browser sends by itself; every change goes as JSON, which the API requires (it refuses anything else, so a
 // form on another site can't act for the person signed in here).
 
 export class ApiError extends Error {
@@ -48,7 +49,7 @@ export function whenSignedOut(handler: () => void): () => void {
 }
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(withBase(path), {
     method,
     credentials: "same-origin",
     headers: body === undefined ? {} : { "Content-Type": "application/json" },
@@ -104,7 +105,7 @@ export const api = {
 // travels in the JSON body, never in a URL), saved by the browser under `name`. A refusal shows
 // as a toast with its reason, like any change's.
 export async function saveFile(path: string, body: unknown, name: string): Promise<void> {
-  const response = await fetch(path, {
+  const response = await fetch(withBase(path), {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },

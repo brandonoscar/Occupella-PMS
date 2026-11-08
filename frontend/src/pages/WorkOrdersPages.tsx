@@ -34,6 +34,7 @@ import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
+import { withBase } from "../base";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 const TEXTAREA = "rounded-sm border border-line-strong bg-sunken px-3 py-2 text-base text-ink";
@@ -525,7 +526,7 @@ export function WorkOrderPage({ me, id }: { me: Me; id: string }) {
                 <ul className="flex flex-wrap gap-3 text-base" aria-label="Request photos">
                   {order.request.photos.map((p) => (
                     <li key={p.id}>
-                      <a className={LINK} href={`/api/documents/${p.id}/file`} target="_blank" rel="noreferrer">{p.title}</a>
+                      <a className={LINK} href={withBase(`/api/documents/${p.id}/file`)} target="_blank" rel="noreferrer">{p.title}</a>
                     </li>
                   ))}
                 </ul>
