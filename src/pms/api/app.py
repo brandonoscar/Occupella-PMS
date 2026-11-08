@@ -227,6 +227,9 @@ class Settings:
     # A host app's check of its own sign-in (pms.external), handed over by the app the PMS is
     # mounted in; a server of its own has none, and POST /api/external-sign-in answers 404.
     verifier: external.Verifier | None = None
+    # A host app's own sending of owners' and tenants' invites (pms.external.Inviter), handed over
+    # with its verifier: each one goes to it once committed, instead of to this server's outbox.
+    inviter: external.Inviter | None = None
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -377,6 +380,9 @@ class Me(BaseModel):
     areas: list[str]
     # Whether this server sends email (PMS_EMAIL_SENDER); without it, emails wait in the outbox.
     email_on: bool
+    # Whether an owner's or a tenant's invite is emailed to them: by this server, or by the app
+    # it is part of (Settings.inviter).
+    invites_on: bool
     # The company's time zone and its day now (src/pms/days.py): the portal's "today".
     time_zone: str
     today: date
@@ -386,8 +392,11 @@ class InviteLink(BaseModel):
     login_id: UUID
     url: str
     expires_at: datetime
-    # Whether the invite was also emailed (the server sends email).
+    # Whether the invite was also emailed, and who sends it: this server ("pms", written to its
+    # outbox), or the app it is part of ("host", Settings.inviter). Neither: the link is shown
+    # alone, for staff to give.
     emailed: bool
+    sent_by: Literal["pms", "host"] | None
 
 
 class InviteDetails(BaseModel):
@@ -665,6 +674,7 @@ def create_app(settings: Settings) -> FastAPI:
             roles=staff.roles_of(conn, session) if session.kind == "staff" else [],
             areas=custom_roles.areas_of(conn, session) if session.kind == "staff" else [],
             email_on=app.state.email is not None,
+            invites_on=app.state.email is not None or settings.inviter is not None,
             time_zone=days.time_zone(conn, session.pmc_id),
             today=days.today(conn, session.pmc_id),
         )
@@ -750,21 +760,30 @@ def create_app(settings: Settings) -> FastAPI:
             conn, session.pmc_id, body.kind, body.person_id, body.email, session.person_id
         )
         url = settings.invite_link(made.token)
-        # Emailed too when the server sends email (ADR 0007); the link is never kept in the
-        # outbox, so the page still shows it once, in case the email doesn't arrive.
-        emailed = app.state.email is not None
-        if emailed:
+        to = accounts.normalize_email(body.email)
+        sent_by: Literal["pms", "host"] | None = None
+        # The link is shown once whoever sends it, in case the email doesn't arrive.
+        if settings.inviter is not None and body.kind != "staff":
+            # The app this server is part of sends an owner's or a tenant's invite in its own
+            # email (ADR 0013). Committed first, so it is handed only an invite that stands: one
+            # rolled back never reaches anyone's inbox. Nothing is written after it.
+            conn.commit()
+            if external.hand_over(
+                settings.inviter, session.pmc_id, body.kind, to, made.token, made.expires_at
+            ):
+                sent_by = "host"
+        elif app.state.email is not None:
+            # Emailed by this server (ADR 0007); the link is never kept in the outbox.
             email.write_invite(
-                conn,
-                session.pmc_id,
-                body.kind,
-                body.person_id,
-                accounts.normalize_email(body.email),
-                url,
-                made.expires_at,
+                conn, session.pmc_id, body.kind, body.person_id, to, url, made.expires_at
             )
+            sent_by = "pms"
         return InviteLink(
-            login_id=made.login_id, url=url, expires_at=made.expires_at, emailed=emailed
+            login_id=made.login_id,
+            url=url,
+            expires_at=made.expires_at,
+            emailed=sent_by is not None,
+            sent_by=sent_by,
         )
 
     @app.get("/api/password-reset")

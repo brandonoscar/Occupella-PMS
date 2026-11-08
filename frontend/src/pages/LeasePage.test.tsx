@@ -754,6 +754,17 @@ describe("LeasePage", () => {
     expect(posted(fetch)).toEqual([["/api/invites", { kind: "tenant", person_id: "t2", email: "t2@example.com" }]]);
   });
 
+  it("says a tenant's invite is emailed while this server, or the app it is part of, emails invites", async () => {
+    server(LEASE);
+    render(<LeasePage me={{ ...ME, email_on: false, invites_on: true }} id="l1" />);
+    await screen.findByRole("heading", { level: 1, name: `${LEASE.property} · ${LEASE.unit} · Tenant 1, Tenant 2` });
+    fireEvent.click(screen.getByRole("tab", { name: "Tenants" }));
+    const one = screen.getByRole("row", { name: "Tenant 1" });
+    expect(within(one).getByTestId("button-says").textContent).toBe(
+      "Emails Tenant 1 a portal invite at t1@example.com; its link shows here too. Using it sets a new password.",
+    );
+  });
+
   it("takes one tenant off from their ⋯ menu, their deposit moving to who stays, and marks who left", async () => {
     const fetch = server(LEASE, { "/api/move-out/l1/departures": { moved: "1500.00" } });
     await open();

@@ -27,6 +27,11 @@ Migrations `20261107000100` (fees the company keeps, the review of 11/07) and `2
   signs people in to: no password sign-in, reset, invite password or two-step setup here, and no
   staff invites. `PMS_INVITE_URL` sends owners' and tenants' invite links to the host's page. Both
   are unset on a self-hosted install, which keeps signing in with passwords.
+- **An app that mounts the PMS may send owners' and tenants' invites itself**, in its own email
+  (`Settings.inviter`; docs/adr/0013-sign-in-through-a-host.md, decision 7). Each invite is handed
+  to it only once it is saved, never written to the PMS's outbox, and the answer says who sent it
+  (`sent_by`). If the app can't send one, the invite still works and staff are shown its link to
+  give, as when no email is sent. A server of its own has no such app and is unchanged.
 
 - **A lease ended mid-month no longer moves the owner's rent to the company.** When a lease's end
   credited the days after it on a monthly fee the company keeps (the starting resident benefit

@@ -180,6 +180,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   by password, staff authenticators, owners' and tenants' own two-step sign-in and staff
   invites (403), and the sign-in page says to sign in through the app instead; `PMS_INVITE_URL`
   (an http(s) address with no query or fragment) is where owners' and tenants' invite links go.
+  The app may send owners' and tenants' invites itself (`Settings.inviter`, `external.Inviter`):
+  each is handed to it once the invite's transaction commits (the route commits first), never
+  written to the outbox, and the answer says who sent it (`sent_by`: "host", "pms" or none;
+  `/api/me`'s `invites_on`); one it fails to take stands, its link shown to staff to give, and
+  is logged by the failure's kind alone, never the token. Staff invites are never the app's.
   Since migration 20261104000700 (the founder's review of 11/03, item 14) an owner or a tenant
   setting their password gives a phone, kept as E.164 (`src/pms/phones.py`) and as their contact
   phone, and says whether the company may text them, unchecked unless they check it

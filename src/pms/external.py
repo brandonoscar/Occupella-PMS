@@ -24,6 +24,10 @@ record of their own, or the staff login that already has their email.
 
 A person is linked to one login per company (trust_external_identities); a login linked this way
 needs no password, and has none unless it accepts a password invite.
+
+The host may send owners' and tenants' invites itself, in its own email, through an Inviter in
+its Settings (`inviter`): the PMS hands it each one once the invite's transaction has committed,
+instead of writing it to its own outbox.
 """
 
 from __future__ import annotations
@@ -32,7 +36,8 @@ import logging
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from datetime import datetime
+from typing import Any, Literal, Protocol
 from uuid import UUID
 
 import psycopg
@@ -79,6 +84,48 @@ class Verifier(Protocol):
     def issuer(self) -> str: ...
 
     def verify(self, token: str) -> Person | None: ...
+
+
+class Inviter(Protocol):
+    """The host's way of sending an owner's or a tenant's invite, in its own email, to its own
+    sign-up page, whose frontend sends the invite's token with the host's token to
+    POST /api/external-sign-in.
+
+    Called once the invite's transaction has committed, so it is handed only an invite that
+    stands, while staff wait for the answer: it returns within seconds, or raises. Either way the
+    invite stands; when it raises, staff are shown the link to give the person themselves.
+    `token` is the invite's secret: it is kept out of every log, and out of every part of a URL a
+    server sees (the fragment alone, as the PMS's own links carry it)."""
+
+    def invite(
+        self,
+        *,
+        pmc_id: UUID,
+        kind: Literal["owner", "tenant"],
+        email: str,
+        token: str,
+        expires_at: datetime,
+    ) -> None: ...
+
+
+def hand_over(
+    inviter: Inviter,
+    pmc_id: UUID,
+    kind: Literal["owner", "tenant"],
+    email: str,
+    token: str,
+    expires_at: datetime,
+) -> bool:
+    """Hands an invite that committed to the host; whether the host took it. A host that fails
+    is logged by the failure's kind alone: its message might carry the token or the email."""
+    try:
+        inviter.invite(pmc_id=pmc_id, kind=kind, email=email, token=token, expires_at=expires_at)
+    except Exception as failed:  # noqa: BLE001 -- the host's own code; the invite stands
+        log.warning(
+            "the host's inviter failed on an invite for the %s: %s", kind, type(failed).__name__
+        )
+        return False
+    return True
 
 
 class SecondStepNeeded(accounts.Refused):

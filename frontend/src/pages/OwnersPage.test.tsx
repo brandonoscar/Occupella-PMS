@@ -25,7 +25,7 @@ const ME: Me = {
   pmc_name: "Synthetic PMC",
 };
 // A server that sends email: an invite is emailed.
-const EMAIL_ON: Me = { ...ME, email_on: true };
+const EMAIL_ON: Me = { ...ME, email_on: true, invites_on: true };
 
 const ACCOUNTS: OwnerMoney[] = [
   {
@@ -198,6 +198,12 @@ describe("OwnerPage", () => {
       "https://pms.example/invite#token",
     );
     expect(posted(fetch)).toEqual([["/api/invites", { kind: "owner", person_id: "o1", email: "owner1@example.com" }]]);
+  });
+
+  it("says the invite is emailed when the app this server is part of sends it", async () => {
+    server({});
+    render(<OwnerPage me={{ ...ME, email_on: false, invites_on: true }} id="o1" />);
+    expect(await screen.findByText("Goes to owner1@example.com, the email in their contact details. The link works once.")).toBeTruthy();
   });
 
   it("shows the owner opened now, even when an earlier owner's answer comes back last", async () => {

@@ -58,6 +58,19 @@ product is the thing the founder ruled out. A self-hosted PMS keeps its own sign
    Owners and tenants are still invited by staff; with `PMS_INVITE_URL` their link goes to the
    host's own page (its token in the fragment, as always), whose frontend sends it with the
    host's token.
+7. **The host may send owners' and tenants' invites itself.** It passes an `Inviter`
+   (`src/pms/external.py`) in its `Settings` (`inviter`), beside its verifier, so the invite
+   reaches the person in the host's own email, to its own sign-up page, rather than from the
+   PMS's outbox. The PMS commits the invite first and only then hands the inviter the company,
+   whether it is an owner's or a tenant's, the invite's email, its token and when it expires:
+   an invite rolled back is never handed over. The invite is not written to the outbox, and
+   `POST /api/invites` says who sent it (`sent_by: "host"`); `/api/me` says invites are emailed
+   (`invites_on`) though the PMS sends no email of its own. An inviter that raises leaves the
+   invite standing: staff are shown its link to give, as when no email is sent, and the log
+   names only the failure's kind, never the token or the email. The token travels to the host as
+   an argument, never in a URL a server logs; the host keeps it out of its logs and out of
+   every part of a link but the fragment. Staff invites are never the host's: with password
+   sign-in off they are refused, and with it on the PMS emails them itself.
 
 ## What stays as it was
 
@@ -88,6 +101,7 @@ read a path read it within the PMS (`deps.app_path`).
 - Staff the host no longer counts keep their login here until it is disabled, but sign in no
   more through the host; nothing is deleted.
 
-NOT VERIFIED: the hosted product's own verifier (AgenticHelixis), the rewrite carrying the
-cookie, and the host's sign-up page. Those are AgenticHelixis' work. Here, the endpoint is tested
-with a stand-in host (`tests/api/test_external_sign_in_api.py`).
+NOT VERIFIED: the hosted product's own verifier and inviter (AgenticHelixis), the rewrite
+carrying the cookie, and the host's sign-up page. Those are AgenticHelixis' work. Here, the
+endpoint and the invites are tested with a stand-in host (`tests/api/test_external_sign_in_api.py`,
+`tests/api/test_host_invites.py`).
