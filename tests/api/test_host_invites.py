@@ -216,17 +216,18 @@ def test_an_invite_rolled_back_is_never_handed_to_the_host(hosted, host, sent, c
     assert invites_of(conn, pmc) == 0
 
 
+@pytest.mark.parametrize("kind", ["owner", "tenant"])
 def test_a_host_that_fails_leaves_the_invite_standing_and_its_link_shown(
-    settings, host, sent, conn, caplog
+    settings, host, sent, conn, caplog, kind
 ):
     sent.fails = True
     pmc = make_pmc(conn)
-    owner_id = pmc.owners[0].owner_id
-    to = address("owner")
+    person_id = pmc.owners[0].owner_id if kind == "owner" else tenant_of(conn, pmc)
+    to = address(kind)
     with server(settings, host, sent) as hosted, caplog.at_level(logging.DEBUG):
         staff_signed_in(hosted, host, pmc)
 
-        made = invite(hosted, "owner", owner_id, to)
+        made = invite(hosted, kind, person_id, to)
 
         assert made.status_code == 201, made.text
         answer = made.json()
@@ -237,13 +238,13 @@ def test_a_host_that_fails_leaves_the_invite_standing_and_its_link_shown(
         assert answer["url"] == f"{INVITED_AT}#{token}"
         assert invite_emails(conn, pmc) == 0
 
-        host.signs_in("owner", to)
-        joined = hosted.post("/api/external-sign-in", json={"token": "owner", "invite": token})
+        host.signs_in(kind, to)
+        joined = hosted.post("/api/external-sign-in", json={"token": kind, "invite": token})
         assert joined.status_code == 200, joined.text
-        assert joined.json()["person_id"] == str(owner_id)
+        assert joined.json()["person_id"] == str(person_id)
 
     said = [record.getMessage() for record in caplog.records]
-    assert "the host's inviter failed on an invite for the owner: RuntimeError" in said
+    assert f"the host's inviter failed on an invite for the {kind}: RuntimeError" in said
     assert not [line for line in said if token in line or to in line]
 
 

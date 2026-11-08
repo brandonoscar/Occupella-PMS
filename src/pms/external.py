@@ -121,8 +121,11 @@ def hand_over(
     try:
         inviter.invite(pmc_id=pmc_id, kind=kind, email=email, token=token, expires_at=expires_at)
     except Exception as failed:  # noqa: BLE001 -- the host's own code; the invite stands
+        # Fixed words and the failure's class alone, never what a request sent (CodeQL's log
+        # injection, alert 62).
+        who = "owner" if kind == "owner" else "tenant"
         log.warning(
-            "the host's inviter failed on an invite for the %s: %s", kind, type(failed).__name__
+            "the host's inviter failed on an invite for the %s: %s", who, type(failed).__name__
         )
         return False
     return True
