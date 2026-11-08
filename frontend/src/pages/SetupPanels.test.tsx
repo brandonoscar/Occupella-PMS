@@ -4,8 +4,9 @@ import type { Portfolio } from "../setup";
 import type { Panel } from "./SetupPanels";
 import {
   AddLeasePanel, AddOwnerPanel, AddPropertyPanel, AddUnitPanel, DepositInterestPanel, LateFeesPanel, LeaseBreakFeePanel, NsfFeePanel,
-  TermsPanel,
+  OwnershipPanel, TermsPanel,
 } from "./SetupPanels";
+import type { OwnerAccount } from "../rentals";
 
 afterEach(() => {
   cleanup();
@@ -113,6 +114,22 @@ function panel(): Panel & { said: string[] } {
 }
 
 describe("setup panels", () => {
+  it("takes an owner the property's page learns of after Set ownership opened", () => {
+    // The page reloads the property after Add owner without waiting; opened before the reload
+    // lands, the panel gets its owners twice. The second owner's row must appear, empty, rather
+    // than end the panel (seen in e2e on a slow runner: "Demo Owner B, percent" never came).
+    const owner = (n: string): OwnerAccount => ({
+      owner_id: `o${n}`, owner: `Owner ${n}`, account: `a${n}`, bank_account: "b1", balance: "0.00",
+      agreement: null, percent: null,
+    });
+    const p = panel();
+    const { rerender } = render(<OwnershipPanel panel={p} propertyId="p1" name="Property A" owners={[owner("A")]} />);
+    rerender(<OwnershipPanel panel={p} propertyId="p1" name="Property A" owners={[owner("A"), owner("B")]} />);
+    type("Owner A, percent", "60");
+    type("Owner B, percent", "40");
+    expect(screen.getByTestId("ownership-total").textContent).toBe("Together 100%.");
+  });
+
   it("adds a property in the only operating account and opens it", async () => {
     const fetch = server();
     const p = panel();
