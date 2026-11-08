@@ -200,12 +200,12 @@ describe("every URL the browser gets passes through withBase()", () => {
       where(/location\.pathname/, ["router.ts", "base.ts"]);
       if (file === "api.ts") {
         for (const call of text.matchAll(/\bfetch\(([^,)]*)/g)) {
-          if (!/^withBase\(/.test(call[1] ?? "")) found.push(`api.ts: fetch(${call[1]}) without withBase()`);
+          if (!(call[1] ?? "").startsWith("withBase(")) found.push(`api.ts: fetch(${call[1]}) without withBase()`);
         }
       }
       // An address built from this site's origin takes the portal's path too.
       for (const built of text.matchAll(/\$\{origin\}([^`]*)/g)) {
-        if (!/^\$\{withBase\(/.test(built[1] ?? "")) found.push(`${file}: \${origin}${built[1]}`);
+        if (!(built[1] ?? "").startsWith("${withBase(")) found.push(`${file}: \${origin}${built[1]}`);
       }
     }
     expect(found).toEqual([]);
