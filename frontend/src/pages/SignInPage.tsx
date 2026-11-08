@@ -7,6 +7,7 @@ import { Notice } from "../components/Notice";
 import { Wordmark } from "../components/Shell";
 import { navigate } from "../router";
 import { Form } from "../components/Form";
+import { withBase } from "../base";
 
 export const PMC_KEY = "pms.pmc";
 
@@ -97,7 +98,7 @@ export function SignInPage() {
             Sign in
           </Button>
           {canReset && (
-            <a href={`/forgot-password?pmc=${pmcId}`} className="text-sm text-iris underline hover:text-iris-hover">Forgot your password?</a>
+            <a href={withBase(`/forgot-password?pmc=${pmcId}`)} className="text-sm text-iris underline hover:text-iris-hover">Forgot your password?</a>
           )}
         </Form>
       ) : asked && (

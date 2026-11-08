@@ -67,6 +67,16 @@ product is the thing the founder ruled out. A self-hosted PMS keeps its own sign
 - Everything a session may do once it exists: the roles, the custom roles, the audit log naming
   the staff member, and the AI's key, which never signs in this way.
 
+## Under a path
+
+The host serves the PMS on its own origin, under a path: Occupella's at
+`https://app.occupella.com/books`, its API at `/books/api`, through a rewrite to the server that
+mounts it. So `PMS_PUBLIC_URL` may carry that path (never a query or a fragment), every link the
+PMS writes starts with it, and the portal is built for it (`vite build --base /books/`;
+`frontend/src/base.ts` adds it to every URL the browser gets). The same-origin guard still
+compares only the scheme and host. A mounted app's request keeps the whole path, so the rules that
+read a path read it within the PMS (`deps.app_path`).
+
 ## Consequences
 
 - A login linked through a host has no password, so every page and email that asks whether a

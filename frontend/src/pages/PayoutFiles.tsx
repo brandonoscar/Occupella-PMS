@@ -14,6 +14,8 @@ import { money, usDate } from "../money";
 import type { BankSettings, PayoutRun } from "../payouts";
 import { methodWord, runFile } from "../payouts";
 import { useRecord } from "./useRecord";
+import { withBase } from "../base";
+import { leave } from "../router";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -91,12 +93,12 @@ function RunFile({ run }: { run: PayoutRun }) {
           question={`This ACH file was taken ${times(taken)} already. Uploading it to the bank again pays everyone in it twice. Download it again only to replace a file the bank never took.`}
           onConfirm={() => {
             setSeen(taken + 1);
-            window.location.assign(`${file.href}?again=true`);
+            leave(`${file.href}?again=true`);
           }}>
           Download again
         </AskFirst>
       ) : (
-        <a href={file.href} className={LINK} onClick={() => setSeen(taken + 1)}>{file.label}</a>
+        <a href={withBase(file.href)} className={LINK} onClick={() => setSeen(taken + 1)}>{file.label}</a>
       )}
       {taken > 0 && <span className="block text-sm text-ink-muted">Taken {times(taken)}</span>}
     </>

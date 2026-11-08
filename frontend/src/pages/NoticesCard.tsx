@@ -10,6 +10,7 @@ import { Card } from "../components/Shell";
 import { companyDay, usDate } from "../money";
 import type { Filled, MadeNotice, Templates } from "../notices";
 import { GoLink } from "./NeedsAttention";
+import { withBase } from "../base";
 
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
@@ -68,7 +69,7 @@ export function NoticesCard({ leaseId }: { leaseId: string }) {
         <ul className="flex flex-col gap-2 text-base" aria-label="Notices made">
           {made.map((n) => (
             <li key={n.id} className="flex flex-wrap items-center gap-3">
-              <a className="inline-flex min-h-6 items-center font-medium text-iris hover:text-iris-hover hover:underline" href={`/api/notices/${n.id}/pdf`}>
+              <a className="inline-flex min-h-6 items-center font-medium text-iris hover:text-iris-hover hover:underline" href={withBase(`/api/notices/${n.id}/pdf`)}>
                 {n.title} (PDF)
               </a>
               <span className="text-sm text-ink-muted">

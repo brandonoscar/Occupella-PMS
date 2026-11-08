@@ -161,10 +161,13 @@ export function OwnershipPanel({ panel, propertyId, name, owners }: {
   const [from, setFrom] = useState(companyDay());
   const [percents, setPercents] = useState<Record<string, string>>(
     Object.fromEntries(owners.map((o) => [o.account, o.percent ?? ""])));
-  const total = sharesTotal(Object.values(percents));
+  // An owner the property's page learns of after this opened (its reload after Add owner lands
+  // late) has no percent typed yet: an empty one, never a missing one.
+  const percentOf = (account: string) => percents[account] ?? "";
+  const total = sharesTotal(owners.map((o) => percentOf(o.account)));
   const whole = total.valid && total.parts === 1_000_000;
-  const shares = owners.filter((o) => percents[o.account]!.trim() !== "")
-    .map((o) => ({ account: o.account, owner: o.owner, percent: percents[o.account]!.trim() }));
+  const shares = owners.filter((o) => percentOf(o.account).trim() !== "")
+    .map((o) => ({ account: o.account, owner: o.owner, percent: percentOf(o.account).trim() }));
   return (
     <SidePanel title="Set ownership" onClose={panel.close}>
       <Form className="flex flex-col gap-3" onSubmit={(event) => {
@@ -182,7 +185,7 @@ export function OwnershipPanel({ panel, propertyId, name, owners }: {
           onChange={(e) => setFrom(e.target.value)} />
         {owners.map((o) => (
           <Field key={o.account} label={`${o.owner}, percent`} id={`ownership-${o.account}`} inputMode="decimal"
-            value={percents[o.account]} onChange={(e) => setPercents({ ...percents, [o.account]: e.target.value })} />
+            value={percentOf(o.account)} onChange={(e) => setPercents({ ...percents, [o.account]: e.target.value })} />
         ))}
         <p className="text-sm text-ink-muted" data-testid="ownership-total">
           {!total.valid

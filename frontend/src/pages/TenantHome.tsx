@@ -34,6 +34,7 @@ import { CreditCard, FileText, Home as HomeIcon, MessagesSquare, UserRound, Wren
 import type { MoveOutNotice } from "./TenantPortalCards";
 import { firstName } from "../directory";
 import { AnnouncementsCard, LeaseUploadForm, MoveOutNoticeCard } from "./TenantPortalCards";
+import { withBase } from "../base";
 
 // What the lease charges every month: its rent, and each recurring fee or credit not stopped
 // (ends_on is the first due date it is no longer charged for).
@@ -189,7 +190,7 @@ function leaseDetails(lease: Lease): { key: string; label: string; value: React.
       key: f.url,
       label: "Lease",
       value: (
-        <a className="text-iris hover:text-iris-hover hover:underline" href={f.url}>
+        <a className="text-iris hover:text-iris-hover hover:underline" href={withBase(f.url)}>
           {f.kind === "signed lease" ? `${f.title} (as signed, PDF)` : f.title}
         </a>
       ),
@@ -368,7 +369,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
               </p>
               <p className="mt-1 text-sm text-ink-subtle">
                 See what makes it up, and pay online when {me.pmc_name} takes payments online, on{" "}
-                <a className="text-iris underline hover:text-iris-hover" href="/payments">Payments</a>.
+                <a className="text-iris underline hover:text-iris-hover" href={withBase("/payments")}>Payments</a>.
               </p>
               {lease.move_out_notice && (
                 <p className="mt-2 text-sm text-ink" data-testid="leaving">
@@ -381,7 +382,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
               <ul className="mt-4 flex flex-col gap-1 text-base" aria-label="Your lease's files">
                 {lease.files.map((f) => (
                   <li key={f.url}>
-                    <a className="font-medium text-iris hover:text-iris-hover hover:underline" href={f.url}>
+                    <a className="font-medium text-iris hover:text-iris-hover hover:underline" href={withBase(f.url)}>
                       {f.kind === "signed lease" ? `${f.title} (as signed, PDF)` : f.title}
                     </a>
                     {f.from_tenant && <span className="text-sm text-ink-subtle"> (sent by you)</span>}
@@ -509,7 +510,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                                 {held.how && ` · ${held.how}`}, {money(held.amount)} held as prepaid rent
                                 {held.returned && " · came back unpaid"}
                               </span>
-                              <a href={held.receipt} className="ml-3 text-sm text-iris hover:text-iris-hover hover:underline">
+                              <a href={withBase(held.receipt)} className="ml-3 text-sm text-iris hover:text-iris-hover hover:underline">
                                 Receipt (PDF)
                               </a>
                             </td>
@@ -534,7 +535,7 @@ export function TenantHome({ me, section = "overview" }: { me: Me; section?: Ten
                             )}
                           </OpensSource>
                           {receipt && (
-                            <a href={receipt} className="ml-3 text-sm text-iris hover:text-iris-hover hover:underline">
+                            <a href={withBase(receipt)} className="ml-3 text-sm text-iris hover:text-iris-hover hover:underline">
                               Receipt (PDF)
                             </a>
                           )}

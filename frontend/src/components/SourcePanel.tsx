@@ -3,6 +3,7 @@ import { ApiError, api } from "../api";
 import { latest } from "../latest";
 import { Notice } from "./Notice";
 import { SidePanel } from "./SidePanel";
+import { withBase } from "../base";
 
 // Where a line of a statement or a ledger came from, as the API says it
 // (src/pms/api/ledger_sources.py): its rows in words and the files to download.
@@ -49,7 +50,7 @@ export function SourcePanel({ url, onClose }: { url: string; onClose: () => void
             <ul className="flex flex-col gap-2 border-t border-line pt-4">
               {source.links.map((link) => (
                 <li key={link.url}>
-                  <a className="text-iris hover:text-iris-hover hover:underline" href={link.url} download>
+                  <a className="text-iris hover:text-iris-hover hover:underline" href={withBase(link.url)} download>
                     {link.label}
                   </a>
                 </li>

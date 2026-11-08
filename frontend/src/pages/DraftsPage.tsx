@@ -19,6 +19,7 @@ import { Wide } from "../components/Wide";
 import { usDate } from "../money";
 import type { Paged } from "../rentals";
 import { STAFF_NAV } from "./staffNav";
+import { withBase } from "../base";
 
 // A draft as the API sends it (src/pms/api/drafts.py, ADR 0011): what software with an API key
 // proposed, by the ids of the company's records, and what became of it.
@@ -150,7 +151,7 @@ export function DraftsPage({ me }: { me: Me }) {
                 {drafts.items.map((draft) => (
                   <tr key={draft.id} aria-label={draft.what}>
                     <td>
-                      <a className="font-medium text-iris hover:text-iris-hover hover:underline" href={`/drafts/${draft.id}`}>
+                      <a className="font-medium text-iris hover:text-iris-hover hover:underline" href={withBase(`/drafts/${draft.id}`)}>
                         {draft.what}
                       </a>
                     </td>
@@ -335,7 +336,7 @@ export function DraftPage({ me, id }: { me: Me; id: string }) {
                 : `Declined by ${draft.decided_by ?? ""} on ${usDate(draft.decided_at)}: ${draft.reason ?? ""}`}
             </p>
           )}
-          <p><a className="text-sm text-iris hover:text-iris-hover hover:underline" href="/drafts">All drafts</a></p>
+          <p><a className="text-sm text-iris hover:text-iris-hover hover:underline" href={withBase("/drafts")}>All drafts</a></p>
           {panel === "edit" && (
             <ChangePanel draft={draft} onClose={() => setPanel(null)} onApprove={approve} />
           )}

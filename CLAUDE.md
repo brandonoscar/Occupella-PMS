@@ -117,7 +117,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`PMS_TRUSTED_PROXIES`, as `compose.selfhost.yaml` sets it) a visitor's address is the one the
   proxy names, as a signature's evidence keeps it (trusting "*", the last X-Forwarded-For
   address, the one the proxy wrote: `app.NearestProxy`). It refuses to start at `.env.example`'s
-  `PMS_PUBLIC_URL` or one that isn't an http(s) origin (`pms.deployment`), and logs each origin a
+  `PMS_PUBLIC_URL` or one that isn't an http(s) address (`pms.deployment`): it may carry a plain
+  path where an app mounts the PMS (Occupella's hosted app at `/books`), never a query or a
+  fragment, and every link the server writes starts with it. Mounted, every rule that reads a
+  request's path reads it within the PMS (`deps.app_path`: the custom roles' areas, the API's
+  no-store; `tests/api/test_under_a_path.py`). It logs each origin a
   change was refused from once. How fast it answers ten staff
   at once on a 1,000-unit company is timed nightly (`tools/speed.py`, `[speed]` ceilings). Every endpoint gets tests in `tests/api/` for success, a caller who isn't
   allowed and bad input. A report's PMC always comes from the session (every report takes
@@ -262,7 +266,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   bar above the page with the avatar, and on white each page's Fraunces title, its parts under
   small uppercase labels and its tables as Occupella's Operations table (`components/Shell.tsx`).
   Its build is served by the API (`PMS_STATIC_DIR`) under a strict Content-Security-Policy
-  (nothing inline but React Aria's two style elements, under a fresh nonce on each page).
+  (nothing inline but React Aria's two style elements, under a fresh nonce on each page), at the
+  root, or built for the path an app mounts it at (`vite build --base /books/`): every URL the
+  browser gets (a link's href, an image's src, fetch, navigate, leave) goes through `withBase()`
+  where it is used, the pages naming root paths and reading `usePath()` without it
+  (`src/base.ts`; `src/base.test.ts` scans every such place).
   Colours, sizes and fonts come only from the tokens in `frontend/src/styles/globals.css`,
   Occupella's values (`designTokens.test.ts` pins them and fails on a raw colour or a size off
   the scale). A state (paid up, bounced, approved) is a badge (`components/Badge.tsx`), a page

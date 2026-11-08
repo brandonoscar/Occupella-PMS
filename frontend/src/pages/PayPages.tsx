@@ -7,6 +7,7 @@ import { Card, PageHeader } from "../components/Shell";
 import { money, usDate } from "../money";
 import type { OnlineStatus } from "../payments";
 import { STATUS } from "../payments";
+import { withBase } from "../base";
 
 type FakeCheckout = {
   amount: string;
@@ -119,7 +120,7 @@ function PayFakeQueue() {
         <ul className="flex flex-col divide-y divide-line text-base" aria-label="Payments waiting for the bank">
           {(queued ?? []).map((q) => (
             <li key={q.id} className="py-2">
-              <a className="font-medium text-iris hover:text-iris-hover hover:underline" href={`/pay/fake#${q.id}`}
+              <a className="font-medium text-iris hover:text-iris-hover hover:underline" href={withBase(`/pay/fake#${q.id}`)}
                 onClick={() => window.setTimeout(() => window.location.reload(), 0)}>
                 {q.memo} · {money(q.amount)} · {usDate(q.started_at.slice(0, 10))}
               </a>

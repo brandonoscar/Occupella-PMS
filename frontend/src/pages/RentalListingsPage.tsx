@@ -28,6 +28,7 @@ import type { Recorder } from "./useRecord";
 import { MarketRent, UnitSize } from "./UnitDetailsCard";
 import { useRecord } from "./useRecord";
 import { AskFirst } from "../components/Confirm";
+import { withBase } from "../base";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -46,7 +47,7 @@ export function daysListed(days: number | null): string {
 
 // The public vacancy page's address, to give out.
 export function publicPage(pmcId: string, origin = window.location.origin): string {
-  return `${origin}/listings?pmc=${pmcId}`;
+  return `${origin}${withBase(`/listings?pmc=${pmcId}`)}`;
 }
 
 // Leasing → Listings (ADR 0006, Buildium's): each unit coming free within 90 days (or with an open
@@ -300,7 +301,7 @@ function PhotosForm({ unit, onChange }: { unit: OpenUnit; onChange: () => void }
         <ul className="grid grid-cols-2 gap-3" aria-label={`Listing photos, ${unit.property}, ${unit.unit}`}>
           {photos.map((photo) => (
             <li key={photo.id} className="flex flex-col gap-1">
-              <img src={`/api/documents/${photo.id}/file`} alt={photo.title} className="h-32 w-full rounded-sm object-cover" />
+              <img src={withBase(`/api/documents/${photo.id}/file`)} alt={photo.title} className="h-32 w-full rounded-sm object-cover" />
               <div className="flex items-center justify-between gap-2 text-sm">
                 <span className="truncate text-ink-muted">{photo.title}</span>
                 <AskFirst variant="ghost" size="sm" aria-label={`Remove ${photo.title}`} danger

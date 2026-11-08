@@ -2,6 +2,7 @@ import type { Details, Household } from "../applying";
 import { addressLine } from "../applying";
 import { PhoneLink } from "../components/PhoneLink";
 import { usDate } from "../money";
+import { withBase } from "../base";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -40,7 +41,7 @@ export function DetailsList({ details, label }: { details: Details; label: strin
       <dt className="text-ink-muted">Proof of income</dt>
       <dd>
         {details.income_proofs.length === 0 ? "None given" : details.income_proofs.map((doc, n) => (
-          <a key={doc} href={`/api/documents/${doc}/file`} className={`${LINK} mr-3`}>
+          <a key={doc} href={withBase(`/api/documents/${doc}/file`)} className={`${LINK} mr-3`}>
             {details.income_proofs.length > 1 ? `Proof of income ${n + 1}` : "Proof of income"}
           </a>
         ))}

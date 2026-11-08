@@ -50,6 +50,7 @@ import { Form } from "../components/Form";
 import type { BankKind } from "../setup";
 import { AskFirst } from "../components/Confirm";
 import { fileText } from "../fileText";
+import { withBase } from "../base";
 
 // Accounting → Banking (ADR 0005): each trust bank account with what the books hold in it, how
 // far it is reconciled and whether a month waits for approval, each opening its own page. Add
@@ -775,7 +776,7 @@ function ApprovedCard({ bank }: { bank: BankBooks }) {
                 <td className="text-right">{money(r.book_balance)}</td>
                 <td>{r.approved_by}</td>
                 <td>
-                  <a href={downloadHref("three_way_reconciliation", [r.id], "pdf")}
+                  <a href={withBase(downloadHref("three_way_reconciliation", [r.id], "pdf"))}
                     aria-label={`Three-way reconciliation, ${usDate(r.period_start)} to ${usDate(lastDayOf(r.period_end))}, PDF`}
                     className="text-iris hover:text-iris-hover hover:underline">PDF</a>
                 </td>

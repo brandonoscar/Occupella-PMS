@@ -42,6 +42,7 @@ import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
 import { HistoryCard } from "./HistoryCard";
+import { withBase } from "../base";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -473,7 +474,7 @@ function OwnerStatements({ owner }: { owner: Owner }) {
       <ul className="flex flex-col gap-1 text-base" aria-label="Monthly statements">
         {lastTwelveMonths(today).map((month) => (
           <li key={month.start}>
-            <a className={LINK} href={`/api/owners/${owner.id}/statement/download?${new URLSearchParams({ start: month.start, end: month.end, format: "pdf" })}`}>
+            <a className={LINK} href={withBase(`/api/owners/${owner.id}/statement/download?${new URLSearchParams({ start: month.start, end: month.end, format: "pdf" })}`)}>
               {month.label} statement (PDF)
             </a>
           </li>

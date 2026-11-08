@@ -6,6 +6,7 @@ import { Form } from "../components/Form";
 import { Notice } from "../components/Notice";
 import { Wordmark } from "../components/Shell";
 import { PMC_KEY, pmcToSignIn } from "./SignInPage";
+import { withBase } from "../base";
 
 // A forgotten password (ADR 0007): an owner or a tenant gives their email and gets a link that
 // sets a new one. The answer is the same whether or not the email has a login, so it tells no
@@ -46,7 +47,7 @@ export function ForgotPasswordPage() {
           </Button>
         </Form>
       )}
-      <a href={pmcId ? `/sign-in?pmc=${pmcId}` : "/sign-in"} className="text-sm text-iris underline hover:text-iris-hover">Back to sign in</a>
+      <a href={withBase(pmcId ? `/sign-in?pmc=${pmcId}` : "/sign-in")} className="text-sm text-iris underline hover:text-iris-hover">Back to sign in</a>
     </div>
   );
 }

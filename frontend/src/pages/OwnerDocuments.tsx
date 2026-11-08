@@ -5,6 +5,7 @@ import { Card } from "../components/Shell";
 import type { OwnerDocument } from "../documents";
 import { sizeLabel } from "../documents";
 import { usDate } from "../money";
+import { withBase } from "../base";
 
 // What the signed-in owner sees of the files, to download: their own documents, their
 // properties' and units' files, and their bills' receipts (q046), each saying what it is about.
@@ -27,7 +28,7 @@ export function OwnerDocuments() {
         <ul className="flex flex-col gap-1 text-sm" aria-label="Your documents">
           {documents.map((d) => (
             <li key={d.id}>
-              <a className="text-ink underline underline-offset-2" href={`/api/owner/documents/${d.id}/file`}>
+              <a className="text-ink underline underline-offset-2" href={withBase(`/api/owner/documents/${d.id}/file`)}>
                 {d.title}
               </a>{" "}
               <span className="text-ink-muted">

@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Button } from "./Button";
+import { withBase } from "../base";
 
 // When a page fails to draw (an answer of a shape it doesn't know after an upgrade, say), React
 // unmounts everything: the portal went blank white (docs/edge-cases.md H-152). This keeps a page
@@ -30,7 +31,7 @@ export class ErrorBoundary extends Component<
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <Button onClick={reload}>Reload</Button>
-          <a href="/" className="text-sm text-iris hover:text-iris-hover hover:underline">Go to the start</a>
+          <a href={withBase("/")} className="text-sm text-iris hover:text-iris-hover hover:underline">Go to the start</a>
         </div>
       </div>
     );

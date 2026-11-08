@@ -6,6 +6,13 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+- **The portal works under a path**, for an app that mounts the PMS (the hosted Occupella serves it
+  at `https://app.occupella.com/books`). `PMS_PUBLIC_URL` may carry a plain path, never a query or
+  a fragment, and every link the server writes starts with it. Build the portal for the same path
+  (`vite build --base /books/`). A server of its own is unchanged.
+- **Fix:** mounted under a path, a staff member's custom roles held nothing, and the API's answers
+  could be cached: both read the request's whole path (`/books/api/...`) where they meant the
+  PMS's own (`/api/...`). They read it within the PMS now.
 Migrations `20261107000100` (fees the company keeps, the review of 11/07) and `20261107000200`
 (signing in through a host app).
 

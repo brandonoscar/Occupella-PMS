@@ -5,6 +5,7 @@ import { LegalLinks } from "../components/LegalLinks";
 import { Card } from "../components/Shell";
 import type { ManagerCard as Manager } from "../company";
 import { addressLines } from "../company";
+import { withBase } from "../base";
 
 // Who manages an owner's or a tenant's home (ADR 0006, step 12): the company's logo, name and
 // mailing address, where a notice to the manager goes, and its own terms and privacy notice.
@@ -22,7 +23,7 @@ export function ManagerCard() {
       ) : (
         <div className="flex flex-col gap-3">
           <div className="flex items-start gap-4">
-            {manager.logo && <img src="/api/company/logo" alt={`${manager.name} logo`} className="h-12 w-auto max-w-40 object-contain" />}
+            {manager.logo && <img src={withBase("/api/company/logo")} alt={`${manager.name} logo`} className="h-12 w-auto max-w-40 object-contain" />}
             <address className="text-base not-italic">
               <span className="block font-medium">{manager.name}</span>
               {manager.address && addressLines(manager.address).map((line) => (

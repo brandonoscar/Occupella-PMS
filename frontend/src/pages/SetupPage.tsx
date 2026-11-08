@@ -27,6 +27,7 @@ import { ScreeningCriteriaCard } from "./ScreeningCriteriaCard";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 import { AskFirst } from "../components/Confirm";
+import { withBase } from "../base";
 
 // Settings → Company setup (ADR 0006, step 12): the company itself, its name, mailing address and
 // logo (which owners and tenants see in their portal), the late fee and NSF fee terms each
@@ -252,7 +253,7 @@ function LogoCard({ company, refresh }: { company: Company; refresh: () => void 
   return (
     <Card title="Logo">
       {company.logo ? (
-        <img src={logoHref(company.logo)} alt={`${company.name} logo`} className="mb-3 h-16 w-auto max-w-60 object-contain" />
+        <img src={withBase(logoHref(company.logo))} alt={`${company.name} logo`} className="mb-3 h-16 w-auto max-w-60 object-contain" />
       ) : (
         <p className="mb-3 text-base text-ink-muted">No logo yet</p>
       )}

@@ -32,6 +32,7 @@ import {
   UserRound,
   Wrench,
 } from "lucide-react";
+import { withBase } from "../base";
 
 type Property = { account_id: string; property_id: string; name: string; bank: string; balance: string };
 
@@ -114,7 +115,7 @@ export function OwnerHome({ me, section = "overview", propertyId }: {
       <Shell me={me} nav={OWNER_NAV}>
         <PageHeader title="Property" description="Its units, who rents each, and what is vacant." />
         <p className="mb-4 text-sm">
-          <a className="text-iris hover:text-iris-hover hover:underline" href="/properties">All your properties</a>
+          <a className="text-iris hover:text-iris-hover hover:underline" href={withBase("/properties")}>All your properties</a>
         </p>
         <OwnerPropertyCard propertyId={propertyId} />
       </Shell>
@@ -141,7 +142,7 @@ export function OwnerHome({ me, section = "overview", propertyId }: {
               <tr key={p.account_id} className="border-t border-line">
                 <td className={CELL}>
                   <a className="font-medium text-iris hover:text-iris-hover hover:underline"
-                    href={`/properties/${p.property_id}`}>{p.name}</a>
+                    href={withBase(`/properties/${p.property_id}`)}>{p.name}</a>
                 </td>
                 <td className={`${CELL} text-ink-muted`}>{p.bank}</td>
                 <td className={AMOUNT}>{money(p.balance)}</td>
