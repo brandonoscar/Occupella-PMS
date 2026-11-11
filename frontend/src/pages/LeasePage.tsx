@@ -240,7 +240,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
         {tab === "ledger" && <LedgerTab lease={lease} runs={runs} record={record} />}
         {tab === "tenants" && (
           <div className="flex flex-col gap-6">
-            <TenantsTab people={lease.people} refresh={refresh} emailOn={me.email_on ?? false}
+            <TenantsTab people={lease.people} refresh={refresh} emailOn={me.invites_on ?? false}
               onRemove={(person) => { setLeaving(person); setPanel("remove"); }} />
             <HouseholdCards leaseId={id} />
           </div>
@@ -376,8 +376,9 @@ function Summary({ lease, record, recordDeposit, recordOwnerHeld }: {
   );
 }
 
-// What an invite does, under its button: emailed to the address named while the server sends
-// email (POST /api/invites), its link shown here either way; using a new one sets a new password.
+// What an invite does, under its button: emailed to the address named while this server, or the
+// app it is part of, emails invites (POST /api/invites, Me.invites_on), its link shown here either
+// way; using a new one sets a new password.
 function inviteSays(person: LeasePerson, to: string, emailOn: boolean): string {
   const at = to ? ` at ${to}` : "";
   const made = emailOn

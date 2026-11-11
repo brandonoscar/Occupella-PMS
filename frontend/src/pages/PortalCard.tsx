@@ -78,8 +78,9 @@ export function InviteForm({ kind, personId, name, portal, email, emailOn, refre
 
 // An owner's or a tenant's portal login on their page (ADR 0010 phase 3): its state and, in one
 // click, an invite to the email in their contact details, named before it goes (rule 3): emailed
-// while this server sends email (`emailOn`), else a link shown once for staff to give. With no
-// email on file it says so and opens their contact details to add one.
+// while this server, or the app it is part of, emails invites (`emailOn`, Me.invites_on), else a
+// link shown once for staff to give. With no email on file it says so and opens their contact
+// details to add one.
 export function PortalCard({ kind, personId, name, portal, loginEmail, contactEmail, emailOn, refresh, onEditContact }: {
   kind: "owner" | "tenant";
   personId: string;

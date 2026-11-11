@@ -19,7 +19,7 @@ const ME: Me = {
   pmc_name: "Synthetic PMC",
 };
 // A server that sends email: an invite is emailed.
-const EMAIL_ON: Me = { ...ME, email_on: true };
+const EMAIL_ON: Me = { ...ME, email_on: true, invites_on: true };
 
 const NO_CONTACT: Contact = {
   email: null, phone: null, alternate_phone: null, address_line_1: null, address_line_2: null,
@@ -234,6 +234,22 @@ describe("TenantPage", () => {
     const ask = await screen.findByRole("alertdialog");
     expect(ask.textContent).toContain("Email Tenant 1 an invite to the portal at tenant1@example.com?");
     expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(ask).getByRole("button", { name: "Send invite" }));
+    await vi.waitFor(() => expect(posted(fetch)).toEqual([
+      ["/api/invites", { kind: "tenant", person_id: "t1", email: TENANT.contact.email }],
+    ]));
+  });
+
+  it("says an invite is emailed when the app this server is part of sends it", async () => {
+    // The hosted Occupella: the PMS sends no email of its own, and the app emails owners' and
+    // tenants' invites (Settings.inviter, docs/adr/0013-sign-in-through-a-host.md).
+    const fetch = server({ "/api/tenants/t1": { ...TENANT, portal: "no login", login_email: null }, ...LEASE_ANSWERS });
+    render(<TenantPage me={{ ...ME, email_on: false, invites_on: true }} id="t1" />);
+    const invite = await screen.findByRole("button", { name: "Invite to the portal" });
+    expect(screen.getByText("Goes to tenant1@example.com, the email in their contact details. The link works once.")).toBeTruthy();
+    fireEvent.click(invite);
+    const ask = await screen.findByRole("alertdialog");
+    expect(ask.textContent).toContain("Email Tenant 1 an invite to the portal at tenant1@example.com?");
     fireEvent.click(within(ask).getByRole("button", { name: "Send invite" }));
     await vi.waitFor(() => expect(posted(fetch)).toEqual([
       ["/api/invites", { kind: "tenant", person_id: "t1", email: TENANT.contact.email }],

@@ -31,6 +31,9 @@ export type Me = {
   areas?: string[];
   // Whether the server sends email (PMS_EMAIL_SENDER); without it, emails wait to send.
   email_on?: boolean;
+  // Whether an owner's or a tenant's invite is emailed to them: by this server, or by the app it
+  // is part of (the hosted Occupella, docs/adr/0013-sign-in-through-a-host.md).
+  invites_on?: boolean;
 };
 export type Role = "admin" | "approve" | "disburse";
 

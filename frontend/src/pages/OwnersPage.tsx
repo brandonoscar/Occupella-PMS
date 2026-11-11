@@ -199,7 +199,7 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
       <Said>{said}</Said>
       <div>
         <Tabs label="Owner" tabs={OWNER_TABS} value={tab} onChange={setTab} />
-        {tab === "summary" && <OwnerSummary owner={owner} emailOn={me.email_on ?? false} refresh={refresh} />}
+        {tab === "summary" && <OwnerSummary owner={owner} emailOn={me.invites_on ?? false} refresh={refresh} />}
         {tab === "properties" && <OwnerProperties accounts={owner.accounts} />}
         {tab === "financials" && <OwnerFinancials owner={owner} refresh={refresh} />}
         {tab === "statements" && (
