@@ -1048,7 +1048,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and test or live ever shown; its webhook `POST /api/payments/webhook/stripe/<company>`, which
   Company setup lists the events of (`payments.STRIPE_EVENTS`), records only its payments and
   takes every secret it used, so a payment started before a change still
-  lands; keys that don't open on this server take no payment and never fall back), else the
+  lands; keys that don't open on this server take no payment and never fall back; a live server,
+  https at a host other than the machine itself, `deployment.is_live`, refuses Stripe's test keys,
+  its own at start and a company's in Company setup, uses none kept from before, and books no
+  report whose `livemode` isn't its keys' mode: P-048), else the
   server's (`PMS_PAYMENTS`: "stripe" with keys from the environment, `PMS_STRIPE_SECRET_KEY` and
   `PMS_STRIPE_WEBHOOK_SECRET`, serving only a server that holds one company, as they are one
   account paying out to one trust account; "fake" for development and CI, whose own page

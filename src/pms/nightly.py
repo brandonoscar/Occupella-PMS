@@ -348,7 +348,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         sending = bool(os.environ.get("PMS_EMAIL_SENDER"))
         # The server's partner, and each company's own keys entered in Settings.
         partner = payments.Resolver(
-            payments.partner_named(os.environ.get("PMS_PAYMENTS", ""), os.environ)
+            payments.partner_named(os.environ.get("PMS_PAYMENTS", ""), os.environ),
+            live=deployment.is_live(public_url, os.environ.get("PMS_FAKE_PARTNERS", "")),
         )
         done = run_all(conn, None, public_url, sending=sending, partner=partner)
         conn.autocommit = True

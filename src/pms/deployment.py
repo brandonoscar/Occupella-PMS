@@ -18,6 +18,12 @@ reached over https (docs/install.md, step 4: the session cookie is Secure). So a
 PMS_PUBLIC_URL is https refuses to start with any of them, unless PMS_FAKE_PARTNERS is "allow":
 for a public demo of a synthetic company, and nothing else.
 
+A live server (https at a host other than this machine's, PMS_FAKE_PARTNERS not "allow") also
+refuses Stripe's test keys, from the environment (PMS_STRIPE_SECRET_KEY) or entered by a company
+(src/pms/api/payment_keys.py): a test payment would go into the trust books as real money
+(docs/edge-cases.md P-048). https://localhost and 127.0.0.1 are the machine itself, nobody's
+real money.
+
 PMS_PUBLIC_URL is the address people open the PMS at (docs/install.md, step 2). Every change a
 browser sends is refused unless it comes from that origin, and every emailed link starts with it,
 so a server at the wrong one lets nobody sign in and emails links that go nowhere
@@ -110,6 +116,44 @@ def refuse_invite_url(invite_url: str) -> None:
     )
 
 
+# Hosts that are the machine itself: a server there takes nobody's real money.
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+# A Stripe secret key, or a restricted one, for real money. Anything else is a test key.
+LIVE_KEYS = ("sk_live_", "rk_live_")
+
+
+def is_live(public_url: str, allow: str = "") -> bool:
+    """Whether a server at `public_url` takes real people's money: one at an https address of a
+    host other than this machine, unless allowed as a demo of a synthetic company
+    (PMS_FAKE_PARTNERS=allow)."""
+    parts = urlsplit(public_url.strip())
+    host = (parts.hostname or "").lower()
+    if parts.scheme.lower() != "https" or host in LOCAL_HOSTS or host.endswith(".localhost"):
+        return False
+    return allow.strip().lower() != ALLOW
+
+
+def live_key(secret_key: str) -> bool:
+    """Whether a Stripe secret key moves real money (sk_live_, rk_live_)."""
+    return secret_key.strip().startswith(LIVE_KEYS)
+
+
+class KeysNotLive(ValueError):
+    """Stripe's test keys on a live server: their payments would be booked as real money."""
+
+
+def refuse_test_keys(public_url: str, payments: str, secret_key: str, allow: str = "") -> None:
+    """Raise if a live server's own payments partner is Stripe under a test key. The key is
+    never repeated."""
+    if payments.strip() == "stripe" and is_live(public_url, allow) and not live_key(secret_key):
+        raise KeysNotLive(
+            "PMS_STRIPE_SECRET_KEY is not a live key (sk_live_ or rk_live_) on a server at an https"
+            " address real people use: a test payment would go into the trust books as real"
+            " money. Set the live key, or leave PMS_PAYMENTS unset (docs/edge-cases.md P-048)."
+        )
+
+
 class FakePartnerRefused(ValueError):
     """A fake partner named on a server reached over https, which real people use."""
 
@@ -138,12 +182,18 @@ def refuse_fakes(public_url: str, partners: Mapping[str, str], allow: str = "") 
 
 
 def refuse_fakes_in(environ: Mapping[str, str]) -> None:
-    """refuse_public_url and refuse_fakes, read from a server's environment (the command-line
-    tools). Unset, PMS_PUBLIC_URL is each command's own default."""
+    """refuse_public_url, refuse_fakes and refuse_test_keys, read from a server's environment (the
+    command-line tools). Unset, PMS_PUBLIC_URL is each command's own default."""
     if environ.get("PMS_PUBLIC_URL", "").strip():
         refuse_public_url(environ["PMS_PUBLIC_URL"])
     refuse_fakes(
         environ.get("PMS_PUBLIC_URL", ""),
         {name: environ.get(name, "") for name in PARTNERS},
+        environ.get("PMS_FAKE_PARTNERS", ""),
+    )
+    refuse_test_keys(
+        environ.get("PMS_PUBLIC_URL", ""),
+        environ.get("PMS_PAYMENTS", ""),
+        environ.get("PMS_STRIPE_SECRET_KEY", ""),
         environ.get("PMS_FAKE_PARTNERS", ""),
     )

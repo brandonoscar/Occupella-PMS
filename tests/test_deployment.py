@@ -114,6 +114,105 @@ def test_the_email_command_refuses_before_it_sends(monkeypatch):
         email.main(["deliver"])
 
 
+# --- Stripe's test keys on a live server (docs/edge-cases.md P-048) -------------------------
+# A test payment would go into the trust books as real money: a live server (https, a host other
+# than the machine itself) takes only live keys, from the environment or entered by a company.
+
+TEST_KEYS = ["sk_" + "test_" + "Synthetic000000000000A1b2", "rk_" + "test_" + "Synthetic0000A1b2"]
+LIVE_KEYS = ["sk_" + "live_" + "Synthetic000000000000Z9y8", "rk_" + "live_" + "Synthetic0000Z9y8"]
+WEBHOOK = "whsec_" + "Synthetic0000000000000001"
+
+
+@pytest.mark.parametrize(
+    "url, live",
+    [
+        ("https://rentals.example.com", True),
+        ("HTTPS://Rentals.Example.com/books", True),
+        ("http://rentals.example.com", False),
+        ("https://localhost:8443", False),
+        ("https://127.0.0.1", False),
+        ("https://[::1]:8443", False),
+        ("https://pms.localhost", False),
+        ("", False),
+    ],
+)
+def test_a_live_server_is_at_https_on_a_host_other_than_the_machine_itself(url, live):
+    assert deployment.is_live(url) is live
+
+
+def test_a_public_demo_allowed_its_test_partners_takes_no_real_money():
+    assert not deployment.is_live("https://demo.example.com", " Allow ")
+    assert deployment.is_live("https://demo.example.com", "yes")
+
+
+@pytest.mark.parametrize("key", [*TEST_KEYS, "", "pk_" + "live_" + "Synthetic0000Z9y8"])
+def test_a_live_server_refuses_stripes_test_keys_without_repeating_them(key):
+    with pytest.raises(deployment.KeysNotLive) as refused:
+        deployment.refuse_test_keys("https://rentals.example.com", "stripe", key)
+    assert "docs/edge-cases.md P-048" in str(refused.value)
+    assert not key or key not in str(refused.value)
+
+
+@pytest.mark.parametrize("key", LIVE_KEYS)
+def test_a_live_server_takes_live_keys(key):
+    deployment.refuse_test_keys("https://rentals.example.com", " stripe ", f" {key} ")
+
+
+@pytest.mark.parametrize(
+    "url, partner, allow",
+    [
+        ("http://rentals.example.com", "stripe", ""),
+        ("https://localhost:8443", "stripe", ""),
+        ("https://demo.example.com", "stripe", "allow"),
+        ("https://rentals.example.com", "", ""),
+        ("https://rentals.example.com", "fake", "allow"),
+    ],
+)
+def test_test_keys_run_where_no_real_money_is_taken(url, partner, allow):
+    deployment.refuse_test_keys(url, partner, TEST_KEYS[0], allow)
+
+
+def test_the_app_refuses_to_start_with_stripes_test_keys_over_https(monkeypatch):
+    monkeypatch.setenv("PMS_STRIPE_SECRET_KEY", TEST_KEYS[0])
+    monkeypatch.setenv("PMS_STRIPE_WEBHOOK_SECRET", WEBHOOK)
+    with pytest.raises(deployment.KeysNotLive):
+        create_app(
+            Settings(
+                database_url="postgresql://unused",
+                public_url="https://rentals.example.com",
+                payments="stripe",
+            )
+        )
+
+
+def test_a_live_servers_payments_take_live_keys_and_no_companys_test_keys(monkeypatch):
+    monkeypatch.setenv("PMS_STRIPE_SECRET_KEY", LIVE_KEYS[0])
+    monkeypatch.setenv("PMS_STRIPE_WEBHOOK_SECRET", WEBHOOK)
+    live = create_app(
+        Settings(
+            database_url="postgresql://unused",
+            public_url="https://rentals.example.com",
+            payments="stripe",
+        )
+    )
+    assert live.state.payments.live is True
+    assert live.state.payments.server.live is True
+    local = create_app(Settings(database_url="postgresql://unused", public_url="http://localhost"))
+    assert local.state.payments.live is False
+
+
+def test_the_command_line_tools_refuse_test_keys_too(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unused")
+    monkeypatch.setenv("PMS_PUBLIC_URL", "https://rentals.example.com")
+    monkeypatch.setenv("PMS_PAYMENTS", "stripe")
+    monkeypatch.setenv("PMS_STRIPE_SECRET_KEY", TEST_KEYS[0])
+    monkeypatch.delenv("PMS_FAKE_PARTNERS", raising=False)
+    with pytest.raises(deployment.KeysNotLive):
+        nightly.main([])
+    with pytest.raises(deployment.KeysNotLive):
+        email.main(["deliver"])
+
+
 # --- PMS_PUBLIC_URL (docs/edge-cases.md H-059, H-060) ----------------------------------------
 # The address people open the PMS at. Every change a browser sends is refused unless it comes
 # from this origin, and every emailed link starts with it, so a server at the wrong one lets

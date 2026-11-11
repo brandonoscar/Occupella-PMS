@@ -38,8 +38,9 @@ NO_DATA_KEY = "This server can't keep keys. Ask whoever runs it to set PMS_DATA_
 
 class KeysView(BaseModel):
     # Whose account the company's payments go through now: its own keys, the server's partner,
-    # or none (no payment online). "unreadable": it has keys of its own that don't open here.
-    using: Literal["own", "server", "none", "unreadable"]
+    # or none (no payment online). "unreadable": it has keys of its own that don't open here;
+    # "test_refused": its keys are Stripe's test keys, and this server is live (P-048).
+    using: Literal["own", "server", "none", "unreadable", "test_refused"]
     # The server's partner, when the company has no keys of its own: "stripe" or "fake".
     server_partner: str | None
     mode: Literal["test", "live"] | None
@@ -81,8 +82,10 @@ def view(conn: psycopg.Connection[Any], request: Request, session: Any) -> KeysV
     row = latest(conn, session.pmc_id)
     own = resolver.own(conn, session.pmc_id)
     server = resolver.server_for(conn)
-    using: Literal["own", "server", "none", "unreadable"] = (
-        "unreadable"
+    using: Literal["own", "server", "none", "unreadable", "test_refused"] = (
+        "test_refused"
+        if own is False and resolver.live and row is not None and row[1] == "test"
+        else "unreadable"
         if own is False
         else "own"
         if own is not None
@@ -131,6 +134,13 @@ def save_keys(session: Staff, conn: Conn, request: Request, new: NewKeys) -> Key
         mode, last4 = payments.check_keys(secret_key, webhook_secret)
     except payments.BadKeys as bad:
         raise HTTPException(422, str(bad)) from None
+    if mode == "test" and resolver_of(request).live:
+        # A test payment would be booked as real money (docs/edge-cases.md P-048).
+        raise HTTPException(
+            422,
+            "Those are test keys, and this server takes real payments. Enter your live keys"
+            " (they start with sk_live_).",
+        )
     try:
         key = sealed.key_from(os.environ, "payments keys")
     except sealed.NoKey:

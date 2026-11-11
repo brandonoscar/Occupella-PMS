@@ -446,6 +446,7 @@ def stripe_report(browser, kind, subject, created=None):
             "id": f"evt_{uuid4().hex}",
             "type": kind,
             "created": now if created is None else created,
+            "livemode": False,  # the server's test key's own mode (P-048)
             "data": {"object": subject},
         }
     ).encode()

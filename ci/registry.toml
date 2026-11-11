@@ -1903,6 +1903,18 @@ tests = [
 ]
 
 [[invariant]]
+id = "payments-test-keys-never-real-money"
+statement = "Stripe's test keys never book real money (docs/edge-cases.md P-048, P-049). A live server, at https on a host other than the machine itself and not a demo allowed its test partners (deployment.is_live), refuses to start with test keys of its own, refuses a company's test keys in Company setup, and takes no payment and no report under test keys a company kept before it went live. A report whose livemode isn't its keys' mode is acknowledged and booked nowhere, whatever webhook it reaches."
+tests = [
+  "tests/properties/test_payment_keys_properties.py::test_a_companys_keys_take_only_its_own_payments_and_its_latest_keys_hold",
+  "tests/test_payments.py::test_a_report_from_the_other_mode_is_acknowledged_and_never_booked",
+  "tests/test_deployment.py::test_a_live_server_refuses_stripes_test_keys_without_repeating_them",
+  "tests/test_deployment.py::test_the_app_refuses_to_start_with_stripes_test_keys_over_https",
+  "tests/api/test_payment_keys_api.py::test_a_live_server_takes_a_companys_live_keys_and_refuses_its_test_keys",
+  "tests/api/test_payment_keys_api.py::test_test_keys_kept_before_the_server_went_live_take_no_payment_and_no_report",
+]
+
+[[invariant]]
 id = "company-status-latest-holds"
 statement = "A company's status (migration 20261105000100), set by the server's operator with python -m pms.admin status, is the latest it was set to, active before any. A person signs in only while it is active, refused the same way whatever the password while it is suspended or closed; open sessions and API keys stop answering and no password reset is sent then. The nightly run passes over a company only while it is closed. Another company's status never changes with it."
 tests = [

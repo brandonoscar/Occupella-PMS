@@ -15,7 +15,7 @@ import { useRecord } from "./useRecord";
 const PAYMENT_KEYS = "/api/payments/keys";
 
 export type PaymentKeys = {
-  using: "own" | "server" | "none" | "unreadable";
+  using: "own" | "server" | "none" | "unreadable" | "test_refused";
   server_partner: string | null;
   mode: "test" | "live" | null;
   ends_in: string | null;
@@ -37,10 +37,15 @@ export function keysLine(keys: PaymentKeys): string {
       return keys.server_partner === "fake" ? "Using the test payments partner." : "Using this server's Stripe account.";
     case "unreadable":
       return "Your keys can't be read on this server. Enter them again.";
+    case "test_refused":
+      return "Your keys are test keys, which take no payments here. Enter your live keys.";
     default:
       return "Not set. Tenants and owners can't pay online.";
   }
 }
+
+// Keys of the company's own that take no payment here: unreadable, or test keys on a live server.
+const keysRefused = (keys: PaymentKeys) => keys.using === "unreadable" || keys.using === "test_refused";
 
 // Company setup: the company's own Stripe keys (the founder's review of 11/03, item 4). An admin
 // enters them; the server keeps them sealed and only ever shows the last four.
@@ -63,13 +68,13 @@ export function PaymentKeysCard() {
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : (
         <>
-          {keys.using === "unreadable" && <Notice tone="error">{keysLine(keys)}</Notice>}
+          {keysRefused(keys) && <Notice tone="error">{keysLine(keys)}</Notice>}
           <div className="flex flex-wrap items-center gap-2">
-            {keys.using !== "unreadable" && <p className="text-base text-ink" data-testid="payment-keys">{keysLine(keys)}</p>}
+            {!keysRefused(keys) && <p className="text-base text-ink" data-testid="payment-keys">{keysLine(keys)}</p>}
             {keys.using === "own" && keys.mode !== null && (
               <Badge tone={keys.mode === "live" ? "positive" : "caution"}>{keys.mode === "live" ? "Live" : "Test"}</Badge>
             )}
-            {(keys.using === "own" || keys.using === "unreadable") && keys.may_change && (
+            {(keys.using === "own" || keysRefused(keys)) && keys.may_change && (
               <RowMenu label="Stripe keys" actions={[{
                 label: "Remove keys",
                 danger: true,

@@ -109,11 +109,19 @@ class Stripe(payments.StripePartner):
         return self.answers[(method, path)]
 
 
-def report(kind, subject, when=None):
+def report(kind, subject, when=None, live=False):
     import time
 
     when = int(time.time()) if when is None else when
-    body = json.dumps({"id": "evt_9", "type": kind, "created": when, "data": {"object": subject}})
+    body = json.dumps(
+        {
+            "id": "evt_9",
+            "type": kind,
+            "created": when,
+            "livemode": live,
+            "data": {"object": subject},
+        }
+    )
     return body.encode(), {"stripe-signature": signed(body.encode(), when)}
 
 
@@ -139,6 +147,45 @@ def test_stripe_reports_a_bank_payment_paid_with_its_fee():
         "evt_9",
         Decimal("5.00"),
     )
+
+
+def test_stripes_keys_say_whether_they_move_real_money():
+    assert payments.StripePartner("sk_" + "live_" + "Synthetic0000Z9y8", SECRET).live
+    assert payments.StripePartner("rk_" + "live_" + "Synthetic0000Z9y8", SECRET).live
+    assert not payments.StripePartner("sk_" + "test_" + "Synthetic0000A1b2", SECRET).live
+
+
+class LiveStripe(Stripe):
+    def __init__(self, answers):
+        payments.StripePartner.__init__(self, "sk_" + "live_" + "Synthetic0000Z9y8", SECRET)
+        self.answers = answers
+        self.calls = []
+
+
+@pytest.mark.parametrize("live_keys", [False, True])
+def test_a_report_from_the_other_mode_is_acknowledged_and_never_booked(live_keys):
+    """docs/edge-cases.md P-048: a test payment's report never counts on live keys, nor a live
+    one's on test keys, nor one that doesn't say its mode."""
+    payment = uuid4()
+    subject = {"id": "pi_1", "object": "payment_intent", "metadata": {"payment_id": str(payment)}}
+    made = LiveStripe if live_keys else Stripe
+    for livemode in (not live_keys, None, "true", 1):
+        body = json.dumps(
+            {
+                "id": "evt_9",
+                "type": "payment_intent.payment_failed",
+                "created": int(__import__("time").time()),
+                "livemode": livemode,
+                "data": {"object": subject},
+            }
+        ).encode()
+        assert (
+            made({}).event(body, {"stripe-signature": signed(body, json.loads(body)["created"])})
+            is None
+        )
+    body, headers = report("payment_intent.payment_failed", subject, live=live_keys)
+    event = made({}).event(body, headers)
+    assert event is not None and (event.payment_id, event.kind) == (payment, "failed")
 
 
 def test_stripe_reports_a_failure_a_return_and_nothing_else():
