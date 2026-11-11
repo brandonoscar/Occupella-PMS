@@ -27,7 +27,7 @@ RUN go mod init build \
         github.com/andybalholm/brotli@v1.2.7 golang.org/x/net@v0.62.0 \
     && go build -o /go/bin/dbmate github.com/amacneil/dbmate/v2
 
-FROM mirror.gcr.io/library/python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60
+FROM mirror.gcr.io/library/python:3.13-slim@sha256:09a17cad02668ae61ece136b4fd36ac3849e14f670ebedb637ea3e15580525bc
 
 COPY --from=dbmate /go/bin/dbmate /usr/local/bin/dbmate
 # The base image's Debian packages with their security fixes since it was published: Grype
