@@ -149,6 +149,8 @@ describe("Dashboard", () => {
         asked: "1500.00", to_receive: "500.00" }],
       month_to_month: [{ lease_id: "l5", property: "Property 1", unit: "Unit 4", tenants: ["Tenant 1"],
         term_ended_on: "2026-10-10", rolled_on: "2026-10-11" }],
+      autopays_moved: [{ lease_id: "l6", property: "Property 2", unit: "Unit 1", tenant: "Tenant 2",
+        stopped_on: "2026-10-12" }],
     });
     render(<DashboardPage me={ME} />);
 
@@ -166,7 +168,12 @@ describe("Dashboard", () => {
       "Renters insurance": ["Open lease", "/leases/l3"],
       "Deposit to receive": ["Open lease", "/leases/l4"],
       "Month to month": ["Open lease", "/leases/l5"],
+      "Autopay stopped": ["Open lease", "/leases/l6"],
     });
+    // P-065: an autopay saved at the company's old payments account stopped by itself.
+    expect(screen.getByText(
+      "Tenant 2 · Property 2, Unit 1 · saved at the old payments account: they were emailed to set it up again",
+    )).toBeTruthy();
     // Insurance expired in May comes before the fees past their day, before the rest of today.
     expect(items.slice(0, 2).map((item) => item.getAttribute("aria-label"))).toEqual([
       "Vendor insurance", "Company fees in trust",

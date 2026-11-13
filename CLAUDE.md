@@ -1134,7 +1134,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   sends email, the tenant is emailed of each payment before the bank is debited. It stops (`trust_autopay_stops`, once) when the tenant or
   staff turn it off (Lease page, Autopay; area rent, naming who), when a new one replaces it, and
   by itself, with an email, when the lease ended, the tenant left it, or two payments in a row
-  didn't go through, came back or were given up before the partner took them. The AI role never reads the saved accounts (`AI_NEVER_READS`).
+  didn't go through, came back or were given up before the partner took them; and (migration
+  20261113000200, P-065, the founder's call) when the company's partner now acts for another
+  account than the one its bank account was saved at (`trust_autopay_account_homes`, noted when
+  the partner reports it saved, else the first night after; `payments.KnowsAccount`, Stripe's
+  GET /v1/account once per keys), checked each night and on Run rent now before any payment
+  starts (`src/pms/autopay_homes.py`; the Dashboard lists them for 30 days, `autopays_moved`).
+  A stop by itself names nobody, even in Run rent now. The AI role never reads the saved accounts (`AI_NEVER_READS`).
   An online payment, autopay's or by hand, waits for staff during a payment hold even when it
   would all be prepaid rent.
 - Rent work (`src/pms/api/rent.py`): a tenant's payment recorded by staff pays the owner's

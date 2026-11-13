@@ -51,7 +51,17 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
-from pms import autopay, days, deployment, email, look_ups, notices, payments, schema
+from pms import (
+    autopay,
+    autopay_homes,
+    days,
+    deployment,
+    email,
+    look_ups,
+    notices,
+    payments,
+    schema,
+)
 from pms.api import payables, rent
 
 log = logging.getLogger("pms.nightly")
@@ -107,6 +117,10 @@ def run_pmc(
     payments partner (its name), the autopay payments due start too, after the rent is charged
     (src/pms/autopay.py); they go to the partner once this commits."""
     with conn.transaction():
+        # The company's partner now and the account it acts for (P-065), asked before anything
+        # here takes a lock: autopays saved at another account stop before any payment starts.
+        chosen = partner.for_pmc(conn, pmc_id) if isinstance(partner, payments.Resolver) else None
+        account = autopay_homes.account_of(chosen)
         # First, each fixed-term lease that ran out with no renewal signed goes month to month
         # (migration 0154), so the month's rent below charges it.
         rolled = conn.execute("SELECT trust_roll_over_leases(%s, %s)", (pmc_id, day)).fetchone()
@@ -138,9 +152,10 @@ def run_pmc(
         prepaid = rent.use_prepaid_by_itself(conn, pmc_id, day)
         # The company's partner: its own keys, else the server's.
         name = partner.name_for(conn, pmc_id) if isinstance(partner, payments.Resolver) else partner
+        moved = autopay_homes.stop_moved(conn, pmc_id, chosen, account, day, sending, public_url)
         started = autopay.start_due(conn, pmc_id, day, name, sending, public_url)
         written = notices.write_scheduled(conn, pmc_id, day, public_url) if sending else None
-    emails = started.emails + (0 if written is None else sum(vars(written).values()))
+    emails = moved.emails + started.emails + (0 if written is None else sum(vars(written).values()))
     return Ran(
         pmc_id,
         run[0],

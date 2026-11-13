@@ -210,6 +210,7 @@ def test_a_quiet_day_shows_nothing(client, conn, staff, pmc):
         "messages_waiting": [],
         "drafts_waiting": [],
         "rent_not_posted": None,
+        "autopays_moved": [],
     }
 
 
@@ -283,6 +284,58 @@ def test_a_lease_gone_month_to_month_is_noted_for_thirty_days_while_it_is(client
     # Once it ends after all (a notice), it isn't month to month any more.
     conn.execute("SELECT trust_end_lease(%s, %s, %s)", (pmc.pmc_id, lease, term_end + 40 * DAY))
     assert noted(term_end + DAY) == []
+
+
+def test_an_autopay_stopped_as_the_payments_account_changed_is_noted_until_set_up_again(
+    client, conn, staff, pmc
+):
+    # docs/edge-cases.md P-065 (src/pms/autopay_homes.py): its tenant was emailed; staff see it.
+    prop = pmc.owners[0].property_id
+    tenant = add_tenant(conn, pmc.pmc_id, prop, "Tenant 6")
+    unit = add_unit(conn, pmc.pmc_id, prop, "Unit 6")
+    lease = open_lease(conn, pmc.pmc_id, unit, START, None, "1500.00", [tenant])
+
+    def autopay_of(lease, tenant):
+        return conn.execute(
+            "INSERT INTO trust_autopay (pmc_id, lease_id, tenant_id, rule, amount, partner)"
+            " VALUES (%s, %s, %s, 'balance', '2000.00', 'stripe') RETURNING id",
+            (pmc.pmc_id, lease, tenant),
+        ).fetchone()[0]
+
+    def stops(autopay_id, why):
+        conn.execute(
+            "INSERT INTO trust_autopay_stops (pmc_id, autopay_id, why) VALUES (%s, %s, %s)",
+            (pmc.pmc_id, autopay_id, why),
+        )
+
+    stops(autopay_of(lease, tenant), "account changed")
+    # Another tenant turned theirs off: nothing for staff.
+    elsewhere = add_tenant(conn, pmc.pmc_id, prop, "Tenant 7")
+    unit_7 = add_unit(conn, pmc.pmc_id, prop, "Unit 7")
+    stops(
+        autopay_of(
+            open_lease(conn, pmc.pmc_id, unit_7, START, None, "900.00", [elsewhere]), elsewhere
+        ),
+        "tenant",
+    )
+
+    def noted(on):
+        return client.get("/api/today", params={"on": str(on)}).json()["autopays_moved"]
+
+    assert noted(TODAY) == [
+        {
+            "lease_id": str(lease),
+            "property": "Property 1",
+            "unit": "Unit 6",
+            "tenant": "Tenant 6",
+            "stopped_on": str(TODAY),
+        }
+    ]
+    assert noted(TODAY - DAY) == [] and len(noted(TODAY + 29 * DAY)) == 1
+    assert noted(TODAY + 30 * DAY) == []
+    # The tenant sets autopay up again: nothing more to do.
+    autopay_of(lease, tenant)
+    assert noted(TODAY) == []
 
 
 def test_the_day_is_the_sessions_pmc(client, conn, staff, pmc):

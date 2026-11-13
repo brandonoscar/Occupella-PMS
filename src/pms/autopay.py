@@ -56,12 +56,20 @@ RETRY_DAYS = 3
 # it comes, still reaches the books.
 ON_ITS_WAY_DAYS = op.NO_WORD_DAYS
 
-Why = Literal["tenant", "staff", "lease ended", "tenant left", "failed twice", "replaced"]
+Why = Literal[
+    "tenant", "staff", "lease ended", "tenant left", "failed twice", "replaced", "account changed"
+]
 # What a stop by itself says to the tenant.
 STOPPED_BY_ITSELF: dict[str, str] = {
     "lease ended": "your lease ended",
     "tenant left": "you left the lease",
     "failed twice": "two payments in a row didn't go through",
+    # The company now takes payments through another account than the one it was saved at
+    # (src/pms/autopay_homes.py, P-065).
+    "account changed": (
+        "your property manager now takes payments online through another account, which can't"
+        " use the bank account you saved. Set up autopay again to keep paying automatically"
+    ),
 }
 
 
@@ -207,11 +215,23 @@ def stop(conn: psycopg.Connection[Any], pmc_id: UUID, autopay_id: UUID, why: Why
     """Stops an autopay, once; False when it was stopped already. Staff's stop names them
     (trust.staff_id, set for the request). A payment of it being sent is recorded first."""
     conn.execute(LOCK, (autopay_id,))
-    made = conn.execute(
-        "INSERT INTO trust_autopay_stops (pmc_id, autopay_id, why) VALUES (%s, %s, %s)"
-        " ON CONFLICT (autopay_id) DO NOTHING RETURNING id",
-        (pmc_id, autopay_id, why),
-    ).fetchone()
+    # A stop by itself names nobody, even in a staff member's request (an admin's Run rent now):
+    # only staff's own stop names them (the table's check).
+    named = None
+    if why != "staff":
+        found = conn.execute("SELECT current_setting('trust.staff_id', true)").fetchone()
+        named = found[0] if found else None
+        if named:
+            conn.execute("SELECT set_config('trust.staff_id', '', true)")
+    try:
+        made = conn.execute(
+            "INSERT INTO trust_autopay_stops (pmc_id, autopay_id, why) VALUES (%s, %s, %s)"
+            " ON CONFLICT (autopay_id) DO NOTHING RETURNING id",
+            (pmc_id, autopay_id, why),
+        ).fetchone()
+    finally:
+        if named:
+            conn.execute("SELECT set_config('trust.staff_id', %s, true)", (named,))
     return made is not None
 
 

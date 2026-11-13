@@ -28,12 +28,12 @@ answer in the portal for everything that can fail.
 | [Money and the ledger](#money-and-the-ledger) | 157 | 120 | 8 | 29 | 6 |
 | [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 92 | 15 | 57 | 11 |
 | [Concurrency and retries](#concurrency-and-retries) | 144 | 77 | 30 | 37 | 0 |
-| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 166 | 78 | 8 | 80 | 16 |
+| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 166 | 79 | 8 | 79 | 15 |
 | [Bad files and imports](#bad-files-and-imports) | 154 | 73 | 17 | 64 | 1 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 169 | 104 | 11 | 54 | 5 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 176 | 82 | 14 | 80 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1187** | **666** | **113** | **408** | **43** |
+| **All** | **1187** | **667** | **113** | **407** | **42** |
 
 ## Open, high risk: the work list
 
@@ -80,7 +80,6 @@ None.
 - P-034: A company with two operating trust bank accounts and one Stripe payout account
 - P-051: PMS_DATA_KEY lost while payments are in flight
 - P-061: An owner's payment refunded in Stripe, or a dispute on it won
-- P-065: The company changes Stripe accounts (server's to own, or new keys) with autopays saved at the old one
 - P-115: The bank returns an owner's ACH draw (account closed, no account)
 - P-116: The bank returns a vendor's ACH payment
 - P-121: A printed check is lost, misprinted or voided
@@ -632,11 +631,11 @@ None.
 | P-034 | A company with two operating trust bank accounts and one Stripe payout account | Books put each payment in its property's trust bank account; Stripe pays everything into the one bank set in Stripe, so cash lands in the wrong account | Open | src/pms/api/online_payments.py:366-369; src/pms/payments.py:517-525 | H |
 | P-051 | PMS_DATA_KEY lost while payments are in flight | The company webhook answers 404 until keys are entered again; reports past Stripe's retry window are lost and nothing asks for them | Open | src/pms/api/online_payments.py:682-684 | H |
 | P-061 | An owner's payment refunded in Stripe, or a dispute on it won | Same gaps as P-027 and P-028: not read, the books keep the contribution or the return | Open | src/pms/payments.py:337-351 | H |
-| P-065 | The company changes Stripe accounts (server's to own, or new keys) with autopays saved at the old one | The partner name is still "stripe", so the new account is asked to charge a customer it doesn't know; each month's payment fails three days and is given up, the tenant emailed, and two in a row given up stop it by itself with an email (autopay.failed_twice). Nothing stops it at the change itself, and staff aren't told: whether a change of keys (a new account, or the same one's keys rolled) should stop autopays saved before it is the founder's call | Open | src/pms/autopay.py:162-165, 476-478; tests/test_autopay.py::test_an_autopay_whose_payments_were_never_sent_two_months_running_stops_by_itself | H |
 | P-115 | The bank returns an owner's ACH draw (account closed, no account) | No way to record it: the draw stays paid and the owner's balance wrong until two staff post a journal entry | Open | src/pms/api/payouts.py (no return path); src/pms/api/journal.py | H |
 | P-116 | The bank returns a vendor's ACH payment | The bill stays Paid and can't be voided once money was taken | Open | src/pms/api/payables.py:1309-1328 (void refused once money was taken) | H |
 | P-121 | A printed check is lost, misprinted or voided | Reprinting gives the same numbers again; there is no void and reissue, and the money stays recorded as gone | Open | src/pms/api/payouts.py:699-728 | H |
 | P-130 | The wrong statement imported (another account's, wrong days, wrong signs) | Permanent: statements are append-only and there is no undo; its lines the books lack block month-end; Import statement asks nothing first | Open | tests/test_bank_statements.py::test_statements_and_lines_are_append_only pins it; frontend/src/pages/ReconcilePage.tsx:370-371 | H |
+| P-065 | The company changes Stripe accounts (server's to own, or new keys) with autopays saved at the old one | The founder's call (2026-11-13): stop them when the account differs. The account each autopay's bank account was saved at is noted (migration 20261113000200: when the partner reports it saved, or the first night after for one saved before), and each night and an admin's Run rent now, before any payment starts, an autopay saved at another account than the company's partner's now (GET /v1/account) stops by itself ('account changed'), its tenant emailed to set it up again, and the Dashboard lists it until they do or 30 days pass. New keys of the same account (rolled, or the same account through Stripe Connect) change nothing; a partner that can't say its account stops nothing that night. A switch made before this release isn't caught: those were noted at the account in use the first night after | Tested | tests/test_autopay_homes.py::test_an_autopay_saved_at_another_account_stops_before_it_pays_and_its_tenant_is_told; tests/test_autopay_homes.py::test_new_keys_of_the_same_account_change_nothing; tests/test_autopay_homes.py::test_one_saved_before_accounts_were_noted_is_noted_at_the_first_look; tests/api/test_autopay_api.py::test_run_rent_now_first_stops_an_autopay_saved_at_another_account; tests/api/test_today.py::test_an_autopay_stopped_as_the_payments_account_changed_is_noted_until_set_up_again | H |
 | P-048 | Test-mode keys (sk_test_) on a live https server | A live server (https at a host other than the machine itself, deployment.is_live) refuses to start with test keys of its own, refuses a company's test keys in Company setup (422), takes no payment or report under test keys kept before it went live (Stripe keys: "test keys, which take no payments here"), and ignores a report whose livemode isn't its keys' mode | Tested | tests/test_deployment.py::test_a_live_server_refuses_stripes_test_keys_without_repeating_them; tests/test_payments.py::test_a_report_from_the_other_mode_is_acknowledged_and_never_booked; tests/api/test_payment_keys_api.py::test_a_live_server_takes_a_companys_live_keys_and_refuses_its_test_keys; tests/properties/test_payment_keys_properties.py | H |
 | P-049 | A company goes from test keys to live | On a live server its old test keys take no report (every_own leaves them out) and a test-mode report never lands under live keys; on an http or localhost server no real money moves | Tested | tests/api/test_payment_keys_api.py::test_test_keys_kept_before_the_server_went_live_take_no_payment_and_no_report; tests/properties/test_payment_keys_properties.py::test_a_companys_keys_take_only_its_own_payments_and_its_latest_keys_hold | H |
 | P-012 | The Stripe endpoint isn't subscribed to the events the PMS reads (async_payment_succeeded, payment_intent.*, checkout.session.expired, charge.dispute.created) | Company setup lists the eight events the endpoint must be sent (payments.STRIPE_EVENTS, the API's webhook_events), saying a bank payment never shows as paid without them | Tested | tests/api/test_payment_keys_api.py; frontend/src/pages/PaymentKeysCard.test.tsx | H |
@@ -798,7 +797,6 @@ None.
 6. P-087: a test that a sender or attachment raising a ValueError records a failed delivery and the next email still goes.
 7. P-075: a test that deliveries never hold more than one pool connection at once, with SMTP set to hang, and that staff pages still answer.
 8. P-111: an API test that Pay owners by ACH refuses before recording when a payee's sealed number doesn't open under the current PMS_DATA_KEY.
-9. P-065: an autopay test that a company changing Stripe accounts stops (or flags) autopays saved at the old one and tells the tenant to save their bank again.
 
 ## Bad files and imports
 

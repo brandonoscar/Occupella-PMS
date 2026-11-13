@@ -160,6 +160,9 @@ class FakePartner:
     def event(self, body: bytes, headers: Mapping[str, str]) -> Event | Saved | None:
         raise NotTheirs("the fake partner reports through its own page, not a webhook")
 
+    def account(self) -> str:
+        return "fake"
+
 
 def fake_saved(autopay_id: UUID, happened_at: datetime) -> Saved:
     """What the fake partner's page reports when the tenant saves a bank account: made-up
@@ -357,6 +360,18 @@ class StripePartner:
         except (KeyError, TypeError, ValueError) as failed:
             raise PartnerFailed(f"Stripe's payment came without its fee: {failed}") from None
 
+    def account(self) -> str:
+        """The Stripe account these keys act for (`acct_...`), asked once per keys in a process:
+        a tenant's bank account saved at one account can be charged only by it (P-065)."""
+        held = hashlib.sha256(self._key.encode()).hexdigest()
+        if held not in ACCOUNTS:
+            found = self._call("GET", "/account", [])
+            try:
+                ACCOUNTS[held] = str(found["id"])
+            except (KeyError, TypeError) as failed:
+                raise PartnerFailed(f"Stripe's account came without {failed}") from None
+        return ACCOUNTS[held]
+
     def look_up(self, payment_id: UUID, ref: str, now: datetime) -> Event | None:
         """What became of a payment Stripe sent no report of (docs/edge-cases.md C-090), asked of
         its Checkout Session (`cs_...`) or, an autopay's, its PaymentIntent (`pi_...`): None while
@@ -455,6 +470,19 @@ def charge_form(
     if account.mandate:
         form.append(("mandate", account.mandate))
     return form
+
+
+# The account each set of keys acts for, by the keys' SHA-256 (never the keys): it never changes.
+ACCOUNTS: dict[str, str] = {}
+
+
+@runtime_checkable
+class KnowsAccount(Protocol):
+    """A partner that says which of its accounts it acts for (P-065)."""
+
+    name: str
+
+    def account(self) -> str: ...
 
 
 @runtime_checkable

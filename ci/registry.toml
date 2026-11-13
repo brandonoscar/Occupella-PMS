@@ -2005,3 +2005,14 @@ tests = [
   "tests/test_look_ups.py::test_the_nightly_run_asks_once_a_company_day",
   "tests/api/test_rent.py::test_a_copy_of_a_payment_online_not_in_the_books_waits_for_staff_to_say_it_is_another",
 ]
+
+[[invariant]]
+id = "autopay-stops-when-the-payments-account-changes"
+statement = "An autopay is charged only through the payments account its bank account was saved at (docs/edge-cases.md P-065; the founder, 2026-11-13). The account is noted once, when the partner reports it saved or the first night after; each night and on Run rent now, before any payment starts, an autopay saved at another account than the company's partner's now stops by itself, naming nobody, its tenant emailed and the Dashboard listing it. New keys of the same account change nothing, and a partner that can't say its account stops nothing."
+tests = [
+  "tests/test_autopay_homes.py::test_an_autopay_saved_at_another_account_stops_before_it_pays_and_its_tenant_is_told",
+  "tests/test_autopay_homes.py::test_new_keys_of_the_same_account_change_nothing",
+  "tests/test_autopay_homes.py::test_a_partner_that_cant_say_its_account_stops_and_notes_nothing",
+  "tests/api/test_autopay_api.py::test_run_rent_now_first_stops_an_autopay_saved_at_another_account",
+  "tests/api/test_today.py::test_an_autopay_stopped_as_the_payments_account_changed_is_noted_until_set_up_again",
+]

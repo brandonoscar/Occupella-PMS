@@ -347,6 +347,8 @@ TABLES = {
     "trust_announcements": {"SELECT", "INSERT"},
     "trust_announcement_removals": {"SELECT", "INSERT"},
     "trust_autopay_accounts": {"SELECT", "INSERT"},
+    # The payments account an autopay's bank account was saved at (P-065).
+    "trust_autopay_account_homes": {"SELECT", "INSERT"},
     "trust_autopay_stops": {"SELECT", "INSERT"},
     "trust_autopay_runs": {"SELECT", "INSERT"},
     "trust_autopay_submissions": {"SELECT", "INSERT"},

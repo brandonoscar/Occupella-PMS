@@ -12,6 +12,14 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
   the end of the grace is on its way, and none is charged once it lands. One that fails, expires
   or is given up leaves the rent late as before; one that comes back is a bounce. Migration
   `20261113000100`.
+- **Autopays saved at another payments account stop, and their tenants are told**
+  (docs/edge-cases.md P-065; the founder's call). The PMS notes which Stripe account each autopay's
+  bank account was saved at. When a company takes payments through another account (its own
+  keys instead of the server's, Stripe Connect with a new account), each autopay saved at the old
+  one stops before it takes anything, its tenant is emailed to set it up again, and the Dashboard
+  lists it. New keys of the same account change nothing. Migration `20261113000200`.
+  **To upgrade:** nothing; an autopay saved before is noted at the account in use the first night
+  after the upgrade, so switch accounts only after that night.
 - **Payments Stripe never reported reach the books** (docs/edge-cases.md C-090). Once a company's
   day, the nightly run asks Stripe about each payment online with no report a week after it
   started (`src/pms/look_ups.py`) and records what it says, once, as its report would have. Receive

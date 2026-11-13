@@ -16312,6 +16312,21 @@ CREATE TABLE public.trust_autopay (
 
 
 --
+-- Name: trust_autopay_account_homes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_autopay_account_homes (
+    autopay_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    partner_account text NOT NULL,
+    noted text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_autopay_account_homes_noted_check CHECK ((noted = ANY (ARRAY['saved'::text, 'first look'::text]))),
+    CONSTRAINT trust_autopay_account_homes_partner_account_check CHECK (((length(partner_account) >= 1) AND (length(partner_account) <= 200)))
+);
+
+
+--
 -- Name: trust_autopay_accounts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16362,8 +16377,7 @@ CREATE TABLE public.trust_autopay_stops (
     why text NOT NULL,
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT trust_autopay_stops_check CHECK (((why = 'staff'::text) = (recorded_by IS NOT NULL))),
-    CONSTRAINT trust_autopay_stops_why_check CHECK ((why = ANY (ARRAY['tenant'::text, 'staff'::text, 'lease ended'::text, 'tenant left'::text, 'failed twice'::text, 'replaced'::text])))
+    CONSTRAINT trust_autopay_stops_check CHECK (((why = 'staff'::text) = (recorded_by IS NOT NULL)))
 );
 
 
@@ -20670,6 +20684,14 @@ ALTER TABLE ONLY public.trust_authority_late_fees
 
 
 --
+-- Name: trust_autopay_account_homes trust_autopay_account_homes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_account_homes
+    ADD CONSTRAINT trust_autopay_account_homes_pkey PRIMARY KEY (autopay_id);
+
+
+--
 -- Name: trust_autopay_accounts trust_autopay_accounts_autopay_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20747,6 +20769,14 @@ ALTER TABLE ONLY public.trust_autopay_stops
 
 ALTER TABLE ONLY public.trust_autopay_stops
     ADD CONSTRAINT trust_autopay_stops_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_autopay_stops trust_autopay_stops_why_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_autopay_stops
+    ADD CONSTRAINT trust_autopay_stops_why_check CHECK ((why = ANY (ARRAY['tenant'::text, 'staff'::text, 'lease ended'::text, 'tenant left'::text, 'failed twice'::text, 'replaced'::text, 'account changed'::text]))) NOT VALID;
 
 
 --
@@ -27060,6 +27090,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_autopay_account_homes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_autopay_account_homes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_autopay_accounts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28814,6 +28851,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_auth
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_autopay FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_autopay_account_homes trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_autopay_account_homes FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -32877,6 +32921,14 @@ ALTER TABLE ONLY public.trust_authority_late_fees
 
 ALTER TABLE ONLY public.trust_authority_late_fees
     ADD CONSTRAINT trust_authority_late_fees_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_autopay_account_homes trust_autopay_account_homes_pmc_id_autopay_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_account_homes
+    ADD CONSTRAINT trust_autopay_account_homes_pmc_id_autopay_id_fkey FOREIGN KEY (pmc_id, autopay_id) REFERENCES public.trust_autopay(pmc_id, id);
 
 
 --
@@ -38606,4 +38658,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261106120100'),
     ('20261107000100'),
     ('20261107000200'),
-    ('20261113000100');
+    ('20261113000100'),
+    ('20261113000200');

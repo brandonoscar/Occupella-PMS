@@ -28,7 +28,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import autopay, days, exports, notices
+from pms import autopay, autopay_homes, days, exports, notices
 from pms.api import outbox
 from pms.api.deps import Conn, Staff, refusal
 from pms.api.owner_held import OwnerHeld, held_by_owner
@@ -1567,6 +1567,11 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
     each night, each fixed-term lease that ran out with no renewal signed goes month to month."""
     if run.late_fees_as_of > today(conn, session.pmc_id):
         raise HTTPException(422, "late fees are assessed as of today or an earlier day")
+    # The company's partner now and the account it acts for, asked before the run takes a lock:
+    # autopays saved at another account stop before any payment starts, as each night (P-065).
+    partners = outbox.PARTNER.get()
+    chosen = None if partners is None else partners.for_pmc(conn, session.pmc_id)
+    account = autopay_homes.account_of(chosen)
     # Fixed-term leases that ran out with no renewal go month to month first, as each night.
     rolled = conn.execute(
         "SELECT trust_roll_over_leases(%s, %s)", (session.pmc_id, today(conn, session.pmc_id))
@@ -1585,7 +1590,15 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
     ).fetchone()
     assert authority is not None
     prepaid_used = use_prepaid_by_itself(conn, session.pmc_id, today(conn, session.pmc_id))
-    partners = outbox.PARTNER.get()
+    moved = autopay_homes.stop_moved(
+        conn,
+        session.pmc_id,
+        chosen,
+        account,
+        today(conn, session.pmc_id),
+        outbox.SENDING.get(),
+        outbox.PUBLIC_URL.get(),
+    )
     started = autopay.start_due(
         conn,
         session.pmc_id,
@@ -1605,7 +1618,7 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
         rents=row[0],
         recurring=row[1],
         late_fees=row[2],
-        emails=started.emails + sum(vars(written).values()),
+        emails=moved.emails + started.emails + sum(vars(written).values()),
         authority_late_fees=authority[0],
         prepaid_used=prepaid_used,
         autopay=started.payments,

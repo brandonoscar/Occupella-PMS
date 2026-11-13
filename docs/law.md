@@ -970,6 +970,16 @@ each payment, its amount and due date, when it starts, before the bank is debite
 send email). The tenant turns it off whenever they like, and it stops by itself after two payments
 in a row didn't go through. A payment hold stops it for that month.
 
+**When the company changes payments accounts** (migration 20261113000200, docs/edge-cases.md
+P-065; the founder's call of 2026-11-13). A tenant's authorization to debit their bank account is
+given to one Stripe account, which alone holds it. When the company starts taking payments
+through another account (its own keys instead of the server's, Stripe Connect with a new account,
+or another account's keys), each autopay saved at the old one stops before it takes anything,
+and the tenant is emailed to set it up again; staff see the list on the Dashboard. The same
+account with new keys, or linked through Stripe Connect, keeps every autopay as it was. Whether a
+tenant's authorization carries over to another account was not looked into (NOT VERIFIED): the
+PMS never asks it to.
+
 **Left to the company.** Whether its partner's authorization text meets NACHA's rules and its
 state's, and whether an email the day a debit starts is notice enough for a varying amount where
 the tenant expects more lead time.

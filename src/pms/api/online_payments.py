@@ -743,7 +743,13 @@ def receive(
     if pmc_id is not None and company_of(conn, event) != pmc_id:
         return Received(recorded=False)  # another company's, or none of ours: acknowledged
     if isinstance(event, payments.Saved):
-        return Received(recorded=record_saved(conn, event, partner.name))
+        from pms import autopay_homes  # it reads autopay, which reads this module
+
+        recorded = record_saved(conn, event, partner.name)
+        if recorded:
+            # The account it was saved at: only that account can charge it (P-065).
+            autopay_homes.note_saved(conn, event.autopay_id, partner)
+        return Received(recorded=recorded)
     from pms.api import owner_payments  # it reads this module's helpers; owners pay in online too
 
     return Received(
