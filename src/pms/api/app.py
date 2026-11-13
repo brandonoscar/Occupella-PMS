@@ -291,6 +291,7 @@ STAFF_FROM_HOST = (
 )
 NO_HOST = "this server signs in no one through another app"
 HOST_UNAVAILABLE = "your sign-in can't be checked right now: try again in a minute"
+ONLY_WITH_INVITE = "a phone and whether texts are OK come only with an owner's or a tenant's invite"
 
 
 # --- request and answer shapes ------------------------------------------------------------
@@ -325,6 +326,11 @@ class ExternalSignIn(BaseModel):
     pmc_id: UUID | None = None
     # An owner's or a tenant's invite, used up by this sign-in (its link's fragment).
     invite: Token | None = None
+    # With that invite: their phone, as typed, and whether the company may text them, kept as
+    # accepting an invite keeps them (item 14 of the founder's review of 11/03; the host's own
+    # sign-up page asks, as the PMS's invite page does when people sign in with a password).
+    phone: Annotated[str, Field(max_length=40)] | None = None
+    texts_ok: bool = False
 
 
 class ServerCompany(BaseModel):
@@ -734,6 +740,16 @@ def create_app(settings: Settings) -> FastAPI:
         verifier = settings.verifier
         if verifier is None:
             raise HTTPException(404, NO_HOST)
+        phone = None
+        if body.phone is not None or body.texts_ok:
+            if body.invite is None:
+                raise HTTPException(422, ONLY_WITH_INVITE)
+            if not (body.phone or "").strip():
+                raise HTTPException(422, "Enter your phone number.")
+            try:
+                phone = phones.e164(body.phone or "")
+            except phones.BadPhone as bad:
+                raise HTTPException(422, str(bad)) from None
         address = throttle.address_of(request)
         throttle.refuse_if_waiting(app.state.sign_in_failures, address, "failed sign-ins")
         try:
@@ -749,6 +765,21 @@ def create_app(settings: Settings) -> FastAPI:
         except accounts.SignInRefused:
             app.state.sign_in_failures.hit(address)
             raise
+        who = signed.session
+        if phone is not None and who.kind != "staff":
+            # In the invite's own transaction: their answer, in the words their company's name
+            # puts beside the box, and the phone as their contact phone (phones.record_signup).
+            _, company = accounts.names(conn, who.login_id)
+            phones.record_signup(
+                conn,
+                who.pmc_id,
+                who.login_id,
+                who.kind,
+                who.person_id,
+                phone,
+                body.texts_ok,
+                phones.text_consent(company),
+            )
         return signed_in(response, signed, conn)
 
     @app.post("/api/sign-out", status_code=204)

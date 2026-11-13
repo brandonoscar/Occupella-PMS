@@ -6,6 +6,12 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+- **Owners and tenants who join through the host app give their phone and say whether texts are
+  OK**, as people who set a password on the PMS's own invite page do (item 14 of the founder's
+  review of 11/03; docs/edge-cases.md U-171). `POST /api/external-sign-in` takes `phone` and
+  `texts_ok` with an owner's or a tenant's invite and keeps the answer, in the words shown beside
+  the box, with the phone as their contact phone. A phone that doesn't read is refused in words and
+  leaves the invite unused. Without a phone the sign-in works as before.
 - **CI: schema dumps compare the same on PostgreSQL 16.16.** From 2026-11-13 CI's `postgres:16`
   service is 16.16, whose dumps carry each column's `pg_attver`, an internal number that changes
   whenever its table is made again. db.yml's down/up check failed on main and every PR, and the
