@@ -160,6 +160,10 @@ step "speed (a short run)" env PYTHONPATH=src python -m tools.speed --units 100 
 # after each; here two months
 step "every night over months (a short run)" env PYTHONPATH=src python -m tools.fast_forward \
   --months 2 --seed 1
+# enterprise.yml, weekly: a company of 20,000 units brought over, run, worked on by fifty staff
+# for an hour and restored; here 200 units, five staff for 20 seconds, against the same ceilings
+step "enterprise size (a short run)" env PYTHONPATH=src python -m tools.enterprise --units 200 \
+  --staff 5 --seconds 20 --pause 1 --history-years 1
 # e2e.yml: the portal's typecheck, lint (oxlint, knip), unit tests and build (the browser tests
 # need a running API and a seeded database; frontend/playwright.config.ts says how to run them
 # by hand)
