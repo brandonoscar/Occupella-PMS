@@ -510,7 +510,7 @@ def test_a_copy_of_a_payment_online_not_in_the_books_waits_for_staff_to_say_it_i
         (online, home.pmc.pmc_id, home.lease, home.tenant, f"cs_test_{online.hex}", began),
     )
 
-    # Receive payment knows of it: it asks staff before one of its amount (src/pages/LeaseForms.tsx).
+    # Receive payment knows of it and asks staff first (frontend/src/pages/LeaseForms.tsx).
     assert lease_row(client, home)["online_waiting"] == [
         {"amount": "600.00", "started_on": began.date().isoformat()}
     ]
