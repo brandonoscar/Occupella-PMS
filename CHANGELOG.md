@@ -6,6 +6,10 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+- **CI:** the migrations' down/up check (`tools/check_rollback.py`) now prints the schema lines
+  that differ (at most 40) when a rollback and re-apply don't round-trip, instead of only saying
+  they differ. db.yml's `migrations` job has failed this way on main since 2026-11-13, the day
+  its `postgres:16` service moved to 16.16, with no line to say why.
 - **CI:** the nightly Python mutation job runs again. mutmut 3.8.0 read pytest's private
   `Function._nodeid`, which pytest 9.2 (this release) removed, so from 2026-11-12 the job failed
   while collecting the tests, before any mutant ran. mutmut is now 3.8.1, and a test runs the
