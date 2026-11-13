@@ -19,7 +19,7 @@ RUN npm run build
 # klauspost/compress 1.20.2 (it pins 1.18.5, with a high vulnerability, GHSA-259r-337f-4rfw; 1.18.7
 # has one too, GO-2026-6865), x/net 0.62.0 (it pins 0.60.0, high, GO-2026-6860) and
 # andybalholm/brotli 1.2.7 (it pins 1.2.1, critical and exploited, GO-2026-6888).
-FROM mirror.gcr.io/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS dbmate
+FROM mirror.gcr.io/library/golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS dbmate
 ENV CGO_ENABLED=0 GOFLAGS=-trimpath GOTOOLCHAIN=local
 WORKDIR /build
 RUN go mod init build \
