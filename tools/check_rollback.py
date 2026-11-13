@@ -22,6 +22,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from tools import schema_dump
+
 ROOT = Path(__file__).resolve().parent.parent
 IRREVERSIBLE = re.compile(r"RAISE\s+EXCEPTION\s+'[^']*cannot be rolled back", re.IGNORECASE)
 # The changed lines a failure shows, so CI's log says what differs, not only that something does.
@@ -69,7 +71,7 @@ class Dbmate:
             dumped = self.run("--schema-file", str(path), "dump")
             if dumped.returncode != 0:
                 raise RuntimeError(f"dbmate dump failed: {dumped.stderr}")
-            return path.read_text()
+            return schema_dump.normal(path.read_text())
 
 
 def check(dbmate: Dbmate) -> list[str]:

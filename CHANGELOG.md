@@ -6,10 +6,14 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
-- **CI:** the migrations' down/up check (`tools/check_rollback.py`) now prints the schema lines
-  that differ (at most 40) when a rollback and re-apply don't round-trip, instead of only saying
-  they differ. db.yml's `migrations` job has failed this way on main since 2026-11-13, the day
-  its `postgres:16` service moved to 16.16, with no line to say why.
+- **CI: schema dumps compare the same on PostgreSQL 16.16.** From 2026-11-13 CI's `postgres:16`
+  service is 16.16, whose dumps carry each column's `pg_attver`, an internal number that changes
+  whenever its table is made again. db.yml's down/up check failed on main and every PR, and the
+  nightly's backup checks with it. `tools/schema_dump.py` now drops what changes when the schema
+  doesn't (the build comments, pg_dump's random `\restrict` key, each column's attver), and the
+  down/up check, the backup check and `scripts/dump_schema.sh` read every dump through it;
+  `db/schema.sql` comes out byte for byte the same. The down/up check also prints the lines that
+  differ (at most 40), instead of only saying they do.
 - **CI:** the nightly Python mutation job runs again. mutmut 3.8.0 read pytest's private
   `Function._nodeid`, which pytest 9.2 (this release) removed, so from 2026-11-12 the job failed
   while collecting the tests, before any mutant ran. mutmut is now 3.8.1, and a test runs the
