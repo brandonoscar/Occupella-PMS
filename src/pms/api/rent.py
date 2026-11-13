@@ -545,6 +545,37 @@ LIMIT 1
 """
 
 
+# A tenant's payment online to a lease that the books don't hold yet and that didn't fail, expire
+# or come back, started in the last LOOKED_FOR_DAYS: its report, or the nightly look-up
+# (src/pms/look_ups.py), brings it in under its own key, so a copy staff recorded by hand would
+# count it twice (docs/edge-cases.md C-090). The day it was started, by the company's day.
+ONLINE_WAITING = """
+SELECT p.lease_id, p.amount, trust_pmc_day(p.pmc_id, p.created_at)
+FROM trust_online_payments AS p
+WHERE p.pmc_id = %(pmc)s AND (%(lease)s::uuid IS NULL OR p.lease_id = %(lease)s::uuid)
+  AND p.created_at >= now() - make_interval(days => %(days)s)
+  AND NOT EXISTS (SELECT 1 FROM trust_online_payment_events AS e
+                  WHERE e.payment_id = p.id AND e.kind IN ('failed', 'expired', 'returned'))
+  AND NOT EXISTS (SELECT 1 FROM pgledger_transfers AS t
+                  WHERE t.metadata ->> 'key' = 'payment/' || p.id::text)
+ORDER BY p.created_at DESC, p.id
+"""
+LOOKED_FOR_DAYS = 60  # look_ups.LOOK_FOR_DAYS: older ones are on Banking's list for staff
+
+
+def online_waiting(
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID | None
+) -> dict[UUID, list[OnlineWaiting]]:
+    """Each lease's payments online not in the books yet (ONLINE_WAITING), newest first."""
+    found: dict[UUID, list[OnlineWaiting]] = {}
+    params = {"pmc": pmc_id, "lease": lease_id, "days": LOOKED_FOR_DAYS}
+    for lease, amount, started_on in conn.execute(ONLINE_WAITING, params).fetchall():
+        found.setdefault(lease, []).append(
+            OnlineWaiting(amount=cents(amount), started_on=started_on)
+        )
+    return found
+
+
 def refuse_alike(
     conn: psycopg.Connection[Any],
     pmc_id: UUID,
@@ -578,6 +609,15 @@ def refuse_alike(
             f"a payment of ${amount:,.2f} received {received_on:%m/%d/%Y} is recorded on this"
             " lease already: refresh the page to see it, and record this one only if it is"
             " another payment, saying so",
+        )
+    coming = online_waiting(conn, pmc_id, lease_id).get(lease_id, [])
+    online = next((w for w in coming if w.amount == cents(amount)), None)
+    if online is not None:
+        raise HTTPException(
+            409,
+            f"a payment of ${amount:,.2f} online, started {online.started_on:%m/%d/%Y}, isn't in"
+            " the books yet: it goes in once the payments partner reports it (Banking, Online"
+            " payments waiting). Record this one only if it is another payment, saying so",
         )
 
 
@@ -1109,6 +1149,14 @@ class DepositAsked(BaseModel):
     to_receive: str
 
 
+class OnlineWaiting(BaseModel):
+    """A payment online to the lease that the books don't hold yet (ONLINE_WAITING): Receive
+    payment asks staff whether one of its amount is another payment (C-090)."""
+
+    amount: str
+    started_on: date
+
+
 class RentLease(BaseModel):
     id: UUID
     property: str
@@ -1142,6 +1190,8 @@ class RentLease(BaseModel):
     deposit_asked: DepositAsked | None = None
     # Its tenants' deposits the owner holds, outside trust (migration 20261106000241).
     owner_held: list[OwnerHeld] = []
+    # Its payments online not in the books yet, newest first (C-090).
+    online_waiting: list[OnlineWaiting] = []
 
 
 # The security deposit each lease's signed offer asked, and the security deposits held for its
@@ -1430,6 +1480,7 @@ def built(
     insured = renters_insurance(conn, pmc, day)
     asked = deposits_asked(conn, pmc, only)
     owners_hold = held_by_owner(conn, pmc, only)
+    coming = online_waiting(conn, pmc, only)
     found = []
     for i, prop, unit, starts, ends, rent, due_day, due, on_hold in conn.execute(
         LEASES, names
@@ -1461,6 +1512,7 @@ def built(
                 renters_insurance=insured.get(i),
                 deposit_asked=asked.get(i),
                 owner_held=owners_hold.get(i, []),
+                online_waiting=coming.get(i, []),
             )
         )
     return found

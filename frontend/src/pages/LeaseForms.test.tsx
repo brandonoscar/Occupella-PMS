@@ -136,6 +136,29 @@ describe("PaymentForm", () => {
       expect(screen.getByRole("button", { name: "Record payment" })).toHaveProperty("disabled", false));
   });
 
+  it("asks whether a payment like one online not in the books yet is another (C-090)", async () => {
+    const record = recorder();
+    const waiting = { amount: "600.00", started_on: "2026-11-03" };
+    render(<PaymentForm lease={{ ...LEASE, payments: [], online_waiting: [waiting] }} record={record} />);
+    fireEvent.change(screen.getByLabelText("Payment received"), { target: { value: "600" } });
+
+    expect(screen.getByText(
+      "A payment of $600.00 online, started 11/03/2026, isn't in the books yet: it goes in once the payments partner reports it.",
+    )).toBeTruthy();
+    const pay = screen.getByRole("button", { name: "Record payment" });
+    expect(pay).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByLabelText("This is another payment, not that one again"));
+    fireEvent.click(pay);
+    await vi.waitFor(() => expect(record).toHaveBeenCalled());
+    expect(record.mock.calls[0]?.[1]).toMatchObject({ amount: "600", not_a_duplicate: true });
+
+    // Another amount is its own payment, and so is a typo the API refuses on its own.
+    for (const typed of ["601.00", "6x0"]) {
+      fireEvent.change(screen.getByLabelText("Payment received"), { target: { value: typed } });
+      expect(screen.queryByText(/online, started/)).toBeNull();
+    }
+  });
+
   it("sends no word of a duplicate for a payment like none recorded", async () => {
     const record = recorder();
     render(<PaymentForm lease={{ ...LEASE, payments: [] }} record={record} />);
