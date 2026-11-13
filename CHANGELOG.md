@@ -6,6 +6,10 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+- **CI:** the nightly Python mutation job runs again. mutmut 3.8.0 read pytest's private
+  `Function._nodeid`, which pytest 9.2 (this release) removed, so from 2026-11-12 the job failed
+  while collecting the tests, before any mutant ran. mutmut is now 3.8.1, and a test runs the
+  pinned mutmut under the pinned pytest so the two can't drift apart unseen.
 - **Fix (payments): Stripe's test keys never book real money** (docs/edge-cases.md P-048, P-049).
   A server whose `PMS_PUBLIC_URL` is https at a host other than the machine itself refuses to
   start with a test key in `PMS_STRIPE_SECRET_KEY`. Company setup refuses a company's test keys
