@@ -48,6 +48,7 @@ import { QuickBooksPage } from "./pages/QuickBooksPage";
 import { NoticeTemplatesPage } from "./pages/NoticeTemplatesPage";
 import { PaymentFilePage, PaymentFilesPage } from "./pages/PaymentFilesPages";
 import { PayDonePage, PayFakePage, PayFakeSavePage } from "./pages/PayPages";
+import { ConnectOnboardingPage, ConnectPayPage, ConnectSavePage } from "./pages/ConnectPages";
 import { RentPage } from "./pages/RentPage";
 import { LeasePage } from "./pages/LeasePage";
 import { PropertiesPage, PropertyPage, UnitPage } from "./pages/RentalsPages";
@@ -81,6 +82,9 @@ export function App() {
   if (path === "/pay/owner-done") return <PayDonePage owner />;
   if (path === "/pay/fake") return <PayFakePage />;
   if (path === "/pay/fake-save") return <PayFakeSavePage />;
+  if (path === "/pay/fake-connect") return <ConnectOnboardingPage />;
+  if (path === "/pay/fake-connect-pay") return <ConnectPayPage />;
+  if (path === "/pay/fake-connect-save") return <ConnectSavePage />;
   if (path === "/sign-in") return <SignInPage />;
   if (path === "/forgot-password") return <ForgotPasswordPage />;
   return <Home path={path} />;

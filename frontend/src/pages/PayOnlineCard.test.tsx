@@ -98,3 +98,51 @@ describe("PayOnlineCard", () => {
     expect((screen.getByRole("button", { name: "Pay online" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
+
+describe("PayOnlineCard through Stripe Connect", () => {
+  const terms = (amount: string) => ({
+    connect: true,
+    card_max: "10000.00",
+    methods: [
+      { method: "ach", fee_payer: "company", why_company: null, tenant_fee: "0.00", total: amount },
+      { method: "card", fee_payer: "tenant", why_company: null, tenant_fee: "30.00", total: "1230.00" },
+    ],
+    autopay: [],
+  });
+
+  it("lets the tenant pick a card, shows its fee before they go, and pays by card", async () => {
+    const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") return new Response(JSON.stringify({ id: "p3", url: "/pay/fake-connect-pay#p3" }), { status: 201 });
+      if (path.startsWith("/api/payments/connect/leases/l1")) {
+        const amount = new URL(path, "http://x").searchParams.get("amount") ?? "100.00";
+        return new Response(JSON.stringify(terms(amount)));
+      }
+      return new Response(JSON.stringify(VIEW));
+    });
+    vi.stubGlobal("fetch", fetch);
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    render(<PayOnlineCard leaseId="l1" />);
+    const method = (await screen.findByLabelText("Pay by")) as HTMLSelectElement;
+    await vi.waitFor(() => expect(screen.getByTestId("pay-fee").textContent).toBe("$1,200.00, no fee"));
+    fireEvent.change(method, { target: { value: "card" } });
+    await vi.waitFor(() => expect(screen.getByTestId("pay-fee").textContent).toBe("$1,200.00 + $30.00 card fee = $1,230.00"));
+    expect(screen.getByText("Credit cards only: a debit or prepaid card can't carry a fee.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Pay online" }));
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith("/pay/fake-connect-pay#p3"));
+    const post = fetch.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(post?.[0]).toBe("/api/payments/connect/leases/l1/checkout");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ amount: "1200.00", method: "card" });
+  });
+
+  it("won't take more than a card payment may be", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (path: string) =>
+      new Response(JSON.stringify(path.startsWith("/api/payments/connect/") ? terms("20000.00") : VIEW))));
+    render(<PayOnlineCard leaseId="l1" />);
+    fireEvent.change(await screen.findByLabelText("Pay by"), { target: { value: "card" } });
+    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "20000.00" } });
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("pay-fee").textContent).toBe("A card payment is $10,000.00 at most: pay more by bank."));
+    expect((screen.getByRole("button", { name: "Pay online" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});

@@ -36,6 +36,7 @@ services:
       PMS_EMAIL_SENDER: fake
       PMS_GEOCODER: fake
       PMS_PAYMENTS: fake
+      PMS_CONNECT: fake
       PMS_NIGHTLY: "off"
       # A throwaway key the script makes for each simulation, never a stored one, seals the
       # synthetic payees' account numbers, as e2e.yml's does. Without one the PMS keeps none.

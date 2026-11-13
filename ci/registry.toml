@@ -1912,6 +1912,26 @@ tests = [
   "tests/test_deployment.py::test_the_app_refuses_to_start_with_stripes_test_keys_over_https",
   "tests/api/test_payment_keys_api.py::test_a_live_server_takes_a_companys_live_keys_and_refuses_its_test_keys",
   "tests/api/test_payment_keys_api.py::test_test_keys_kept_before_the_server_went_live_take_no_payment_and_no_report",
+  "tests/test_deployment.py::test_the_app_and_the_command_line_refuse_the_connect_platforms_test_key",
+  "tests/test_connect.py::test_the_platforms_webhook_reads_only_its_own_signed_reports_of_its_own_mode",
+  "tests/api/test_connect_api.py::test_a_test_mode_report_or_account_never_books_money_on_a_live_server",
+]
+
+[[invariant]]
+id = "connect-fees-never-an-owners-trust-whole"
+statement = "Stripe Connect (docs/adr/0014-stripe-connect.md, migration 20261113000150): a payment through a company's connected account (a tenant's or an owner's, by bank or card) reaches the books only once Stripe reports it paid, at most once; everything Stripe kept of it, its own fee and Occupella's application fee, and a dispute's fee leave trust only from the company's fee account, each exactly what was kept, and never from an owner's account, which moves only by whole payments in and their returns out. A dispute is recorded as a return; one the company wins puts the payment back. A report about another connected account's payment, or from an account no company connected, is never booked. Occupella's fee is never below what a payment costs the platform under the model chosen, at any amount, and a tenant who pays the fees adds the least that covers them, a card fee never past its cap. Every trust bank account ties out. Append-only."
+tests = [
+  "tests/properties/test_connect_properties.py::test_connect_payments_never_take_a_fee_from_an_owner_and_keep_trust_whole",
+  "tests/properties/test_connect_properties.py::test_the_default_fee_is_never_below_cost",
+  "tests/properties/test_connect_properties.py::test_a_fee_below_cost_check_passes_is_never_below_cost",
+  "tests/properties/test_connect_properties.py::test_what_a_tenant_adds_covers_the_fees_and_is_the_least_that_does",
+  "tests/properties/test_connect_properties.py::test_a_tenants_card_fee_never_passes_the_cap",
+  "tests/test_connect.py::test_the_default_fees_land_above_break_even",
+  "tests/api/test_connect_api.py::test_a_tenant_pays_by_bank_and_the_fees_leave_trust_from_the_companys_account",
+  "tests/api/test_connect_api.py::test_a_card_dispute_is_a_return_with_its_fee_and_one_won_puts_the_payment_back",
+  "tests/api/test_connect_api.py::test_an_owner_adds_money_by_card_and_the_fees_are_the_companys",
+  "tests/api/test_connect_api.py::test_the_platforms_webhook_maps_each_report_to_the_company_that_connected_its_account",
+  "tests/api/test_connect_api.py::test_disconnecting_stops_autopays_saved_at_the_account_and_another_accounts_report_never_lands",
 ]
 
 [[invariant]]

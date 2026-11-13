@@ -50,6 +50,16 @@ describe("online payments", () => {
     expect(waitingLine({ ...WAITING, what: "return", company_owes: null })).toContain("owner's account");
   });
 
+  it("says what a card dispute through Connect left waiting", () => {
+    expect(waitingLine({ ...WAITING, what: "dispute fee", company_owes: "15.00" })).toBe(
+      "A dispute cost a $15.00 fee; the company's fee account holds $1.25",
+    );
+    expect(waitingLine({ ...WAITING, what: "dispute won", company_owes: null })).toContain("not on the lease yet");
+    expect(waitingLine({ ...WAITING, what: "dispute won", company_owes: null, owner_id: "o1" })).toContain(
+      "not in the owner's account yet",
+    );
+  });
+
   it("says a payment started weeks ago with no word from the partner, to look up there (P-013)", () => {
     expect(waitingLine({ ...WAITING, what: "no word", company_owes: null, started_on: "2026-10-05" })).toBe(
       "Started online 10/05/2026, and the payments partner hasn't said since whether the bank paid:"
@@ -80,6 +90,9 @@ describe("autopay wording", () => {
       "Waiting for a bank account to be saved: pays the balance due, up to $1,200.00",
     );
     expect(autopayLine({ ...base, stopped: "failed twice" })).toBe("Stopped: two payments in a row didn't go through");
+    expect(autopayLine({ ...base, stopped: "account changed" })).toBe(
+      "Stopped: the manager changed the Stripe account it was saved at. Set it up again.",
+    );
     expect(autopayLine({ ...base, stopped: "something new" })).toBe("Off: something new");
   });
   it("reads a due date's payment with any fee, or why it took nothing", () => {

@@ -248,6 +248,9 @@ def settle(conn: psycopg.Connection[Any], row: Row, on: date | None = None) -> N
     from_company(conn, row, fee or ZERO, on or paid_on)
     if "returned" in events:
         record_return(conn, row, online.day_of(conn, row.pmc_id, events["returned"][0]))
+    from pms.api import disputes  # a card dispute through Connect, after its return (ADR 0014)
+
+    disputes.settle_owner(conn, row, on)
 
 
 def apply(conn: psycopg.Connection[Any], event: payments.Event, partner: str) -> bool:

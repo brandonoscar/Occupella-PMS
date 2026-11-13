@@ -897,7 +897,16 @@ excerpts, every one NOT VERIFIED against the statute):
   charge unless a free way to pay exists).
 - Card surcharges are banned in Connecticut, Massachusetts and Maine and capped at 2% in Colorado
   and Oklahoma; a debit card is never surcharged; Visa reportedly forbids a convenience fee on a
-  recurring payment. The PMS takes no card yet.
+  recurring payment. The PMS takes cards only through Stripe Connect (below).
+- Researched again on 2026-11-13 for Stripe Connect (merchant-compliance summaries of 2026 state
+  surcharge laws, e.g. nickel.com/surcharge-laws, verifee.com, weaudit.com, intellipay.com; every
+  one NOT VERIFIED against the statute): bans in Connecticut (C.G.S. 42-133ff), Massachusetts
+  (M.G.L. c. 140D, s. 28A), Maine (9-A M.R.S. 8-509, which reaches debit too) and Puerto Rico;
+  Colorado caps a surcharge at 2% (C.R.S. 5-2-212); Oklahoma's cap could not be confirmed (one
+  source says surcharging became legal there on November 1, 2025, SB 677); Texas sources conflict;
+  New York, New Jersey and others limit a surcharge to the merchant's cost of acceptance. The card
+  networks cap a US surcharge at 3% (Visa) or 4% (Mastercard), never more than the cost, and
+  allow none on a debit or prepaid card anywhere.
 - Trust money: the company is the merchant of record (the payment is its, into its trust bank
   account), and no fee is taken out of the rent: rent is owners' trust money. No regulator
   guidance was found on a processor keeping its fee out of what it pays into trust, or on returns
@@ -921,6 +930,25 @@ counts as received for its state's deposit deadline (a bank payment takes days t
 forbids a broker's own money in trust and Iowa requires the broker to cover bank charges from its
 own: a company in Oregon should keep its fee account able to pay the processor without a deposit.
 
+**Through Stripe Connect** (migration 20261113000150, docs/adr/0014-stripe-connect.md). On the
+hosted product each company connects its own Stripe account (Standard) and is the merchant of
+record; each payment is a direct charge on that account, landing in its Stripe balance and paid out
+to its trust account, Occupella's fee an application fee on it: trust money never passes through
+Occupella. What Stripe keeps (its fee and Occupella's) leaves the books from the company's fee
+account, never an owner's, as the processor's fee always did. A tenant pays by bank or card:
+- the bank fee by the company's choice above;
+- the card fee is the company's unless it chooses the tenant, and then only where the property's
+  state allows a surcharge (not CT, MA, ME, PR), never on autopay, never more than 3% of the
+  payment or the state's lower cap (CO 2%; OK 2% as recorded above, unconfirmed), and by credit
+  card only: Stripe's page refuses a debit or prepaid card when a fee is on top. Company setup
+  shows each state rule recorded here for the states its properties are in, as a warning.
+- A card dispute is recorded as a return (with the property's NSF fee), its dispute fee from the
+  company's fee account; a dispute the company wins puts the payment back. The NSF fee charged
+  at the dispute stays until staff waive it.
+
+**Left to the company.** Whether its state lets it pass a card fee to tenants (the PMS's list is
+researched, not reviewed by counsel), and its own disclosures of the fee.
+
 **Owners paying in online** (migration 20261102000150, ADR 0009, readiness q054). The same switch
 lets owners add money to their property accounts from the owner portal, by bank. ADR 0009's first
 rule says a processor's fee is never the owner's; the founder chose on 2026-11-02 that the company
@@ -928,7 +956,9 @@ always pays it on an owner's payment: nothing is added to what the owner pays, a
 trust only from the company's fee account, as for rent. The whole payment is the owner's
 contribution; a return comes back out of the owner's account, with no fee charged to them. No rule
 was found on owners paying into a trust account online (NOT VERIFIED); it is the owner's own money
-coming in, recorded as a contribution by check is.
+coming in, recorded as a contribution by check is. Through Stripe Connect an owner may pay by card
+too, and Occupella's fee on their payment is the company's as well: nothing is added to what the
+owner pays, and nothing leaves their account for it.
 
 
 ## Autopay (migration 0151, ADR 0009)

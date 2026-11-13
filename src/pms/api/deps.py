@@ -212,6 +212,7 @@ AREA_PATHS = (
     ("/api/unapplied", "rent"),  # money received not yet applied (a refund takes disburse too)
     ("/api/payments/settings", "setup"),  # whether tenants pay online, who pays the fee
     ("/api/payments/keys", "setup"),  # the company's own Stripe keys (an admin's, too)
+    ("/api/payments/connect/", "setup"),  # its connected Stripe account, who pays a card fee
     ("/api/payments/", "rent"),  # online payments waiting, the company's cover of the fees
     ("/api/payables/bills", "bills"),
     ("/api/payables/recurring", "bills"),

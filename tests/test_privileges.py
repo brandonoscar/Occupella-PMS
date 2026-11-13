@@ -350,6 +350,14 @@ TABLES = {
     "trust_autopay_stops": {"SELECT", "INSERT"},
     "trust_autopay_runs": {"SELECT", "INSERT"},
     "trust_autopay_submissions": {"SELECT", "INSERT"},
+    # Stripe Connect (docs/adr/0014-stripe-connect.md): a company's connected account and what
+    # Stripe says of it, the account each payment started on, who pays the card fee, and card
+    # disputes. The AI role reads the card fee choice and the disputes, never an account.
+    "trust_connected_accounts": {"SELECT", "INSERT"},
+    "trust_connected_account_states": {"SELECT", "INSERT"},
+    "trust_connected_payments": {"SELECT", "INSERT"},
+    "trust_card_fee_settings": {"SELECT", "INSERT"},
+    "trust_connect_disputes": {"SELECT", "INSERT"},
     # Owner draws and payout files (migration 0153): the draw day, how each owner is paid, payees'
     # bank accounts, what each bank asks in an ACH file, runs of payouts and their files' downloads,
     # each an insert by staff; the draws prepared on the draw day are written only by
@@ -498,6 +506,12 @@ AI_NEVER_READS = {
     "trust_text_consents",
     # A company's own Stripe keys, sealed (fix-list item 4).
     "trust_payment_keys",
+    # A company's connected Stripe account (ADR 0014): not a secret, but what a charge on the
+    # company's account names, so as near a credential as the keys; what Stripe says of it; and
+    # which account each payment and autopay was started on.
+    "trust_connected_accounts",
+    "trust_connected_account_states",
+    "trust_connected_payments",
     "trust_announcements",
     "trust_announcement_removals",
     # The company's mailing address, with the fee terms new properties start with (ADR 0006).
@@ -712,6 +726,10 @@ FUNCTIONS = {
     "trust_check_request_change()": set(),  # a trigger's: no one calls it
     "trust_check_text_consent()": set(),  # a trigger's: no one calls it
     "trust_check_payment_keys()": set(),  # a trigger's: no one calls it
+    "trust_check_connected_account()": set(),  # a trigger's: no one calls it
+    "trust_check_connected_account_state()": set(),  # a trigger's: no one calls it
+    "trust_check_connected_payment()": set(),  # a trigger's: no one calls it
+    "trust_check_connect_dispute()": set(),  # a trigger's: no one calls it
     "trust_refuse_cancelled_request_order()": set(),  # a trigger's: no one calls it
     "trust_check_autopay()": set(),  # a trigger's: no one calls it
     "trust_check_autopay_run()": set(),  # a trigger's: no one calls it

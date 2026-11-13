@@ -32,7 +32,8 @@ def test_the_refusal_names_every_fake_partner_at_once():
     with pytest.raises(deployment.FakePartnerRefused) as refused:
         deployment.refuse_fakes("HTTPS://pms.example.com", ALL_FAKE)
     assert str(refused.value).startswith(
-        "PMS_EMAIL_SENDER, PMS_GEOCODER, PMS_PAYMENTS, PMS_SCREENING_PARTNER name the fake"
+        "PMS_CONNECT, PMS_EMAIL_SENDER, PMS_GEOCODER, PMS_PAYMENTS, PMS_SCREENING_PARTNER name the"
+        " fake"
     )
 
 
@@ -327,3 +328,59 @@ def test_the_commands_run_with_no_address_set(monkeypatch):
 )
 def test_the_origin_is_written_as_a_browser_sends_it(url, origin):
     assert Settings(database_url="postgresql://unused", public_url=url).origin == origin
+
+
+# --- the Connect platform's key (docs/adr/0014-stripe-connect.md) ---------------------------
+
+
+@pytest.mark.parametrize("key", TEST_KEYS)
+def test_a_live_server_refuses_the_connect_platforms_test_key_without_repeating_it(key):
+    with pytest.raises(deployment.KeysNotLive) as refused:
+        deployment.refuse_test_keys(
+            "https://rentals.example.com", "stripe", key, "", "PMS_STRIPE_CONNECT_SECRET_KEY"
+        )
+    assert str(refused.value).startswith("PMS_STRIPE_CONNECT_SECRET_KEY is not a live key")
+    assert "leave PMS_CONNECT unset" in str(refused.value)
+    assert not key or key not in str(refused.value)
+
+
+def test_the_app_and_the_command_line_refuse_the_connect_platforms_test_key(monkeypatch):
+    monkeypatch.setenv("PMS_STRIPE_CONNECT_SECRET_KEY", TEST_KEYS[0])
+    monkeypatch.setenv("PMS_STRIPE_CONNECT_WEBHOOK_SECRET", WEBHOOK)
+    with pytest.raises(deployment.KeysNotLive, match="PMS_STRIPE_CONNECT_SECRET_KEY"):
+        create_app(
+            Settings(
+                database_url="postgresql://unused",
+                public_url="https://rentals.example.com",
+                connect="stripe",
+            )
+        )
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unused")
+    monkeypatch.setenv("PMS_PUBLIC_URL", "https://rentals.example.com")
+    monkeypatch.setenv("PMS_CONNECT", "stripe")
+    monkeypatch.delenv("PMS_PAYMENTS", raising=False)
+    monkeypatch.delenv("PMS_FAKE_PARTNERS", raising=False)
+    with pytest.raises(deployment.KeysNotLive, match="PMS_STRIPE_CONNECT_SECRET_KEY"):
+        nightly.main([])
+
+
+def test_a_live_server_runs_the_connect_platform_on_its_live_key(monkeypatch):
+    monkeypatch.setenv("PMS_STRIPE_CONNECT_SECRET_KEY", LIVE_KEYS[0])
+    monkeypatch.setenv("PMS_STRIPE_CONNECT_WEBHOOK_SECRET", WEBHOOK)
+    live = create_app(
+        Settings(
+            database_url="postgresql://unused",
+            public_url="https://rentals.example.com",
+            connect="stripe",
+        )
+    )
+    assert live.state.payments.live is True
+    assert live.state.payments.platform.live is True
+    with pytest.raises(deployment.FakePartnerRefused, match="PMS_CONNECT names the fake"):
+        create_app(
+            Settings(
+                database_url="postgresql://unused",
+                public_url="https://rentals.example.com",
+                connect="fake",
+            )
+        )

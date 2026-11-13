@@ -35,6 +35,7 @@ services:
     environment:
       PMS_PUBLIC_URL: http://localhost:${PMS_DEMO_PORT:-8100}
       PMS_PAYMENTS: fake
+      PMS_CONNECT: fake
       PMS_EMAIL_SENDER: fake
       PMS_SCREENING_PARTNER: fake
       PMS_GEOCODER: fake

@@ -15,6 +15,8 @@ import type { Autopay, AutopayRule, AutopayView, Started } from "../payments";
 import { STATUS, autopayLine, autopayRule, autopayRunLine, payable } from "../payments";
 import { useRecord } from "./useRecord";
 import { leave } from "../router";
+import type { LeaseMethods, Method } from "../connect";
+import { CONNECT, METHOD_NAMES } from "../connect";
 
 // A tenant's autopay of a lease (src/pms/api/autopay.py): set up with what it pays, the bank
 // account saved on the payments partner's page (the PMS never sees its number); then it pays on
@@ -59,7 +61,7 @@ export function TenantAutopayCard({ leaseId }: { leaseId: string }) {
               </div>
             </div>
           ) : (
-            <SetUpForm path={path} view={view} fail={setError} />
+            <SetUpForm path={path} leaseId={leaseId} view={view} fail={setError} />
           )}
           {on && <AutopayRuns autopay={on} />}
         </>
@@ -69,14 +71,37 @@ export function TenantAutopayCard({ leaseId }: { leaseId: string }) {
   );
 }
 
-function SetUpForm({ path, view, fail }: { path: string; view: AutopayView; fail: (why: string) => void }) {
+// Through Stripe Connect (docs/adr/0014-stripe-connect.md) autopay pays from a bank account or a
+// card the tenant saves; a card fee on autopay is always the company's.
+function SetUpForm({ path, leaseId, view, fail }: {
+  path: string;
+  leaseId: string;
+  view: AutopayView;
+  fail: (why: string) => void;
+}) {
   const [rule, setRule] = useState<AutopayRule>("balance");
   const [amount, setAmount] = useState("");
+  const [connect, setConnect] = useState<LeaseMethods | null>(null);
+  const [method, setMethod] = useState<Method>("ach");
+  useEffect(() => {
+    const run = latest();
+    api.get<LeaseMethods>(`${CONNECT}/leases/${encodeURIComponent(leaseId)}`).then(run.keep(setConnect))
+      .catch(run.keep(() => setConnect(null)));
+    return run.stop;
+  }, [leaseId]);
+  const viaConnect = connect?.connect === true;
+  const card = viaConnect && method === "card";
   async function start(event: React.FormEvent) {
     event.preventDefault();
     fail("");
     try {
-      const started = await api.post<Started>(path, { rule, amount: amount.trim() });
+      const started = viaConnect
+        ? await api.post<Started>(`${CONNECT}/leases/${encodeURIComponent(leaseId)}/autopay`, {
+          rule,
+          amount: amount.trim(),
+          method,
+        })
+        : await api.post<Started>(path, { rule, amount: amount.trim() });
       leave(started.url);
     } catch (failed) {
       fail(failed instanceof ApiError ? failed.detail : String(failed));
@@ -86,9 +111,20 @@ function SetUpForm({ path, view, fail }: { path: string; view: AutopayView; fail
     <Form className="flex flex-col gap-3" onSubmit={start}>
       <p className="text-sm text-ink-muted">
         Pay each month by itself, on your rent's due day{view.next_due ? ` (next: ${usDate(view.next_due)})` : ""},
-        from a bank account you save on our payments partner's page.{" "}
-        {view.fee_payer === "tenant" ? "A processing fee of at most $5.00 is added to each payment." : "No fee."}
+        from {viaConnect ? "a bank account or card" : "a bank account"} you save on our payments partner's page.{" "}
+        {card
+          ? "No fee by card."
+          : view.fee_payer === "tenant"
+            ? viaConnect
+              ? "A processing fee is added to each bank payment, shown in the email before it is taken."
+              : "A processing fee of at most $5.00 is added to each payment."
+            : "No fee."}
       </p>
+      {viaConnect && (
+        <Select label="Pay from" id="autopay-method" value={method} onChange={(e) => setMethod(e.target.value as Method)}>
+          {connect.autopay.map((m) => <option key={m.method} value={m.method}>{METHOD_NAMES[m.method]}</option>)}
+        </Select>
+      )}
       <Select label="Pay" id="autopay-rule" value={rule} onChange={(e) => setRule(e.target.value as AutopayRule)}>
         <option value="balance">My balance due, up to an amount</option>
         <option value="fixed">The same amount each month</option>
@@ -97,8 +133,10 @@ function SetUpForm({ path, view, fail }: { path: string; view: AutopayView; fail
         onChange={(e) => setAmount(e.target.value)} />
       <div>
         <Button type="submit" disabled={!payable(amount)}
-          says="Takes you to our payments partner's page to save your bank account. Nothing is paid before a rent due day.">
-          Save a bank account and turn on autopay
+          says={card
+            ? "Takes you to our payments partner's page to save your card. Nothing is paid before a rent due day."
+            : "Takes you to our payments partner's page to save your bank account. Nothing is paid before a rent due day."}>
+          {card ? "Save a card and turn on autopay" : "Save a bank account and turn on autopay"}
         </Button>
       </div>
     </Form>
