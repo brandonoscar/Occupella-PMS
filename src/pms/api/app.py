@@ -437,6 +437,13 @@ def create_app(settings: Settings) -> FastAPI:
         },
         settings.fake_partners,
     )
+    # ...and Stripe's test keys, whose payments would be booked as real money (P-048).
+    deployment.refuse_test_keys(
+        settings.public_url,
+        settings.payments,
+        os.environ.get("PMS_STRIPE_SECRET_KEY", ""),
+        settings.fake_partners,
+    )
 
     def configure(conn: psycopg.Connection[Any]) -> None:
         conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(settings.db_role)))
@@ -508,7 +515,10 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.geocoder = geocoding.geocoder_named(settings.geocoder)
     # Like the SMTP settings, the server's partner's keys come straight from the environment; a
     # company's own keys, entered in Settings, are sealed in the database (pms.payments.Resolver).
-    app.state.payments = payments.Resolver(payments.partner_named(settings.payments, os.environ))
+    app.state.payments = payments.Resolver(
+        payments.partner_named(settings.payments, os.environ),
+        live=deployment.is_live(settings.public_url, settings.fake_partners),
+    )
     # The SMTP settings come straight from the environment, so a password is never part of
     # Settings (which a log or an error could print).
     app.state.email = email.sender_named(settings.email_sender, os.environ)

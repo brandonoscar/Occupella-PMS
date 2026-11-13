@@ -104,4 +104,13 @@ describe("PaymentKeysCard", () => {
     expect(screen.getByRole("button", { name: "Enter keys" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Actions for Stripe keys" })).toBeTruthy();
   });
+
+  it("says test keys take no payments on a live server, and offers live ones (P-048)", async () => {
+    server({ ...OWN, using: "test_refused", mode: "test" });
+    render(<PaymentKeysCard />);
+    expect(await screen.findByText("Your keys are test keys, which take no payments here. Enter your live keys.")).toBeTruthy();
+    expect(screen.queryByText("Test")).toBeNull();
+    expect(screen.getByRole("button", { name: "Enter keys" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Actions for Stripe keys" })).toBeTruthy();
+  });
 });

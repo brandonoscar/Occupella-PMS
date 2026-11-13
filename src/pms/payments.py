@@ -43,7 +43,7 @@ from uuid import UUID
 
 import psycopg
 
-from pms import sealed
+from pms import deployment, sealed
 
 log = logging.getLogger(__name__)
 
@@ -198,6 +198,8 @@ class StripePartner:
         self._key = secret_key
         self._webhook_secret = webhook_secret
         self.timeout = timeout
+        # Whether its key moves real money; a report from the other mode is never its own.
+        self.live = deployment.live_key(secret_key)
 
     def _call(self, method: str, path: str, form: list[tuple[str, str]], key: str = "") -> Any:
         data = urllib.parse.urlencode(form).encode() if method == "POST" else None
@@ -304,6 +306,16 @@ class StripePartner:
             event_id = str(report["id"])
         except (KeyError, TypeError, ValueError) as failed:
             raise NotTheirs(f"Stripe's report can't be read: {failed}") from None
+        if report.get("livemode") is not self.live:
+            # A test payment's report to live keys, or the other way round (docs/edge-cases.md
+            # P-048): acknowledged and never booked, so test money never counts as real.
+            log.warning(
+                "Stripe report %s is %s mode, not the keys' %s mode: ignored",
+                event_id,
+                "live" if report.get("livemode") is True else "test or unstated",
+                "live" if self.live else "test",
+            )
+            return None
         if kind_of == "checkout.session.completed" and subject.get("mode") == "setup":
             if not subject.get("setup_intent"):
                 return None
@@ -540,9 +552,14 @@ class Resolver:
     company's account, so it takes none online until it enters its own. The fake partner, which
     moves no money, serves any."""
 
-    def __init__(self, server: Partner | None, environ: Mapping[str, str] = os.environ) -> None:
+    def __init__(
+        self, server: Partner | None, environ: Mapping[str, str] = os.environ, live: bool = False
+    ) -> None:
         self.server = server
         self._environ = environ
+        # A live server (deployment.is_live) takes no payment under a company's test keys: they
+        # would be booked as real money (docs/edge-cases.md P-048).
+        self.live = live
 
     @classmethod
     def of(cls, partner: Partner | Resolver | None) -> Resolver:
@@ -571,7 +588,11 @@ class Resolver:
         except (sealed.NoKey, sealed.Unreadable) as failed:
             log.error("company %s's payments keys don't open on this server: %s", pmc_id, failed)
             return None
-        return StripePartner(secret, webhook)
+        partner = StripePartner(secret, webhook)
+        if self.live and not partner.live:
+            log.error("company %s's payments keys are test keys on a live server: unused", pmc_id)
+            return None
+        return partner
 
     def server_for(self, conn: psycopg.Connection[Any]) -> Partner | None:
         """The server's partner, where it may take a company's payments: the fake one always, a

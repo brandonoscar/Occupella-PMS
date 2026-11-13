@@ -154,6 +154,11 @@ Stripe account paying out to one trust account, so on a server with more, each c
 its own. A tenant's autopay bank account stays with the Stripe account it was saved at: after
 changing accounts, tenants set autopay up again.
 
+Only live keys (`sk_live_`, or a restricted `rk_live_`) work on a server at an https address other
+than `localhost`: there a test payment would be booked as real money, so the server refuses to
+start with a test key in `.env`, Company setup refuses test keys, and test keys kept from before
+take no payment. Try Stripe's test mode on a server at `http://` or `https://localhost`.
+
 Then turn it on in Company setup, Online payments. Payments are by bank (ACH) for now. They were
 tested against answers in the shape Stripe documents, not a live Stripe account: try one small
 payment of your own first (NOT VERIFIED).

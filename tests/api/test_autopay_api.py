@@ -371,7 +371,13 @@ def stripe_app(database_url, monkeypatch):
 def stripe_report(browser, kind, subject):
     now = int(time.time())
     body = json.dumps(
-        {"id": f"evt_{uuid4().hex}", "type": kind, "created": now, "data": {"object": subject}}
+        {
+            "id": f"evt_{uuid4().hex}",
+            "type": kind,
+            "created": now,
+            "livemode": False,  # the server's test key's own mode (P-048)
+            "data": {"object": subject},
+        }
     ).encode()
     mac = hmac.new(SECRET.encode(), f"{now}.".encode() + body, hashlib.sha256).hexdigest()
     return browser.post(

@@ -6,6 +6,14 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+- **Fix (payments): Stripe's test keys never book real money** (docs/edge-cases.md P-048, P-049).
+  A server whose `PMS_PUBLIC_URL` is https at a host other than the machine itself refuses to
+  start with a test key in `PMS_STRIPE_SECRET_KEY`. Company setup refuses a company's test keys
+  there, and test keys a company kept before the server went live take no payment until it enters
+  live ones. A Stripe report whose `livemode` isn't its keys' mode is acknowledged and booked
+  nowhere. http and localhost servers, and a demo with `PMS_FAKE_PARTNERS=allow`, keep taking
+  test keys.
+  **To upgrade:** a live server running Stripe test keys must set its live keys before it starts.
 - **The portal works under a path**, for an app that mounts the PMS (the hosted Occupella serves it
   at `https://app.occupella.com/books`). `PMS_PUBLIC_URL` may carry a plain path, never a query or
   a fragment, and every link the server writes starts with it. Build the portal for the same path

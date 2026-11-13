@@ -86,7 +86,14 @@ def signed(client, pmc_id, kind, subject, secret):
     """Stripe's signed report of `kind` about `subject`, to the company's own webhook."""
     now = int(time.time())
     body = json.dumps(
-        {"id": f"evt_{uuid4().hex}", "type": kind, "created": now, "data": {"object": subject}}
+        {
+            "id": f"evt_{uuid4().hex}",
+            "type": kind,
+            "created": now,
+            # Each webhook secret here goes with its key: OTHER_KEY's is live, SECRET_KEY's test.
+            "livemode": secret == OTHER_WEBHOOK,
+            "data": {"object": subject},
+        }
     ).encode()
     mac = hmac.new(secret.encode(), f"{now}.".encode() + body, hashlib.sha256).hexdigest()
     return client.post(
@@ -183,6 +190,41 @@ def test_an_admin_keeps_the_companys_keys_sealed_and_only_the_last_four_show(
 
 def test_a_live_key_says_live(client, admin):
     assert ok(keep(client, OTHER_KEY))["mode"] == "live"
+
+
+# docs/edge-cases.md P-048: a server at https on a host other than the machine itself is live
+# (deployment.is_live): a test payment there would be booked as real money.
+
+
+def test_a_live_server_takes_a_companys_live_keys_and_refuses_its_test_keys(
+    client, conn, pmc, admin
+):
+    client.app.state.payments.live = True
+
+    refused(
+        keep(client),
+        422,
+        "Those are test keys, and this server takes real payments. Enter your live keys"
+        " (they start with sk_live_).",
+    )
+    assert conn.execute(
+        "SELECT count(*) FROM trust_payment_keys WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone() == (0,)
+    shown = ok(keep(client, OTHER_KEY, OTHER_WEBHOOK))
+    assert (shown["using"], shown["mode"]) == ("own", "live")
+
+
+def test_test_keys_kept_before_the_server_went_live_take_no_payment_and_no_report(
+    client, pmc, admin, lease
+):
+    ok(keep(client))
+    client.app.state.payments.live = True
+
+    shown = ok(client.get("/api/payments/keys"))
+    assert (shown["using"], shown["mode"], shown["ends_in"]) == ("test_refused", "test", "A1b2")
+    assert ok(client.get("/api/payments/settings"))["partner"] is None
+    # Its own webhook has no keys left to take a report with.
+    refused(report(client, pmc.pmc_id, str(uuid4()), WEBHOOK), 404)
 
 
 @pytest.mark.parametrize(

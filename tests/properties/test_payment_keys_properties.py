@@ -12,7 +12,12 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
   - a payment is in the books only once a report reached its own company's webhook, at most
     once however often it is sent: another company's webhook never records it;
   - each company's payments go through its latest keys, or the server's partner once it has
-    none: never another company's, never keys since taken away.
+    none: never another company's, never keys since taken away;
+  - on a live server (docs/edge-cases.md P-048) a company's test keys take no payment and no
+    report, and a report whose livemode isn't its keys' mode is never booked.
+
+Key sets alternate test (even) and live (odd), the server may go live at any step, and each
+report says one mode or the other.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
@@ -50,8 +55,13 @@ TODAY = datetime.now(UTC).date()
 KEY_SETS = 4
 
 
+def live(i: int) -> bool:
+    """Key set i's mode: odd sets are live keys, even sets test keys."""
+    return i % 2 == 1
+
+
 def secret_key(i: int) -> str:
-    return "sk_" + "test_" + f"Synthetic{i:016d}Key{i}"
+    return "sk_" + ("live_" if live(i) else "test_") + f"Synthetic{i:016d}Key{i}"
 
 
 def webhook_secret(i: int) -> str:
@@ -119,11 +129,28 @@ class PaymentKeysMachine(RuleBasedStateMachine):
         self.as_admin(
             c,
             "INSERT INTO trust_payment_keys (id, pmc_id, secret_key_sealed, webhook_secret_sealed,"
-            " secret_key_last4, mode) VALUES (%s, %s, %s, %s, %s, 'test')",
-            (row, c.pmc_id, sealed_secret, sealed_webhook, secret_key(keys)[-4:]),
+            " secret_key_last4, mode) VALUES (%s, %s, %s, %s, %s, %s)",
+            (
+                row,
+                c.pmc_id,
+                sealed_secret,
+                sealed_webhook,
+                secret_key(keys)[-4:],
+                "live" if live(keys) else "test",
+            ),
         )
         c.keys = keys
         c.held.add(keys)
+
+    @precondition(lambda self: not self.resolver.live)
+    @rule()
+    def go_live(self):
+        """The server moves to an https address of its own (deployment.is_live)."""
+        self.resolver.live = True
+
+    def usable(self, keys: int | None) -> bool:
+        """Whether a key set takes payments and reports on the server as it is now."""
+        return keys is not None and (live(keys) or not self.resolver.live)
 
     @rule(which=st.integers(min_value=0, max_value=1))
     def take_keys_away(self, which):
@@ -135,8 +162,8 @@ class PaymentKeysMachine(RuleBasedStateMachine):
     @rule(which=st.integers(min_value=0, max_value=1))
     def start(self, which):
         c = self.companies[which]
-        if c.keys is None:
-            return  # no partner: no payment starts
+        if not self.usable(c.keys):
+            return  # no partner (or test keys on a live server): no payment starts
         payment, session = uuid.uuid4(), f"cs_{uuid.uuid4().hex}"
         self.conn.execute(
             "INSERT INTO trust_online_payments (id, pmc_id, lease_id, tenant_id, amount,"
@@ -151,8 +178,9 @@ class PaymentKeysMachine(RuleBasedStateMachine):
         which=st.integers(min_value=0),
         to=st.integers(min_value=0, max_value=1),
         signed_with=st.integers(min_value=0, max_value=KEY_SETS),  # KEY_SETS: no one's
+        livemode=st.booleans(),
     )
-    def report(self, which, to, signed_with):
+    def report(self, which, to, signed_with, livemode):
         p = self.paying[which % len(self.paying)]
         target = self.companies[to]
         now = int(time.time())
@@ -161,6 +189,7 @@ class PaymentKeysMachine(RuleBasedStateMachine):
                 "id": f"evt_{uuid.uuid4().hex}",
                 "type": "checkout.session.async_payment_succeeded",
                 "created": now,
+                "livemode": livemode,
                 "data": {
                     "object": {
                         "id": p.session,
@@ -176,20 +205,24 @@ class PaymentKeysMachine(RuleBasedStateMachine):
             app=SimpleNamespace(state=SimpleNamespace(payments=self.resolver)),
             headers={"stripe-signature": f"t={now},v1={mac}"},
         )
+        usable = {k for k in target.held if self.usable(k)}
         try:
             with self.conn.transaction():
                 answer = op.company_webhook(request, self.conn, "stripe", target.pmc_id, body)
         except HTTPException as refused:
-            if not target.held:
+            if not usable:
                 assert refused.status_code == 404
-                event("a webhook of a company that never held keys")
+                event("a webhook of a company with no keys it may use")
             else:
-                assert signed_with not in target.held and refused.status_code == 400
-                event("a report signed with a secret the company never held")
+                assert signed_with not in usable and refused.status_code == 400
+                event("a report signed with a secret the company can't take one with")
             return
-        assert target.held and signed_with in target.held
-        assert answer.recorded is (p.company == to)
-        if p.company == to:
+        assert signed_with in usable
+        same_mode = livemode is live(signed_with)
+        assert answer.recorded is (p.company == to and same_mode)
+        if not same_mode:
+            event("a report from the other mode, booked nowhere")
+        elif p.company == to:
             event("a report sent again" if p.paid else "a payment paid")
             p.paid = True
         else:
@@ -212,8 +245,9 @@ class PaymentKeysMachine(RuleBasedStateMachine):
         for c in self.companies:
             with self.conn.transaction():
                 partner = self.resolver.for_pmc(self.conn, c.pmc_id)
-            if c.keys is None:
-                assert partner is None  # the server has no partner of its own here
+            if not self.usable(c.keys):
+                # No keys, or test keys on a live server; the server has no partner here.
+                assert partner is None
             else:
                 assert isinstance(partner, payments.StripePartner)
                 assert partner._key == secret_key(c.keys)
