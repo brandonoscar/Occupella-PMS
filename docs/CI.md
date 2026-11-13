@@ -479,7 +479,9 @@ correctness, React, accessibility and vitest among them, the few off saying why)
 `frontend/knip.json`: no unused file, export or dependency). Then the API serves that build on a fresh Postgres (emails go to the fake sender's outbox,
 `PMS_EMAIL_SENDER=fake`, addresses are found on a map by the fake geocoder, which calls nothing,
 `PMS_GEOCODER=fake`, tenants pay online through the fake payments partner, whose page's buttons
-say what the bank did and which moves no money, `PMS_PAYMENTS=fake`, and the nightly rent run is
+say what the bank did and which moves no money, `PMS_PAYMENTS=fake`, a company connects its
+Stripe account through the fake Connect platform, whose pages play Stripe's onboarding, a card
+payment and a dispute, `PMS_CONNECT=fake` (docs/adr/0014-stripe-connect.md), and the nightly rent run is
 off, `PMS_NIGHTLY=off`, so rent is charged
 only when a test runs it), `frontend/e2e/seed.py` makes a synthetic PMC
 with an owner who has statements and a tenant with rent due and a maintenance request, and

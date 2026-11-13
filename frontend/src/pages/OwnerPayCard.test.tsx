@@ -86,3 +86,23 @@ describe("OwnerPayCard", () => {
     expect(await screen.findByText("no such property account of yours")).toBeTruthy();
   });
 });
+
+describe("OwnerPayCard through Stripe Connect", () => {
+  it("lets the owner pay by card, with no fee", async () => {
+    const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") return new Response(JSON.stringify({ id: "p4", url: "/pay/fake-connect-pay#p4" }), { status: 201 });
+      if (path === "/api/payments/connect/owner") return new Response(JSON.stringify({ connect: true, card_max: "10000.00" }));
+      return new Response(JSON.stringify(VIEW));
+    });
+    vi.stubGlobal("fetch", fetch);
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    render(<OwnerPayCard />);
+    fireEvent.change(await screen.findByLabelText("Pay by"), { target: { value: "card" } });
+    fireEvent.click(screen.getByRole("button", { name: "Pay by card" }));
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith("/pay/fake-connect-pay#p4"));
+    const post = fetch.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(post?.[0]).toBe("/api/payments/connect/owner/checkout");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ account_id: "a2", amount: "400.00", method: "card" });
+  });
+});

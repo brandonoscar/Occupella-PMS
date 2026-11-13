@@ -15,6 +15,7 @@
 "GET /health" = "the server's health check: the self-host image and the browser run wait for it, and no person uses it"
 "POST /api/payments/webhook/{name}" = "the payments partner's server reports what the bank did; no person calls it, and the browser run uses the fake partner's page instead (tests/api/test_online_payments_api.py signs reports as Stripe does)"
 "POST /api/payments/webhook/{name}/{pmc_id}" = "a company's own Stripe account reports what the bank did; no person calls it, and the browser run uses the fake partner's page instead (tests/api/test_payment_keys_api.py signs reports as Stripe does)"
+"POST /api/payments/connect/webhook" = "Stripe reports what happened on a company's connected account to Occupella's platform (docs/adr/0014-stripe-connect.md); no person calls it, and the browser run uses the fake Connect platform's pages instead (tests/api/test_connect_api.py signs reports as Stripe does)"
 "POST /api/external-sign-in" = "a host app's frontend calls it after its own sign-in (docs/adr/0013-sign-in-through-a-host.md); the PMS's own pages never do, and the browser run has no host (tests/api/test_external_sign_in_api.py signs in through a stand-in host)"
 
 [[feature]]
@@ -1398,6 +1399,31 @@ operations = [
 ]
 browser = [
   "features.spec.ts › an admin enters the company's own Stripe keys in Company setup: only the last four show, and removing them goes back to the server's partner",
+]
+
+[[feature]]
+id = "stripe-connect"
+statement = "Stripe Connect for the hosted product (docs/adr/0014-stripe-connect.md, migration 20261113000150): an admin connects the company's own Stripe account from Company setup through Stripe's hosted onboarding (the fake Connect platform's page in development and CI), with no key pasted, and sees whether it takes payments and pays out and what Stripe still needs; once it takes charges, tenants pay by bank or card and owners add money by either through it, each a direct charge carrying Occupella's fee (a server setting, never below what a payment costs the platform); Stripe's fee and Occupella's leave trust from the company's fee account, never an owner's; staff choose who pays the card fee (the tenant only by credit card, capped at 3% or the state's cap, never where the state bans a surcharge and never on autopay); a tenant's autopay saves a card or a bank account; a card dispute is recorded as a return with its fee from the company, and one the company wins puts the payment back; the admin disconnects it."
+operations = [
+  "GET /api/payments/connect",
+  "POST /api/payments/connect/start",
+  "POST /api/payments/connect/refresh",
+  "POST /api/payments/connect/disconnect",
+  "POST /api/payments/connect/card-fees",
+  "GET /api/payments/connect/leases/{lease_id}",
+  "POST /api/payments/connect/leases/{lease_id}/checkout",
+  "POST /api/payments/connect/leases/{lease_id}/autopay",
+  "GET /api/payments/connect/owner",
+  "POST /api/payments/connect/owner/checkout",
+  "GET /api/payments/connect/fake/accounts/{account}",
+  "POST /api/payments/connect/fake/accounts/{account}",
+  "GET /api/payments/connect/fake/payments/{payment_id}",
+  "POST /api/payments/connect/fake/payments/{payment_id}",
+  "GET /api/payments/connect/fake/autopay/{autopay_id}",
+  "POST /api/payments/connect/fake/autopay/{autopay_id}",
+]
+browser = [
+  "features.spec.ts › an admin connects the company's Stripe account through Stripe Connect; a tenant pays by card, the card fee on top, and a dispute the company wins puts it back; autopay saves a card; an owner adds money by card; the admin disconnects",
 ]
 
 [[feature]]

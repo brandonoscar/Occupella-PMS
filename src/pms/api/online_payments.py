@@ -635,6 +635,9 @@ def settle(conn: psycopg.Connection[Any], row: Row, on: date | None = None) -> N
                 on or returned_on,
                 "Processing fee that came back",
             )
+    from pms.api import disputes  # a card dispute through Connect, after its return (ADR 0014)
+
+    disputes.settle_tenant(conn, row, on)
 
 
 # A return reported before its payment's paid report: refused for now (409), so the partner sends
@@ -880,7 +883,11 @@ class Waiting(BaseModel):
     # owner's account short), what the company's fee account can't cover yet (the partner's fee,
     # or a tenant's fee that came back), or a payment the partner has said nothing of for
     # NO_WORD_DAYS (P-013): staff look it up there; its report, when it comes, brings it in.
-    what: Literal["payment", "return", "partner fee", "fee refund", "no word"]
+    # Through Connect (src/pms/api/disputes.py): a card dispute's fee the company's fee account
+    # can't cover yet, or a dispute won whose payment the books refuse for now.
+    what: Literal[
+        "payment", "return", "partner fee", "fee refund", "no word", "dispute fee", "dispute won"
+    ]
     # The day a payment with no word was started (the company's day).
     started_on: date | None = None
     # What the company covers for it, if anything.
@@ -951,6 +958,9 @@ def waiting(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Waiting]:
     from pms.api import owner_payments  # it reads this module's helpers; owners pay in online too
 
     found += owner_payments.waiting(conn, pmc_id)
+    from pms.api import disputes  # card disputes through Connect (ADR 0014)
+
+    found += disputes.waiting(conn, pmc_id)
     for bank in {item.bank_account_id for item in found}:
         here = [item for item in found if item.bank_account_id == bank]
         owed = sum((Decimal(i.company_owes) for i in here if i.company_owes is not None), ZERO)

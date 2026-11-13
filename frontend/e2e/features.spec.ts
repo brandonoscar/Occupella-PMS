@@ -6394,3 +6394,102 @@ test("an admin enters the company's own Stripe keys in Company setup: only the l
   await page.getByRole("alertdialog").getByRole("button", { name: "Remove keys" }).click();
   await expect(card.getByTestId("payment-keys")).toHaveText("Using the test payments partner.");
 });
+
+
+test("an admin connects the company's Stripe account through Stripe Connect; a tenant pays by card, the card fee on top, and a dispute the company wins puts it back; autopay saves a card; an owner adds money by card; the admin disconnects", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["stripe-connect"]!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Company setup");
+
+  // Online payments on, then Connect Stripe: Stripe's onboarding (the fake platform's page),
+  // finished, back to Company setup, which asks Stripe where the account stands.
+  const online = part(page, "Online payments");
+  await online.getByRole("button", { name: "Edit online payments" }).click();
+  const choices = page.getByRole("dialog", { name: "Online payments" });
+  await choices.getByLabel("Tenants and owners may pay online").check();
+  await choices.getByRole("button", { name: "Save" }).click();
+  await expect(choices).toHaveCount(0);
+  const card = part(page, "Stripe Connect");
+  await expect(card.getByTestId("connect-status")).toHaveText(
+    "Not connected. Connect your Stripe account to take rent by bank and card.",
+  );
+  await expect(card.getByTestId("connect-fees")).toContainText("bank $0.50, card $0.50 a payment");
+  await card.getByRole("button", { name: "Connect Stripe" }).click();
+  await expect(page.getByRole("heading", { name: "Test Stripe Connect" })).toBeVisible();
+  await page.getByRole("button", { name: "Leave the bank account for later" }).click();
+  await page.getByRole("link", { name: "Back to Company setup" }).click();
+  await expect(part(page, "Stripe Connect").getByTestId("connect-requirements")).toHaveText(
+    "Stripe still needs: external_account.",
+  );
+  await part(page, "Stripe Connect").getByRole("button", { name: "Continue setup" }).click();
+  await page.getByRole("button", { name: "Finish onboarding" }).click();
+  await expect(page.getByTestId("fake-onboarding")).toContainText("Finished");
+  await page.getByRole("link", { name: "Back to Company setup" }).click();
+  const connected = part(page, "Stripe Connect");
+  await expect(connected.getByTestId("connect-status")).toContainText("Payments go through it.");
+  // Tenants pay the card fee where their state allows it.
+  await connected.getByLabel("Who pays the card fee").selectOption("tenant");
+  await connected.getByRole("button", { name: "Save card fee" }).click();
+  await expect(connected.getByTestId("card-fees")).toContainText("Tenants pay the card fee by credit card");
+
+  // The tenant pays $100.00 by card: the card fee is on top, capped at 3%, shown before they go.
+  const tenant = await (await browser.newContext()).newPage();
+  await joinPortal(tenant, people.taylor);
+  await portalSection(tenant, "Payments");
+  const pay = part(tenant, "Pay online");
+  await pay.getByLabel("Amount").fill("100.00");
+  await pay.getByLabel("Pay by").selectOption("card");
+  await expect(pay.getByTestId("pay-fee")).toHaveText("$100.00 + $3.00 card fee = $103.00");
+  await pay.getByRole("button", { name: "Pay online" }).click();
+  await expect(tenant.getByTestId("fake-total")).toHaveText("$103.00 by card ($100.00 + $3.00 fee)");
+  await expect(tenant.getByTestId("fake-platform-fee")).toHaveText("Occupella's fee in it: $0.50");
+  await tenant.getByRole("button", { name: "The card paid it" }).click();
+  await expect(tenant.getByText("Paid", { exact: true })).toBeVisible();
+  // A dispute: the payment comes back; the company wins it, and it is put back.
+  await tenant.getByRole("button", { name: "The cardholder disputed it" }).click();
+  await expect(tenant.getByText("Disputed", { exact: true })).toBeVisible();
+  await tenant.getByRole("button", { name: "The company won the dispute" }).click();
+  await expect(tenant.getByText("Dispute won", { exact: true })).toBeVisible();
+  await expectAccessible(tenant);
+  await tenant.getByRole("link", { name: "Back to the portal" }).click();
+  await tenant.getByRole("link", { name: "Back to your payments" }).click();
+
+  // Autopay from a card: the card fee on autopay is the company's.
+  const autopay = part(tenant, "Autopay");
+  await autopay.getByLabel("Pay from").selectOption("card");
+  await expect(autopay).toContainText("No fee by card.");
+  await autopay.getByLabel("Up to", { exact: true }).fill("2500.00");
+  await autopay.getByRole("button", { name: "Save a card and turn on autopay" }).click();
+  await expect(tenant.getByTestId("fake-save")).toHaveText("Taylor Demo saves a card to pay from.");
+  await tenant.getByRole("button", { name: "Save this card" }).click();
+  await expect(tenant.getByTestId("fake-save")).toHaveText("Saved: Test card ••••4242.");
+  await tenant.getByRole("link", { name: "Back to the portal" }).click();
+  await tenant.getByRole("link", { name: "Back to your payments" }).click();
+  await expect(part(tenant, "Autopay").getByTestId("autopay")).toContainText("from Test card ••••4242");
+  await tenant.close();
+
+  // An owner adds money by card: no fee on top, the company's.
+  const owner = await (await browser.newContext()).newPage();
+  await joinPortal(owner, people.owner_a);
+  const add = part(owner, "Add money");
+  await add.getByLabel("Property").selectOption({ label: "Birch Flats" });
+  await add.getByLabel("Amount").fill("125.00");
+  await add.getByLabel("Pay by").selectOption("card");
+  await add.getByRole("button", { name: "Pay by card" }).click();
+  await expect(owner.getByTestId("fake-total")).toHaveText("$125.00 by card");
+  await owner.getByRole("button", { name: "The card paid it" }).click();
+  await expect(owner.getByText("Paid", { exact: true })).toBeVisible();
+  await owner.close();
+
+  // The admin disconnects the account: payments go back to the server's partner.
+  await page.reload();
+  const again = part(page, "Stripe Connect");
+  await again.getByRole("button", { name: "Disconnect" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Disconnect" }).click();
+  await expect(part(page, "Stripe Connect").getByTestId("connect-status")).toHaveText(
+    "Not connected. Connect your Stripe account to take rent by bank and card.",
+  );
+});

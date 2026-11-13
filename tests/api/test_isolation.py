@@ -409,6 +409,22 @@ EXEMPT = {
     "POST /api/payments/fake-save/{autopay_id}": "the fake payments partner's own page, as above",
     "GET /api/payments/fake": "the fake payments partner's queue of every payment it holds, as"
     " the partner's own dashboard lists them (development and tests only)",
+    "POST /api/payments/connect/webhook": "Stripe's signed report to the Connect platform: the"
+    " company is the one that connected its account, and a payment started on another account is"
+    " never booked (tests/api/test_connect_api.py)",
+    "GET /api/payments/connect/fake/accounts/{account}": "the fake Connect platform's own"
+    " onboarding page (development and tests only), standing in for Stripe's: reached by the"
+    " account's id, with no caller",
+    "POST /api/payments/connect/fake/accounts/{account}": "the fake Connect platform's own page,"
+    " as above",
+    "GET /api/payments/connect/fake/payments/{payment_id}": "the fake Connect platform's own"
+    " payment page, standing in for Stripe's: reached by the payment's id, with no caller",
+    "POST /api/payments/connect/fake/payments/{payment_id}": "the fake Connect platform's own"
+    " page, as above",
+    "GET /api/payments/connect/fake/autopay/{autopay_id}": "the fake Connect platform's own page"
+    " that saves a card or bank account, as above",
+    "POST /api/payments/connect/fake/autopay/{autopay_id}": "the fake Connect platform's own"
+    " page, as above",
     "GET /api/ai/me": "software calls it with an API key, no person's session: the key is the"
     " credential and names the company (tests/api/test_ai_keys.py)",
     "GET /api/ai/reports/{name}": "software calls it with an API key: the report's company is"

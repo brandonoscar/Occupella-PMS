@@ -3235,6 +3235,132 @@ $$;
 
 
 --
+-- Name: trust_check_connect_dispute(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_connect_dispute() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_payment uuid := coalesce(NEW.online_payment_id, NEW.owner_payment_id);
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtext('trust_connect_disputes'), hashtext(v_payment::text));
+    IF NEW.kind = 'opened' AND NOT EXISTS (
+        SELECT 1 FROM trust_online_payment_events AS e
+        WHERE e.payment_id = NEW.online_payment_id AND e.kind = 'returned'
+        UNION ALL
+        SELECT 1 FROM trust_owner_online_payment_events AS e
+        WHERE e.payment_id = NEW.owner_payment_id AND e.kind = 'returned'
+    ) THEN
+        RAISE EXCEPTION 'trust: payment % didn''t come back, so no dispute opens on it', v_payment
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.kind <> 'opened' AND NOT EXISTS (
+        SELECT 1 FROM trust_connect_disputes AS d
+        WHERE coalesce(d.online_payment_id, d.owner_payment_id) = v_payment
+          AND d.kind = 'opened' AND d.dispute_id = NEW.dispute_id
+    ) THEN
+        RAISE EXCEPTION 'trust: dispute % isn''t open, so it can''t close', NEW.dispute_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.kind <> 'opened' AND EXISTS (
+        SELECT 1 FROM trust_connect_disputes AS d
+        WHERE coalesce(d.online_payment_id, d.owner_payment_id) = v_payment
+          AND d.kind IN ('won', 'lost')
+    ) THEN
+        RAISE EXCEPTION 'trust: dispute % closed already', NEW.dispute_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_connected_account(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_connected_account() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM trust_require_role(
+        NEW.pmc_id, NEW.recorded_by, 'admin', 'connect the company''s Stripe account'
+    );
+    IF NEW.account_id IS NOT NULL THEN
+        PERFORM pg_advisory_xact_lock(
+            hashtext('trust_connected_accounts'), hashtext(NEW.account_id)
+        );
+        IF EXISTS (
+            SELECT 1 FROM trust_connected_accounts AS c
+            WHERE c.account_id = NEW.account_id AND c.pmc_id <> NEW.pmc_id
+        ) THEN
+            RAISE EXCEPTION 'trust: that Stripe account is another company''s'
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_connected_account_state(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_connected_account_state() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_connected_accounts AS c
+        WHERE c.pmc_id = NEW.pmc_id AND c.account_id = NEW.account_id
+    ) THEN
+        RAISE EXCEPTION 'trust: that Stripe account isn''t one this company connected'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_connected_payment(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_connected_payment() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_partner text;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_connected_accounts AS c
+        WHERE c.pmc_id = NEW.pmc_id AND c.account_id = NEW.account_id
+    ) THEN
+        RAISE EXCEPTION 'trust: that Stripe account isn''t one this company connected'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT coalesce(
+        (SELECT p.partner FROM trust_online_payments AS p WHERE p.id = NEW.online_payment_id),
+        (SELECT p.partner FROM trust_owner_online_payments AS p WHERE p.id = NEW.owner_payment_id),
+        (SELECT a.partner FROM trust_autopay AS a WHERE a.id = NEW.autopay_id)
+    ) INTO v_partner;
+    IF v_partner IS DISTINCT FROM 'stripe_connect' AND v_partner IS DISTINCT FROM 'fake_connect'
+    THEN
+        RAISE EXCEPTION 'trust: only a payment through Connect is started on a connected account'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_cutover_entry(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16239,8 +16365,11 @@ CREATE TABLE public.trust_autopay (
     amount numeric NOT NULL,
     partner text NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    method text DEFAULT 'ach'::text NOT NULL,
     CONSTRAINT trust_autopay_amount_check CHECK (((amount > (0)::numeric) AND (amount <= (100000)::numeric) AND (amount = round(amount, 2)))),
-    CONSTRAINT trust_autopay_partner_check CHECK ((partner = ANY (ARRAY['fake'::text, 'stripe'::text]))),
+    CONSTRAINT trust_autopay_connect_only CHECK (((partner = ANY (ARRAY['fake_connect'::text, 'stripe_connect'::text])) OR (method = 'ach'::text))),
+    CONSTRAINT trust_autopay_method_check CHECK ((method = ANY (ARRAY['ach'::text, 'card'::text]))),
+    CONSTRAINT trust_autopay_partner_v2 CHECK ((partner = ANY (ARRAY['fake'::text, 'stripe'::text, 'fake_connect'::text, 'stripe_connect'::text]))),
     CONSTRAINT trust_autopay_rule_check CHECK ((rule = ANY (ARRAY['fixed'::text, 'balance'::text])))
 );
 
@@ -16296,8 +16425,8 @@ CREATE TABLE public.trust_autopay_stops (
     why text NOT NULL,
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT trust_autopay_stops_check CHECK (((why = 'staff'::text) = (recorded_by IS NOT NULL))),
-    CONSTRAINT trust_autopay_stops_why_check CHECK ((why = ANY (ARRAY['tenant'::text, 'staff'::text, 'lease ended'::text, 'tenant left'::text, 'failed twice'::text, 'replaced'::text])))
+    CONSTRAINT trust_autopay_stops_who_v2 CHECK (((why = 'account changed'::text) OR ((why = 'staff'::text) = (recorded_by IS NOT NULL)))),
+    CONSTRAINT trust_autopay_stops_why_v2 CHECK ((why = ANY (ARRAY['tenant'::text, 'staff'::text, 'lease ended'::text, 'tenant left'::text, 'failed twice'::text, 'replaced'::text, 'account changed'::text])))
 );
 
 
@@ -16686,6 +16815,20 @@ CREATE TABLE public.trust_calendar_feeds (
 
 
 --
+-- Name: trust_card_fee_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_card_fee_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    card_fee_payer text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_card_fee_settings_card_fee_payer_check CHECK ((card_fee_payer = ANY (ARRAY['company'::text, 'tenant'::text])))
+);
+
+
+--
 -- Name: trust_charge_payments; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16870,6 +17013,85 @@ CREATE TABLE public.trust_company_statuses (
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT trust_company_statuses_reason_check CHECK (((reason ~ '\S'::text) AND (length(reason) <= 500))),
     CONSTRAINT trust_company_statuses_status_check CHECK ((status = ANY (ARRAY['active'::text, 'suspended'::text, 'closed'::text])))
+);
+
+
+--
+-- Name: trust_connect_disputes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_connect_disputes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    online_payment_id uuid,
+    owner_payment_id uuid,
+    dispute_id text NOT NULL,
+    kind text NOT NULL,
+    fee numeric,
+    partner_event text NOT NULL,
+    happened_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_connect_disputes_check CHECK ((num_nonnulls(online_payment_id, owner_payment_id) = 1)),
+    CONSTRAINT trust_connect_disputes_check1 CHECK (((kind = 'lost'::text) = (fee IS NULL))),
+    CONSTRAINT trust_connect_disputes_dispute_id_check CHECK (((length(dispute_id) >= 1) AND (length(dispute_id) <= 200))),
+    CONSTRAINT trust_connect_disputes_fee_check CHECK (((fee >= (0)::numeric) AND (fee <= (1000)::numeric) AND (fee = round(fee, 2)))),
+    CONSTRAINT trust_connect_disputes_kind_check CHECK ((kind = ANY (ARRAY['opened'::text, 'won'::text, 'lost'::text]))),
+    CONSTRAINT trust_connect_disputes_partner_event_check CHECK (((length(partner_event) >= 1) AND (length(partner_event) <= 200)))
+);
+
+
+--
+-- Name: trust_connected_account_states; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_connected_account_states (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    account_id text NOT NULL,
+    charges_enabled boolean NOT NULL,
+    payouts_enabled boolean NOT NULL,
+    details_submitted boolean NOT NULL,
+    requirements_due text[] DEFAULT '{}'::text[] NOT NULL,
+    partner_event text,
+    reported_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_connected_account_states_account_id_check CHECK (((length(account_id) >= 1) AND (length(account_id) <= 100))),
+    CONSTRAINT trust_connected_account_states_partner_event_check CHECK (((length(partner_event) >= 1) AND (length(partner_event) <= 200))),
+    CONSTRAINT trust_connected_account_states_requirements_due_check CHECK ((cardinality(requirements_due) <= 100))
+);
+
+
+--
+-- Name: trust_connected_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_connected_accounts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    account_id text,
+    partner text NOT NULL,
+    livemode boolean NOT NULL,
+    recorded_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_connected_accounts_account_id_check CHECK ((account_id ~ '^(acct|fake_acct)_[A-Za-z0-9]{6,64}$'::text)),
+    CONSTRAINT trust_connected_accounts_partner_check CHECK ((partner = ANY (ARRAY['fake_connect'::text, 'stripe_connect'::text])))
+);
+
+
+--
+-- Name: trust_connected_payments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_connected_payments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    account_id text NOT NULL,
+    online_payment_id uuid,
+    owner_payment_id uuid,
+    autopay_id uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_connected_payments_account_id_check CHECK (((length(account_id) >= 1) AND (length(account_id) <= 100))),
+    CONSTRAINT trust_connected_payments_check CHECK ((num_nonnulls(online_payment_id, owner_payment_id, autopay_id) = 1))
 );
 
 
@@ -18513,12 +18735,16 @@ CREATE TABLE public.trust_online_payments (
     partner text NOT NULL,
     partner_ref text NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    platform_fee numeric DEFAULT 0 NOT NULL,
     CONSTRAINT trust_online_payments_amount_check CHECK (((amount > (0)::numeric) AND (amount <= (100000)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_online_payments_card_amount CHECK (((method = 'ach'::text) OR (amount <= (10000)::numeric))),
     CONSTRAINT trust_online_payments_check CHECK (((fee_payer = 'tenant'::text) OR (tenant_fee = (0)::numeric))),
+    CONSTRAINT trust_online_payments_connect_only CHECK (((partner = ANY (ARRAY['fake_connect'::text, 'stripe_connect'::text])) OR ((method = 'ach'::text) AND (platform_fee = (0)::numeric)))),
     CONSTRAINT trust_online_payments_fee_payer_check CHECK ((fee_payer = ANY (ARRAY['company'::text, 'tenant'::text]))),
-    CONSTRAINT trust_online_payments_method_check CHECK ((method = 'ach'::text)),
-    CONSTRAINT trust_online_payments_partner_check CHECK ((partner = ANY (ARRAY['fake'::text, 'stripe'::text]))),
+    CONSTRAINT trust_online_payments_method_v2 CHECK ((method = ANY (ARRAY['ach'::text, 'card'::text]))),
     CONSTRAINT trust_online_payments_partner_ref_check CHECK (((length(partner_ref) >= 1) AND (length(partner_ref) <= 200))),
+    CONSTRAINT trust_online_payments_partner_v2 CHECK ((partner = ANY (ARRAY['fake'::text, 'stripe'::text, 'fake_connect'::text, 'stripe_connect'::text]))),
+    CONSTRAINT trust_online_payments_platform_fee_check CHECK (((platform_fee >= (0)::numeric) AND (platform_fee <= (1000)::numeric) AND (platform_fee = round(platform_fee, 2)))),
     CONSTRAINT trust_online_payments_tenant_fee_check CHECK (((tenant_fee >= (0)::numeric) AND (tenant_fee <= (1000)::numeric) AND (tenant_fee = round(tenant_fee, 2))))
 );
 
@@ -18697,10 +18923,14 @@ CREATE TABLE public.trust_owner_online_payments (
     partner text NOT NULL,
     partner_ref text NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    platform_fee numeric DEFAULT 0 NOT NULL,
     CONSTRAINT trust_owner_online_payments_amount_check CHECK (((amount > (0)::numeric) AND (amount <= (100000)::numeric) AND (amount = round(amount, 2)))),
-    CONSTRAINT trust_owner_online_payments_method_check CHECK ((method = 'ach'::text)),
-    CONSTRAINT trust_owner_online_payments_partner_check CHECK ((partner = ANY (ARRAY['fake'::text, 'stripe'::text]))),
-    CONSTRAINT trust_owner_online_payments_partner_ref_check CHECK (((length(partner_ref) >= 1) AND (length(partner_ref) <= 200)))
+    CONSTRAINT trust_owner_online_payments_card_amount CHECK (((method = 'ach'::text) OR (amount <= (10000)::numeric))),
+    CONSTRAINT trust_owner_online_payments_connect_only CHECK (((partner = ANY (ARRAY['fake_connect'::text, 'stripe_connect'::text])) OR ((method = 'ach'::text) AND (platform_fee = (0)::numeric)))),
+    CONSTRAINT trust_owner_online_payments_method_v2 CHECK ((method = ANY (ARRAY['ach'::text, 'card'::text]))),
+    CONSTRAINT trust_owner_online_payments_partner_ref_check CHECK (((length(partner_ref) >= 1) AND (length(partner_ref) <= 200))),
+    CONSTRAINT trust_owner_online_payments_partner_v2 CHECK ((partner = ANY (ARRAY['fake'::text, 'stripe'::text, 'fake_connect'::text, 'stripe_connect'::text]))),
+    CONSTRAINT trust_owner_online_payments_platform_fee_check CHECK (((platform_fee >= (0)::numeric) AND (platform_fee <= (1000)::numeric) AND (platform_fee = round(platform_fee, 2))))
 );
 
 
@@ -20988,6 +21218,14 @@ ALTER TABLE ONLY public.trust_calendar_feeds
 
 
 --
+-- Name: trust_card_fee_settings trust_card_fee_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_card_fee_settings
+    ADD CONSTRAINT trust_card_fee_settings_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_charge_payments trust_charge_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21105,6 +21343,86 @@ ALTER TABLE ONLY public.trust_company_profiles
 
 ALTER TABLE ONLY public.trust_company_statuses
     ADD CONSTRAINT trust_company_statuses_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_connect_disputes trust_connect_disputes_online_payment_id_kind_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connect_disputes
+    ADD CONSTRAINT trust_connect_disputes_online_payment_id_kind_key UNIQUE (online_payment_id, kind);
+
+
+--
+-- Name: trust_connect_disputes trust_connect_disputes_owner_payment_id_kind_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connect_disputes
+    ADD CONSTRAINT trust_connect_disputes_owner_payment_id_kind_key UNIQUE (owner_payment_id, kind);
+
+
+--
+-- Name: trust_connect_disputes trust_connect_disputes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connect_disputes
+    ADD CONSTRAINT trust_connect_disputes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_connected_account_states trust_connected_account_states_partner_event_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connected_account_states
+    ADD CONSTRAINT trust_connected_account_states_partner_event_key UNIQUE (partner_event);
+
+
+--
+-- Name: trust_connected_account_states trust_connected_account_states_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connected_account_states
+    ADD CONSTRAINT trust_connected_account_states_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_connected_accounts trust_connected_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connected_accounts
+    ADD CONSTRAINT trust_connected_accounts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_connected_payments trust_connected_payments_autopay_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connected_payments
+    ADD CONSTRAINT trust_connected_payments_autopay_id_key UNIQUE (autopay_id);
+
+
+--
+-- Name: trust_connected_payments trust_connected_payments_online_payment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connected_payments
+    ADD CONSTRAINT trust_connected_payments_online_payment_id_key UNIQUE (online_payment_id);
+
+
+--
+-- Name: trust_connected_payments trust_connected_payments_owner_payment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connected_payments
+    ADD CONSTRAINT trust_connected_payments_owner_payment_id_key UNIQUE (owner_payment_id);
+
+
+--
+-- Name: trust_connected_payments trust_connected_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connected_payments
+    ADD CONSTRAINT trust_connected_payments_pkey PRIMARY KEY (id);
 
 
 --
@@ -24383,6 +24701,20 @@ CREATE INDEX trust_calendar_feeds_tenant ON public.trust_calendar_feeds USING bt
 
 
 --
+-- Name: trust_card_fee_settings_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_card_fee_settings_pmc ON public.trust_card_fee_settings USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_card_fee_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_card_fee_settings_recorded_by ON public.trust_card_fee_settings USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_charge_payments_transfer_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -24513,6 +24845,48 @@ CREATE INDEX trust_company_profiles_recorded_by ON public.trust_company_profiles
 --
 
 CREATE INDEX trust_company_statuses_pmc ON public.trust_company_statuses USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_connect_disputes_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_connect_disputes_pmc ON public.trust_connect_disputes USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_connected_account_states_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_connected_account_states_account ON public.trust_connected_account_states USING btree (pmc_id, account_id, reported_at);
+
+
+--
+-- Name: trust_connected_accounts_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_connected_accounts_account ON public.trust_connected_accounts USING btree (account_id);
+
+
+--
+-- Name: trust_connected_accounts_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_connected_accounts_pmc ON public.trust_connected_accounts USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_connected_accounts_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_connected_accounts_recorded_by ON public.trust_connected_accounts USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_connected_payments_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_connected_payments_account ON public.trust_connected_payments USING btree (pmc_id, account_id);
 
 
 --
@@ -27169,6 +27543,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_card_fee_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_card_fee_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_charge_payments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27229,6 +27610,34 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_company_statuses FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_connect_disputes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_connect_disputes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_connected_account_states trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_connected_account_states FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_connected_accounts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_connected_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_connected_payments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_connected_payments FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -28933,6 +29342,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_cale
 
 
 --
+-- Name: trust_card_fee_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_card_fee_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_charge_payments trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28993,6 +29409,34 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_comp
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_company_statuses FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_connect_disputes trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_connect_disputes FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_connected_account_states trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_connected_account_states FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_connected_accounts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_connected_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_connected_payments trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_connected_payments FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -30522,6 +30966,27 @@ CREATE TRIGGER trust_check_autopay_run BEFORE INSERT ON public.trust_autopay_run
 
 
 --
+-- Name: trust_connect_disputes trust_check_connect_dispute; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_connect_dispute BEFORE INSERT ON public.trust_connect_disputes FOR EACH ROW EXECUTE FUNCTION public.trust_check_connect_dispute();
+
+
+--
+-- Name: trust_connected_account_states trust_check_connected_account_state; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_connected_account_state BEFORE INSERT ON public.trust_connected_account_states FOR EACH ROW EXECUTE FUNCTION public.trust_check_connected_account_state();
+
+
+--
+-- Name: trust_connected_payments trust_check_connected_payment; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_connected_payment BEFORE INSERT ON public.trust_connected_payments FOR EACH ROW EXECUTE FUNCTION public.trust_check_connected_payment();
+
+
+--
 -- Name: trust_drafts trust_check_draft; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -31208,6 +31673,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_calendar_feeds FO
 
 
 --
+-- Name: trust_card_fee_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_card_fee_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_charge_type_archivals trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -31247,6 +31719,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_charge_waivers FO
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_company_profiles FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_connected_accounts trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_connected_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -31961,6 +32440,13 @@ CREATE TRIGGER trust_request_work_order_unit BEFORE INSERT ON public.trust_maint
 --
 
 CREATE TRIGGER trust_reveal_by_admin BEFORE INSERT ON public.trust_tax_id_reveals FOR EACH ROW EXECUTE FUNCTION public.trust_check_tax_id_reveal();
+
+
+--
+-- Name: trust_connected_accounts trust_set_by_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_set_by_admin BEFORE INSERT ON public.trust_connected_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_check_connected_account();
 
 
 --
@@ -33430,6 +33916,22 @@ ALTER TABLE ONLY public.trust_calendar_feeds
 
 
 --
+-- Name: trust_card_fee_settings trust_card_fee_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_card_fee_settings
+    ADD CONSTRAINT trust_card_fee_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_card_fee_settings trust_card_fee_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_card_fee_settings
+    ADD CONSTRAINT trust_card_fee_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_charge_payments trust_charge_payments_pmc_id_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -33635,6 +34137,86 @@ ALTER TABLE ONLY public.trust_company_profiles
 
 ALTER TABLE ONLY public.trust_company_statuses
     ADD CONSTRAINT trust_company_statuses_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_connect_disputes trust_connect_disputes_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connect_disputes
+    ADD CONSTRAINT trust_connect_disputes_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_connect_disputes trust_connect_disputes_pmc_id_online_payment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connect_disputes
+    ADD CONSTRAINT trust_connect_disputes_pmc_id_online_payment_id_fkey FOREIGN KEY (pmc_id, online_payment_id) REFERENCES public.trust_online_payments(pmc_id, id);
+
+
+--
+-- Name: trust_connect_disputes trust_connect_disputes_pmc_id_owner_payment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connect_disputes
+    ADD CONSTRAINT trust_connect_disputes_pmc_id_owner_payment_id_fkey FOREIGN KEY (pmc_id, owner_payment_id) REFERENCES public.trust_owner_online_payments(pmc_id, id);
+
+
+--
+-- Name: trust_connected_account_states trust_connected_account_states_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connected_account_states
+    ADD CONSTRAINT trust_connected_account_states_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_connected_accounts trust_connected_accounts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connected_accounts
+    ADD CONSTRAINT trust_connected_accounts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_connected_accounts trust_connected_accounts_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connected_accounts
+    ADD CONSTRAINT trust_connected_accounts_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_connected_payments trust_connected_payments_pmc_id_autopay_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connected_payments
+    ADD CONSTRAINT trust_connected_payments_pmc_id_autopay_id_fkey FOREIGN KEY (pmc_id, autopay_id) REFERENCES public.trust_autopay(pmc_id, id);
+
+
+--
+-- Name: trust_connected_payments trust_connected_payments_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connected_payments
+    ADD CONSTRAINT trust_connected_payments_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_connected_payments trust_connected_payments_pmc_id_online_payment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connected_payments
+    ADD CONSTRAINT trust_connected_payments_pmc_id_online_payment_id_fkey FOREIGN KEY (pmc_id, online_payment_id) REFERENCES public.trust_online_payments(pmc_id, id);
+
+
+--
+-- Name: trust_connected_payments trust_connected_payments_pmc_id_owner_payment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_connected_payments
+    ADD CONSTRAINT trust_connected_payments_pmc_id_owner_payment_id_fkey FOREIGN KEY (pmc_id, owner_payment_id) REFERENCES public.trust_owner_online_payments(pmc_id, id);
 
 
 --
@@ -38539,4 +39121,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261106120000'),
     ('20261106120100'),
     ('20261107000100'),
-    ('20261107000200');
+    ('20261107000200'),
+    ('20261113000150');

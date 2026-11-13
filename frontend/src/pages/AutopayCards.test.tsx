@@ -105,3 +105,35 @@ describe("LeaseAutopayCard", () => {
     expect(await screen.findByText("No tenant set up autopay.")).toBeTruthy();
   });
 });
+
+describe("TenantAutopayCard through Stripe Connect", () => {
+  it("saves a card for autopay, its fee the company's", async () => {
+    const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") return new Response(JSON.stringify({ id: "a3", url: "/pay/fake-connect-save#a3" }), { status: 201 });
+      if (path === "/api/payments/connect/leases/l1") {
+        return new Response(JSON.stringify({
+          connect: true,
+          card_max: "10000.00",
+          methods: [],
+          autopay: [
+            { method: "ach", fee_payer: "company", why_company: null, tenant_fee: null, total: null },
+            { method: "card", fee_payer: "company", why_company: "a card fee on autopay is the company's", tenant_fee: null, total: null },
+          ],
+        }));
+      }
+      return new Response(JSON.stringify(VIEW));
+    });
+    vi.stubGlobal("fetch", fetch);
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    render(<TenantAutopayCard leaseId="l1" />);
+    fireEvent.change(await screen.findByLabelText("Pay from"), { target: { value: "card" } });
+    expect(screen.getByText(/No fee by card\./)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Up to"), { target: { value: "1500" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save a card and turn on autopay" }));
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith("/pay/fake-connect-save#a3"));
+    const post = fetch.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(post?.[0]).toBe("/api/payments/connect/leases/l1/autopay");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ rule: "balance", amount: "1500", method: "card" });
+  });
+});

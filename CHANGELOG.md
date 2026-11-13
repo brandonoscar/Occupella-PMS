@@ -6,6 +6,16 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+- **Stripe Connect for the hosted product** (docs/adr/0014-stripe-connect.md). A server that runs a
+  Stripe platform account (`PMS_CONNECT=stripe`, `PMS_STRIPE_CONNECT_SECRET_KEY`,
+  `PMS_STRIPE_CONNECT_WEBHOOK_SECRET`) lets each company connect its own Stripe account from Company
+  setup through Stripe's onboarding, no keys pasted. Tenants then pay by bank or card, owners add
+  money by either and autopay saves either, each a direct charge on the company's account with the
+  platform's fee on it (`PMS_CONNECT_FEE_ACH`, `PMS_CONNECT_FEE_CARD`; $0.50 unset). Stripe's fee and
+  the platform's leave trust from the company's fee account, never an owner's; a card fee falls on a
+  tenant only where the company chose it, the state allows a surcharge and never on autopay or a
+  debit card; a card dispute is recorded as a return, and one won puts the payment back. A server of
+  your own leaves `PMS_CONNECT` unset: your own keys work as before. Migration `20261113000150`.
 - **Fix (payments): Stripe's test keys never book real money** (docs/edge-cases.md P-048, P-049).
   A server whose `PMS_PUBLIC_URL` is https at a host other than the machine itself refuses to
   start with a test key in `PMS_STRIPE_SECRET_KEY`. Company setup refuses a company's test keys

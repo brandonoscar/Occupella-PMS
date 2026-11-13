@@ -87,7 +87,7 @@ jobs:
           export PMS_DATA_KEY
           PYTHONPATH=src PMS_STATIC_DIR=frontend/dist PMS_PORT=8123 \
             PMS_PUBLIC_URL="$ORIGIN" PMS_COOKIE_SECURE=false \
-            PMS_SCREENING_PARTNER=fake PMS_EMAIL_SENDER=fake PMS_GEOCODER=fake PMS_PAYMENTS=fake \
+            PMS_SCREENING_PARTNER=fake PMS_EMAIL_SENDER=fake PMS_GEOCODER=fake PMS_PAYMENTS=fake PMS_CONNECT=fake \
             PMS_NIGHTLY=off \
             nohup python -m pms.api > "$RUNNER_TEMP/api.log" 2>&1 &
           for _ in $(seq 30); do curl -fsS "$ORIGIN/health" && break; sleep 1; done
@@ -172,7 +172,7 @@ jobs:
           PMS_DATA_KEY="$(python -c 'import base64, os; print(base64.b64encode(os.urandom(32)).decode())')"
           export PMS_DATA_KEY
           PYTHONPATH=src PMS_PORT=8123 PMS_PUBLIC_URL="$ORIGIN" PMS_COOKIE_SECURE=false \
-            PMS_SCREENING_PARTNER=fake PMS_EMAIL_SENDER=fake PMS_GEOCODER=fake PMS_PAYMENTS=fake \
+            PMS_SCREENING_PARTNER=fake PMS_EMAIL_SENDER=fake PMS_GEOCODER=fake PMS_PAYMENTS=fake PMS_CONNECT=fake \
             PMS_NIGHTLY=off \
             nohup python -m pms.api > "$RUNNER_TEMP/api.log" 2>&1 &
           for _ in $(seq 30); do curl -fsS "$ORIGIN/health" && break; sleep 1; done

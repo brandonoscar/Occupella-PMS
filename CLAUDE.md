@@ -1102,6 +1102,34 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   company's account can't) waits on Banking with the tenants' payments, an owner's naming the
   owner, not a lease. A low-balance email to an owner who signs in says they may pay it online
   once the company takes payments online. The AI role reads these tables; it moves no money.
+- Stripe Connect (migration 20261113000150, `docs/adr/0014-stripe-connect.md`, `src/pms/connect.py`,
+  `src/pms/api/connect.py`, `src/pms/api/disputes.py`): on a server with a platform (`PMS_CONNECT`:
+  "stripe" with `PMS_STRIPE_CONNECT_SECRET_KEY` and `PMS_STRIPE_CONNECT_WEBHOOK_SECRET` from the
+  environment, never stored; "fake" for development and CI, refused over https; none by default) an
+  admin connects the company's own Stripe account from Company setup (Connect Stripe: a Standard
+  account by its controller properties, then Stripe's hosted onboarding, back to Company setup,
+  which asks Stripe where it stands; `trust_connected_accounts`, the latest holding, a row with none
+  disconnecting it, an account one company's; `trust_connected_account_states`, the latest by
+  Stripe's time). Once Stripe says it takes charges its payments go through it
+  (`connect.ConnectResolver`; else the company's own keys or the server's partner, as before): a
+  tenant pays by bank or card, an owner adds money by either, an autopay saves either, each a
+  direct charge on the company's account (`Stripe-Account`) with Occupella's fee as its application
+  fee (`platform_fee` on the payment; `PMS_CONNECT_FEE_ACH`, `PMS_CONNECT_FEE_CARD`:
+  "percent,fixed,minimum", $0.50 unset, refused below what a payment costs the platform,
+  `connect.cost`), so the money lands in the company's Stripe balance and pays out to its trust
+  account, never through Occupella's. What Stripe keeps, its fee and Occupella's together, leaves
+  the books from the company's fee account, never an owner's. A tenant pays a bank fee by
+  `ach_fee_payer` and a card fee only where the company chose it (`trust_card_fee_settings`), the
+  property's state allows a surcharge, not on autopay, at most 3% or the state's cap, by credit card
+  only (`connect.card_fee_terms`); an owner never pays one. A card payment is $10,000.00 at most. A
+  dispute is a return with its dispute fee from the company's fee account, and one won puts the
+  payment back (`trust_connect_disputes`). The platform's one webhook (`POST
+  /api/payments/connect/webhook`) maps each report's `account` to its company (404 for none),
+  books nothing from another account or the other mode, and a live server refuses the platform's
+  test key. Disconnecting stops the autopays saved at the account ('account changed', emailed).
+  `trust_connected_payments` names the account each payment started on. All append-only; the AI
+  role reads the card fee choice and the disputes, never an account, its state or which a payment
+  used.
 - Autopay (migration 0151, `src/pms/autopay.py`, `src/pms/api/autopay.py`, ADR 0009): a tenant
   sets up autopay of a lease from the portal (Autopay), a fixed amount each month or the balance
   due up to an amount they set (`trust_autopay`), and saves the bank account it pays from on the
