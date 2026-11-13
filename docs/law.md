@@ -921,6 +921,28 @@ counts as received for its state's deposit deadline (a bank payment takes days t
 forbids a broker's own money in trust and Iowa requires the broker to cover bank charges from its
 own: a company in Oregon should keep its fee account able to pay the processor without a deposit.
 
+**When a payment online counts for a late fee** (migration 20261113000100, docs/edge-cases.md
+D-080, D-081). In plain words: a tenant who starts a bank payment online (or whose autopay starts
+one) by the last day of the grace has paid on time. The bank takes days to settle it, and the late
+fee waits until it does. If the bank pays it, there is no late fee, however late it settled. If
+it fails, or the tenant left the partner's page without paying, the rent is late as if no payment
+had been made, and the fee is charged as it would have been the day after the grace. If the bank
+pays it and later takes it back, it is a bounce, as a check that bounced is: the property's NSF
+fee is charged and the rent is owed again; it came back within the grace, the rent is late. A
+payment of part of the rent counts for that part. The day it was started is the company's day.
+Why: a late fee is for paying late, and the tenant chose the day they paid, not the day their bank
+settled; charging it for the bank's days would punish paying online. No statute was read on when
+a payment by bank counts as received (NOT VERIFIED; a lease may say). How Buildium treats it was
+not checked: its help pages weren't reachable from where this was built, and search excerpts say
+only that it keeps pending bank payments apart until they clear (NOT VERIFIED). The books still
+date the money on the day the bank paid it, so statements and month-end follow the bank.
+
+**A payment the partner never reported** (docs/edge-cases.md C-090). Stripe stops sending a report
+after about three days of failed deliveries (NOT VERIFIED). A week after a payment online started
+with no report, the nightly run asks Stripe what became of it and records what it says, as its
+report would have, once; staff recording a payment of the same amount by hand are asked first
+whether it is another payment.
+
 **Owners paying in online** (migration 20261102000150, ADR 0009, readiness q054). The same switch
 lets owners add money to their property accounts from the owner portal, by bank. ADR 0009's first
 rule says a processor's fee is never the owner's; the founder chose on 2026-11-02 that the company

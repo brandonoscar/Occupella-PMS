@@ -6,6 +6,17 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+- **Fix (late fees): rent paid online counts from the day the tenant started it** (docs/edge-cases.md
+  D-080, D-081). A bank payment online, or autopay's, takes days to settle; a short grace charged
+  a late fee on rent the tenant paid in time. The late fee now waits while a payment started by
+  the end of the grace is on its way, and none is charged once it lands. One that fails, expires
+  or is given up leaves the rent late as before; one that comes back is a bounce. Migration
+  `20261113000100`.
+- **Payments Stripe never reported reach the books** (docs/edge-cases.md C-090). Once a company's
+  day, the nightly run asks Stripe about each payment online with no report a week after it
+  started (`src/pms/look_ups.py`) and records what it says, once, as its report would have. Receive
+  payment asks staff before recording a payment of the same amount as one online the books don't
+  hold yet, so a copy recorded by hand no longer counts it twice.
 - **Fix (payments): Stripe's test keys never book real money** (docs/edge-cases.md P-048, P-049).
   A server whose `PMS_PUBLIC_URL` is https at a host other than the machine itself refuses to
   start with a test key in `PMS_STRIPE_SECRET_KEY`. Company setup refuses a company's test keys

@@ -862,7 +862,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   end of its last grace day (UTC) one late fee under the terms in force on its due date, reaching
   its rents in the order their grace ends so one run charges what a run every day would (a late
   fee is an open charge too; migration 0056), never one whose fee would fall in a closed year
-  (migration 20261105000700). READ COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
+  (migration 20261105000700). A payment online counts from the company's day the tenant (or
+  autopay) started it (migration 20261113000100, `trust_online_started_by`, D-080, D-081): while
+  one started by the end of the grace is on its way (`trust_online_on_its_way`: reported paid, or
+  started in the last 14 days, and neither failed, expired, returned nor in the books) the fee
+  waits, and once it lands it counts as paid then; one that came back is a bounce. READ
+  COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
   payments matched, plus what bounced, less its share of the lease's credits, which come off
   its rent first, as the delinquency report counts them (Rent first, below).
   A waiver (migration 0079, `trust_charge_waivers`; staff waive from an open charge's ⋯ menu on
@@ -1077,7 +1082,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and a payment the partner has said nothing of for 14 days
   (`online_payments.NO_WORD_DAYS`; "no word", to look up with the partner; until then it counts as
   on its way, and one reported paid counts however old). Each posting has a key of its own (`metadata ->> 'key'`, indexed), so
-  a partner reporting twice moves nothing twice. The AI role reads these tables; it moves no money.
+  a partner reporting twice moves nothing twice. Once a company's day the nightly run asks the
+  partner about each payment online (a tenant's, an autopay's once sent, an owner's) with no
+  report `look_ups.LOOK_AFTER_DAYS` (7) to `LOOK_FOR_DAYS` (60) days after it started
+  (`src/pms/look_ups.py`, C-090: Stripe's Checkout Session or PaymentIntent, `payments.LooksUp`,
+  each set of the company's keys that opens here, then the server's) and records what it says
+  through the same `apply` a report goes through; Receive payment refuses (409) a payment of the
+  amount of one online to the lease the books don't hold yet (`rent.ONLINE_WAITING`, the lease's
+  `online_waiting`) until staff say it is another (`not_a_duplicate`), and the panel asks first. The AI role reads these tables; it moves no money.
   While a tenant or owner can't pay online, the API says why as a word ("off", or "paused" on a
   payment hold), never in the server's words, and their Pay online and Add money show the
   company's How to pay us instead (Company setup, `/api/company/how-to-pay`, migration

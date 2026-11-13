@@ -26,14 +26,14 @@ answer in the portal for everything that can fail.
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
 | [Money and the ledger](#money-and-the-ledger) | 157 | 120 | 8 | 29 | 6 |
-| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 90 | 15 | 59 | 13 |
-| [Concurrency and retries](#concurrency-and-retries) | 144 | 76 | 30 | 38 | 1 |
+| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 92 | 15 | 57 | 11 |
+| [Concurrency and retries](#concurrency-and-retries) | 144 | 77 | 30 | 37 | 0 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 166 | 78 | 8 | 80 | 16 |
 | [Bad files and imports](#bad-files-and-imports) | 154 | 73 | 17 | 64 | 1 |
 | [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 169 | 104 | 11 | 54 | 5 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 176 | 82 | 14 | 80 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1187** | **663** | **113** | **411** | **46** |
+| **All** | **1187** | **666** | **113** | **408** | **43** |
 
 ## Open, high risk: the work list
 
@@ -57,8 +57,6 @@ its ten most pressing, each with the test that would close it.
 - D-069: California increase notice served by mail
 - D-078: A check received on the last grace day, recorded the next morning dated back
 - D-079: A lockbox file line dated within grace brought in after the fee
-- D-080: Rent paid online by bank on the due day that settles after the grace
-- D-081: Autopay started on the due day, settled 2 to 4 business days later
 - D-082: Late fee terms added with a start day in the past
 - D-083: Rent first charged after its own grace ran out (lease entered late, an admin's catch-up)
 - D-128: A fee charged after the 10-day deadline passed
@@ -67,7 +65,7 @@ its ten most pressing, each with the test that would close it.
 
 **Concurrency and retries**
 
-- C-090: Stripe gives up on a webhook after days of failed deliveries
+None.
 
 **Partners and outside services down, slow or wrong**
 
@@ -292,8 +290,6 @@ its ten most pressing, each with the test that would close it.
 | D-069 | California increase notice served by mail | The 5 extra days for mail (CCP 1013) are not added; days are counted from today | Open | src/pms/rent_notice.py:83 | H |
 | D-078 | A check received on the last grace day, recorded the next morning dated back | The night already charged the fee; nothing undoes a late fee when a payment dated within grace comes in later | Open | db/migrations/20261031000200_late_fees_skip_paid_rents.sql:208 | H |
 | D-079 | A lockbox file line dated within grace brought in after the fee | Same: the fee stays until staff waive it | Open | src/pms/api/payment_files.py:109 | H |
-| D-080 | Rent paid online by bank on the due day that settles after the grace | Dated when the partner reports it paid (the event's created time), so a short grace charges a late fee though the tenant paid in time | Open | src/pms/api/online_payments.py:533; src/pms/payments.py:292 | H |
-| D-081 | Autopay started on the due day, settled 2 to 4 business days later | Same as online: every autopay tenant whose grace is shorter than settlement is charged a late fee | Open | src/pms/autopay.py:371; src/pms/api/online_payments.py:533 | H |
 | D-082 | Late fee terms added with a start day in the past | The next night charges a fee on every old open rent back to that day (one that would fall in a closed year is passed over since migration 20261105000700, M-050), and append-only terms can't be undone | Open | src/pms/api/setup.py:751; db/migrations/20261021000106_year_close.sql (trust_refuse_closed_year) | H |
 | D-083 | Rent first charged after its own grace ran out (lease entered late, an admin's catch-up) | Charged a late fee the same night, before the tenant could see the rent | Open | db/migrations/20261031000200_late_fees_skip_paid_rents.sql:208 | H |
 | D-128 | A fee charged after the 10-day deadline passed | The deadline moves to 14 days, hiding that the 10-day one was missed (the test pins the move) | Open | src/pms/api/moveout.py:134; tests/api/test_deposit_statements_api.py::test_a_lease_shows_when_its_deposit_is_due_back_and_its_fees_with_their_receipts | H |
@@ -302,6 +298,8 @@ its ten most pressing, each with the test that would close it.
 | D-054 | A term ending on the last day of the month | Rolled over before that night's rent, so the new month is charged | Guarded | src/pms/nightly.py:112 | H |
 | D-086 | Staff record a payment at 9 pm Eastern dated today (UTC already tomorrow) | Accepted and dated the company's day; the database's UTC checks never refuse it; tests use UTC companies only | Guarded | src/pms/api/rent.py:1720 | H |
 | D-119 | A vendor paid at 9 pm Eastern on 12/31 | Dated 12/31 (the company's day at 00:00 UTC), so in that 1099 year; no test of the evening case | Guarded | src/pms/api/payables.py:56 | H |
+| D-080 | Rent paid online by bank on the due day that settles after the grace | Late fees count a payment online from the company's day the tenant started it, not the day the partner reports it paid (migration 20261113000100): while one started by the end of the grace is on its way (reported paid, or started in the last 14 days, and neither failed, expired nor returned) the late fee waits, and once it lands it counts as paid that day. One that fails, expires or is given up leaves the rent late as with no payment; one that comes back after the grace is a bounce (its NSF fee, no late fee), as staff's is. The books still date the money on the day the bank paid | Tested | tests/test_online_late_fees.py::test_rent_paid_online_on_the_due_day_that_settles_after_the_grace_is_not_late; tests/test_online_late_fees.py::test_a_payment_that_came_back_after_the_grace_is_a_bounce; tests/test_online_late_fees.py::test_started_counts_by_the_companys_day; tests/properties/test_online_late_fee_properties.py::test_a_payment_started_within_grace_draws_no_late_fee_however_late_it_settles | H |
+| D-081 | Autopay started on the due day, settled 2 to 4 business days later | As D-080: autopay's payment counts from the day the nightly run started it | Tested | tests/test_online_late_fees.py::test_an_autopay_payment_started_on_the_due_day_is_not_late | H |
 | D-003 | 9 pm Eastern on 10/31 (01:00 UTC on 11/01), in each allowed zone | trust_pmc_day gives 10/31 in every US zone and 11/01 in UTC | Tested | tests/test_nightly.py::test_a_companys_day_is_the_date_in_its_time_zone | H |
 | D-004 | A payment the partner reports paid at 11:30 pm Pacific on the 31st | Dated the 31st (the company's day) and on that month's owner statement only | Tested | tests/properties/test_company_day_properties.py::test_a_payment_is_on_the_statement_of_the_companys_own_day | H |
 | D-010 | At 05:30 UTC on 11/01 it is still 10/31 in Hawaii | Each company runs for its own day: Hawaii gets no November rent until its midnight | Tested | tests/test_nightly.py::test_each_company_runs_for_its_own_day | H |
@@ -457,7 +455,6 @@ its ten most pressing, each with the test that would close it.
 - D-025: A new test in tests/api/test_rent.py: Run rent now with due_on the 15th after the 1st was charged leaves one rent per lease and month, or is refused.
 - D-016: A new test in tests/test_nightly.py: a lease due on the 28th, no run from the 28th to the 31st, run_pmc on the 1st still charges (or flags) last month's rent.
 - D-082: A new test in tests/test_rent_automation.py: backdated terms charge no fee on rents due before they were entered, and an old open rent in a closed year leaves run_pmc working.
-- D-080: A new test in tests/api/test_online_payments_api.py: a payment started within grace and reported paid after it charges no late fee.
 - D-078: A new test in tests/test_rent_automation.py: a payment dated within grace recorded after the fee was charged undoes (or flags) that fee.
 - D-066: A new test in tests/api/test_rent.py: a 03/01 change with 02/01 notice in California warns or is refused, as the renewal panel would.
 - D-129: A new test in tests/api/test_deposit_statements_api.py: return_by counts from the notice's leaving day, and a fee charged after the 10-day day keeps the missed deadline.
@@ -468,7 +465,6 @@ its ten most pressing, each with the test that would close it.
 
 | ID | Edge case | What the PMS does | Status | Evidence | Risk |
 |---|---|---|---|---|---|
-| C-090 | Stripe gives up on a webhook after days of failed deliveries | Nothing polls for it; the payment never reaches the books; staff see it on Banking's Online payments waiting after 14 days with no word (P-013), told not to record it by hand, but if they do, a later resend records it twice | Open | src/pms/api/online_payments.py:622 (receive only; no event poll in src/pms/payments.py) | H |
 | C-041 | Staff void a bill while another staff member pays it | The decision trigger locks the owner's account; a void after money was taken is refused | Guarded | db/schema.sql:2496 (trust_check_bill_decision) | H |
 | C-050 | Two staff pay the night's prepared draws under different request ids | One approval; the second gets 409 paid already | Guarded | src/pms/api/payables.py:2208 | H |
 | C-063 | A journal entry posted twice at once | Entry lock; the second returns the transfers already posted | Guarded | db/schema.sql:6939 (trust_post_journal_entry) | H |
@@ -476,6 +472,7 @@ its ten most pressing, each with the test that would close it.
 | C-078 | One autopay payment sent by two processes at once | Same Stripe retry key, a lookup by payment id, and the submission row ON CONFLICT | Guarded | src/pms/payments.py:242 (StripePartner.charge) | H |
 | C-079 | The process dies after Stripe took the payment, before the submission row | The next send finds it on Stripe by payment id instead of making a second | Guarded | src/pms/payments.py:248 | H |
 | C-086 | Two paid reports (session completed and intent succeeded) at the same moment | Lease lock and the event's own lock serialize them; each posting has a key | Guarded | src/pms/api/online_payments.py:560 | H |
+| C-090 | Stripe gives up on a webhook after days of failed deliveries | Once a company's day the nightly run asks Stripe about each payment online (a tenant's, an autopay's once sent, an owner's) with no report a week to 60 days after it started, and records what its Checkout Session or PaymentIntent says (paid with its fee, failed, expired; nothing while on its way) through the webhook's own apply: once per payment and kind, under the payment's own posting keys, so the report that comes after records nothing twice (src/pms/look_ups.py). Staff's Receive payment of the same amount as a payment online the books don't hold yet is refused (409) until staff say it is another, and the panel asks first | Tested | tests/test_look_ups.py::test_a_paid_payment_stripe_never_reported_is_found_and_recorded_once; tests/test_look_ups.py::test_an_owner_payment_stripe_never_reported_is_found_and_recorded_once; tests/test_look_ups.py::test_the_nightly_run_asks_once_a_company_day; tests/api/test_rent.py::test_a_copy_of_a_payment_online_not_in_the_books_waits_for_staff_to_say_it_is_another; frontend/src/pages/LeaseForms.test.tsx ("asks whether a payment like one online not in the books yet is another (C-090)") | H |
 | C-001 | The same idempotency key posted twice in a row | The second call returns the first call's transfers and posts nothing | Tested | `tests/test_idempotency.py::test_same_key_twice_posts_once_and_returns_the_original` | H |
 | C-002 | A key reused with a different amount, account or day | Refused as used for a different posting; nothing is written | Tested | `tests/test_idempotency.py::test_same_key_with_different_contents_is_refused_and_nothing_written` | H |
 | C-003 | Two calls with one key at the same instant | One posts; the other waits on the key and gets the original | Tested | `tests/test_idempotency.py::test_two_calls_with_one_key_at_once_post_once` | H |
@@ -617,7 +614,6 @@ its ten most pressing, each with the test that would close it.
 
 - C-087: an API test that sends returned, then paid, through the fake partner and asserts the payment is in the books and then undone (or that the early return is kept and applied once paid lands).
 - C-088: the same test for owner payments: returned then paid leaves the owner's account as it was before the payment.
-- C-090: a test that a paid payment with no report after N days is found by a poll of the partner and recorded once, and that a staff-recorded copy and a late report don't double it.
 - C-055: an API test that a second take of a run's ACH file asks for confirmation (or carries a new file id modifier) and is logged as a repeat.
 - C-130: a timing test: an archival and a new lease on one unit at once, asserting one of them is refused.
 
@@ -627,8 +623,8 @@ its ten most pressing, each with the test that would close it.
 |---|---|---|---|---|---|
 | P-006 | The company's secret key was rolled or revoked in Stripe, is a restricted key without a permission, or the account was restricted | Every checkout and autopay fails as "couldn't reach"; Settings still says "Your Stripe account, key ending in ..."; no admin alert, no check of the key | Open | src/pms/payments.py:203; src/pms/api/payment_keys.py:73-104 (view never calls Stripe) | H |
 | P-007 | Keys saved that only look right: a typo'd key, or a secret key and a webhook secret from different Stripe accounts or modes | check_keys checks only their shape; payments start on one account and its reports fail the signature, so paid payments never reach the books | Open | src/pms/payments.py:477-487; src/pms/api/payment_keys.py:117-142 | H |
-| P-010 | The server's clock drifts more than 5 minutes | Every Stripe report is refused 400 as "signed too long ago"; Stripe retries then stops; payments stay "Waiting for your bank"; no alert | Open | src/pms/payments.py:429-447 (tolerance 300) | H |
-| P-011 | The webhook signing secret changed in Stripe (endpoint recreated) but not in the PMS | Every report answers 400 "the report's signature isn't this company's"; after Stripe's retries (about 3 days, NOT VERIFIED) they are gone; nobody is told | Open | src/pms/api/online_payments.py:686-693 | H |
+| P-010 | The server's clock drifts more than 5 minutes | Every Stripe report is refused 400 as "signed too long ago"; Stripe retries then stops; payments stay "Waiting for your bank" until the nightly look-up asks Stripe a week on (C-090); no alert | Open | src/pms/payments.py:429-447 (tolerance 300) | H |
+| P-011 | The webhook signing secret changed in Stripe (endpoint recreated) but not in the PMS | Every report answers 400 "the report's signature isn't this company's"; after Stripe's retries (about 3 days, NOT VERIFIED) they are gone, and the nightly look-up asks Stripe for the payments a week on (C-090); nobody is told | Open | src/pms/api/online_payments.py:686-693 | H |
 | P-026 | A late return Stripe reports by another event than a dispute (charge.failed after success; NOT VERIFIED which Stripe sends) | Not in STRIPE_KINDS: ignored, the payment stays in the books | Open | src/pms/payments.py:337-351 | H |
 | P-027 | A dispute the company won, funds reinstated (charge.dispute.closed, charge.dispute.funds_reinstated) | Not read: the payment stays bounced, the tenant owes it again plus an NSF fee though the money came back | Open | src/pms/payments.py:337-351 | H |
 | P-028 | Staff refund a tenant, all or part, from Stripe's dashboard (charge.refunded) | Not read: the books keep the whole payment; trust cash at the bank is short of the books | Open | src/pms/payments.py:337-351 (no refund kind) | H |
@@ -650,7 +646,7 @@ its ten most pressing, each with the test that would close it.
 | P-075 | SMTP server hangs | Delivery after a write, and autopay's submissions, run one at a time in a process (outbox.OneAtATime): a write while one runs returns at once and makes it run once more after, so a hung mail server or partner holds one pooled connection, never the pool | Tested | tests/api/test_outbox.py::test_many_writes_at_once_lend_the_slow_partner_one_connection | H |
 | P-111 | PMS_DATA_KEY changed (one is set, but not the one that sealed the numbers) | Before anything is recorded, each ACH payee's bank account number must open under the server's key; one that doesn't is refused (409 naming them: pay by check, or run with the key that sealed it), and checks need no key | Tested | tests/api/test_payouts_api.py::test_a_server_with_another_key_records_no_ach_payout | H |
 | P-129 | Every amount positive with a separate Type (Debit or Credit) column | Each line's way is read from the type column (Debit, Credit, Dr, Cr, ACH_DEBIT...) when every amount is positive; a type saying neither is refused with its line; signed amounts keep their signs | Tested | tests/test_statement_files.py::test_a_csv_of_positive_amounts_reads_each_ones_way_from_its_type | H |
-| P-013 | No report ever arrives for a started payment (webhook broken, PMS down past Stripe's retry window) | Nothing asks Stripe, and the tenant's line still says Waiting for your bank; after 14 days with no word, staff see it on Banking's Online payments waiting (started on, look it up at the partner, don't record it by hand), and a balance autopay no longer counts it as on its way | Tested | tests/api/test_online_payments_api.py::test_staff_see_a_payment_started_weeks_ago_with_no_word_from_the_partner; frontend/src/payments.test.ts ("says a payment started weeks ago with no word from the partner") | H |
+| P-013 | No report ever arrives for a started payment (webhook broken, PMS down past Stripe's retry window) | A week on, the nightly look-up asks Stripe and records what it says (C-090); one it can't ask (no keys open here) still says Waiting for your bank; after 14 days with no word, staff see it on Banking's Online payments waiting (started on, look it up at the partner, don't record it by hand), and a balance autopay no longer counts it as on its way | Tested | tests/api/test_online_payments_api.py::test_staff_see_a_payment_started_weeks_ago_with_no_word_from_the_partner; frontend/src/payments.test.ts ("says a payment started weeks ago with no word from the partner") | H |
 | P-067 | Stripe leaves an off-session payment waiting on the tenant (requires_action; NOT VERIFIED for ACH) | Recorded as sent, and no report follows; after 14 days it no longer counts as on its way, so the next balance autopay pays the whole balance, and staff see it on Banking's Online payments waiting to look up at Stripe. Stripe's requires_action itself is not read (NOT VERIFIED that it happens for ACH) | Tested | tests/test_autopay.py::test_a_payment_no_word_came_of_for_weeks_is_not_on_its_way; tests/api/test_online_payments_api.py::test_staff_see_a_payment_started_weeks_ago_with_no_word_from_the_partner | H |
 | P-068 | A hand payment left on Stripe's page whose expired report never comes | Counted on its way only for 14 days after it started (autopay.ON_ITS_WAY_DAYS); after that it no longer lowers what a balance autopay pays, and staff see it on Banking's Online payments waiting; its report, if it comes, still reaches the books | Tested | tests/test_autopay.py::test_a_payment_no_word_came_of_for_weeks_is_not_on_its_way; tests/properties/test_on_its_way_properties.py::test_a_balance_autopay_counts_on_its_way_only_what_may_still_come | H |
 | P-087 | The attachment or HTML fails with something other than a database or lookup error (fpdf, ValueError, HTTPException; NOT VERIFIED that any does today) | Caught: whatever else an attempt raises is that email's failed attempt, recorded with its error and logged, and the emails behind it go out in the same pass (src/pms/email.py's last except) | Tested | tests/test_email_attachments.py::test_an_attachment_that_fails_in_any_way_is_a_failed_delivery_and_stops_nothing_behind_it | H |
@@ -797,7 +793,7 @@ its ten most pressing, each with the test that would close it.
 1. P-040: an API test that a paid online payment on a two-owner property without shares appears in GET /api/payments/waiting (not a 422) and that Record takes an owner account; a vitest that the Waiting card shows an error notice when the GET fails.
 2. P-024: a webhook test that a return arriving before paid is kept (or answered 5xx so Stripe resends) and settles once paid lands.
 3. P-027 and P-028: Stripe event tests for charge.refunded and charge.dispute.closed (won), each read and recorded, or at least listed for staff.
-4. P-013 (with P-011, P-012, P-051): a nightly sweep that lists payments started more than a few days ago with no report, shown on Banking and the Dashboard, and a test that one appears there.
+4. P-011 and P-051: an admin alert when the company's webhook refuses reports, or its keys don't open, with a test that it is written once a day (the payments themselves come in by the nightly look-up, C-090).
 5. P-130: a preview of the statement's lines and totals before Import statement, confirmed with AskFirst, and a browser test; plus a way to set aside a statement imported in error.
 6. P-087: a test that a sender or attachment raising a ValueError records a failed delivery and the next email still goes.
 7. P-075: a test that deliveries never hold more than one pool connection at once, with SMTP set to hang, and that staff pages still answer.
