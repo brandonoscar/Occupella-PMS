@@ -450,3 +450,65 @@ def test_the_fake_platforms_pages_are_the_pms_own():
         fake.state(account)
     with pytest.raises(payments.PartnerFailed):
         bound.charge(payment, Decimal("1.00"), "Rent", payments.Account("c", "m"))
+
+
+# --- Stripe saying something unexpected (the merge with main, 965b560) --------------------------
+
+
+def test_stripe_refusing_or_not_answering_is_a_partner_failure_naming_no_account(monkeypatch):
+    def refused(*args, **kwargs):
+        raise urllib.error.HTTPError("https://api.stripe.com/v1/x", 402, "no", {}, None)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(connect.urllib.request, "urlopen", refused)
+    with pytest.raises(payments.PartnerFailed, match="HTTP 402") as said:
+        connect.stripe_call(
+            "sk_test_x", "GET", "/accounts/acct_1Secret", [], account="acct_1Secret"
+        )
+    assert "acct_1Secret" not in str(said.value)
+
+    def down(*args, **kwargs):
+        raise OSError("connection reset")
+
+    monkeypatch.setattr(connect.urllib.request, "urlopen", down)
+    with pytest.raises(payments.PartnerFailed, match="did not answer GET"):
+        connect.stripe_call("sk_test_x", "GET", "/accounts", [])
+
+
+def test_an_account_or_link_stripe_answers_without_its_parts_is_a_partner_failure(monkeypatch):
+    monkeypatch.setattr(connect, "stripe_call", lambda *a, **k: {"object": "unexpected"})
+    platform = connect.StripePlatform("sk_test_" + "x" * 24, "whsec_" + "y" * 24)
+
+    with pytest.raises(payments.PartnerFailed, match="account came without"):
+        platform.create_account(uuid4(), 1)
+    with pytest.raises(payments.PartnerFailed, match="link came without"):
+        platform.onboarding_link("acct_1A", "https://example.test/r", "https://example.test/d")
+    # An account object without its id reads as Stripe's failure, not as an account.
+    with pytest.raises(payments.PartnerFailed, match="account came without"):
+        platform.state("acct_1A")
+
+
+def test_a_disputes_fee_reads_only_its_balance_transactions():
+    # An id Stripe didn't expand says nothing; the withdrawal takes the fee, a reinstatement
+    # gives it back (its fee negative).
+    subject = {
+        "balance_transactions": [
+            "txn_unexpanded",
+            {"amount": -100000, "fee": 1500},
+            {"amount": 100000, "fee": -1500},
+        ]
+    }
+    assert connect.dispute_fees(subject) == (Decimal("15.00"), Decimal("15.00"))
+    assert connect.dispute_fees({}) == (Decimal("0.00"), Decimal("0.00"))
+
+
+def test_the_fake_connected_account_takes_payments_only_at_connects_own_pages():
+    fake = connect.FakeConnected("acct_fake_1")
+
+    with pytest.raises(payments.PartnerFailed, match="starts at Connect's checkout"):
+        fake.checkout(uuid4(), [("Rent", Decimal("1.00"))], "https://example.test/pay/done")
+    with pytest.raises(payments.PartnerFailed, match="saves at Connect's page"):
+        fake.save_account(uuid4(), "https://example.test/pay/done")
+    with pytest.raises(payments.NotTheirs):
+        fake.event(b"{}", {})
+    assert connect.platform_of(payments.Resolver(None)) is None
+    assert connect.is_connected(fake) and not connect.is_connected(payments.FakePartner())
