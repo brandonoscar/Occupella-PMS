@@ -71,6 +71,7 @@ nightly_factor = 60
 "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings" = 119.9
 "tests/properties/test_note_properties.py::test_a_records_notes_are_exactly_those_written_about_it_newest_first" = 10.3
 "tests/properties/test_on_its_way_properties.py::test_a_balance_autopay_counts_on_its_way_only_what_may_still_come" = 4.2
+"tests/properties/test_online_late_fee_properties.py::test_a_payment_started_within_grace_draws_no_late_fee_however_late_it_settles" = 16.9
 "tests/properties/test_online_payment_properties.py::test_online_payments_record_what_the_partner_reports_once_and_keep_trust_whole" = 48.1
 "tests/properties/test_open_charges_properties.py::test_each_leases_open_charges_are_the_pmcs_of_its_charges" = 11.3
 "tests/properties/test_owner_fee_properties.py::test_owner_fees_follow_the_rules_and_the_books_tie_out" = 22.8

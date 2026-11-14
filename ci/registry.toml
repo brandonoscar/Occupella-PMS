@@ -1984,3 +1984,35 @@ tests = [
   "tests/test_external_identities.py::test_a_host_changes_the_admin_role_only_of_staff_it_signs_in",
   "tests/test_external_identities.py::test_every_query_that_reads_a_password_counts_a_hosts_sign_in_too",
 ]
+
+[[invariant]]
+id = "late-fees-count-online-payments-when-started"
+statement = "A payment online counts for late fees from the company's day the tenant, or their autopay, started it (migration 20261113000100; docs/edge-cases.md D-080, D-081): while one started by the end of a rent's grace is on its way, no late fee is charged however long it takes to settle; once it lands it counts as paid then, so one that covers the rent never draws a late fee. One that fails, expires or is given up leaves the rent late as with no payment, one that came back by the end of the grace leaves it late, and one that came back after it is a bounce, counted as paid then."
+tests = [
+  "tests/properties/test_online_late_fee_properties.py::test_a_payment_started_within_grace_draws_no_late_fee_however_late_it_settles",
+  "tests/test_online_late_fees.py::test_rent_paid_online_on_the_due_day_that_settles_after_the_grace_is_not_late",
+  "tests/test_online_late_fees.py::test_a_payment_that_came_back_after_the_grace_is_a_bounce",
+  "tests/test_online_late_fees.py::test_an_autopay_payment_started_on_the_due_day_is_not_late",
+]
+
+[[invariant]]
+id = "payments-stripe-never-reported-recorded-once"
+statement = "A payment online Stripe sent no report of reaches the books (docs/edge-cases.md C-090): once a company's day the nightly run asks the partner about each one with no report a week to 60 days after it started and records what it says through the report's own apply, once per payment and kind and under the payment's own posting keys, so a report before or after it records nothing twice. A payment of the same amount staff record by hand while one online is not in the books is refused until staff say it is another."
+tests = [
+  "tests/test_look_ups.py::test_a_paid_payment_stripe_never_reported_is_found_and_recorded_once",
+  "tests/test_look_ups.py::test_a_payment_reported_already_is_never_asked_about",
+  "tests/test_look_ups.py::test_an_owner_payment_stripe_never_reported_is_found_and_recorded_once",
+  "tests/test_look_ups.py::test_the_nightly_run_asks_once_a_company_day",
+  "tests/api/test_rent.py::test_a_copy_of_a_payment_online_not_in_the_books_waits_for_staff_to_say_it_is_another",
+]
+
+[[invariant]]
+id = "autopay-stops-when-the-payments-account-changes"
+statement = "An autopay is charged only through the payments account its bank account was saved at (docs/edge-cases.md P-065; the founder, 2026-11-13). The account is noted once, when the partner reports it saved or the first night after; each night and on Run rent now, before any payment starts, an autopay saved at another account than the company's partner's now stops by itself, naming nobody, its tenant emailed and the Dashboard listing it. New keys of the same account change nothing, and a partner that can't say its account stops nothing."
+tests = [
+  "tests/test_autopay_homes.py::test_an_autopay_saved_at_another_account_stops_before_it_pays_and_its_tenant_is_told",
+  "tests/test_autopay_homes.py::test_new_keys_of_the_same_account_change_nothing",
+  "tests/test_autopay_homes.py::test_a_partner_that_cant_say_its_account_stops_and_notes_nothing",
+  "tests/api/test_autopay_api.py::test_run_rent_now_first_stops_an_autopay_saved_at_another_account",
+  "tests/api/test_today.py::test_an_autopay_stopped_as_the_payments_account_changed_is_noted_until_set_up_again",
+]

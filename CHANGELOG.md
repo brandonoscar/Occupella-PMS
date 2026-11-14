@@ -6,6 +6,25 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+- **Fix (late fees): rent paid online counts from the day the tenant started it** (docs/edge-cases.md
+  D-080, D-081). A bank payment online, or autopay's, takes days to settle; a short grace charged
+  a late fee on rent the tenant paid in time. The late fee now waits while a payment started by
+  the end of the grace is on its way, and none is charged once it lands. One that fails, expires
+  or is given up leaves the rent late as before; one that comes back is a bounce. Migration
+  `20261113000100`.
+- **Autopays saved at another payments account stop, and their tenants are told**
+  (docs/edge-cases.md P-065; the founder's call). The PMS notes which Stripe account each autopay's
+  bank account was saved at. When a company takes payments through another account (its own
+  keys instead of the server's, Stripe Connect with a new account), each autopay saved at the old
+  one stops before it takes anything, its tenant is emailed to set it up again, and the Dashboard
+  lists it. New keys of the same account change nothing. Migration `20261113000200`.
+  **To upgrade:** nothing; an autopay saved before is noted at the account in use the first night
+  after the upgrade, so switch accounts only after that night.
+- **Payments Stripe never reported reach the books** (docs/edge-cases.md C-090). Once a company's
+  day, the nightly run asks Stripe about each payment online with no report a week after it
+  started (`src/pms/look_ups.py`) and records what it says, once, as its report would have. Receive
+  payment asks staff before recording a payment of the same amount as one online the books don't
+  hold yet, so a copy recorded by hand no longer counts it twice.
 - **CI: schema dumps compare the same on PostgreSQL 16.16.** From 2026-11-13 CI's `postgres:16`
   service is 16.16, whose dumps carry each column's `pg_attver`, an internal number that changes
   whenever its table is made again. db.yml's down/up check failed on main and every PR, and the

@@ -921,6 +921,28 @@ counts as received for its state's deposit deadline (a bank payment takes days t
 forbids a broker's own money in trust and Iowa requires the broker to cover bank charges from its
 own: a company in Oregon should keep its fee account able to pay the processor without a deposit.
 
+**When a payment online counts for a late fee** (migration 20261113000100, docs/edge-cases.md
+D-080, D-081). In plain words: a tenant who starts a bank payment online (or whose autopay starts
+one) by the last day of the grace has paid on time. The bank takes days to settle it, and the late
+fee waits until it does. If the bank pays it, there is no late fee, however late it settled. If
+it fails, or the tenant left the partner's page without paying, the rent is late as if no payment
+had been made, and the fee is charged as it would have been the day after the grace. If the bank
+pays it and later takes it back, it is a bounce, as a check that bounced is: the property's NSF
+fee is charged and the rent is owed again; it came back within the grace, the rent is late. A
+payment of part of the rent counts for that part. The day it was started is the company's day.
+Why: a late fee is for paying late, and the tenant chose the day they paid, not the day their bank
+settled; charging it for the bank's days would punish paying online. No statute was read on when
+a payment by bank counts as received (NOT VERIFIED; a lease may say). How Buildium treats it was
+not checked: its help pages weren't reachable from where this was built, and search excerpts say
+only that it keeps pending bank payments apart until they clear (NOT VERIFIED). The books still
+date the money on the day the bank paid it, so statements and month-end follow the bank.
+
+**A payment the partner never reported** (docs/edge-cases.md C-090). Stripe stops sending a report
+after about three days of failed deliveries (NOT VERIFIED). A week after a payment online started
+with no report, the nightly run asks Stripe what became of it and records what it says, as its
+report would have, once; staff recording a payment of the same amount by hand are asked first
+whether it is another payment.
+
 **Owners paying in online** (migration 20261102000150, ADR 0009, readiness q054). The same switch
 lets owners add money to their property accounts from the owner portal, by bank. ADR 0009's first
 rule says a processor's fee is never the owner's; the founder chose on 2026-11-02 that the company
@@ -947,6 +969,16 @@ is agreed when they set it up; a fixed one takes the same each month. The tenant
 each payment, its amount and due date, when it starts, before the bank is debited (the server must
 send email). The tenant turns it off whenever they like, and it stops by itself after two payments
 in a row didn't go through. A payment hold stops it for that month.
+
+**When the company changes payments accounts** (migration 20261113000200, docs/edge-cases.md
+P-065; the founder's call of 2026-11-13). A tenant's authorization to debit their bank account is
+given to one Stripe account, which alone holds it. When the company starts taking payments
+through another account (its own keys instead of the server's, Stripe Connect with a new account,
+or another account's keys), each autopay saved at the old one stops before it takes anything,
+and the tenant is emailed to set it up again; staff see the list on the Dashboard. The same
+account with new keys, or linked through Stripe Connect, keeps every autopay as it was. Whether a
+tenant's authorization carries over to another account was not looked into (NOT VERIFIED): the
+PMS never asks it to.
 
 **Left to the company.** Whether its partner's authorization text meets NACHA's rules and its
 state's, and whether an email the day a debit starts is notice enough for a varying amount where

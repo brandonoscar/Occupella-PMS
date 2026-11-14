@@ -128,6 +128,8 @@ export type RentLease = {
   deposit_asked?: DepositAsked | null;
   // Its tenants' deposits the owner holds, outside trust (migration 20261106000241).
   owner_held?: OwnerHeld[];
+  // Its payments online the books don't hold yet, newest first (docs/edge-cases.md C-090).
+  online_waiting?: OnlineWaiting[];
 };
 // Asking holds nothing: staff record the deposit when it comes in (migration 0071, q036).
 export type DepositAsked = { asked: string; held: string; to_receive: string };
@@ -163,6 +165,17 @@ export function requestId(): string {
 // say one, as the API's rent.ALIKE reads it. Receive payment asks whether this is another one
 // before it records it, as the API refuses one alike unless staff say so. An amount typed half
 // way matches nothing.
+// A payment online to the lease that the payments partner hasn't reported yet: its report, or the
+// nightly look-up, brings it in, so one of its amount staff record by hand may be a copy (C-090).
+export type OnlineWaiting = { amount: string; started_on: string };
+
+export function onlineAlike(waiting: OnlineWaiting[], amount: string): OnlineWaiting | null {
+  const typed = amount.trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(typed)) return null;
+  const cents = sumMoney([typed]);
+  return waiting.find((w) => sumMoney([w.amount]) === cents) ?? null;
+}
+
 export function alikePayment(
   payments: Paid[], amount: string, on: string, method: string | null = null, reference = "",
 ): Paid | null {

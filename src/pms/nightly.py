@@ -51,7 +51,17 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
-from pms import autopay, days, deployment, email, notices, payments, schema
+from pms import (
+    autopay,
+    autopay_homes,
+    days,
+    deployment,
+    email,
+    look_ups,
+    notices,
+    payments,
+    schema,
+)
 from pms.api import payables, rent
 
 log = logging.getLogger("pms.nightly")
@@ -107,6 +117,10 @@ def run_pmc(
     payments partner (its name), the autopay payments due start too, after the rent is charged
     (src/pms/autopay.py); they go to the partner once this commits."""
     with conn.transaction():
+        # The company's partner now and the account it acts for (P-065), asked before anything
+        # here takes a lock: autopays saved at another account stop before any payment starts.
+        chosen = partner.for_pmc(conn, pmc_id) if isinstance(partner, payments.Resolver) else None
+        account = autopay_homes.account_of(chosen)
         # First, each fixed-term lease that ran out with no renewal signed goes month to month
         # (migration 0154), so the month's rent below charges it.
         rolled = conn.execute("SELECT trust_roll_over_leases(%s, %s)", (pmc_id, day)).fetchone()
@@ -138,9 +152,10 @@ def run_pmc(
         prepaid = rent.use_prepaid_by_itself(conn, pmc_id, day)
         # The company's partner: its own keys, else the server's.
         name = partner.name_for(conn, pmc_id) if isinstance(partner, payments.Resolver) else partner
+        moved = autopay_homes.stop_moved(conn, pmc_id, chosen, account, day, sending, public_url)
         started = autopay.start_due(conn, pmc_id, day, name, sending, public_url)
         written = notices.write_scheduled(conn, pmc_id, day, public_url) if sending else None
-    emails = started.emails + (0 if written is None else sum(vars(written).values()))
+    emails = moved.emails + started.emails + (0 if written is None else sum(vars(written).values()))
     return Ran(
         pmc_id,
         run[0],
@@ -314,6 +329,15 @@ class Scheduler:
             conn.autocommit = True
             if self.payments is not None:
                 autopay.submit_waiting(conn, self.payments, now=self.clock())
+                # Once a company's day: the payments its partner sent no report of (C-090).
+                look_ups.look_up_waiting(
+                    conn,
+                    self.payments,
+                    ran,
+                    now=self.clock(),
+                    sending=self.sender is not None,
+                    public_url=self.public_url,
+                )
             if self.sender is not None:
                 email.deliver_pending(conn, self.sender)
         self.ran.set()
@@ -354,6 +378,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         done = run_all(conn, None, public_url, sending=sending, partner=partner)
         conn.autocommit = True
         autopay.submit_waiting(conn, partner)
+        looked = look_ups.look_up_waiting(
+            conn, partner, [r.pmc_id for r in done], sending=sending, public_url=public_url
+        )
     rents = sum(r.rents for r in done)
     late_fees = sum(r.late_fees for r in done)
     bills = sum(r.bills for r in done)
@@ -364,7 +391,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         f"{len(done)} companies: {rents} rents, {late_fees} late fees, {bills} bills,"
         f" {emails} emails, {fees} management fees, {orders} work orders,"
-        f" {autopays} autopay payments"
+        f" {autopays} autopay payments, {looked.recorded} payments looked up"
     )
     return 0
 

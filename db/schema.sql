@@ -1063,7 +1063,7 @@ BEGIN
     -- The rents past their grace without a late fee, locked one by one in id order: one lock
     -- order for every run, so two at once can't deadlock.
     FOR v_rent IN
-        SELECT c.id
+        SELECT c.id, c.lease_id, c.due_on + p.grace_days AS grace_ends
         FROM trust_charges AS c
         JOIN trust_leases AS l ON l.id = c.lease_id
         JOIN trust_units AS u ON u.id = l.unit_id
@@ -1089,7 +1089,8 @@ BEGIN
                   FROM trust_charge_payments AS cp
                   JOIN pgledger_transfers AS t ON t.id = cp.transfer_id
                   WHERE cp.charge_id = c.id
-                    AND t.event_at < (c.due_on + p.grace_days + 1)::timestamp AT TIME ZONE 'UTC'
+                    AND (t.event_at < (c.due_on + p.grace_days + 1)::timestamp AT TIME ZONE 'UTC'
+                         OR trust_online_started_by(t, c.due_on + p.grace_days))
               ), 0)
               - coalesce((
                   SELECT sum(r.amount)
@@ -1104,6 +1105,11 @@ BEGIN
         CONTINUE WHEN EXISTS (
             SELECT f.rent_charge_id FROM trust_late_fees AS f WHERE f.rent_charge_id = v_rent.id
         );
+        -- Nor while a payment online of its lease, started by the end of its grace, is still on
+        -- its way to the books: it counts from the day it was started, so whether this rent is
+        -- late waits until the partner says how it went (docs/edge-cases.md D-080, D-081). Asked
+        -- only of the rents left open, so a rent paid in time costs a run no more than before.
+        CONTINUE WHEN trust_online_on_its_way(v_rent.lease_id, v_rent.grace_ends);
         v_due := v_due || v_rent.id;
     END LOOP;
 
@@ -1139,10 +1145,19 @@ BEGIN
         v_cutoff := (v_rent.due_on + v_rent.grace_days + 1)::timestamp AT TIME ZONE 'UTC';
         -- What is open of it then: payments and bounces dated before then, and the lease's
         -- credits due by its last day of grace, oldest charges first (the fees this run charged
-        -- for the rents whose grace ended before its own among them).
+        -- for the rents whose grace ended before its own among them)...
         SELECT o.open INTO v_unpaid
         FROM trust_open_charges(p_pmc_id, v_rent.lease_id, v_cutoff) AS o
         WHERE o.charge_id = v_rent.id;
+        -- ...less what a payment online started by the end of its grace paid of it, though the
+        -- partner reported it paid after (D-080, D-081).
+        v_unpaid := v_unpaid - coalesce((
+            SELECT sum(cp.amount)
+            FROM trust_charge_payments AS cp
+            JOIN pgledger_transfers AS t ON t.id = cp.transfer_id
+            WHERE cp.charge_id = v_rent.id AND t.event_at >= v_cutoff
+              AND trust_online_started_by(t, v_rent.due_on + v_rent.grace_days)
+        ), 0);
         CONTINUE WHEN v_unpaid <= 0;
         v_fee := least(
             round(v_rent.flat_fee + v_rent.percent / 100 * v_unpaid, 2),
@@ -6929,6 +6944,57 @@ CREATE FUNCTION public.trust_next_account_code(p_pmc_id uuid, p_from integer, p_
     ORDER BY n
     LIMIT 1
 $$;
+
+
+--
+-- Name: trust_online_on_its_way(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_online_on_its_way(p_lease_id uuid, p_day date) RETURNS boolean
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM trust_online_payments AS op
+        WHERE op.lease_id = p_lease_id
+          AND trust_pmc_day(op.pmc_id, op.created_at) <= p_day
+          AND NOT EXISTS (
+              SELECT 1 FROM trust_online_payment_events AS e
+              WHERE e.payment_id = op.id AND e.kind IN ('failed', 'returned', 'expired')
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM pgledger_transfers AS t
+              WHERE t.metadata ->> 'key' = 'payment/' || op.id::text
+          )
+          AND (op.created_at >= now() - interval '14 days'
+               OR EXISTS (SELECT 1 FROM trust_online_payment_events AS e
+                          WHERE e.payment_id = op.id AND e.kind = 'paid'))
+    )
+$$;
+
+
+--
+-- Name: trust_online_started_by(public.pgledger_transfers, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_online_started_by(p_transfer public.pgledger_transfers, p_day date) RETURNS boolean
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $_$
+    -- Its key is "payment/" and the online payment's id (rent.record_payment's, with the online
+    -- payment's id as its request id), so the payment is found by its primary key.
+    SELECT p_transfer.metadata ->> 'method' = 'online'
+       AND p_transfer.metadata ->> 'kind' = 'tenant payment'
+       AND EXISTS (
+           SELECT 1 FROM trust_online_payments AS op
+           WHERE op.id = CASE
+                   WHEN p_transfer.metadata ->> 'key'
+                        ~ '^payment/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                   THEN substr(p_transfer.metadata ->> 'key', 9)::uuid
+                 END
+             AND trust_pmc_day(op.pmc_id, op.created_at) <= p_day
+       )
+$_$;
 
 
 --
@@ -16246,6 +16312,21 @@ CREATE TABLE public.trust_autopay (
 
 
 --
+-- Name: trust_autopay_account_homes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_autopay_account_homes (
+    autopay_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    partner_account text NOT NULL,
+    noted text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_autopay_account_homes_noted_check CHECK ((noted = ANY (ARRAY['saved'::text, 'first look'::text]))),
+    CONSTRAINT trust_autopay_account_homes_partner_account_check CHECK (((length(partner_account) >= 1) AND (length(partner_account) <= 200)))
+);
+
+
+--
 -- Name: trust_autopay_accounts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16296,8 +16377,7 @@ CREATE TABLE public.trust_autopay_stops (
     why text NOT NULL,
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT trust_autopay_stops_check CHECK (((why = 'staff'::text) = (recorded_by IS NOT NULL))),
-    CONSTRAINT trust_autopay_stops_why_check CHECK ((why = ANY (ARRAY['tenant'::text, 'staff'::text, 'lease ended'::text, 'tenant left'::text, 'failed twice'::text, 'replaced'::text])))
+    CONSTRAINT trust_autopay_stops_check CHECK (((why = 'staff'::text) = (recorded_by IS NOT NULL)))
 );
 
 
@@ -20604,6 +20684,14 @@ ALTER TABLE ONLY public.trust_authority_late_fees
 
 
 --
+-- Name: trust_autopay_account_homes trust_autopay_account_homes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_account_homes
+    ADD CONSTRAINT trust_autopay_account_homes_pkey PRIMARY KEY (autopay_id);
+
+
+--
 -- Name: trust_autopay_accounts trust_autopay_accounts_autopay_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20681,6 +20769,14 @@ ALTER TABLE ONLY public.trust_autopay_stops
 
 ALTER TABLE ONLY public.trust_autopay_stops
     ADD CONSTRAINT trust_autopay_stops_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_autopay_stops trust_autopay_stops_why_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_autopay_stops
+    ADD CONSTRAINT trust_autopay_stops_why_check CHECK ((why = ANY (ARRAY['tenant'::text, 'staff'::text, 'lease ended'::text, 'tenant left'::text, 'failed twice'::text, 'replaced'::text, 'account changed'::text]))) NOT VALID;
 
 
 --
@@ -26994,6 +27090,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_autopay_account_homes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_autopay_account_homes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_autopay_accounts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28748,6 +28851,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_auth
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_autopay FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_autopay_account_homes trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_autopay_account_homes FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -32811,6 +32921,14 @@ ALTER TABLE ONLY public.trust_authority_late_fees
 
 ALTER TABLE ONLY public.trust_authority_late_fees
     ADD CONSTRAINT trust_authority_late_fees_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_autopay_account_homes trust_autopay_account_homes_pmc_id_autopay_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_account_homes
+    ADD CONSTRAINT trust_autopay_account_homes_pmc_id_autopay_id_fkey FOREIGN KEY (pmc_id, autopay_id) REFERENCES public.trust_autopay(pmc_id, id);
 
 
 --
@@ -38539,4 +38657,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261106120000'),
     ('20261106120100'),
     ('20261107000100'),
-    ('20261107000200');
+    ('20261107000200'),
+    ('20261113000100'),
+    ('20261113000200');
