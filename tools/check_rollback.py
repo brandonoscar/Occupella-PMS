@@ -13,6 +13,7 @@ usage: python -m tools.check_rollback [--migrations db/migrations]   (uses $DATA
 from __future__ import annotations
 
 import argparse
+import difflib
 import os
 import re
 import shutil
@@ -21,8 +22,23 @@ import sys
 import tempfile
 from pathlib import Path
 
+from tools import schema_dump
+
 ROOT = Path(__file__).resolve().parent.parent
 IRREVERSIBLE = re.compile(r"RAISE\s+EXCEPTION\s+'[^']*cannot be rolled back", re.IGNORECASE)
+# The changed lines a failure shows, so CI's log says what differs, not only that something does.
+SHOWN = 40
+
+
+def differences(before: str, after: str) -> str:
+    """The lines of two schema dumps that differ ("-" before, "+" after), at most SHOWN."""
+    changed = [
+        line
+        for line in difflib.unified_diff(before.splitlines(), after.splitlines(), n=0, lineterm="")
+        if line[:1] in "+-" and not line.startswith(("+++", "---"))
+    ]
+    more = len(changed) - SHOWN
+    return "\n".join(changed[:SHOWN] + ([f"... and {more} more"] if more > 0 else []))
 
 
 def down_section(text: str) -> str:
@@ -55,7 +71,7 @@ class Dbmate:
             dumped = self.run("--schema-file", str(path), "dump")
             if dumped.returncode != 0:
                 raise RuntimeError(f"dbmate dump failed: {dumped.stderr}")
-            return path.read_text()
+            return schema_dump.normal(path.read_text())
 
 
 def check(dbmate: Dbmate) -> list[str]:
@@ -67,8 +83,11 @@ def check(dbmate: Dbmate) -> list[str]:
         if is_irreversible(migration.read_text()):
             if rolled.returncode == 0:
                 problems.append(f"{migration.name} says it cannot be rolled back, but it was.")
-            elif dbmate.schema() != before:
-                problems.append(f"{migration.name}: the refused rollback changed the schema.")
+            elif (after := dbmate.schema()) != before:
+                problems.append(
+                    f"{migration.name}: the refused rollback changed the schema:\n"
+                    + differences(before, after)
+                )
             else:
                 print(f"ok    {migration.name} refuses to roll back, schema unchanged")
             break
@@ -80,8 +99,11 @@ def check(dbmate: Dbmate) -> list[str]:
     applied = dbmate.run("--no-dump-schema", "up")
     if applied.returncode != 0:
         problems.append(f"re-applying migrations failed: {applied.stderr.strip()}")
-    elif dbmate.schema() != start:
-        problems.append("after rolling back and re-applying, the schema differs from the start.")
+    elif (end := dbmate.schema()) != start:
+        problems.append(
+            "after rolling back and re-applying, the schema differs from the start:\n"
+            + differences(start, end)
+        )
     return problems
 
 

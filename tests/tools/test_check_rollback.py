@@ -23,6 +23,12 @@ CREATE TABLE notes (id int);
 -- migrate:down
 SELECT 1;
 """
+STRAY = """-- migrate:up
+CREATE TABLE notes (id int);
+-- migrate:down
+DROP TABLE notes;
+CREATE TABLE stray_after_down (id int);
+"""
 LYING = """-- migrate:up
 CREATE TABLE notes (id int);
 -- migrate:down
@@ -74,6 +80,25 @@ def test_down_that_leaves_the_table_fails_on_reapply(scratch):
     migrate(scratch, **{"20270101000001_a": LEAKY})
     problems = check_rollback.check(scratch)
     assert problems and "re-applying migrations failed" in problems[0]
+
+
+def test_a_schema_that_differs_after_reapply_says_which_lines(scratch):
+    # 11/13: CI's db job failed with only "the schema differs", and nothing said where.
+    migrate(scratch, **{"20270101000001_a": STRAY})
+    problems = check_rollback.check(scratch)
+    assert len(problems) == 1
+    assert "differs from the start" in problems[0]
+    assert "+CREATE TABLE public.stray_after_down (" in problems[0]
+
+
+def test_the_differences_shown_are_bounded():
+    before = "\n".join(f"line {n}" for n in range(100))
+    after = "\n".join(f"line {n}" for n in range(1, 101))
+    shown = check_rollback.differences(before, after)
+    assert shown.splitlines() == ["-line 0", "+line 100"]
+    many = check_rollback.differences("", "\n".join(f"new {n}" for n in range(60)))
+    assert len(many.splitlines()) == check_rollback.SHOWN + 1
+    assert many.splitlines()[-1] == "... and 20 more"
 
 
 def test_marker_that_does_not_raise_is_caught(scratch):
