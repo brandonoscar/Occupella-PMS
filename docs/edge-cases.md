@@ -30,10 +30,10 @@ answer in the portal for everything that can fail.
 | [Concurrency and retries](#concurrency-and-retries) | 144 | 76 | 30 | 38 | 1 |
 | [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 166 | 78 | 8 | 80 | 16 |
 | [Bad files and imports](#bad-files-and-imports) | 154 | 73 | 17 | 64 | 1 |
-| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 169 | 104 | 11 | 54 | 5 |
+| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 170 | 105 | 11 | 54 | 5 |
 | [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 176 | 82 | 14 | 80 | 4 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1187** | **663** | **113** | **411** | **46** |
+| **All** | **1188** | **664** | **113** | **411** | **46** |
 
 ## Open, high risk: the work list
 
@@ -1111,6 +1111,7 @@ its ten most pressing, each with the test that would close it.
 | U-164 | A portal session left open: someone at it turns two-step off by guessing codes | Turning it off takes a code; each wrong one counts as a failed sign-in, and ten lock the login for 15 minutes, turning off included | Tested | tests/api/test_two_step_api.py::test_turning_two_step_off_takes_a_code; ::test_wrong_codes_turning_it_off_lock_the_login | M |
 | U-168 | The host takes the admin role from a company's last admin | The books keep them its admin, log why, and take it once another admin stands; the database refuses it too (trust_check_staff_role_change, migration 20261107000200) | Tested | tests/api/test_external_sign_in_api.py::test_the_admin_role_follows_the_hosts_and_the_company_keeps_one; tests/test_external_identities.py::test_a_host_never_takes_a_companys_last_admin | M |
 | U-169 | A login the host signs in has no password | Every page and email that asks whether a login signs in counts the host's link too: the Logins list, a tenant's and an owner's page, who is on call, an owner's bill to approve, an admin's alert | Tested | tests/api/test_external_sign_in_api.py::test_a_login_the_host_signs_in_reads_as_active; tests/test_external_identities.py::test_every_query_that_reads_a_password_counts_a_hosts_sign_in_too | M |
+| U-171 | An owner or a tenant joins through the host app (password sign-in off), never seeing the PMS's own invite page that asks for a phone and whether texts are OK | The host's sign-up page asks, and `POST /api/external-sign-in` takes `phone` and `texts_ok` with their invite: kept in `trust_text_consents` in the words shown beside the box (`phones.text_consent`), the phone as their contact phone, in the invite's transaction; a phone that doesn't read is refused in words (422) with the invite left unused; a phone without an invite is refused; no phone keeps no answer, as before | Tested | tests/api/test_external_sign_in_api.py::test_a_tenant_joining_through_the_host_gives_their_phone_and_says_whether_to_text; ::test_an_owner_joining_through_the_host_keeps_their_answer; ::test_a_phone_that_doesnt_read_leaves_the_invite_unused; ::test_a_phone_comes_only_with_an_owners_or_a_tenants_invite; ::test_a_join_through_the_host_without_a_phone_keeps_no_answer | M |
 | U-031 | A server run with several processes | Each process counts alone, so the sign-in limit is that many times larger | Open | src/pms/api/throttle.py docstring (counted per process) | L |
 | U-037 | Sign out on one device while others stay signed in | Only that session ends; there is no list of sessions or "sign out everywhere" short of a new password | Open | src/pms/accounts.py:480 sign_out | L |
 | U-038 | A shared office computer after sign-out | The browser keeps the company id and the last property scope | Open | frontend/src/App.tsx:101 PMC_KEY in localStorage; frontend/src/scope.ts | L |
