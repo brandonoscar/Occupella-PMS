@@ -494,6 +494,48 @@ def test_a_payment_like_one_recorded_waits_for_staff_to_say_it_is_another(
     assert ok(pay(client, home, "600.00", request_id=request)) == third
 
 
+def test_a_copy_of_a_payment_online_not_in_the_books_waits_for_staff_to_say_it_is_another(
+    client, conn, staff, home
+):
+    # docs/edge-cases.md C-090: a payment online the partner hasn't reported goes in by its
+    # report, or the nightly look-up (src/pms/look_ups.py), under its own key; a copy staff
+    # recorded by hand after looking it up at the partner would count it twice.
+    home.charge(conn, START)
+    began = datetime.now(UTC) - 10 * DAY
+    online = uuid.uuid4()
+    conn.execute(
+        "INSERT INTO trust_online_payments (id, pmc_id, lease_id, tenant_id, amount, tenant_fee,"
+        " fee_payer, method, partner, partner_ref, created_at)"
+        " VALUES (%s, %s, %s, %s, '600.00', 0, 'company', 'ach', 'stripe', %s, %s)",
+        (online, home.pmc.pmc_id, home.lease, home.tenant, f"cs_test_{online.hex}", began),
+    )
+
+    # Receive payment knows of it and asks staff first (frontend/src/pages/LeaseForms.tsx).
+    assert lease_row(client, home)["online_waiting"] == [
+        {"amount": "600.00", "started_on": began.date().isoformat()}
+    ]
+    copy = pay(client, home, "600.00", method="EFT")
+    refused(
+        copy,
+        409,
+        f"a payment of $600.00 online, started {began:%m/%d/%Y}, isn't in the books yet: it goes"
+        " in once the payments partner reports it (Banking, Online payments waiting). Record"
+        " this one only if it is another payment, saying so",
+    )
+    assert balance(conn, home.owner) == 0  # the one refused wrote nothing
+    ok(pay(client, home, "601.00"))  # another amount is another payment
+    ok(pay(client, home, "600.00", method="EFT", not_a_duplicate=True))
+    # Once it failed or expired, nothing is on its way: a payment of its amount goes in.
+    conn.execute(
+        "INSERT INTO trust_online_payment_events (pmc_id, payment_id, kind, partner_event,"
+        " happened_at) VALUES (%s, %s, 'expired', 'evt_expired', %s)",
+        (home.pmc.pmc_id, online, began + DAY),
+    )
+    assert lease_row(client, home)["online_waiting"] == []
+    ok(pay(client, home, "600.00", received_on=TODAY - DAY))
+    assert balance(conn, home.owner) == Decimal("1500.00")
+
+
 def test_a_payment_alike_to_another_lease_is_its_own(client, conn, staff, home, pmc):
     unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "Unit 2")
     other = open_lease(conn, pmc.pmc_id, unit, START, None, "900.00", [home.tenant])

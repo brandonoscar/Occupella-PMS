@@ -214,11 +214,24 @@ def stop(conn: psycopg.Connection[Any], pmc_id: UUID, autopay_id: UUID, why: Why
     """Stops an autopay, once; False when it was stopped already. Staff's stop names them
     (trust.staff_id, set for the request). A payment of it being sent is recorded first."""
     conn.execute(LOCK, (autopay_id,))
-    made = conn.execute(
-        "INSERT INTO trust_autopay_stops (pmc_id, autopay_id, why) VALUES (%s, %s, %s)"
-        " ON CONFLICT (autopay_id) DO NOTHING RETURNING id",
-        (pmc_id, autopay_id, why),
-    ).fetchone()
+    # A stop by itself names nobody, even in a staff member's request (an admin's Run rent now):
+    # only staff's own stop names them, and one for an account changed names the admin who
+    # disconnected it, or nobody (the table's checks, migration 20261114000100).
+    named = None
+    if why not in ("staff", "account changed"):
+        found = conn.execute("SELECT current_setting('trust.staff_id', true)").fetchone()
+        named = found[0] if found else None
+        if named:
+            conn.execute("SELECT set_config('trust.staff_id', '', true)")
+    try:
+        made = conn.execute(
+            "INSERT INTO trust_autopay_stops (pmc_id, autopay_id, why) VALUES (%s, %s, %s)"
+            " ON CONFLICT (autopay_id) DO NOTHING RETURNING id",
+            (pmc_id, autopay_id, why),
+        ).fetchone()
+    finally:
+        if named:
+            conn.execute("SELECT set_config('trust.staff_id', %s, true)", (named,))
     return made is not None
 
 

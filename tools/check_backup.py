@@ -33,6 +33,7 @@ from psycopg.conninfo import conninfo_to_dict
 
 from pms import demo
 from selfhost import smoke
+from tools import schema_dump
 from tools.check_rollback import Dbmate
 from tools.scratch_db import scratch_database
 
@@ -48,8 +49,6 @@ LIBPQ = {
     "dbname": "PGDATABASE",
     "sslmode": "PGSSLMODE",
 }
-# pg_dump 16.10 and later fence a plain dump with a random key, different every time.
-RANDOM_LINES = re.compile(r"^\\(un)?restrict .*$", re.MULTILINE)
 CHECK_LINE = re.compile(r"^\s*CONSTRAINT \w+ CHECK \(")
 PARENTHESES = re.compile(r"[()]")
 
@@ -91,7 +90,8 @@ def schema(url: str) -> list[str]:
         text=True,
         check=True,
     )
-    return RANDOM_LINES.sub("", dumped.stdout).splitlines()
+    # Without what changes when the schema doesn't: a random \restrict key, each column's attver.
+    return schema_dump.normal(dumped.stdout).splitlines()
 
 
 def schema_differences(original: list[str], restored: list[str]) -> list[str]:

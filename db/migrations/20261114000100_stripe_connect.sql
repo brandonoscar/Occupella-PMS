@@ -436,8 +436,11 @@ ALTER TABLE trust_autopay_stops ADD CONSTRAINT trust_autopay_stops_check CHECK (
 ALTER TABLE trust_autopay_stops DROP CONSTRAINT trust_autopay_stops_who_v2;
 -- squawk-ignore constraint-missing-not-valid
 ALTER TABLE trust_autopay_stops ADD CONSTRAINT trust_autopay_stops_why_check CHECK (
-    why IN ('tenant', 'staff', 'lease ended', 'tenant left', 'failed twice', 'replaced')
-);
+    why IN (
+        'tenant', 'staff', 'lease ended', 'tenant left', 'failed twice', 'replaced',
+        'account changed'
+    )
+) NOT VALID;
 -- squawk-ignore ban-drop-constraint
 ALTER TABLE trust_autopay_stops DROP CONSTRAINT trust_autopay_stops_why_v2;
 -- squawk-ignore ban-drop-constraint

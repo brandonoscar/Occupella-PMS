@@ -397,7 +397,7 @@ def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     assert seen == [(None, "https://rentals.example.com", False, None)]
     assert capsys.readouterr().out == (
         "1 companies: 2 rents, 1 late fees, 3 bills, 4 emails, 5 management fees, 6 work orders,"
-        " 0 autopay payments\n"
+        " 0 autopay payments, 0 payments looked up\n"
     )
     assert nightly.main(["now"]) == 2
     # A server that sends email writes the automatic emails too; `pms.email deliver` sends them.

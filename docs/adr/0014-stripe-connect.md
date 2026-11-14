@@ -186,7 +186,7 @@ it (`ci/features.toml`, "stripe-connect").
 
 ## Consequences
 
-- Migration `20261113000150`: `trust_connected_accounts`, `trust_connected_account_states`,
+- Migration `20261114000100`: `trust_connected_accounts`, `trust_connected_account_states`,
   `trust_connected_payments`, `trust_card_fee_settings`, `trust_connect_disputes`; a payment may be
   by card (Connect only, at most $10,000.00) and names Occupella's fee (`platform_fee`); an
   autopay says how it pays.

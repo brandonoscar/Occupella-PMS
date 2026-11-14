@@ -7,7 +7,7 @@ httpx2==2.16.0
 hypothesis==6.170.8
 mypy==2.4.0
 # Python mutation testing, nightly (BSD-3-Clause; mutation.yml, pyproject.toml [tool.mutmut]).
-mutmut==3.8.0
+mutmut==3.8.1
 pip-licenses==5.5.5
 pytest==9.2.0
 ruff==0.17.2

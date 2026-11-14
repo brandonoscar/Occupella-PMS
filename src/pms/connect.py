@@ -570,6 +570,10 @@ class StripeConnected(payments.StripePartner):
     def _call(self, method: str, path: str, form: list[tuple[str, str]], key: str = "") -> Any:
         return stripe_call(self._key, method, path, form, key, account=self.account)
 
+    def account_id(self) -> str:
+        """The connected account it charges at (P-065: autopays saved at another stop)."""
+        return self.account
+
     def checkout(
         self, payment_id: UUID, lines: list[tuple[str, Decimal]], done_url: str
     ) -> payments.Checkout:
@@ -856,6 +860,10 @@ class FakeConnected:
     def __init__(self, account: str, conn: Any = None) -> None:
         self.account = account
         self.conn = conn
+
+    def account_id(self) -> str:
+        """The connected account it charges at (P-065: autopays saved at another stop)."""
+        return self.account
 
     @staticmethod
     def _base(done_url: str) -> str:

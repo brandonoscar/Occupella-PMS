@@ -15,7 +15,38 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
   the platform's leave trust from the company's fee account, never an owner's; a card fee falls on a
   tenant only where the company chose it, the state allows a surcharge and never on autopay or a
   debit card; a card dispute is recorded as a return, and one won puts the payment back. A server of
-  your own leaves `PMS_CONNECT` unset: your own keys work as before. Migration `20261113000150`.
+  your own leaves `PMS_CONNECT` unset: your own keys work as before. Migration `20261114000100`.
+- **Fix (late fees): rent paid online counts from the day the tenant started it** (docs/edge-cases.md
+  D-080, D-081). A bank payment online, or autopay's, takes days to settle; a short grace charged
+  a late fee on rent the tenant paid in time. The late fee now waits while a payment started by
+  the end of the grace is on its way, and none is charged once it lands. One that fails, expires
+  or is given up leaves the rent late as before; one that comes back is a bounce. Migration
+  `20261113000100`.
+- **Autopays saved at another payments account stop, and their tenants are told**
+  (docs/edge-cases.md P-065; the founder's call). The PMS notes which Stripe account each autopay's
+  bank account was saved at. When a company takes payments through another account (its own
+  keys instead of the server's, Stripe Connect with a new account), each autopay saved at the old
+  one stops before it takes anything, its tenant is emailed to set it up again, and the Dashboard
+  lists it. New keys of the same account change nothing. Migration `20261113000200`.
+  **To upgrade:** nothing; an autopay saved before is noted at the account in use the first night
+  after the upgrade, so switch accounts only after that night.
+- **Payments Stripe never reported reach the books** (docs/edge-cases.md C-090). Once a company's
+  day, the nightly run asks Stripe about each payment online with no report a week after it
+  started (`src/pms/look_ups.py`) and records what it says, once, as its report would have. Receive
+  payment asks staff before recording a payment of the same amount as one online the books don't
+  hold yet, so a copy recorded by hand no longer counts it twice.
+- **CI: schema dumps compare the same on PostgreSQL 16.16.** From 2026-11-13 CI's `postgres:16`
+  service is 16.16, whose dumps carry each column's `pg_attver`, an internal number that changes
+  whenever its table is made again. db.yml's down/up check failed on main and every PR, and the
+  nightly's backup checks with it. `tools/schema_dump.py` now drops what changes when the schema
+  doesn't (the build comments, pg_dump's random `\restrict` key, each column's attver), and the
+  down/up check, the backup check and `scripts/dump_schema.sh` read every dump through it;
+  `db/schema.sql` comes out byte for byte the same. The down/up check also prints the lines that
+  differ (at most 40), instead of only saying they do.
+- **CI:** the nightly Python mutation job runs again. mutmut 3.8.0 read pytest's private
+  `Function._nodeid`, which pytest 9.2 (this release) removed, so from 2026-11-12 the job failed
+  while collecting the tests, before any mutant ran. mutmut is now 3.8.1, and a test runs the
+  pinned mutmut under the pinned pytest so the two can't drift apart unseen.
 - **Fix (payments): Stripe's test keys never book real money** (docs/edge-cases.md P-048, P-049).
   A server whose `PMS_PUBLIC_URL` is https at a host other than the machine itself refuses to
   start with a test key in `PMS_STRIPE_SECRET_KEY`. Company setup refuses a company's test keys
