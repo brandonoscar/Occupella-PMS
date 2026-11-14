@@ -347,6 +347,8 @@ TABLES = {
     "trust_announcements": {"SELECT", "INSERT"},
     "trust_announcement_removals": {"SELECT", "INSERT"},
     "trust_autopay_accounts": {"SELECT", "INSERT"},
+    # The payments account an autopay's bank account was saved at (P-065).
+    "trust_autopay_account_homes": {"SELECT", "INSERT"},
     "trust_autopay_stops": {"SELECT", "INSERT"},
     "trust_autopay_runs": {"SELECT", "INSERT"},
     "trust_autopay_submissions": {"SELECT", "INSERT"},
@@ -573,6 +575,10 @@ FUNCTIONS = {
     "trust_tenant_records(uuid,uuid)": {"trust_app"},
     "trust_closed_until(uuid)": {"trust_app"},
     "trust_open_charges(uuid,uuid,timestamptz)": {"trust_app"},
+    # Late fees count a payment online from the day it was started (migration 20261113000100):
+    # read only by trust_assess_late_fees, which runs as the owner.
+    "trust_online_started_by(pgledger_transfers,date)": set(),
+    "trust_online_on_its_way(uuid,date)": set(),
     # Where a charge comes in the order money pays them: rent first (migration 0093).
     "trust_pay_rank(trust_charges)": {"trust_app"},
     # The chart of accounts (migrations 20261106000205 to 20261106000220): its fixed lines, each

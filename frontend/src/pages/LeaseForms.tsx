@@ -21,6 +21,7 @@ import {
   earliestRentChange,
   methodLabel,
   nextMonthFirst,
+  onlineAlike,
   ordinal,
   partsTotal,
   paymentSummary,
@@ -137,7 +138,11 @@ export function PaymentForm({ lease, record, onRecorded }: {
   // One of this amount received this day is recorded already: the answer lost and the panel
   // opened again, or the same check from another tab (H-008, U-138). Staff say it is another.
   const alike = alikePayment(lease.payments ?? [], amount, on, method, reference);
-  const waiting = problem !== "" || (alike !== null && !notDuplicate);
+  // One of this amount paid online that the payments partner hasn't reported yet goes in by its
+  // report: staff say this is another (C-090).
+  const online = onlineAlike(lease.online_waiting ?? [], amount);
+  const asks = alike !== null || online !== null;
+  const waiting = problem !== "" || (asks && !notDuplicate);
   return (
     <div className="flex flex-col gap-4">
       <Form
@@ -148,7 +153,7 @@ export function PaymentForm({ lease, record, onRecorded }: {
           const body = {
             request_id: id, amount, received_on: on, method, reference: reference || null, ...chosen,
             ...(lease.on_hold && pastHold ? { past_hold: true } : {}),
-            ...(alike && notDuplicate ? { not_a_duplicate: true } : {}),
+            ...(asks && notDuplicate ? { not_a_duplicate: true } : {}),
             ...(note.trim() ? { note: note.trim() } : {}),
             ...(file ? { attachment: { title: file.title, content_type: file.type, content_base64: file.base64 } } : {}),
             ...(charges.length > 0 ? { charges } : {}),
@@ -234,11 +239,18 @@ export function PaymentForm({ lease, record, onRecorded }: {
             Accept this payment past the payment hold
           </label>
         )}
-        {alike && (
+        {asks && (
           <div className="flex flex-col gap-2">
-            <Notice tone="info">
-              {`A payment of ${money(alike.amount)} received ${usDate(alike.received_on)} is recorded on this lease already.`}
-            </Notice>
+            {alike && (
+              <Notice tone="info">
+                {`A payment of ${money(alike.amount)} received ${usDate(alike.received_on)} is recorded on this lease already.`}
+              </Notice>
+            )}
+            {online && (
+              <Notice tone="info">
+                {`A payment of ${money(online.amount)} online, started ${usDate(online.started_on)}, isn't in the books yet: it goes in once the payments partner reports it.`}
+              </Notice>
+            )}
             <label className="flex items-center gap-2 text-sm text-ink">
               <input type="checkbox" checked={notDuplicate} onChange={(e) => setNotDuplicate(e.target.checked)} />
               This is another payment, not that one again
