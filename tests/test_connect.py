@@ -61,10 +61,10 @@ def test_below_cost_finds_a_fee_short_between_the_rents_checked():
     # only around 1,000.00, where the minimum gives way: a point no fixed list holds.
     fee = connect.Fee(Decimal("0.0098"), Decimal("0"), Decimal("9.80"))
     for checked in (Decimal("625.00"), Decimal("1500.00")):
-        assert fee.on(checked) >= connect.cost(connect.EXPRESS, "ach", checked)
+        assert fee.on(checked) > connect.cost(connect.EXPRESS, "ach", checked)
     short = connect.below_cost(fee, "ach", connect.EXPRESS)
     assert short is not None and Decimal("625.00") < short < Decimal("1500.00")
-    assert fee.on(short) < connect.cost(connect.EXPRESS, "ach", short)
+    assert fee.on(short) <= connect.cost(connect.EXPRESS, "ach", short)
 
 
 # --- Occupella's fee setting ------------------------------------------------------------------
@@ -86,6 +86,22 @@ def test_a_fee_setting_reads_as_percent_fixed_and_minimum():
 def test_a_fee_setting_that_isnt_one_is_refused(text):
     with pytest.raises(connect.BadFee):
         connect.read_fee("ach", text)
+
+
+@pytest.mark.parametrize("text", ["0,0,0", "0.25,0,0", "0.9,0,0"])
+def test_a_fee_at_break_even_is_refused_even_under_standard(text):
+    """Under Standard a payment costs the platform nothing, so break-even is a fee of nothing:
+    none at all, or a percent alone, which comes to $0.00 on a one-cent payment. Brandon's rule is
+    above break-even, so each is refused, naming the payment where it lands on it."""
+    with pytest.raises(connect.BadFee) as refused:
+        connect.read_fee("ach", text)
+    assert str(refused.value).startswith(
+        "PMS_CONNECT_FEE_ACH isn't above what a payment of $0.01 costs the platform ($0.00)"
+    )
+    # A cent at least on every payment clears it.
+    nothing = Decimal("0")
+    assert connect.read_fee("ach", "0,0.01,0") == connect.Fee(nothing, Decimal("0.01"), nothing)
+    assert connect.read_fee("ach", "0.25,0,0.01").on(Decimal("0.01")) == Decimal("0.01")
 
 
 def test_the_server_reads_each_fee_from_its_environment_or_takes_the_default():
@@ -512,3 +528,301 @@ def test_the_fake_connected_account_takes_payments_only_at_connects_own_pages():
         fake.event(b"{}", {})
     assert connect.platform_of(payments.Resolver(None)) is None
     assert connect.is_connected(fake) and not connect.is_connected(payments.FakePartner())
+
+
+# --- the fee floor under a model that costs the platform money -------------------------------
+
+
+def test_a_fee_setting_below_what_the_model_costs_is_refused_naming_where(monkeypatch):
+    # Under Standard a payment costs the platform nothing, so only a fee of nothing is refused.
+    # Were the platform on Express, the default 0.50 falls short of the 2.33 a one-cent payment
+    # costs it (2.00 active account, 0.25 payout, 0.075 dispute share), and the server refuses
+    # to start.
+    monkeypatch.setattr(connect, "CHOSEN", connect.EXPRESS)
+    monkeypatch.setattr(connect.below_cost, "__defaults__", (connect.EXPRESS,))
+    with pytest.raises(connect.BadFee) as refused:
+        connect.read_fee("ach", "0,0.50,0.50")
+    said = str(refused.value)
+    assert said.startswith("PMS_CONNECT_FEE_ACH isn't above what a payment of $0.01 costs")
+    assert "($2.33)" in said and "above break-even" in said
+    with pytest.raises(connect.BadFee, match="PMS_CONNECT_FEE_CARD isn't above"):
+        connect.fees_from({"PMS_CONNECT_FEE_CARD": "0,0.50,0.50"})
+    # One that clears Express's cost at every amount it is checked at reads.
+    covering = connect.read_fee("ach", "0.8,13,13")
+    assert connect.below_cost(covering, "ach") is None
+    assert covering.words() == "0.8% + $13.00, at least $13.00"
+    # A percent with no fixed part reads as the percent and its minimum.
+    assert connect.Fee(Decimal("0.0098"), Decimal("0"), Decimal("9.80")).words() == (
+        "0.98%, at least $9.80"
+    )
+
+
+def test_a_small_card_payments_fee_steps_up_until_it_covers_stripes_rounding():
+    # On 0.05 with Occupella's 0.50, the straight-line guess, 0.82, leaves Stripe's fee on the
+    # whole (0.33 on 0.87) and 0.50 one cent short; 0.83 covers it (0.33 on 0.88).
+    added = connect.gross_up("card", Decimal("0.05"), Decimal("0.50"))
+    assert added == Decimal("0.83")
+    assert connect.stripe_fee("card", Decimal("0.05") + added) + Decimal("0.50") <= added
+    short = added - Decimal("0.01")
+    assert connect.stripe_fee("card", Decimal("0.05") + short) + Decimal("0.50") > short
+
+
+# --- a connected account's own calls ---------------------------------------------------------
+
+
+@pytest.fixture
+def calls(monkeypatch):
+    """Stripe's answers by method and path (an exception is raised as Stripe failing), and each
+    call made: its form, idempotency key, connected account and API version."""
+    answers, made = {}, []
+
+    def call(
+        secret,
+        method,
+        path,
+        form,
+        key="",
+        account=None,
+        version=payments.STRIPE_VERSION,
+        timeout=20.0,
+    ):
+        assert secret == PLATFORM_KEY
+        made.append(
+            {
+                "method": method,
+                "path": path,
+                "form": list(form),
+                "key": key,
+                "account": account,
+                "version": version,
+            }
+        )
+        answer = answers[(method, path)]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(connect, "stripe_call", call)
+    return answers, made
+
+
+def test_a_connected_accounts_checkout_is_a_direct_charge_on_it_carrying_occupellas_fee(calls):
+    answers, made = calls
+    partner = connect.StripeConnected(PLATFORM_KEY, WEBHOOK, "acct_Synthetic0001")
+    payment = uuid4()
+    lines = [("Rent – Unit 1", Decimal("1200.00")), ("Card fee", Decimal("36.00"))]
+    answers[("POST", "/checkout/sessions")] = {
+        "id": "cs_Synthetic1",
+        "url": "https://checkout.stripe.test/c/cs_Synthetic1",
+    }
+    started = partner.connect_checkout(
+        payment, lines, "https://pms.test/pay/done", "card", Decimal("0.50"), True
+    )
+    assert started == payments.Checkout(
+        ref="cs_Synthetic1", url="https://checkout.stripe.test/c/cs_Synthetic1"
+    )
+    sent = made[-1]
+    assert (sent["method"], sent["path"], sent["account"], sent["key"]) == (
+        "POST",
+        "/checkout/sessions",
+        "acct_Synthetic0001",
+        f"checkout-{payment}",
+    )
+    # The debit and prepaid filter needs its own API version; a bank payment keeps the usual one.
+    assert sent["version"] == connect.FUNDING_FILTER_VERSION
+    form = dict(sent["form"])
+    assert form["payment_intent_data[application_fee_amount]"] == "50"
+    assert form["client_reference_id"] == str(payment)
+    partner.connect_checkout(
+        payment, lines[:1], "https://pms.test/pay/done", "ach", Decimal("0.50"), False
+    )
+    assert made[-1]["version"] == payments.STRIPE_VERSION
+    # A session without its page is Stripe's failure: the tenant is never sent nowhere.
+    answers[("POST", "/checkout/sessions")] = {"id": "cs_Synthetic2"}
+    with pytest.raises(payments.PartnerFailed, match="session came without 'url'"):
+        partner.connect_checkout(
+            payment, lines[:1], "https://pms.test/pay/done", "ach", Decimal("0.50"), False
+        )
+    # An autopay saves only at Connect's own page.
+    with pytest.raises(payments.PartnerFailed, match="saves at Connect's page"):
+        partner.save_account(uuid4(), "https://pms.test/pay/done")
+
+
+@pytest.mark.parametrize(("method", "kind"), [("card", "card"), ("ach", "us_bank_account")])
+def test_a_connected_accounts_autopay_saves_on_a_customer_of_its_own(calls, method, kind):
+    answers, made = calls
+    partner = connect.StripeConnected(PLATFORM_KEY, WEBHOOK, "acct_Synthetic0001")
+    autopay = uuid4()
+    answers[("POST", "/customers")] = {"id": "cus_Synthetic1", "object": "customer"}
+    answers[("POST", "/checkout/sessions")] = {
+        "id": "cs_SyntheticSetup1",
+        "url": "https://checkout.stripe.test/c/cs_SyntheticSetup1",
+    }
+    page = partner.connect_save(autopay, "https://pms.test/pay/done", method)
+    assert page.url == "https://checkout.stripe.test/c/cs_SyntheticSetup1"
+    customer, session = made
+    # The customer is made on the connected account, once per autopay however often it's asked.
+    assert (customer["path"], customer["account"], customer["key"]) == (
+        "/customers",
+        "acct_Synthetic0001",
+        f"customer-{autopay}",
+    )
+    assert customer["form"] == [("metadata[autopay_id]", str(autopay))]
+    form = dict(session["form"])
+    assert (session["account"], session["key"]) == ("acct_Synthetic0001", f"setup-{autopay}")
+    assert (form["mode"], form["customer"], form["payment_method_types[0]"]) == (
+        "setup",
+        "cus_Synthetic1",
+        kind,
+    )
+    assert form["setup_intent_data[metadata][autopay_id]"] == str(autopay)
+    # A customer or a session Stripe answers without its id or page is Stripe's failure.
+    answers[("POST", "/checkout/sessions")] = {"object": "checkout.session"}
+    with pytest.raises(payments.PartnerFailed, match="session came without"):
+        partner.connect_save(autopay, "https://pms.test/pay/done", method)
+    answers[("POST", "/customers")] = {"object": "customer"}
+    with pytest.raises(payments.PartnerFailed, match="customer came without 'id'"):
+        partner.connect_save(autopay, "https://pms.test/pay/done", method)
+
+
+class Started:
+    """What the database says of an autopay payment started through Connect: its method,
+    Occupella's fee and the connected account it was started on (charge_terms' one row)."""
+
+    def __init__(self, row):
+        self.row = row
+
+    def execute(self, query, params):
+        assert "trust_connected_payments" in query
+        return self
+
+    def fetchone(self):
+        return self.row
+
+
+def test_an_autopay_charge_is_off_session_on_its_account_with_its_fee_and_found_again(calls):
+    answers, made = calls
+    payment = uuid4()
+    saved = payments.Account("cus_Synthetic1", "pm_Synthetic1", "mandate_Synthetic1")
+    card = connect.StripeConnected(
+        PLATFORM_KEY,
+        WEBHOOK,
+        "acct_Synthetic0001",
+        Started(("card", Decimal("0.50"), "acct_Synthetic0001")),
+    )
+    answers[("GET", "/payment_intents")] = {"object": "list", "data": []}
+    answers[("POST", "/payment_intents")] = {"id": "pi_Synthetic1", "object": "payment_intent"}
+    assert card.charge(payment, Decimal("1200.00"), "Rent – Unit 1", saved) == "pi_Synthetic1"
+    listed, made_intent = made
+    assert listed["form"] == [("customer", "cus_Synthetic1"), ("limit", "100")]
+    form = dict(made_intent["form"])
+    assert (made_intent["account"], made_intent["key"]) == (
+        "acct_Synthetic0001",
+        f"autopay-{payment}",
+    )
+    assert (form["amount"], form["payment_method_types[0]"], form["off_session"]) == (
+        "120000",
+        "card",
+        "true",
+    )
+    assert form["application_fee_amount"] == "50"
+    assert "mandate" not in form  # a card has no bank mandate
+    # By bank, the mandate the tenant agreed to goes with it.
+    bank = connect.StripeConnected(
+        PLATFORM_KEY,
+        WEBHOOK,
+        "acct_Synthetic0001",
+        Started(("ach", Decimal("0.75"), "acct_Synthetic0001")),
+    )
+    bank.charge(payment, Decimal("1200.00"), "Rent – Unit 1", saved)
+    form = dict(made[-1]["form"])
+    assert (form["payment_method_types[0]"], form["mandate"]) == (
+        "us_bank_account",
+        "mandate_Synthetic1",
+    )
+    assert form["application_fee_amount"] == "75"
+    # Taken before but its answer lost: found again by its payment id, never made twice.
+    answers[("GET", "/payment_intents")] = {
+        "object": "list",
+        "data": [
+            {"id": "pi_SomeoneElse", "metadata": {"payment_id": str(uuid4())}},
+            {"id": "pi_Synthetic1", "metadata": {"payment_id": str(payment)}},
+        ],
+    }
+    before = len(made)
+    assert bank.charge(payment, Decimal("1200.00"), "Rent – Unit 1", saved) == "pi_Synthetic1"
+    assert [call["method"] for call in made[before:]] == ["GET"]
+    # A payment Stripe answers without its id is Stripe's failure, so it's tried again later.
+    answers[("GET", "/payment_intents")] = {"object": "list", "data": []}
+    answers[("POST", "/payment_intents")] = {"object": "payment_intent"}
+    with pytest.raises(payments.PartnerFailed, match="payment came without 'id'"):
+        bank.charge(payment, Decimal("1200.00"), "Rent – Unit 1", saved)
+
+
+def test_an_autopay_charge_is_refused_on_any_account_but_the_one_it_was_started_on(calls):
+    answers, made = calls
+    saved = payments.Account("cus_Synthetic1", "pm_Synthetic1")
+    other = connect.StripeConnected(
+        PLATFORM_KEY,
+        WEBHOOK,
+        "acct_Synthetic0002",
+        Started(("ach", Decimal("0.50"), "acct_Synthetic0001")),
+    )
+    with pytest.raises(payments.PartnerFailed, match="wasn't started on this connected account"):
+        other.charge(uuid4(), Decimal("100.00"), "Rent", saved)
+    unknown = connect.StripeConnected(PLATFORM_KEY, WEBHOOK, "acct_Synthetic0001", Started(None))
+    with pytest.raises(payments.PartnerFailed, match="wasn't started on this connected account"):
+        unknown.charge(uuid4(), Decimal("100.00"), "Rent", saved)
+    outside = connect.StripeConnected(PLATFORM_KEY, WEBHOOK, "acct_Synthetic0001")
+    with pytest.raises(payments.PartnerFailed, match="charged within a request"):
+        outside.charge(uuid4(), Decimal("100.00"), "Rent", saved)
+    assert made == []  # nothing was asked of Stripe
+
+
+def test_reports_a_connected_account_cant_act_on_read_as_nothing_or_as_stripes_failure(calls):
+    answers, made = calls
+    partner = connect.StripeConnected(PLATFORM_KEY, WEBHOOK, "acct_Synthetic0001")
+    autopay = uuid4()
+    # A setup session without its setup intent, or one for a setup intent the PMS didn't start.
+    assert partner.read(report("checkout.session.completed", {"mode": "setup"})) == []
+    assert (
+        partner.read(report("setup_intent.succeeded", {"id": "seti_Other", "metadata": {}})) == []
+    )
+    # A bank account still being verified (micro-deposits) isn't saved yet.
+    answers[("GET", "/setup_intents/seti_Synthetic1")] = {
+        "status": "requires_action",
+        "metadata": {"autopay_id": str(autopay)},
+    }
+    setup = {"mode": "setup", "setup_intent": "seti_Synthetic1"}
+    assert partner.read(report("checkout.session.completed", setup)) == []
+    assert dict(made[-1]["form"]) == {"expand[]": "payment_method"}
+    # Saved: a bank account reads as its bank and last four, with the mandate it was given.
+    answers[("GET", "/setup_intents/seti_Synthetic1")] = {
+        "status": "succeeded",
+        "metadata": {"autopay_id": str(autopay)},
+        "customer": "cus_Synthetic1",
+        "mandate": "mandate_Synthetic1",
+        "payment_method": {
+            "id": "pm_Synthetic1",
+            "us_bank_account": {"bank_name": "Synthetic Test Bank", "last4": "6789"},
+        },
+    }
+    [saved] = partner.read(report("checkout.session.completed", setup))
+    assert (saved.autopay_id, saved.label) == (autopay, "Synthetic Test Bank ••••6789")
+    assert saved.account == payments.Account(
+        "cus_Synthetic1", "pm_Synthetic1", "mandate_Synthetic1"
+    )
+    answers[("GET", "/setup_intents/seti_Synthetic1")]["payment_method"] = {"id": "pm_Synthetic2"}
+    [unnamed] = partner.read(report("checkout.session.completed", setup))
+    assert unnamed.label == "Bank account ••••????"
+    # Its payment method not expanded: Stripe's answer can't be read, so it's sent again.
+    answers[("GET", "/setup_intents/seti_Synthetic1")]["payment_method"] = "pm_Synthetic1"
+    with pytest.raises(payments.PartnerFailed, match="saved account can't be read"):
+        partner.read(report("checkout.session.completed", setup))
+    # A payment, or a dispute on one, that no PMS payment started: nothing to record.
+    assert (
+        partner.read(report("payment_intent.succeeded", {"id": "pi_Other", "metadata": {}})) == []
+    )
+    answers[("GET", "/payment_intents/pi_Other")] = {"id": "pi_Other", "metadata": {}}
+    dispute = {"id": "du_Other", "payment_intent": "pi_Other", "status": "needs_response"}
+    assert partner.read(report("charge.dispute.created", dispute)) == []

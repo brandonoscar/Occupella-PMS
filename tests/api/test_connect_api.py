@@ -6,6 +6,7 @@ dispute is recorded as a return, and one the company wins puts the payment back;
 one webhook maps each report's account to its company. Every key here is made up, and spelled in
 pieces so no secret scanner mistakes it for one."""
 
+import dataclasses
 import hashlib
 import hmac
 import json
@@ -14,14 +15,31 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
-from helpers import acting_as, add_unit, balance, bank_sums, charge, open_lease, post
+from helpers import (
+    acting_as,
+    add_unit,
+    balance,
+    bank_sums,
+    charge,
+    contribute,
+    hold_payments,
+    in_background,
+    make_pmc,
+    open_account,
+    open_lease,
+    post,
+    release_hold,
+    wait_until_blocked,
+)
 from people import join_as_owner, join_as_staff, join_as_tenant, tenant_of
 
-from pms import connect, deployment, payments
-from pms.api import Settings, create_app
+from pms import autopay, autopay_homes, connect, deployment, payments
+from pms.api import Settings, create_app, disputes
 from pms.api import connect as connect_api
+from pms.api import online_payments as op
 
 TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
@@ -224,6 +242,17 @@ def test_card_fees_are_the_companys_until_it_chooses_and_each_state_rule_shows(
             " VALUES (%s, %s, '1 Synthetic Way', 'Demo City', %s, '00001')",
             (pmc.pmc_id, owner.property_id, state),
         )
+    # A property in a state with no surcharge rule found says nothing of one.
+    texas = conn.execute(
+        "INSERT INTO trust_properties (pmc_id, display_name) VALUES (%s, 'Property TX')"
+        " RETURNING id",
+        (pmc.pmc_id,),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO trust_property_addresses (pmc_id, property_id, line_1, city, state, zip)"
+        " VALUES (%s, %s, '2 Synthetic Way', 'Demo City', 'TX', '00002')",
+        (pmc.pmc_id, texas),
+    )
     rules = ok(client.get("/api/payments/connect"))["rules"]
     assert [(r["state"], r["card"]) for r in rules] == [("CO", "capped"), ("CT", "banned")]
     assert "2%" in rules[0]["says"] and "HB25-1090" in rules[0]["says"]
@@ -445,6 +474,25 @@ def test_a_dispute_fee_the_company_cant_cover_waits_and_a_lost_dispute_moves_not
     assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
 
 
+def test_a_dispute_fee_still_waiting_when_the_dispute_is_won_is_owed_no_more(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    turn_on(client)
+    connect_company(client)
+    started = pay(tenant_client, lease, "1000.00", "card")
+    fund_company(conn, pmc, "29.80")  # Stripe's 29.30 on 1,000.00 and Occupella's 0.50
+    says(tenant_client, started["id"], "paid")
+    assert balance(conn, pmc.pmc_income) == Decimal(0)
+    says(tenant_client, started["id"], "disputed")
+    waiting = ok(client.get("/api/payments/waiting"))
+    assert [(w["what"], w["company_owes"]) for w in waiting] == [("dispute fee", "15.00")]
+    # Won with the fee given back: the company owes none of it, so nothing is paid or given back.
+    says(tenant_client, started["id"], "won")
+    assert ok(client.get("/api/payments/waiting")) == []
+    assert balance(conn, pmc.pmc_income) == Decimal(0)
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
+
+
 def test_a_tenant_sets_up_autopay_by_card_and_its_payment_carries_occupellas_fee(
     client, tenant_client, conn, staff, tenant, lease, pmc
 ):
@@ -467,6 +515,7 @@ def test_a_tenant_sets_up_autopay_by_card_and_its_payment_carries_occupellas_fee
     ok(tenant_client.post(f"/api/payments/connect/fake/autopay/{made['id']}", json={}), 204)
     shown = ok(tenant_client.get(f"/api/payments/leases/{lease}/autopay"))["autopays"][0]
     assert shown["account"] == "Test card ••••4242"
+    first = made["id"]
     # Another, its card saved before this month's due day (as the fake page would have then).
     made = ok(
         tenant_client.post(url, json={"rule": "fixed", "amount": "100.00", "method": "card"}), 201
@@ -498,6 +547,19 @@ def test_a_tenant_sets_up_autopay_by_card_and_its_payment_carries_occupellas_fee
         (made["id"],),
     ).fetchall()
     assert len(taken) == 1 and taken[0][0].startswith("fake_connect_pi_")
+    # A third replaces the second; the first, replaced already, keeps the stop it had.
+    third = ok(
+        tenant_client.post(url, json={"rule": "fixed", "amount": "50.00", "method": "ach"}), 201
+    )
+    stops = dict(
+        conn.execute(
+            "SELECT s.autopay_id, s.why FROM trust_autopay_stops AS s"
+            " JOIN trust_autopay AS a ON a.id = s.autopay_id WHERE a.lease_id = %s",
+            (lease,),
+        ).fetchall()
+    )
+    assert stops == {UUID(first): "replaced", UUID(made["id"]): "replaced"}
+    assert UUID(third["id"]) not in stops
 
 
 # --- an owner adds money --------------------------------------------------------------------------
@@ -558,7 +620,8 @@ def test_an_owner_adds_money_by_card_and_the_fees_are_the_companys(
 
 @pytest.fixture
 def stripe(monkeypatch):
-    """Stripe's answers by method and path, and each call made: its form, account and version."""
+    """Stripe's answers by method and path (an exception is raised, as Stripe failing would be),
+    and each call made: its form, idempotency key, account and version."""
     answers, calls = {}, []
 
     def call(secret, method, path, form, key="", account=None, version="", timeout=20.0):
@@ -567,11 +630,15 @@ def stripe(monkeypatch):
                 "method": method,
                 "path": path,
                 "form": dict(form),
+                "key": key,
                 "account": account,
                 "version": version,
             }
         )
-        return answers[(method, path)]
+        answer = answers[(method, path)]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
 
     monkeypatch.setattr(connect, "stripe_call", call)
     return answers, calls
@@ -590,13 +657,14 @@ def stripe_settings(
     )
 
 
-def signed(client, account, kind, subject, livemode=False):
+def signed(client, account, kind, subject, livemode=False, created=None):
+    """Stripe's signed report, sent now, of what happened at `created` (now unless given)."""
     now = int(time.time())
     body = json.dumps(
         {
             "id": f"evt_{uuid4().hex}",
             "type": kind,
-            "created": now,
+            "created": now if created is None else int(created.timestamp()),
             "livemode": livemode,
             "account": account,
             "data": {"object": subject},
@@ -768,6 +836,27 @@ def test_disconnecting_stops_autopays_saved_at_the_account_and_another_accounts_
         UUID(started["id"]), "paid", f"evt_{uuid4().hex}", datetime.now(UTC), Decimal("0.50")
     )
     assert connect_api.record_items(conn, other, pmc.pmc_id, [event]) is False
+    # Nor is a save or a dispute it reports of the company's, or the company's account reporting
+    # another account's state.
+    now = datetime.now(UTC)
+    elsewhere = [
+        connect.fake_saved(UUID(made["id"]), "card", now),
+        connect.Dispute(
+            UUID(started["id"]), "du_SomeoneElse1", "opened", Decimal("15.00"), "evt_else_1", now
+        ),
+    ]
+    assert connect_api.record_items(conn, other, pmc.pmc_id, elsewhere) is False
+    state = connect.AccountState(
+        "fake_acct_SomeoneElse01", True, True, True, (), f"evt_{uuid4().hex}", now
+    )
+    own = connect.FakeConnected(account, conn)
+    assert connect_api.record_items(conn, own, pmc.pmc_id, [state]) is False
+    assert conn.execute(
+        "SELECT count(*) FROM trust_connect_disputes WHERE online_payment_id = %s",
+        (started["id"],),
+    ).fetchone() == (0,)
+    shown = ok(tenant_client.get(f"/api/payments/leases/{lease}/autopay"))["autopays"][0]
+    assert shown["account"] == "Test bank ••••0000"  # as the company's own account saved it
     assert (
         ok(tenant_client.get(f"/api/payments/connect/fake/payments/{started['id']}"))["status"]
         == "started"
@@ -829,3 +918,761 @@ def test_an_autopay_saved_at_an_account_the_company_replaced_stops_at_its_due_da
     assert conn.execute(
         "SELECT why, recorded_by FROM trust_autopay_stops WHERE autopay_id = %s", (made["id"],)
     ).fetchone() == ("account changed", staff.person_id)
+
+
+def test_a_connect_autopay_notes_its_account_so_a_replacement_stops_it_at_once(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    turn_on(client)
+    account = connect_company(client)
+    made = ok(
+        tenant_client.post(
+            f"/api/payments/connect/leases/{lease}/autopay",
+            json={"rule": "fixed", "amount": "100.00", "method": "ach"},
+        ),
+        201,
+    )
+    ok(tenant_client.post(f"/api/payments/connect/fake/autopay/{made['id']}", json={}), 204)
+    # The report that saved it notes the account it was saved at, as a save through the
+    # company's own keys is (P-065), not the company's account at the first nightly look.
+    home = "SELECT partner_account, noted FROM trust_autopay_account_homes WHERE autopay_id = %s"
+    assert conn.execute(home, (made["id"],)).fetchone() == (account, "saved")
+    # The company connects another account: the next look stops it on any day of the month,
+    # rather than noting the new account as its home and leaving the stop to its due day.
+    replacement = connect.FakeConnected("fake_acct_Replacement02")
+    moved = autopay_homes.stop_moved(conn, pmc.pmc_id, replacement, replacement.account_id(), TODAY)
+    assert moved.stopped == 1
+    shown = ok(tenant_client.get(f"/api/payments/leases/{lease}/autopay"))["autopays"][0]
+    assert shown["stopped"] == "account changed"
+    assert conn.execute(home, (made["id"],)).fetchone() == (account, "saved")
+
+
+# --- Stripe failing, or answering what can't be acted on --------------------------------------
+
+
+def test_stripe_failing_to_connect_or_naming_another_companys_account_connects_nothing(
+    database_url, monkeypatch, stripe, conn, app_conn, pmc
+):
+    answers, calls = stripe
+    acct = f"acct_Synthetic{uuid4().hex[:12]}"
+    with TestClient(create_app(stripe_settings(database_url, monkeypatch))) as browser:
+        join_as_staff(browser, conn, app_conn, pmc)
+        # Nothing connected yet: nothing to ask Stripe about.
+        refused(
+            browser.post("/api/payments/connect/refresh", json={}),
+            404,
+            "The company hasn't connected a Stripe account.",
+        )
+        # Stripe down as the account is made, or as its onboarding link is: try again, and
+        # nothing is kept (the request's transaction rolls back).
+        answers[("POST", "/accounts")] = payments.PartnerFailed("Stripe answered HTTP 500")
+        refused(browser.post("/api/payments/connect/start", json={}), 502, op.PARTNER_DOWN)
+        answers[("POST", "/accounts")] = {"id": acct}
+        answers[("POST", "/account_links")] = payments.PartnerFailed("Stripe didn't answer")
+        refused(browser.post("/api/payments/connect/start", json={}), 502, op.PARTNER_DOWN)
+        assert connect.connection_of(conn, pmc.pmc_id) is None
+        # Tried again: the same idempotency key each time, so Stripe makes one account.
+        answers[("POST", "/account_links")] = {"url": "https://connect.stripe.test/setup/1"}
+        ok(browser.post("/api/payments/connect/start", json={}))
+        keys = [call["key"] for call in calls if call["path"] == "/accounts"]
+        assert keys == [f"account-{pmc.pmc_id}-0"] * 3
+        assert connect.connection_of(conn, pmc.pmc_id).account == acct
+        # Refresh asks Stripe what the account is now, and keeps what it says.
+        answers[("GET", f"/accounts/{acct}")] = {
+            "id": acct,
+            "charges_enabled": True,
+            "payouts_enabled": False,
+            "details_submitted": True,
+            "requirements": {"currently_due": ["external_account"], "past_due": []},
+        }
+        shown = ok(browser.post("/api/payments/connect/refresh", json={}))
+        assert (shown["charges_enabled"], shown["payouts_enabled"], shown["using"]) == (
+            True,
+            False,
+            True,
+        )
+        assert shown["requirements_due"] == ["external_account"]
+        answers[("GET", f"/accounts/{acct}")] = payments.PartnerFailed("timed out")
+        refused(browser.post("/api/payments/connect/refresh", json={}), 502, op.PARTNER_DOWN)
+        # Another company that Stripe answers with this company's account is refused: an account
+        # is one company's (the database checks it too).
+        other = make_pmc(conn)
+        theirs = TestClient(browser.app)
+        join_as_staff(theirs, conn, app_conn, other, name="Staff 2")
+        refused(
+            theirs.post("/api/payments/connect/start", json={}),
+            409,
+            "That Stripe account is another company's.",
+        )
+        assert connect.connection_of(conn, other.pmc_id) is None
+        assert connect.connection_of(conn, pmc.pmc_id).account == acct
+
+
+def connected_through_stripe(browser, answers, conn, app_conn, pmc):
+    """An admin connects the company's account through the Stripe platform, Stripe reports it
+    takes charges, and the company takes payments online, its fees the company's; the account
+    (one of each test's own: the tests share a database, and an account is one company's)."""
+    acct = f"acct_Synthetic{uuid4().hex[:12]}"
+    join_as_staff(browser, conn, app_conn, pmc)
+    ok(
+        browser.post("/api/payments/settings", json={"online": True, "ach_fee_payer": "company"}),
+        204,
+    )
+    answers[("POST", "/accounts")] = {"id": acct}
+    answers[("POST", "/account_links")] = {"url": "https://connect.stripe.test/setup/1"}
+    ok(browser.post("/api/payments/connect/start", json={}))
+    subject = {
+        "id": acct,
+        "charges_enabled": True,
+        "payouts_enabled": True,
+        "details_submitted": True,
+        "requirements": {"currently_due": [], "past_due": []},
+    }
+    ok(signed(browser, acct, "account.updated", subject))
+    return acct
+
+
+def test_stripe_failing_as_a_payment_starts_or_as_its_report_is_read_keeps_nothing(
+    database_url, monkeypatch, stripe, conn, app_conn, pmc, lease
+):
+    answers, _ = stripe
+    tag = uuid4().hex[:10]
+    with TestClient(create_app(stripe_settings(database_url, monkeypatch))) as browser:
+        acct = connected_through_stripe(browser, answers, conn, app_conn, pmc)
+        renter = TestClient(browser.app)
+        join_as_tenant(renter, conn, app_conn, pmc)
+        owner = TestClient(browser.app)
+        join_as_owner(owner, app_conn, pmc)
+        down = payments.PartnerFailed("Stripe answered HTTP 503")
+        answers[("POST", "/checkout/sessions")] = down
+        answers[("POST", "/customers")] = down
+        refused(
+            renter.post(
+                f"/api/payments/connect/leases/{lease}/checkout",
+                json={"amount": "100.00", "method": "card"},
+            ),
+            502,
+            op.PARTNER_DOWN,
+        )
+        refused(
+            renter.post(
+                f"/api/payments/connect/leases/{lease}/autopay",
+                json={"rule": "fixed", "amount": "100.00", "method": "ach"},
+            ),
+            502,
+            op.PARTNER_DOWN,
+        )
+        refused(
+            owner.post(
+                "/api/payments/connect/owner/checkout",
+                json={"account_id": pmc.owners[0].account, "amount": "100.00", "method": "ach"},
+            ),
+            502,
+            op.PARTNER_DOWN,
+        )
+        # Nothing started is kept: no payment, autopay or owner's payment waits for a report.
+        for table in (
+            "trust_online_payments",
+            "trust_autopay",
+            "trust_owner_online_payments",
+            "trust_connected_payments",
+        ):
+            assert conn.execute(
+                f"SELECT count(*) FROM {table} WHERE pmc_id = %s",  # noqa: S608
+                (pmc.pmc_id,),
+            ).fetchone() == (0,)
+        # A paid report whose fee Stripe won't give yet is refused (502), so Stripe sends it
+        # again, and it lands once Stripe answers.
+        answers[("POST", "/checkout/sessions")] = {
+            "id": f"cs_Synthetic1{tag}",
+            "url": f"https://checkout.stripe.test/c/cs_Synthetic1{tag}",
+        }
+        started = pay(renter, lease, "100.00", "ach")
+        paid = {
+            "id": f"cs_Synthetic1{tag}",
+            "object": "checkout.session",
+            "payment_status": "paid",
+            "client_reference_id": started["id"],
+            "payment_intent": f"pi_Synthetic1{tag}",
+        }
+        answers[("GET", f"/payment_intents/pi_Synthetic1{tag}")] = down
+        owner_before = balance(conn, pmc.owners[0].account)
+        refused(
+            signed(browser, acct, "checkout.session.completed", paid),
+            502,
+            "the payments partner didn't answer: send it again",
+        )
+        assert balance(conn, pmc.owners[0].account) == owner_before
+        answers[("GET", f"/payment_intents/pi_Synthetic1{tag}")] = {
+            "latest_charge": {"balance_transaction": {"fee": 130}}
+        }
+        assert ok(signed(browser, acct, "checkout.session.completed", paid)) == {"recorded": True}
+        assert balance(conn, pmc.owners[0].account) - owner_before == Decimal("100.00")
+
+
+def test_an_autopay_through_stripe_connect_saves_on_its_account_and_is_charged_there_once(
+    database_url, monkeypatch, stripe, conn, app_conn, pmc, lease
+):
+    answers, calls = stripe
+    tag = uuid4().hex[:10]
+    with TestClient(create_app(stripe_settings(database_url, monkeypatch))) as browser:
+        acct = connected_through_stripe(browser, answers, conn, app_conn, pmc)
+        renter = TestClient(browser.app)
+        join_as_tenant(renter, conn, app_conn, pmc)
+        answers[("POST", "/customers")] = {"id": f"cus_Synthetic1{tag}", "object": "customer"}
+        answers[("POST", "/checkout/sessions")] = {
+            "id": f"cs_SyntheticSetup1{tag}",
+            "url": f"https://checkout.stripe.test/c/cs_SyntheticSetup1{tag}",
+        }
+        made = ok(
+            renter.post(
+                f"/api/payments/connect/leases/{lease}/autopay",
+                json={"rule": "fixed", "amount": "100.00", "method": "ach"},
+            ),
+            201,
+        )
+        assert made["url"] == f"https://checkout.stripe.test/c/cs_SyntheticSetup1{tag}"
+        customer, session = calls[-2:]
+        assert (customer["path"], customer["account"], customer["form"]) == (
+            "/customers",
+            acct,
+            {"metadata[autopay_id]": made["id"]},
+        )
+        assert (session["account"], session["key"]) == (
+            acct,
+            f"setup-{made['id']}",
+        )
+        assert (
+            session["form"]["mode"],
+            session["form"]["customer"],
+            session["form"]["payment_method_types[0]"],
+        ) == ("setup", f"cus_Synthetic1{tag}", "us_bank_account")
+        # Stripe reports the bank account saved, before this month's due day.
+        answers[("GET", f"/setup_intents/seti_Synthetic1{tag}")] = {
+            "id": f"seti_Synthetic1{tag}",
+            "status": "succeeded",
+            "metadata": {"autopay_id": made["id"]},
+            "customer": f"cus_Synthetic1{tag}",
+            "mandate": f"mandate_Synthetic1{tag}",
+            "payment_method": {
+                "id": f"pm_Synthetic1{tag}",
+                "us_bank_account": {"bank_name": "Synthetic Test Bank", "last4": "6789"},
+            },
+        }
+        setup = {
+            "id": f"cs_SyntheticSetup1{tag}",
+            "object": "checkout.session",
+            "mode": "setup",
+            "setup_intent": f"seti_Synthetic1{tag}",
+        }
+        long_ago = datetime.now(UTC) - timedelta(days=90)
+        assert ok(
+            signed(
+                browser,
+                acct,
+                "checkout.session.completed",
+                setup,
+                created=long_ago,
+            )
+        ) == {"recorded": True}
+        shown = ok(renter.get(f"/api/payments/leases/{lease}/autopay"))["autopays"][0]
+        assert shown["account"] == "Synthetic Test Bank ••••6789"
+        # Run rent now starts the month's payment; Stripe takes it, but its answer is lost.
+        answers[("GET", "/payment_intents")] = {"object": "list", "data": []}
+        answers[("POST", "/payment_intents")] = {"object": "payment_intent"}
+        month = TODAY.replace(day=1)
+        done = ok(
+            browser.post(
+                "/api/rent/run", json={"due_on": str(month), "late_fees_as_of": str(TODAY)}
+            )
+        )
+        assert done["autopay"] == 1
+        payment = str(
+            conn.execute(
+                "SELECT payment_id FROM trust_autopay_runs WHERE autopay_id = %s", (made["id"],)
+            ).fetchone()[0]
+        )
+
+        def charged():
+            return [c for c in calls if (c["method"], c["path"]) == ("POST", "/payment_intents")]
+
+        [sent] = charged()
+        assert (sent["account"], sent["key"]) == (acct, f"autopay-{payment}")
+        form = sent["form"]
+        assert (form["amount"], form["customer"], form["payment_method"]) == (
+            "10000",
+            f"cus_Synthetic1{tag}",
+            f"pm_Synthetic1{tag}",
+        )
+        assert (form["mandate"], form["off_session"], form["application_fee_amount"]) == (
+            f"mandate_Synthetic1{tag}",
+            "true",
+            "50",
+        )
+        submitted = "SELECT partner_ref FROM trust_autopay_submissions WHERE payment_id = %s"
+        assert conn.execute(submitted, (payment,)).fetchone() is None  # tried again later
+        # The next submission (after any change staff make) finds the payment Stripe took by its
+        # id, and never makes another.
+        answers[("GET", "/payment_intents")] = {
+            "object": "list",
+            "data": [{"id": f"pi_Synthetic9{tag}", "metadata": {"payment_id": payment}}],
+        }
+        ok(browser.post("/api/payments/connect/card-fees", json={"card_fee_payer": "company"}), 204)
+        assert conn.execute(submitted, (payment,)).fetchone() == (f"pi_Synthetic9{tag}",)
+        assert len(charged()) == 1
+
+
+def test_a_tenant_or_owner_payment_through_connect_is_refused_while_it_cant_go(
+    client, tenant_client, owner_client, conn, app_conn, staff, tenant, lease, pmc
+):
+    join_as_owner(owner_client, app_conn, pmc)
+    owner_pays = "/api/payments/connect/owner/checkout"
+    tenant_pays = f"/api/payments/connect/leases/{lease}/checkout"
+    account = pmc.owners[0].account
+    turn_on(client)
+    # On, but not through Connect: the server's partner (or the company's keys) takes them.
+    refused(
+        owner_client.post(
+            owner_pays, json={"account_id": account, "amount": "50.00", "method": "ach"}
+        ),
+        409,
+        connect_api.OWN_KEYS,
+    )
+    refused(
+        tenant_client.post(tenant_pays, json={"amount": "50.00", "method": "ach"}),
+        409,
+        connect_api.OWN_KEYS,
+    )
+    connect_company(client)
+    # A card payment is 10,000.00 at most, an owner's too.
+    refused(
+        owner_client.post(
+            owner_pays, json={"account_id": account, "amount": "10000.01", "method": "card"}
+        ),
+        422,
+        connect_api.CARD_TOO_MUCH,
+    )
+    # Online payments off: nobody pays online, connected or not.
+    ok(
+        client.post("/api/payments/settings", json={"online": False, "ach_fee_payer": "company"}),
+        204,
+    )
+    refused(
+        tenant_client.post(tenant_pays, json={"amount": "50.00", "method": "card"}), 409, op.OFF
+    )
+    refused(
+        owner_client.post(
+            owner_pays, json={"account_id": account, "amount": "50.00", "method": "ach"}
+        ),
+        409,
+        op.OFF,
+    )
+    for table in ("trust_online_payments", "trust_owner_online_payments"):
+        assert conn.execute(
+            f"SELECT count(*) FROM {table} WHERE pmc_id = %s",  # noqa: S608
+            (pmc.pmc_id,),
+        ).fetchone() == (0,)
+
+
+def test_the_fake_platforms_pages_answer_only_for_their_own_accounts_payments_and_autopays(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    turn_on(client)
+    # A payment through the server's own fake partner is no payment of the fake platform's.
+    own = ok(
+        tenant_client.post(f"/api/payments/leases/{lease}/checkout", json={"amount": "100.00"}),
+        201,
+    )
+    refused(tenant_client.get(f"/api/payments/connect/fake/payments/{own['id']}"), 404)
+    refused(
+        tenant_client.post(
+            f"/api/payments/connect/fake/payments/{own['id']}", json={"outcome": "paid"}
+        ),
+        404,
+    )
+    # Its onboarding page says whose account it is and whether it takes charges yet.
+    url = ok(client.post("/api/payments/connect/start", json={}))["url"]
+    account = url.split("#", 1)[1]
+    page = f"/api/payments/connect/fake/accounts/{account}"
+    company = conn.execute(
+        "SELECT display_name FROM trust_pmcs WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone()[0]
+    assert ok(client.get(page)) == {"company": company, "charges_enabled": False}
+    ok(client.post(page, json={"outcome": "finished"}), 204)
+    assert ok(client.get(page)) == {"company": company, "charges_enabled": True}
+    unknown = "/api/payments/connect/fake/accounts/fake_acct_Unknown000001"
+    refused(client.get(unknown), 404, "no such account at the fake platform")
+    refused(client.post(unknown, json={"outcome": "finished"}), 404)
+    refused(tenant_client.get(f"/api/payments/connect/fake/autopay/{uuid4()}"), 404)
+    # A payment the bank refused, or one the tenant left Stripe's page without paying, moves
+    # nothing: the lease still owes it.
+    owner_before = balance(conn, pmc.owners[0].account)
+    for outcome in ("failed", "expired"):
+        started = pay(tenant_client, lease, "100.00", "ach")
+        assert says(tenant_client, started["id"], outcome) == {"recorded": True}
+        shown = ok(tenant_client.get(f"/api/payments/connect/fake/payments/{started['id']}"))
+        assert (shown["status"], shown["dispute"]) == (outcome, None)
+    assert balance(conn, pmc.owners[0].account) == owner_before
+    assert ok(tenant_client.get(f"/api/payments/leases/{lease}"))["owed"] == "1200.00"
+
+
+# --- disputes, as the books take them --------------------------------------------------------
+
+
+def test_a_won_dispute_puts_the_tenants_fee_back_and_nothing_moves_twice(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    turn_on(client, "tenant")
+    connect_company(client)
+    fund_company(conn, pmc, "100.00")
+    started = pay(tenant_client, lease, "200.00", "ach")
+    fee = Decimal(
+        ok(tenant_client.get(f"/api/payments/connect/fake/payments/{started['id']}"))["tenant_fee"]
+    )
+    assert fee == Decimal("2.12")  # Stripe's 1.62 on 202.12 and Occupella's 0.50
+    says(tenant_client, started["id"], "paid")
+    owner_paid = balance(conn, pmc.owners[0].account)
+    company_paid = balance(conn, pmc.pmc_income)
+    says(tenant_client, started["id"], "disputed")
+    # Returned: the tenant's fee goes back out of the company's account, and the dispute fee.
+    assert company_paid - balance(conn, pmc.pmc_income) == fee + Decimal("15.00")
+    says(tenant_client, started["id"], "won")
+    # Won: the payment, the tenant's fee and the dispute fee all come back.
+    assert balance(conn, pmc.owners[0].account) == owner_paid
+    assert balance(conn, pmc.pmc_income) == company_paid
+    # Stripe saying it was won again, or staff recording what waits again, moves nothing twice.
+    assert says(tenant_client, started["id"], "won") == {"recorded": True}
+    ok(client.post(f"/api/payments/{started['id']}/record", json={}), 204)
+    assert balance(conn, pmc.owners[0].account) == owner_paid
+    assert balance(conn, pmc.pmc_income) == company_paid
+    assert ok(client.get("/api/payments/waiting")) == []
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
+
+
+def test_a_won_dispute_goes_back_to_the_owners_account_it_first_went_to(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    turn_on(client)
+    connect_company(client)
+    fund_company(conn, pmc, "100.00")
+    started = pay(tenant_client, lease, "1000.00", "card")
+    says(tenant_client, started["id"], "paid")
+    first = pmc.owners[0].account
+    owner_paid = balance(conn, first)
+    says(tenant_client, started["id"], "disputed")
+    # Another owner joins the property before the dispute is won, with no ownership shares: the
+    # payment can't go by shares, so it goes back where it went.
+    second = open_account(
+        conn,
+        pmc.pmc_id,
+        pmc.operating_bank_id,
+        "owner_property",
+        pmc.owners[1].owner_id,
+        pmc.owners[0].property_id,
+    )
+    says(tenant_client, started["id"], "won")
+    assert balance(conn, first) == owner_paid
+    assert balance(conn, second) == Decimal(0)
+    assert ok(client.get("/api/payments/waiting")) == []
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
+
+
+def test_a_won_dispute_that_cant_say_whose_it_is_waits_until_the_property_has_shares(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    turn_on(client)
+    connect_company(client)
+    fund_company(conn, pmc, "100.00")
+    # Its rent paid, the lease owes nothing: a second payment is all the tenant's prepaid rent,
+    # in no owner's account.
+    for amount in ("1200.00", "300.00"):
+        started = pay(tenant_client, lease, amount, "ach")
+        says(tenant_client, started["id"], "paid")
+    assert balance(conn, pmc.prepaid_rent) == Decimal("300.00")
+    says(tenant_client, started["id"], "disputed")
+    assert balance(conn, pmc.prepaid_rent) == Decimal(0)
+    # Another owner joins the property, with no shares: the payment, which went to no owner's
+    # account, can't be put back by whose it was, so it waits for staff.
+    place = pmc.owners[0].property_id
+    second = ok(
+        client.post(
+            f"/api/setup/properties/{place}/owners",
+            json={
+                "owner_id": str(pmc.owners[1].owner_id),
+                "bank_account_id": str(pmc.operating_bank_id),
+            },
+        ),
+        201,
+    )["id"]
+    says(tenant_client, started["id"], "won")
+    waiting = ok(client.get("/api/payments/waiting"))
+    assert [(w["what"], w["payment_id"]) for w in waiting] == [("dispute won", started["id"])]
+    assert balance(conn, pmc.prepaid_rent) == Decimal(0)
+    # The property's shares set, Try again records it.
+    ok(
+        client.post(
+            f"/api/setup/properties/{place}/ownership",
+            json={
+                "starts_on": str(TODAY),
+                "shares": [
+                    {"account": pmc.owners[0].account, "percent": "60"},
+                    {"account": second, "percent": "40"},
+                ],
+            },
+        ),
+        201,
+    )
+    ok(client.post(f"/api/payments/{started['id']}/record", json={}), 204)
+    assert balance(conn, pmc.prepaid_rent) == Decimal("300.00")
+    assert ok(client.get("/api/payments/waiting")) == []
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
+
+
+def test_a_won_dispute_on_a_lease_under_a_payment_hold_waits_until_the_hold_is_released(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    turn_on(client)
+    connect_company(client)
+    fund_company(conn, pmc, "100.00")
+    started = pay(tenant_client, lease, "1000.00", "card")
+    says(tenant_client, started["id"], "paid")
+    owner_paid = balance(conn, pmc.owners[0].account)
+    says(tenant_client, started["id"], "disputed")
+    company_disputed = balance(conn, pmc.pmc_income)
+    hold = hold_payments(conn, pmc.pmc_id, lease, TODAY - DAY)
+    says(tenant_client, started["id"], "won")
+    # The books refuse the payment back while the hold stands: Banking lists it, and trying
+    # again changes nothing until the hold is released.
+    waiting = ok(client.get("/api/payments/waiting"))
+    assert [(w["what"], w["payment_id"], w["lease_id"]) for w in waiting] == [
+        ("dispute won", started["id"], str(lease))
+    ]
+    ok(client.post(f"/api/payments/{started['id']}/record", json={}), 204)
+    assert balance(conn, pmc.owners[0].account) == owner_paid - Decimal("1000.00")
+    assert balance(conn, pmc.pmc_income) == company_disputed
+    release_hold(conn, pmc.pmc_id, hold, TODAY)
+    ok(client.post(f"/api/payments/{started['id']}/record", json={}), 204)
+    assert balance(conn, pmc.owners[0].account) == owner_paid
+    assert balance(conn, pmc.pmc_income) == company_disputed + Decimal("15.00")
+    assert ok(client.get("/api/payments/waiting")) == []
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
+
+
+def drawn_down(conn, pmc, account):
+    """The owner's account paid out to nothing left (a draw, say)."""
+    post(
+        conn,
+        pmc.pmc_id,
+        f"draw/{uuid4()}",
+        [(account, pmc.operating_cash, balance(conn, account))],
+    )
+
+
+def test_a_dispute_on_a_return_the_owner_cant_cover_waits_behind_the_return(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    turn_on(client)
+    connect_company(client)
+    fund_company(conn, pmc, "100.00")
+    started = pay(tenant_client, lease, "1000.00", "card")
+    says(tenant_client, started["id"], "paid")
+    account = pmc.owners[0].account
+    drawn_down(conn, pmc, account)
+    company_paid = balance(conn, pmc.pmc_income)
+    says(tenant_client, started["id"], "disputed")
+    # The return waits for the owner's money; the dispute's fee waits behind it.
+    waiting = ok(client.get("/api/payments/waiting"))
+    assert [w["what"] for w in waiting] == ["return"]
+    assert balance(conn, pmc.pmc_income) == company_paid
+    contribute(conn, pmc.pmc_id, account, f"contribution/{uuid4()}", "1000.00")
+    ok(client.post(f"/api/payments/{started['id']}/record", json={}), 204)
+    assert balance(conn, account) == Decimal(0)
+    assert company_paid - balance(conn, pmc.pmc_income) == Decimal("15.00")
+    assert ok(client.get("/api/payments/waiting")) == []
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
+
+
+def test_an_owners_card_dispute_waits_behind_its_return_then_for_the_companys_fee(
+    client, owner_client, conn, app_conn, staff, pmc
+):
+    turn_on(client)
+    owner = join_as_owner(owner_client, app_conn, pmc)
+    connect_company(client)
+    fund_company(conn, pmc, "15.30")  # Stripe's 14.80 on 500.00 and Occupella's 0.50
+    account = pmc.owners[0].account
+    started = ok(
+        owner_client.post(
+            "/api/payments/connect/owner/checkout",
+            json={"account_id": account, "amount": "500.00", "method": "card"},
+        ),
+        201,
+    )
+    says(owner_client, started["id"], "paid")
+    assert balance(conn, pmc.pmc_income) == Decimal(0)
+    drawn_down(conn, pmc, account)
+    says(owner_client, started["id"], "disputed")
+    waiting = ok(client.get("/api/payments/waiting"))
+    assert [(w["what"], w["owner_id"]) for w in waiting] == [("return", str(owner.person_id))]
+    # The owner's money comes back in: the return goes, and the dispute fee waits for the
+    # company's fee account, never taken from the owner's.
+    contribute(conn, pmc.pmc_id, account, f"contribution/{uuid4()}", "500.00")
+    ok(client.post(f"/api/payments/{started['id']}/record", json={}), 204)
+    assert balance(conn, account) == Decimal(0)
+    waiting = ok(client.get("/api/payments/waiting"))
+    assert [(w["what"], w["owner_id"], w["lease_id"], w["company_owes"]) for w in waiting] == [
+        ("dispute fee", str(owner.person_id), None, "15.00")
+    ]
+    ok(
+        client.post(
+            "/api/payments/partner-fees/cover",
+            json={
+                "bank_account_id": waiting[0]["bank_account_id"],
+                "amount": waiting[0]["cover_needed"],
+                "request_id": str(uuid4()),
+            },
+        )
+    )
+    assert ok(client.get("/api/payments/waiting")) == []
+    assert balance(conn, account) == Decimal(0)
+    # Won: the owner's money is back, and the dispute fee back in the company's account.
+    says(owner_client, started["id"], "won")
+    assert balance(conn, account) == Decimal("500.00")
+    assert balance(conn, pmc.pmc_income) == Decimal("15.00")
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
+
+
+def test_a_dispute_about_a_payment_not_through_connect_is_never_recorded_here(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    turn_on(client)
+    own = ok(
+        tenant_client.post(f"/api/payments/leases/{lease}/checkout", json={"amount": "100.00"}),
+        201,
+    )
+    now = datetime.now(UTC)
+    for payment in (UUID(own["id"]), uuid4()):
+        report = connect.Dispute(
+            payment, "du_Synthetic1", "opened", Decimal("15.00"), f"evt_{uuid4().hex}", now
+        )
+        assert disputes.record(conn, report) is False
+    assert conn.execute(
+        "SELECT count(*) FROM trust_connect_disputes WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone() == (0,)
+
+
+# --- with email on: the tenant is told their autopay stopped ----------------------------------
+
+
+@pytest.fixture
+def mailing(settings):
+    """A server that sends email (the fake sender keeps each in the outbox)."""
+    with TestClient(create_app(dataclasses.replace(settings, email_sender="fake"))) as browser:
+        yield browser
+
+
+def stopped_emails(conn, autopay_id):
+    return conn.execute(
+        "SELECT body FROM trust_emails WHERE kind = 'autopay_stopped' AND autopay_id = %s",
+        (autopay_id,),
+    ).fetchall()
+
+
+def test_with_email_on_disconnecting_tells_each_tenant_whose_autopay_stopped(
+    mailing, conn, app_conn, pmc, lease
+):
+    join_as_staff(mailing, conn, app_conn, pmc)
+    turn_on(mailing)
+    connect_company(mailing)
+    renter = TestClient(mailing.app)
+    join_as_tenant(renter, conn, app_conn, pmc)
+    made = ok(
+        renter.post(
+            f"/api/payments/connect/leases/{lease}/autopay",
+            json={"rule": "fixed", "amount": "100.00", "method": "ach"},
+        ),
+        201,
+    )
+    ok(renter.post(f"/api/payments/connect/fake/autopay/{made['id']}", json={}), 204)
+    ok(mailing.post("/api/payments/connect/disconnect", json={}), 204)
+    [(body,)] = stopped_emails(conn, made["id"])
+    assert autopay.STOPPED_BY_ITSELF["account changed"] in body
+    assert "Test bank ••••0000" in body
+
+
+def test_with_email_on_an_autopay_at_a_replaced_account_stops_at_its_due_day_telling_its_tenant(
+    mailing, conn, app_conn, pmc, lease
+):
+    staff = join_as_staff(mailing, conn, app_conn, pmc)
+    turn_on(mailing)
+    connect_company(mailing)
+    renter = TestClient(mailing.app)
+    join_as_tenant(renter, conn, app_conn, pmc)
+    made = ok(
+        renter.post(
+            f"/api/payments/connect/leases/{lease}/autopay",
+            json={"rule": "fixed", "amount": "100.00", "method": "card"},
+        ),
+        201,
+    )
+    conn.execute(
+        "INSERT INTO trust_autopay_accounts (pmc_id, autopay_id, partner_customer, partner_method,"
+        " label, partner_event, saved_at) VALUES (%s, %s, 'fake_cus', 'fake_pm',"
+        " 'Test card ••••4242', %s, %s)",
+        (pmc.pmc_id, made["id"], f"evt_{made['id']}", datetime.now(UTC) - timedelta(days=90)),
+    )
+    replacement = f"fake_acct_{uuid4().hex[:16]}"
+    with acting_as(conn, staff.person_id):
+        conn.execute(
+            "INSERT INTO trust_connected_accounts (pmc_id, account_id, partner, livemode)"
+            " VALUES (%s, %s, 'fake_connect', false)",
+            (pmc.pmc_id, replacement),
+        )
+    conn.execute(
+        "INSERT INTO trust_connected_account_states (pmc_id, account_id, charges_enabled,"
+        " payouts_enabled, details_submitted, reported_at)"
+        " VALUES (%s, %s, true, true, true, now())",
+        (pmc.pmc_id, replacement),
+    )
+    month = TODAY.replace(day=1)
+    done = ok(
+        mailing.post("/api/rent/run", json={"due_on": str(month), "late_fees_as_of": str(TODAY)})
+    )
+    assert done["autopay"] == 0
+    [(body,)] = stopped_emails(conn, made["id"])
+    assert autopay.STOPPED_BY_ITSELF["account changed"] in body
+    assert "Test card ••••4242" in body
+
+
+@pytest.mark.timing
+def test_a_tenant_turning_autopay_off_as_the_company_disconnects_is_stopped_once(
+    client, tenant_client, conn, staff, tenant, lease, pmc, database_url
+):
+    # The disconnect lists the autopay before the tenant's stop commits, then waits for it
+    # (the autopay's lock): it finds it stopped, and neither counts nor emails it again.
+    turn_on(client)
+    account = connect_company(client)
+    made = ok(
+        tenant_client.post(
+            f"/api/payments/connect/leases/{lease}/autopay",
+            json={"rule": "fixed", "amount": "100.00", "method": "ach"},
+        ),
+        201,
+    )
+    ok(tenant_client.post(f"/api/payments/connect/fake/autopay/{made['id']}", json={}), 204)
+    mine = UUID(made["id"])
+    with psycopg.connect(database_url) as turning_off:
+        assert autopay.stop(turning_off, pmc.pmc_id, mine, "tenant")  # not committed yet
+
+        def disconnecting(worker):
+            with worker.transaction():
+                return connect_api.stop_autopays_at(worker, pmc.pmc_id, account)
+
+        thread, pid, outcome = in_background(database_url, disconnecting)
+        wait_until_blocked(conn, pid)
+        turning_off.commit()
+        thread.join(timeout=30)
+
+    assert outcome == {"result": 0}
+    assert conn.execute(
+        "SELECT why FROM trust_autopay_stops WHERE autopay_id = %s", (mine,)
+    ).fetchall() == [("tenant",)]

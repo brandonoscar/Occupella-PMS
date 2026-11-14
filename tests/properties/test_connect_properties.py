@@ -72,10 +72,10 @@ def test_the_default_fee_is_never_below_cost(method, amount):
     amount=CENTS,
 )
 def test_a_fee_below_cost_check_passes_is_never_below_cost(fee, method, model, amount):
-    """below_cost checks a fee where it or the cost turns, so a fee it passes is at or above the
-    cost everywhere, not only at the rents it names."""
+    """below_cost checks a fee where it or the cost turns, so a fee it passes is above the cost
+    everywhere, not only at the rents it names: never at break-even."""
     if connect.below_cost(fee, method, model) is None:
-        assert fee.on(amount) >= connect.cost(model, method, amount)
+        assert fee.on(amount) > connect.cost(model, method, amount)
     else:
         event("a fee below cost somewhere")
 

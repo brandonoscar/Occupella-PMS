@@ -1127,7 +1127,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   tenant pays by bank or card, an owner adds money by either, an autopay saves either, each a
   direct charge on the company's account (`Stripe-Account`) with Occupella's fee as its application
   fee (`platform_fee` on the payment; `PMS_CONNECT_FEE_ACH`, `PMS_CONNECT_FEE_CARD`:
-  "percent,fixed,minimum", $0.50 unset, refused below what a payment costs the platform,
+  "percent,fixed,minimum", $0.50 unset, refused unless above what a payment costs the platform,
   `connect.cost`), so the money lands in the company's Stripe balance and pays out to its trust
   account, never through Occupella's. What Stripe keeps, its fee and Occupella's together, leaves
   the books from the company's fee account, never an owner's. A tenant pays a bank fee by

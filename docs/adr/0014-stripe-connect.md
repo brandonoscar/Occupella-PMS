@@ -80,9 +80,11 @@ old one (OAuth for Standard is Stripe's older path; not built).
 
 Occupella's fee is a server setting per method, `PMS_CONNECT_FEE_ACH` and `PMS_CONNECT_FEE_CARD`,
 each `percent,fixed,minimum` (percent in percent: `0.25,0.30,0.50` is 0.25% + $0.30, at least
-$0.50), on what goes to the lease or the owner. A setting below what a payment costs the platform
-under the chosen model, at any amount, refuses to start the server (`pms.connect.read_fee`,
-`below_cost`, which checks every point where the fee or the cost changes slope).
+$0.50), on what goes to the lease or the owner. A setting that isn't above what a payment costs the
+platform under the chosen model, at every amount, refuses to start the server (`pms.connect.read_fee`,
+`below_cost`, which checks every point where the fee or the cost changes slope). Break-even is
+refused too: under Standard that is a fee of nothing on some payment, as `0,0,0` or a percent
+alone on a one-cent payment.
 
 What a payment costs the platform (`pms.connect.cost`): Stripe's processing (if the platform pays
 it), the active-account fee spread over the account's payments (one a month, the worst case), the

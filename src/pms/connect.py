@@ -196,7 +196,7 @@ MOST_FIXED = Decimal("50.00")
 
 
 class BadFee(ValueError):
-    """A fee setting that can't be read, or that falls below what a payment costs."""
+    """A fee setting that can't be read, or that isn't above what a payment costs."""
 
 
 def turning_points(fee: Fee, method: Method) -> list[Decimal]:
@@ -219,18 +219,19 @@ def turning_points(fee: Fee, method: Method) -> list[Decimal]:
 
 
 def below_cost(fee: Fee, method: Method, model: Model = CHOSEN) -> Decimal | None:
-    """The first amount at which `fee` falls below the platform's cost under `model`, or None:
-    checked at the ends, at rents in between, and at every point either changes slope
-    (turning_points), each a cent either side for rounding."""
+    """The first amount at which `fee` doesn't land above the platform's cost under `model` (at
+    break-even counts: Brandon's rule is above it), or None: checked at the ends, at rents in
+    between, and at every point either changes slope (turning_points), each a cent either side
+    for rounding."""
     for amount in sorted({*CHECKED_AT, *turning_points(fee, method)}):
-        if fee.on(amount) < cost(model, method, amount):
+        if fee.on(amount) <= cost(model, method, amount):
             return amount
     return None
 
 
 def read_fee(method: Method, text: str) -> Fee:
     """A fee from its setting, "percent,fixed,minimum" (percent in percent: "0.25" is 0.25%),
-    refused when it can't be read, is negative or absurd, or falls below cost."""
+    refused when it can't be read, is negative or absurd, or isn't above cost at every amount."""
     parts = [part.strip() for part in text.split(",")]
     try:
         if len(parts) != 3:
@@ -259,7 +260,7 @@ def read_fee(method: Method, text: str) -> Fee:
     short = below_cost(fee, method)
     if short is not None:
         raise BadFee(
-            f"PMS_CONNECT_FEE_{method.upper()} falls below what a payment of ${short:,.2f} costs"
+            f"PMS_CONNECT_FEE_{method.upper()} isn't above what a payment of ${short:,.2f} costs"
             f" the platform (${cost(CHOSEN, method, short):,.2f}): Occupella's fee always lands"
             " above break-even (docs/adr/0014-stripe-connect.md)"
         )

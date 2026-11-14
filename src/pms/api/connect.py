@@ -32,7 +32,7 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import connect, payments
+from pms import autopay_homes, connect, payments
 from pms.api import online_payments as op
 from pms.api import outbox, owner_payments, rent, tenant
 from pms.api.deps import Conn, Owner, Staff, Tenant
@@ -761,8 +761,14 @@ def record_items(
             if item.account == partner.account:
                 recorded = record_state(conn, pmc_id, item) or recorded
         elif isinstance(item, payments.Saved):
-            if started_on(conn, pmc_id, partner.account, item.autopay_id):
-                recorded = op.record_saved(conn, item, partner.name) or recorded
+            if started_on(conn, pmc_id, partner.account, item.autopay_id) and op.record_saved(
+                conn, item, partner.name
+            ):
+                # The account it was saved at, as op.receive notes it: only that account can
+                # charge it (P-065), so the nightly look stops it the first night after the
+                # company connects another, not on its due day.
+                autopay_homes.note_saved(conn, item.autopay_id, partner)
+                recorded = True
         elif isinstance(item, payments.Event):
             if started_on(conn, pmc_id, partner.account, item.payment_id):
                 recorded = op.receive(conn, partner, item, pmc_id).recorded or recorded
