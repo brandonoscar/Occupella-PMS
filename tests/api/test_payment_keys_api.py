@@ -455,6 +455,8 @@ def test_a_bank_account_saved_for_autopay_reports_through_its_own_companys_webho
         },
     }
     subject = {"id": "cs_setup_1", "mode": "setup", "setup_intent": "seti_1"}
+    # The account the company's keys act for, noted with the bank account (P-065).
+    answers[("GET", "/account")] = {"id": "acct_1Company", "object": "account"}
     other = make_pmc(conn)
     with TestClient(
         create_app(
@@ -479,3 +481,7 @@ def test_a_bank_account_saved_for_autopay_reports_through_its_own_companys_webho
         "SELECT partner_customer, label FROM trust_autopay_accounts WHERE autopay_id = %s",
         (autopay,),
     ).fetchone() == ("cus_1", "STRIPE TEST BANK ••••6789")
+    assert conn.execute(
+        "SELECT partner_account, noted FROM trust_autopay_account_homes WHERE autopay_id = %s",
+        (autopay,),
+    ).fetchone() == ("acct_1Company", "saved")

@@ -262,6 +262,31 @@ def test_staff_and_nobody_use_none_of_the_tenants_autopay_pages(client, other_cl
 # --- the payment, from Run rent now to the books ------------------------------------------------
 
 
+def test_run_rent_now_first_stops_an_autopay_saved_at_another_account(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    # docs/edge-cases.md P-065, as each night (src/pms/autopay_homes.py): the server's partner
+    # (fake) acts for the account "fake", and this bank account was saved at another.
+    turn_on(client)
+    mine = set_up(tenant_client, lease)["id"]
+    saved_long_ago(conn, pmc, mine)
+    conn.execute(
+        "INSERT INTO trust_autopay_account_homes (autopay_id, pmc_id, partner_account, noted)"
+        " VALUES (%s, %s, 'acct_old', 'saved')",
+        (mine, pmc.pmc_id),
+    )
+
+    done = ok(
+        client.post("/api/rent/run", json={"due_on": str(MONTH), "late_fees_as_of": str(TODAY)})
+    )
+
+    assert done["autopay"] == 0
+    assert conn.execute(
+        "SELECT why FROM trust_autopay_stops WHERE autopay_id = %s", (mine,)
+    ).fetchone() == ("account changed",)
+    assert view(tenant_client, lease)["autopays"][0]["runs"] == []
+
+
 def test_run_rent_now_starts_the_autopay_payment_which_goes_to_the_partner_and_the_books(
     client, tenant_client, conn, staff, tenant, lease, pmc
 ):
@@ -409,12 +434,18 @@ def test_stripe_saves_the_bank_account_and_its_report_records_it(
         },
     }
     subject = {"id": "cs_setup_1", "mode": "setup", "setup_intent": "seti_1"}
+    # The account the keys act for, noted with it (P-065).
+    answers[("GET", "/account")] = {"id": "acct_1Saved", "object": "account"}
     assert ok(stripe_report(browser, "checkout.session.completed", subject)) == {"recorded": True}
     assert conn.execute(
         "SELECT partner_customer, partner_method, partner_mandate, label"
         " FROM trust_autopay_accounts WHERE autopay_id = %s",
         (started["id"],),
     ).fetchone() == ("cus_1", "pm_1", "mandate_1", "STRIPE TEST BANK ••••6789")
+    assert conn.execute(
+        "SELECT partner_account, noted FROM trust_autopay_account_homes WHERE autopay_id = %s",
+        (started["id"],),
+    ).fetchone() == ("acct_1Saved", "saved")
     # Still being verified: nothing yet; an account for no autopay of the PMS's: not recorded.
     answers[("GET", "/setup_intents/seti_2")] = {"status": "requires_action"}
     pending = {"id": "cs_setup_2", "mode": "setup", "setup_intent": "seti_2"}

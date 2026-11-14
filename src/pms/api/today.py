@@ -182,6 +182,47 @@ def notices_given(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> lis
     ]
 
 
+class AutopayMoved(BaseModel):
+    lease_id: UUID
+    property: str
+    unit: str
+    tenant: str
+    stopped_on: date
+
+
+# Autopays that stopped by themselves in the 30 days to the day because the company now takes
+# payments through another account than the one their bank account was saved at (P-065): their
+# tenants were emailed to set autopay up again, and staff may want to tell them too.
+AUTOPAYS_MOVED = """
+SELECT a.lease_id, p.display_name, u.display_name, t.display_name,
+       trust_pmc_day(s.pmc_id, s.created_at)
+FROM trust_autopay_stops AS s
+JOIN trust_autopay AS a ON a.id = s.autopay_id
+JOIN trust_tenants AS t ON t.id = a.tenant_id
+JOIN trust_leases AS l ON l.id = a.lease_id
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+WHERE s.pmc_id = %(pmc)s AND s.why = 'account changed'
+  AND trust_pmc_day(s.pmc_id, s.created_at) > %(day)s::date - 30
+  AND trust_pmc_day(s.pmc_id, s.created_at) <= %(day)s
+  AND NOT EXISTS (SELECT 1 FROM trust_autopay AS again
+                  WHERE again.lease_id = a.lease_id AND again.tenant_id = a.tenant_id
+                    AND again.created_at > s.created_at)
+ORDER BY s.created_at DESC, p.display_name COLLATE "C", u.display_name COLLATE "C", a.id
+"""
+
+
+def autopays_moved(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> list[AutopayMoved]:
+    """The autopays stopped because the payments account changed, until their tenant sets one up
+    again or 30 days pass."""
+    return [
+        AutopayMoved(
+            lease_id=row[0], property=row[1], unit=row[2], tenant=row[3], stopped_on=row[4]
+        )
+        for row in conn.execute(AUTOPAYS_MOVED, {"pmc": pmc_id, "day": day}).fetchall()
+    ]
+
+
 class RentNotPosted(BaseModel):
     # The last day a rent run ran for (the nightly run's or an admin's Run rent now), or None.
     last_posted_on: date | None
@@ -245,6 +286,8 @@ class Today(BaseModel):
     drafts_waiting: list[drafts.DraftRow] = []
     # Rent that stopped posting: no rent run in two days while the company has leases (H-021).
     rent_not_posted: RentNotPosted | None = None
+    # Autopays stopped because the company's payments account changed (P-065).
+    autopays_moved: list[AutopayMoved] = []
 
 
 # The leases named as the rent page names them: property, unit and every tenant on it.
@@ -418,6 +461,7 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
         owner_draws=payouts.waiting_draws_of(conn, session.pmc_id),
         month_to_month=holdovers(conn, session.pmc_id, day),
         move_out_notices=notices_given(conn, session.pmc_id, day),
+        autopays_moved=autopays_moved(conn, session.pmc_id, day),
         messages_waiting=[t for t in messages.threads(conn, session.pmc_id) if t.waiting],
         drafts_waiting=[
             drafts.row_of(d) for d in drafts.drafts_of(conn, session.pmc_id, show="waiting")[0]

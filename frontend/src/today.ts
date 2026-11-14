@@ -56,7 +56,10 @@ export type Today = {
   drafts_waiting?: DraftWaiting[];
   // No rent run in two days while the company has leases (docs/edge-cases.md H-021).
   rent_not_posted?: RentNotPosted | null;
+  // Autopays stopped because the company's payments account changed (docs/edge-cases.md P-065).
+  autopays_moved?: AutopayMoved[];
 };
+export type AutopayMoved = { lease_id: string; property: string; unit: string; tenant: string; stopped_on: string };
 type RentNotPosted = { last_posted_on: string | null; waiting_since: string };
 export type DraftWaiting = { id: string; what: string; key: string; made_at: string };
 export type NoticeGiven = {
@@ -329,6 +332,13 @@ export function attentionRows(today: Today): AttentionRow[] {
       line: `${thread.name} (${thread.about}): ${thread.preview}`,
       due: thread.last_at.slice(0, 10),
       action: go("Answer", `/messages/${thread.about}/${thread.person_id}`),
+    })),
+    ...(today.autopays_moved ?? []).map((moved) => ({
+      key: `autopay-moved:${moved.lease_id}:${moved.tenant}`, what: "Autopay stopped",
+      line: `${moved.tenant} · ${moved.property}, ${moved.unit} · saved at the old payments account:`
+        + " they were emailed to set it up again",
+      due: moved.stopped_on,
+      action: go("Open lease", `/leases/${moved.lease_id}`),
     })),
     ...(today.drafts_waiting ?? []).map((draft) => ({
       key: `draft:${draft.id}`, what: "Draft", line: `${draft.what} (from ${draft.key})`,

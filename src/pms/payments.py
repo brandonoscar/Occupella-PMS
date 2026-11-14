@@ -38,7 +38,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, runtime_checkable
 from uuid import UUID
 
 import psycopg
@@ -159,6 +159,9 @@ class FakePartner:
 
     def event(self, body: bytes, headers: Mapping[str, str]) -> Event | Saved | None:
         raise NotTheirs("the fake partner reports through its own page, not a webhook")
+
+    def account(self) -> str:
+        return "fake"
 
 
 def fake_saved(autopay_id: UUID, happened_at: datetime) -> Saved:
@@ -357,6 +360,35 @@ class StripePartner:
         except (KeyError, TypeError, ValueError) as failed:
             raise PartnerFailed(f"Stripe's payment came without its fee: {failed}") from None
 
+    def account(self) -> str:
+        """The Stripe account these keys act for (`acct_...`), asked once per keys in a process:
+        a tenant's bank account saved at one account can be charged only by it (P-065)."""
+        held = hashlib.sha256(self._key.encode()).hexdigest()
+        if held not in ACCOUNTS:
+            found = self._call("GET", "/account", [])
+            try:
+                ACCOUNTS[held] = str(found["id"])
+            except (KeyError, TypeError) as failed:
+                raise PartnerFailed(f"Stripe's account came without {failed}") from None
+        return ACCOUNTS[held]
+
+    def look_up(self, payment_id: UUID, ref: str, now: datetime) -> Event | None:
+        """What became of a payment Stripe sent no report of (docs/edge-cases.md C-090), asked of
+        its Checkout Session (`cs_...`) or, an autopay's, its PaymentIntent (`pi_...`): None while
+        it is on its way. A ref this account doesn't hold is refused (PartnerFailed)."""
+        if not LOOK_UP_REF.match(ref):
+            return None
+        charge = "latest_charge.balance_transaction"
+        if ref.startswith("cs_"):
+            session = self._call(
+                "GET", f"/checkout/sessions/{ref}", [("expand[]", f"payment_intent.{charge}")]
+            )
+            intent = session.get("payment_intent") if isinstance(session, dict) else None
+        else:
+            session = None
+            intent = self._call("GET", f"/payment_intents/{ref}", [("expand[]", charge)])
+        return looked_up(payment_id, ref, session, intent, now)
+
 
 # Stripe's reports the PMS reads, and what each says happened.
 STRIPE_KINDS: dict[str, Kind] = {
@@ -438,6 +470,68 @@ def charge_form(
     if account.mandate:
         form.append(("mandate", account.mandate))
     return form
+
+
+# The account each set of keys acts for, by the keys' SHA-256 (never the keys): it never changes.
+ACCOUNTS: dict[str, str] = {}
+
+
+@runtime_checkable
+class KnowsAccount(Protocol):
+    """A partner that says which of its accounts it acts for (P-065)."""
+
+    name: str
+
+    def account(self) -> str: ...
+
+
+@runtime_checkable
+class LooksUp(Protocol):
+    """A partner that can be asked what became of a payment it sent no report of (C-090)."""
+
+    name: str
+
+    def look_up(self, payment_id: UUID, ref: str, now: datetime) -> Event | None: ...
+
+
+# A Checkout Session's or PaymentIntent's id as Stripe writes it: nothing else goes in a path.
+LOOK_UP_REF = re.compile(r"^(cs|pi)_[A-Za-z0-9_]{1,200}$")
+
+
+def looked_up(payment_id: UUID, ref: str, session: Any, intent: Any, now: datetime) -> Event | None:
+    """What a Checkout Session (or None, for an autopay's payment) and its PaymentIntent say of a
+    payment, as its report would have: expired, paid with Stripe's fee, failed, or None while the
+    bank hasn't said. A paid one is dated by its balance transaction (NOT VERIFIED: that Stripe
+    writes it when an ACH payment succeeds, not when it starts), never after `now`; the others
+    by `now`. Nothing is read of an object that isn't this payment's."""
+    if payment_of(session, intent) != payment_id:
+        return None
+    event_id = f"look-up/{ref}"
+    if isinstance(session, dict) and session.get("status") == "expired":
+        return Event(payment_id, "expired", event_id, moment(session.get("expires_at"), now))
+    if not isinstance(intent, dict):
+        return None  # the tenant hasn't paid on the session yet
+    status = intent.get("status")
+    if status == "succeeded":
+        try:
+            balance = intent["latest_charge"]["balance_transaction"]
+            fee = (Decimal(int(balance["fee"])) / 100).quantize(CENT)
+        except (KeyError, TypeError, ValueError) as failed:
+            raise PartnerFailed(f"Stripe's payment came without its fee: {failed}") from None
+        return Event(payment_id, "paid", event_id, moment(balance.get("created"), now), fee)
+    if status == "canceled" or (
+        status == "requires_payment_method" and intent.get("last_payment_error")
+    ):
+        return Event(payment_id, "failed", event_id, now)
+    return None  # processing, or waiting on the tenant
+
+
+def moment(stamp: Any, now: datetime) -> datetime:
+    """A Stripe timestamp (seconds) as a moment, never after `now`; `now` when there is none."""
+    try:
+        return min(datetime.fromtimestamp(int(stamp), UTC), now)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return now
 
 
 def payment_of(subject: Any, intent: Any) -> UUID | None:
