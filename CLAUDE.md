@@ -938,7 +938,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   starts there. Tenants' unpaid charges carry over as charges with their own due dates, and the
   rent run charges no rent or monthly charge due before the cutover of the trust bank account
   holding the lease's property's owners' money (`trust_lease_cutover`, migration 20261106100000,
-  M-144): that month is the old system's.
+  M-144): that month is the old system's; a lease the switching tool brought in counts the day
+  it came until the opening balances give a cutover (`trust_switched_leases`, migration
+  20261115000220, M-152).
 - Audit: every write to a trust table or `pgledger_transfers` is logged in `trust_audit_log`
   (append-only, written only by the `trust_audit` trigger): when, the row (and the row before an
   update), the database role, and the staff member the app names with

@@ -130,6 +130,36 @@ def test_the_roster_comes_in_and_a_file_sent_again_adds_nothing(client, conn, st
     assert accounts == (2,)
 
 
+def test_a_lease_brought_over_waits_for_the_cutover(client, conn, staff, pmc):
+    """docs/edge-cases.md M-152: each lease the roster brings in is recorded with the company's
+    day it came, naming who brought it, so a night before the opening balances charges nothing
+    the old system charged; the same file again records nothing more."""
+    roster(client)
+    lease_file = (
+        "leases",
+        "Property,Unit,Tenants,Starts On,Monthly Rent",
+        "Property A,Unit 1,Tenant A,2025-06-01,1500.00",
+    )
+    ok(imported(client, *lease_file))
+    ok(imported(client, *lease_file))
+
+    came = conn.execute(
+        "SELECT s.switched_on, s.recorded_by, trust_lease_cutover(s.lease_id)"
+        " FROM trust_switched_leases AS s WHERE s.pmc_id = %s",
+        (pmc.pmc_id,),
+    ).fetchall()
+    assert came == [(TODAY, staff.person_id, TODAY)]
+    (lease,) = conn.execute(
+        "SELECT lease_id FROM trust_switched_leases WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone()
+    conn.execute("SELECT trust_run_rent(%s, %s, %s)", (pmc.pmc_id, TODAY.replace(day=1), TODAY))
+    charged = conn.execute(
+        "SELECT due_on FROM trust_charges WHERE lease_id = %s AND kind = 'rent'", (lease,)
+    ).fetchall()
+    # This month is the old system's unless the lease came on its first.
+    assert charged == ([(TODAY,)] if TODAY.day == 1 else [])
+
+
 @pytest.mark.parametrize(
     "kind, lines, why",
     [

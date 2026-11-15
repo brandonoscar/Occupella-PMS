@@ -205,6 +205,15 @@ tests = [
 ]
 
 [[invariant]]
+id = "switched-leases-wait-for-the-cutover"
+statement = "A lease the switching tool brought in counts the company's day it came as its cutover until opening balances are on file for its property's owners' trust bank account (trust_switched_leases, migration 20261115000220; docs/edge-cases.md M-152): the nights between the roster and the opening balances charge nothing due before that day; from then on the opening balances' cutover rules as before."
+tests = [
+  "tests/properties/test_rent_from_the_cutover_properties.py::test_rent_is_charged_from_the_cutover_and_never_for_the_old_systems_days",
+  "tests/test_rent_from_the_cutover.py::test_nights_between_the_roster_and_the_opening_balances_charge_the_old_systems_month_nothing",
+  "tests/api/test_switch.py::test_a_lease_brought_over_waits_for_the_cutover",
+]
+
+[[invariant]]
 id = "payment-alike-waits-for-staff"
 statement = "Staff's Receive payment refuses a tenant's payment like one recorded to the lease under another request id (the same amount received the same day, by the same way and with the same check or reference where both say one; rent.refuse_alike, docs/edge-cases.md H-008, U-138), recording nothing, unless staff say it is another payment; read under the lease's lock, so the same check from two tabs at once is recorded once. The same request id again returns the payment as recorded; a payment alike to one on another lease is its own; every trust bank account ties out."
 tests = [

@@ -6462,13 +6462,18 @@ CREATE FUNCTION public.trust_lease_cutover(p_lease_id uuid) RETURNS date
     LANGUAGE sql STABLE
     SET search_path TO 'public', 'pg_temp'
     AS $$
-    SELECT max(o.opened_on)
-    FROM trust_leases AS l
-    JOIN trust_units AS u ON u.id = l.unit_id
-    JOIN trust_ledger_accounts AS a
-      ON a.property_id = u.property_id AND a.kind = 'owner_property'
-    JOIN trust_opening_balances AS o ON o.bank_account_id = a.bank_account_id
-    WHERE l.id = p_lease_id;
+    SELECT coalesce(
+        (SELECT max(o.opened_on)
+         FROM trust_leases AS l
+         JOIN trust_units AS u ON u.id = l.unit_id
+         JOIN trust_ledger_accounts AS a
+           ON a.property_id = u.property_id AND a.kind = 'owner_property'
+         JOIN trust_opening_balances AS o ON o.bank_account_id = a.bank_account_id
+         WHERE l.id = p_lease_id),
+        -- Brought over by the switching tool before any opening balances: the old system's
+        -- books hold its money up to the day it came (M-152).
+        (SELECT s.switched_on FROM trust_switched_leases AS s WHERE s.lease_id = p_lease_id)
+    );
 $$;
 
 
@@ -20090,6 +20095,19 @@ CREATE TABLE public.trust_staff_roles (
 
 
 --
+-- Name: trust_switched_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_switched_leases (
+    lease_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    switched_on date NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
 -- Name: trust_tax_credit_limits; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -23921,6 +23939,14 @@ ALTER TABLE ONLY public.trust_staff_roles
 
 
 --
+-- Name: trust_switched_leases trust_switched_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_switched_leases
+    ADD CONSTRAINT trust_switched_leases_pkey PRIMARY KEY (lease_id);
+
+
+--
 -- Name: trust_tax_credit_limits trust_tax_credit_limits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26857,6 +26883,13 @@ CREATE INDEX trust_staff_roles_pmc_id ON public.trust_staff_roles USING btree (p
 
 
 --
+-- Name: trust_switched_leases_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_switched_leases_recorded_by ON public.trust_switched_leases USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_tax_credit_limits_pmc; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -28852,6 +28885,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_switched_leases trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_switched_leases FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_tax_credit_limits trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -30679,6 +30719,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_staf
 
 
 --
+-- Name: trust_switched_leases trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_switched_leases FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_tax_credit_limits trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -32391,6 +32438,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_showings FOR EACH
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_signing_links FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_switched_leases trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_switched_leases FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -38365,6 +38419,30 @@ ALTER TABLE ONLY public.trust_staff_roles
 
 
 --
+-- Name: trust_switched_leases trust_switched_leases_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_switched_leases
+    ADD CONSTRAINT trust_switched_leases_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_switched_leases trust_switched_leases_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_switched_leases
+    ADD CONSTRAINT trust_switched_leases_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_switched_leases trust_switched_leases_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_switched_leases
+    ADD CONSTRAINT trust_switched_leases_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_tax_credit_limits trust_tax_credit_limits_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39295,4 +39373,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261113000200'),
     ('20261114000100'),
     ('20261115000200'),
-    ('20261115000210');
+    ('20261115000210'),
+    ('20261115000220');

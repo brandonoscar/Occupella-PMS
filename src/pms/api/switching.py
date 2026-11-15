@@ -454,9 +454,17 @@ def import_lease(names: Names, row: Row) -> None:
         return
     try:
         with conn.transaction():
-            conn.execute(
+            opened = one(
+                conn,
                 "SELECT trust_open_lease(%s, %s, %s, %s, %s, %s::uuid[])",
                 (pmc, unit, starts, ends, rent, tenants),
+            )
+            # Its money is the old system's up to today until the opening balances give the
+            # cutover: the rent run leaves this month alone meanwhile (M-152).
+            conn.execute(
+                "INSERT INTO trust_switched_leases (pmc_id, lease_id, switched_on)"
+                " VALUES (%s, %s, trust_pmc_day(%s))",
+                (pmc, opened, pmc),
             )
     except psycopg.errors.ExclusionViolation as refused:
         raise Bad(f"line {row.line}: {refusal(refused)}") from None

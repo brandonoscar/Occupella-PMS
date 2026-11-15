@@ -290,6 +290,8 @@ TABLES = {
     "trust_tenant_links": {"SELECT", "INSERT"},
     # A link taken back (docs/edge-cases.md U-099): staff insert it; it names who.
     "trust_tenant_unlinks": {"SELECT", "INSERT"},
+    # Each lease the switching tool brought in, the day it came (migration 20261115000220, M-152).
+    "trust_switched_leases": {"SELECT", "INSERT"},
     # A login linked to the person a host app signs in (docs/adr/0013-sign-in-through-a-host.md):
     # the app inserts it at that sign-in, through an owner's or a tenant's invite or a staff
     # member's first sign-in.
