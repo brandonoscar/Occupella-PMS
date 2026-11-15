@@ -108,7 +108,9 @@ describe("Wide", () => {
   it("lets a wide table scroll sideways inside its frame, not the page", () => {
     render(<Wide><table aria-label="Ledger"><tbody><tr><td>1</td></tr></tbody></table></Wide>);
     const frame = screen.getByRole("table", { name: "Ledger" }).parentElement;
-    expect(frame?.className).toBe("overflow-x-auto");
+    // `relative`: a table's sr-only heading stays in the frame instead of widening the page on a
+    // phone (e2e/phone.spec.ts measures that against the screen).
+    expect(frame?.className).toBe("relative overflow-x-auto");
     // It fits: no stop in the tab order.
     expect(frame?.hasAttribute("tabindex")).toBe(false);
   });
