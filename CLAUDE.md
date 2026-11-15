@@ -1336,6 +1336,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   fees go through `trust_run_rent`, which records the run (`trust_rent_runs`, append-only, naming
   nobody); an admin runs it by hand from the rent roll (Run rent now), and a named staff member
   without admin is refused. Each part charges once per date, so a run again charges nothing new.
+  A night after the company's last run fell in an earlier month first runs each month since as its
+  last night would have (`nightly.catch_up`, twelve months at most; D-016, H-089).
   Each company's run is for its own day (its time zone, below): the API runs every company at
   start, then looks a minute past each hour and runs each company whose day has begun since (just
   after its midnight), unless `PMS_NIGHTLY` is "off" (e2e turns it off); `python -m pms.nightly`

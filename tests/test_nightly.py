@@ -536,3 +536,50 @@ def test_a_night_starts_the_autopay_payments_due_and_sends_them_to_the_partner(
     ).fetchone() == ("1000.00", f"fake_pi_{payment.hex}")
     (again,) = runs.run_once()
     assert again.autopay == 0
+
+
+def due_on_the(conn, pmc, lease, day, starts_on=date(2026, 10, 1)):
+    conn.execute(
+        "INSERT INTO trust_rent_due_days (pmc_id, lease_id, starts_on, due_day)"
+        " VALUES (%s, %s, %s, %s)",
+        (pmc.pmc_id, lease, starts_on, day),
+    )
+
+
+def test_a_night_after_the_server_was_down_over_a_months_end_charges_the_rent_due_then(
+    conn, app_conn, pmc
+):
+    # docs/edge-cases.md D-016, H-089: due on the 28th, nobody ran from the 28th to the 31st.
+    lease = lease_since(conn, pmc, date(2026, 9, 1))
+    due_on_the(conn, pmc, lease, 28)
+    nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 10, 27), URL)
+
+    back = nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 11, 1), URL)
+    again = nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 11, 1), URL)
+
+    assert [c for c in charges(conn, lease) if c[0] >= date(2026, 10, 1)] == [
+        (date(2026, 10, 28), "rent", "1000.00")
+    ]
+    assert (back.rents, again.rents) == (1, 0)
+
+
+def test_a_night_after_a_whole_month_down_charges_that_months_rent(conn, app_conn, pmc):
+    # D-017: the last run on September 30, back on November 2.
+    lease = lease_since(conn, pmc, date(2026, 9, 1))
+    nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 9, 30), URL)
+
+    nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 11, 2), URL)
+
+    assert [c[:2] for c in charges(conn, lease)] == [
+        (date(2026, 9, 1), "rent"),
+        (date(2026, 10, 1), "rent"),
+        (date(2026, 11, 1), "rent"),
+    ]
+
+
+def test_a_companys_first_night_reaches_back_into_no_earlier_month(conn, app_conn, pmc):
+    lease = lease_since(conn, pmc, date(2026, 6, 1))
+
+    nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 11, 2), URL)
+
+    assert [c[:2] for c in charges(conn, lease)] == [(date(2026, 11, 1), "rent")]

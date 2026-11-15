@@ -1490,6 +1490,16 @@ tests = [
 ]
 
 [[invariant]]
+id = "no-night-missed"
+statement = "A night after the server was down over a month's end (the company's last run in an earlier month) charges each missed month as its last night would have, before the new month: a rent or monthly charge due on a night nobody ran is charged all the same, once, and the books match a company that ran every night (docs/edge-cases.md D-016, D-017, H-089). A company that never ran reaches back into no earlier month."
+tests = [
+  "tests/properties/test_rent_catch_up_properties.py::test_a_night_after_the_server_was_down_charges_what_every_night_would",
+  "tests/test_nightly.py::test_a_night_after_the_server_was_down_over_a_months_end_charges_the_rent_due_then",
+  "tests/test_nightly.py::test_a_night_after_a_whole_month_down_charges_that_months_rent",
+  "tests/test_nightly.py::test_a_companys_first_night_reaches_back_into_no_earlier_month",
+]
+
+[[invariant]]
 id = "every-night-over-years"
 statement = "Night after night for months (tools/fast_forward.py; five years nightly), with everything the PMS does by itself turned on and tenants paying late, in part, ahead or with a bounce: what each night posts is dated by that night, never later; no rent is charged twice for a due date; the delinquency report is what is open of the leases' charges; the trial balance balances and every trust bank account's book cash is what it holds; each owner's statement ends at their accounts' balances; and every account under an agreement has each month's management fee taken by the month after's end."
 tests = [
