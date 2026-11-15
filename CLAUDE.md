@@ -1361,7 +1361,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   a payment hold or whose owner's account staff choose (`rent.use_prepaid_by_itself`; Run rent now
   too). Rent and late
   fees go through `trust_run_rent`, which records the run (`trust_rent_runs`, append-only, naming
-  nobody); an admin runs it by hand from the rent roll (Run rent now), and a named staff member
+  nobody); an admin runs it by hand from the rent roll (Run rent now, never for rent or late fees
+  after the company's today, D-026), and a named staff member
   without admin is refused. Each part charges once per date, so a run again charges nothing new.
   A night after the company's last run fell in an earlier month first runs each month since as its
   last night would have (`nightly.catch_up`, twelve months at most; D-016, H-089).

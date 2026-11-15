@@ -1719,6 +1719,9 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
     each night, each fixed-term lease that ran out with no renewal signed goes month to month."""
     if run.late_fees_as_of > today(conn, session.pmc_id):
         raise HTTPException(422, "late fees are assessed as of today or an earlier day")
+    # Rent due on a day still to come would be charged today, a month early (D-026).
+    if run.due_on > today(conn, session.pmc_id):
+        raise HTTPException(422, "rent is charged for today or an earlier day")
     # The company's partner now and the account it acts for, asked before the run takes a lock:
     # autopays saved at another account stop before any payment starts, as each night (P-065).
     partners = outbox.PARTNER.get()
