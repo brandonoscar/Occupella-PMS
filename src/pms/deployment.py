@@ -10,6 +10,7 @@ harm on a server real people use:
 - the fake screening partner (PMS_SCREENING_PARTNER=fake) makes up an applicant's
   recommendation;
 - the fake geocoder (PMS_GEOCODER=fake) makes up where a property is;
+- the fake CPI source (PMS_CPI=fake) makes up the price index a rent cap is worked out from;
 - the fake email sender (PMS_EMAIL_SENDER=fake) sends nothing, so invites and notices never
   arrive.
 
@@ -52,6 +53,7 @@ PARTNERS = (
     "PMS_CONNECT",
     "PMS_SCREENING_PARTNER",
     "PMS_GEOCODER",
+    "PMS_CPI",
     "PMS_EMAIL_SENDER",
 )
 

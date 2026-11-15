@@ -8,10 +8,11 @@ refused with 405). The request runs as the API key's does (`ai_keys.with_key`): 
 the key's, it reads as trust_ai_agent, it is rate-limited, and a key taken back opens nothing.
 
 Read tools find the company's records with their ids (`find`), run its reports, read a lease's
-ledger, delinquency, the rent roll, work orders, its events and its own drafts. Propose tools
-write drafts (src/pms/api/drafts.py), which do nothing until a staff member approves one: an
-email, a notice, a work order opened, assigned or scheduled, a note. No tool moves money, and the
-AI's role can't.
+ledger, delinquency, the rent roll, work orders, its events and its own drafts, and the most a
+lease's rent may rise where its state caps it by inflation, in the words staff are warned with
+(`rent_increase_limit`, src/pms/rent_cap.py). Propose tools write drafts
+(src/pms/api/drafts.py), which do nothing until a staff member approves one: an email, a notice,
+a work order opened, assigned or scheduled, a note. No tool moves money, and the AI's role can't.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -29,7 +31,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
 from pms import exports
-from pms.api import drafts, events
+from pms.api import drafts, events, renewals
 from pms.api.ai_keys import Key, WithKey
 from pms.api.deps import Conn
 
@@ -262,6 +264,38 @@ def lease_ledger(conn: psycopg.Connection[Any], key: Key, args: dict[str, Any]) 
     return report(conn, key, "tenant_ledger", lease, day_of(conn, key, args))
 
 
+# The most a rent a month may be, as the API takes one (offers.Rent).
+MOST_RENT = Decimal("1000000")
+
+
+def rent_of(args: dict[str, Any], name: str) -> Decimal | None:
+    value = args.get(name)
+    if value is None:
+        return None
+    try:
+        amount = Decimal(str(value).strip())
+    except InvalidOperation:
+        amount = Decimal(-1)
+    if not amount.is_finite() or amount <= 0 or amount > MOST_RENT or amount != round(amount, 2):
+        raise ToolError(f"{name} is an amount a month, as 1250.00")
+    return amount
+
+
+def rent_increase_limit(conn: psycopg.Connection[Any], key: Key, args: dict[str, Any]) -> Any:
+    lease = uuid_of(args, "lease_id")
+    starts_on = (
+        renewals.first_of_next_month(today(key))
+        if args.get("starts_on") is None
+        else day_of(conn, key, args, "starts_on")
+    )
+    found = renewals.limit_for(
+        conn, key.pmc_id, lease, starts_on, rent_of(args, "monthly_rent"), today(key)
+    )
+    if found is None:
+        raise ToolError("no such lease in this company")
+    return found.model_dump(mode="json")
+
+
 def recent_events(conn: psycopg.Connection[Any], key: Key, args: dict[str, Any]) -> Any:
     after = args.get("after")
     if after is not None and (not isinstance(after, int) or after < 1):
@@ -362,6 +396,30 @@ TOOLS = [
         "A lease's charges and payments with the running balance, through a day.",
         obj({"lease_id": UUID_S, "as_of": DAY}, ("lease_id",)),
         lease_ledger,
+    ),
+    Tool(
+        "rent_increase_limit",
+        "The most a lease's rent may rise from a day where its state caps a year's increase by"
+        " inflation (California, Oregon, Washington), how it was worked out, and the written notice"
+        " the state asks before it, in the words the PMS warns staff with (`words`). A warning,"
+        " not legal advice: some homes are exempt and the PMS can't tell which.",
+        obj(
+            {
+                "lease_id": UUID_S,
+                "monthly_rent": {
+                    "type": "string",
+                    "description": "The new rent a month, as 1250.00; none: the most it may be",
+                },
+                "starts_on": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "YYYY-MM-DD; the first of next month by the company's day if"
+                    " left out",
+                },
+            },
+            ("lease_id",),
+        ),
+        rent_increase_limit,
     ),
     Tool(
         "recent_events",

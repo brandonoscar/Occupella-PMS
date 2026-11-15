@@ -205,7 +205,7 @@ describe("RentChangeForm", () => {
     const warning = "California asks 30 days' written notice before a rent increase of 5.0% (California"
       + " Civil Code §827). This new rent starts in 28 days. To give that notice, start it on or after 03/03/2026.";
     const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(path.includes("monthly_rent=1050.00")
-      ? { state: "CA", days: 30, law: "California Civil Code §827", increase_percent: "5.0", earliest: "2026-03-03", warning }
+      ? { state: "CA", days: 30, law: "California Civil Code §827", increase_percent: "5.0", earliest: "2026-03-03", warning, cap: null }
       : null), { status: 200 }));
     vi.stubGlobal("fetch", fetch);
     render(<RentChangeForm lease={{ ...LEASE, ends_on: null }} record={recorder()} />);
@@ -224,5 +224,25 @@ describe("RentChangeForm", () => {
     expect(screen.getByRole("button", { name: "Change rent" })).toHaveProperty("disabled", false);
     fireEvent.change(screen.getByLabelText("New monthly rent"), { target: { value: "1000.00" } });
     await vi.waitFor(() => expect(screen.queryByText(warning)).toBeNull());
+  });
+
+  it("says the most a year's increase may be where the state caps it, a warning only", async () => {
+    const words = "California caps a year's rent increase at 5% plus the change in the cost of living, or 10%."
+      + " The PMS couldn't work out this year's figure. A warning, not legal advice.";
+    const cap = {
+      state: "CA", law: "California Civil Code §1947.12", checked: false, max_percent: "10", max_rent: "1100.00",
+      base_rent: "1000.00", index: null, increase_percent: "12.0", over: true, words,
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(
+      { state: "CA", days: 30, law: "California Civil Code §827", increase_percent: "12.0", earliest: "2026-03-01", warning: null, cap },
+    ), { status: 200 })));
+    render(<RentChangeForm lease={{ ...LEASE, ends_on: null }} record={recorder()} />);
+    fireEvent.change(screen.getByLabelText("From (the first of a month)"), { target: { value: "2026-03-01" } });
+    fireEvent.change(screen.getByLabelText("Written notice given on"), { target: { value: "2026-01-01" } });
+    fireEvent.change(screen.getByLabelText("New monthly rent"), { target: { value: "1120.00" } });
+
+    // Over it: said as an alert, and Change rent still records it.
+    expect((await screen.findByText(words)).closest("[role=alert]")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Change rent" })).toHaveProperty("disabled", false);
   });
 });

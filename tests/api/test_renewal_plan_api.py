@@ -1,13 +1,17 @@
 """A lease's renewal plan through the API (src/pms/api/renewals.py; ADR 0010 phase 3, part L): the
 Renew lease panel's starting terms, who signs, and the written notice the property's state asks
-before the new rent (src/pms/rent_notice.py), for the session's PMC only. Every address here is
-synthetic."""
+before the new rent (src/pms/rent_notice.py) and, where it caps a year's increase by inflation,
+the most it may be (src/pms/rent_cap.py), for the session's PMC only. Every address here is
+synthetic, and every ZIP code one USPS never issued of a prefix the PMS reads."""
 
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from helpers import add_tenant, add_unit, make_pmc, open_lease
 from people import join_as_owner, join_as_staff, join_as_tenant
+
+from pms import cpi, rent_cap
 
 
 def on_this_day() -> None:
@@ -37,12 +41,17 @@ def first_of_last_months(months: int) -> date:
     return day
 
 
-def in_state(conn, pmc, state):
+def in_state(conn, pmc, state, zip_code="00001"):
     conn.execute(
         "INSERT INTO trust_property_addresses (pmc_id, property_id, line_1, city, state, zip)"
-        " VALUES (%s, %s, '100 Synthetic Way', 'Demo City', %s, '00001')",
-        (pmc.pmc_id, pmc.owners[0].property_id, state),
+        " VALUES (%s, %s, '100 Synthetic Way', 'Demo City', %s, %s)",
+        (pmc.pmc_id, pmc.owners[0].property_id, state, zip_code),
     )
+
+
+def index_figures(conn, pmc, series, months_and_values):
+    """The company's CPI figures, as the nightly run keeps them (src/pms/cpi.py)."""
+    cpi.keep(conn, pmc.pmc_id, "fake", {series: {m: Decimal(v) for m, v in months_and_values}})
 
 
 def lease_of(conn, pmc, starts_on, ends_on, rent="1000.00", names=("Tenant A",)):
@@ -102,6 +111,20 @@ def test_california_warns_when_an_increase_over_ten_percent_starts_inside_90_day
 
     starts = TODAY + 21 * DAY
     earliest = TODAY + 90 * DAY
+    # Its ZIP code is in no BLS area the PMS can place: the cap says so and gives its 10%.
+    cap = notice.pop("cap")
+    assert {k: v for k, v in cap.items() if k != "words"} == {
+        "state": "CA",
+        "law": "California Civil Code §1947.12",
+        "checked": False,
+        "max_percent": "10",
+        "max_rent": "1100.00",
+        "base_rent": "1000.00",
+        "index": None,
+        "increase_percent": "15.0",
+        "over": True,
+    }
+    assert "can't tell which BLS index applies at ZIP code 00001" in cap["words"]
     assert notice == {
         "state": "CA",
         "days": 90,
@@ -267,7 +290,9 @@ def test_a_rent_change_on_the_rent_page_is_warned_of_a_states_notice_from_the_da
     )
 
     assert answer.status_code == 200, answer.text
-    assert answer.json() == {
+    cap = answer.json()["cap"]
+    assert (cap["checked"], cap["increase_percent"], cap["over"]) == (False, "5.0", False)
+    assert {k: v for k, v in answer.json().items() if k != "cap"} == {
         "state": "CA",
         "days": 30,
         "law": "California Civil Code §827",
@@ -346,3 +371,111 @@ def test_a_rent_changes_notice_asks_for_what_it_needs(client, conn, staff, pmc):
         ).status_code
         == 422
     )
+
+
+# --- a year's increase capped by inflation (src/pms/rent_cap.py; docs/law.md) ------------------
+
+LA = rent_cap.LOS_ANGELES.series
+
+
+def test_california_says_the_most_a_renewal_may_raise_rent_from_the_companys_index(
+    client, conn, staff, pmc
+):
+    in_state(conn, pmc, "CA", "90000")
+    lease, _ = lease_of(conn, pmc, TODAY - 300 * DAY, TODAY + 20 * DAY)
+    starts = TODAY + 21 * DAY
+    first, last = rent_cap.california_months(rent_cap.LOS_ANGELES, starts)
+    index_figures(conn, pmc, LA, [(first, "300.000"), (last, "309.000")])
+
+    cap = plan(client, lease, monthly_rent="1150.00")["notice"]["cap"]
+
+    assert {k: v for k, v in cap.items() if k != "words"} == {
+        "state": "CA",
+        "law": "California Civil Code §1947.12",
+        "checked": True,
+        "max_percent": "8.0",
+        "max_rent": "1080.00",
+        "base_rent": "1000.00",
+        "index": "Los Angeles-Long Beach-Anaheim",
+        "increase_percent": "15.0",
+        "over": True,
+    }
+    assert (
+        f"the Los Angeles-Long Beach-Anaheim CPI-U went from 300.000 in"
+        f" {rent_cap.month_name(first)} to 309.000 in {rent_cap.month_name(last)}, a change of"
+        " 3.0%. So the most is 8.0% over $1,000.00"
+    ) in cap["words"]
+    assert cap["words"].endswith("A warning, not legal advice.")
+    within = plan(client, lease, monthly_rent="1080.00")["notice"]["cap"]
+    assert (within["over"], within["increase_percent"]) == (False, "8.0")
+
+
+def test_without_the_index_on_file_the_cap_says_it_couldnt_check(client, conn, staff, pmc):
+    in_state(conn, pmc, "CA", "90000")
+    lease, _ = lease_of(conn, pmc, TODAY - 300 * DAY, TODAY + 20 * DAY)
+
+    cap = plan(client, lease, monthly_rent="1050.00")["notice"]["cap"]
+
+    assert (cap["checked"], cap["max_percent"], cap["max_rent"], cap["over"]) == (
+        False,
+        "10",
+        "1100.00",
+        False,
+    )
+    assert "The PMS couldn't work out this year's figure: it has no Los Angeles" in cap["words"]
+    assert "no cap" not in cap["words"]
+
+
+def test_a_rent_change_in_oregon_counts_the_west_regions_average_from_the_rent_now(
+    client, conn, staff, pmc
+):
+    in_state(conn, pmc, "OR", "97000")
+    lease, _ = lease_of(conn, pmc, date(2025, 1, 1), None)
+    prior, latest = rent_cap.oregon_months(2026)
+    index_figures(
+        conn,
+        pmc,
+        rent_cap.WEST.series,
+        [(m, "300.000") for m in prior] + [(m, "306.000") for m in latest],
+    )
+
+    cap = change_notice(
+        client,
+        lease,
+        effective_on="2026-03-01",
+        monthly_rent="1095.00",
+        notice_given_on="2025-11-01",
+    ).json()["cap"]
+
+    assert (cap["state"], cap["law"], cap["checked"]) == ("OR", "ORS 90.323 and 90.324", True)
+    assert (cap["max_percent"], cap["max_rent"], cap["over"]) == ("9.0", "1090.00", True)
+    assert "Oregon's DAS publishes the figure for 2026, which governs" in cap["words"]
+    assert "first year" not in cap["words"]
+
+
+def test_a_rent_change_in_washingtons_first_year_says_none_is_allowed(client, conn, staff, pmc):
+    in_state(conn, pmc, "WA", "98000")
+    lease, _ = lease_of(conn, pmc, date(2025, 9, 1), None)
+    index_figures(
+        conn, pmc, rent_cap.SEATTLE.series, [((2024, 6), "300.000"), ((2025, 6), "308.049")]
+    )
+
+    cap = change_notice(
+        client,
+        lease,
+        effective_on="2026-03-01",
+        monthly_rent="1050.00",
+        notice_given_on="2025-11-01",
+    ).json()["cap"]
+
+    assert (cap["checked"], cap["max_percent"], cap["max_rent"]) == (True, "9.683", "1096.83")
+    assert "Washington allows no increase in a tenancy's first 12 months." in cap["words"]
+
+
+def test_a_state_with_no_inflation_cap_gets_its_notice_alone(client, conn, staff, pmc):
+    in_state(conn, pmc, "NY", "10000")
+    lease, _ = lease_of(conn, pmc, TODAY - 800 * DAY, None)
+
+    notice = plan(client, lease, monthly_rent="1100.00")["notice"]
+
+    assert (notice["days"], notice["cap"]) == (90, None)

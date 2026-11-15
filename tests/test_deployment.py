@@ -32,8 +32,8 @@ def test_the_refusal_names_every_fake_partner_at_once():
     with pytest.raises(deployment.FakePartnerRefused) as refused:
         deployment.refuse_fakes("HTTPS://pms.example.com", ALL_FAKE)
     assert str(refused.value).startswith(
-        "PMS_CONNECT, PMS_EMAIL_SENDER, PMS_GEOCODER, PMS_PAYMENTS, PMS_SCREENING_PARTNER name the"
-        " fake"
+        "PMS_CONNECT, PMS_CPI, PMS_EMAIL_SENDER, PMS_GEOCODER, PMS_PAYMENTS, PMS_SCREENING_PARTNER"
+        " name the fake"
     )
 
 
@@ -298,7 +298,7 @@ def test_the_commands_refuse_the_example_address_before_they_connect(monkeypatch
     monkeypatch.setenv("DATABASE_URL", "postgresql://unused")
     monkeypatch.setenv("PMS_PUBLIC_URL", deployment.PLACEHOLDER)
     monkeypatch.setenv("PMS_EMAIL_SENDER", "smtp")
-    for name in ("PMS_PAYMENTS", "PMS_SCREENING_PARTNER", "PMS_GEOCODER"):
+    for name in ("PMS_PAYMENTS", "PMS_SCREENING_PARTNER", "PMS_GEOCODER", "PMS_CPI"):
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(deployment.PublicUrlRefused):
         if command == "nightly":

@@ -54,6 +54,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from pms import (
     accounts,
     connect,
+    cpi,
     days,
     deployment,
     email,
@@ -201,6 +202,9 @@ class Settings:
     # The geocoder that finds a property on a map (pms.geocoding): "census", "fake", or empty
     # for none.
     geocoder: str = ""
+    # Where the nightly run fetches the price index a rent cap counts (pms.cpi): "bls", "fake",
+    # or empty for none.
+    cpi: str = ""
     # The payments partner tenants pay online through (pms.payments): "stripe" (its keys from
     # the environment), "fake", or empty for none.
     payments: str = ""
@@ -250,6 +254,7 @@ class Settings:
             screening_partner=env.get("PMS_SCREENING_PARTNER", ""),
             email_sender=env.get("PMS_EMAIL_SENDER", ""),
             geocoder=env.get("PMS_GEOCODER", ""),
+            cpi=env.get("PMS_CPI", ""),
             payments=env.get("PMS_PAYMENTS", ""),
             connect=env.get("PMS_CONNECT", ""),
             nightly=env.get("PMS_NIGHTLY", "on").lower() != "off",
@@ -445,6 +450,7 @@ def create_app(settings: Settings) -> FastAPI:
             "PMS_CONNECT": settings.connect,
             "PMS_SCREENING_PARTNER": settings.screening_partner,
             "PMS_GEOCODER": settings.geocoder,
+            "PMS_CPI": settings.cpi,
             "PMS_EMAIL_SENDER": settings.email_sender,
         },
         settings.fake_partners,
@@ -498,6 +504,7 @@ def create_app(settings: Settings) -> FastAPI:
                 settings.public_url,
                 app.state.email,
                 payments=app.state.payments,
+                cpi_source=app.state.cpi,
             )
             runs.start()
         else:
@@ -533,6 +540,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.pool = pool
     app.state.screening = screening.partner_named(settings.screening_partner)
     app.state.geocoder = geocoding.geocoder_named(settings.geocoder)
+    app.state.cpi = cpi.source_named(settings.cpi)
     # Like the SMTP settings, the server's partner's keys come straight from the environment; a
     # company's own keys, entered in Settings, are sealed in the database (pms.payments.Resolver).
     # With a Connect platform (PMS_CONNECT), a company that connected its own Stripe account pays

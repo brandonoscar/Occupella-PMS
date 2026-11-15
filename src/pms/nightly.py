@@ -33,6 +33,10 @@ lock while it lasts, and one that finds it held leaves the work to that run.
 With a payments partner (PMS_PAYMENTS), each tenant's autopay payment due starts too, after the
 rent is charged, and goes to the partner once the run commits (src/pms/autopay.py).
 
+With a CPI source (PMS_CPI), the Consumer Price Index figures a rent cap counts are fetched once a
+day for every company and kept in each one's books after its run, in a transaction of their own
+(src/pms/cpi.py): a fetch that fails is logged and never fails a company's run.
+
 usage: python -m pms.nightly    (DATABASE_URL and PMS_PUBLIC_URL, acting as trust_app)
 """
 
@@ -55,6 +59,7 @@ from pms import (
     autopay,
     autopay_homes,
     connect,
+    cpi,
     days,
     deployment,
     email,
@@ -194,11 +199,13 @@ def run_all(
     sending: bool = False,
     partner: str | payments.Resolver | None = None,
     at: datetime | None = None,
+    cpi_source: cpi.Source | None = None,
 ) -> list[Ran]:
     """Every PMC's run (or only those named) for a day, or with none for each one's own day at
     `at` (now by default). One that fails is logged and left for the next run, and while the
     server sends email its admins are told (once a day); the others still run. While another run
-    holds the lock, this one runs nothing."""
+    holds the lock, this one runs nothing. With a CPI source, each company that ran keeps the
+    day's figures (fetched once for all of them) after its run."""
     held = conn.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (LOCK,)).fetchone()
     conn.commit()
     if held is None or not held[0]:
@@ -208,6 +215,7 @@ def run_all(
         if pmcs is None:
             pmcs = companies(conn)
             conn.commit()
+        fetched = None if cpi_source is None else cpi.fetched_today(cpi_source, at)
         done = []
         for pmc_id in pmcs:
             on = day or days.day_at(conn, pmc_id, at or datetime.now(UTC))
@@ -218,6 +226,9 @@ def run_all(
                 log.exception("the nightly run of PMC %s failed; the next run tries again", pmc_id)
                 if sending:
                     alert(conn, pmc_id, on, failed, public_url)
+                continue
+            if cpi_source is not None:
+                cpi.keep_for(conn, pmc_id, cpi_source, fetched)
         return done
     finally:
         if not conn.closed:
@@ -277,6 +288,7 @@ class Scheduler:
         retry: float = RETRY,
         pmcs: Sequence[UUID] | None = None,
         payments: payments.Partner | payments.Resolver | None = None,
+        cpi_source: cpi.Source | None = None,
     ) -> None:
         self.database_url = database_url
         self.role = role
@@ -286,6 +298,7 @@ class Scheduler:
         self.retry = retry
         self.pmcs = pmcs
         self.payments = None if payments is None else resolver_of(payments)
+        self.cpi_source = cpi_source
         # The day each company's run last began, in this process.
         self.days: dict[UUID, date] = {}
         self.ran = threading.Event()  # set after each run that finished
@@ -319,6 +332,7 @@ class Scheduler:
                     self.sender is not None,
                     self.payments,
                     at=at,
+                    cpi_source=self.cpi_source,
                 )
                 if due
                 else []
@@ -379,7 +393,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             os.environ,
             live=deployment.is_live(public_url, os.environ.get("PMS_FAKE_PARTNERS", "")),
         )
-        done = run_all(conn, None, public_url, sending=sending, partner=partner)
+        done = run_all(
+            conn,
+            None,
+            public_url,
+            sending=sending,
+            partner=partner,
+            cpi_source=cpi.source_named(os.environ.get("PMS_CPI", "")),
+        )
         conn.autocommit = True
         autopay.submit_waiting(conn, partner)
         looked = look_ups.look_up_waiting(

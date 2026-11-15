@@ -147,6 +147,24 @@ export type RenewalNotice = {
   increase_percent: string;
   earliest: string;
   warning: string | null;
+  // Where the state caps a year's increase by inflation (src/pms/rent_cap.py): the most this one
+  // may be and how it was worked out, in `words`; a warning, never a refusal.
+  cap: RentCap | null;
+};
+
+export type RentCap = {
+  state: string;
+  law: string;
+  // False when the PMS couldn't work out this year's figure (`words` says why): the most is then
+  // the 10% the cap never exceeds.
+  checked: boolean;
+  max_percent: string;
+  max_rent: string;
+  base_rent: string;
+  index: string | null;
+  increase_percent: string | null;
+  over: boolean;
+  words: string;
 };
 
 export type RenewalPlan = {

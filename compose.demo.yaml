@@ -39,6 +39,7 @@ services:
       PMS_EMAIL_SENDER: fake
       PMS_SCREENING_PARTNER: fake
       PMS_GEOCODER: fake
+      PMS_CPI: fake
     depends_on:
       demo:
         condition: service_completed_successfully

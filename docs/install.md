@@ -30,6 +30,7 @@ four are needed to start; add the others when you turn those parts on.
 | `PMS_EMAIL_SENDER=smtp`, `PMS_SMTP_HOST`, `PMS_SMTP_PORT`, `PMS_SMTP_USERNAME`, `PMS_SMTP_PASSWORD`, `PMS_EMAIL_FROM` | Sends invites, password resets, receipts, notices and owners' statements | Your email provider's SMTP settings (any provider that offers SMTP with STARTTLS) | Strongly recommended. Without it, emails wait in the PMS and you hand invite links over yourself |
 | `PMS_PAYMENTS=stripe`, `PMS_STRIPE_SECRET_KEY`, `PMS_STRIPE_WEBHOOK_SECRET` | Tenants pay rent online by bank, with autopay; owners pay into their accounts | Easier: leave these out and enter your Stripe keys in Company setup (below). These are the fallback for a company that enters none | Optional |
 | `PMS_GEOCODER=census` | Puts each property on a map from its address | Nothing: the U.S. Census Bureau's geocoder is free and needs no key | Optional |
+| `PMS_CPI=bls` | Says the most a rent increase may be in California, Oregon and Washington, from the price index their caps count | Nothing: the Bureau of Labor Statistics' API is free and needs no key | Optional |
 
 Never set any of these to `fake`. The fake partners are for development and the demo, and a
 server whose `PMS_PUBLIC_URL` starts with `https://` refuses to start with one.

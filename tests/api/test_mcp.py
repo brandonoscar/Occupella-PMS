@@ -3,13 +3,15 @@ the tools and calls them at /mcp; read tools find the company's records with the
 its reports, ledgers and events; propose tools write drafts that wait for staff. Everything is
 the key's company's, read as the AI's role. Every name here is synthetic."""
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
 from helpers import add_tenant, add_unit, events_seen, make_pmc, open_lease
 from people import join_as_staff
 
+from pms import cpi, rent_cap
 from pms.api import create_app
 
 NOT_VALID = "this key was taken back or doesn't exist"
@@ -95,6 +97,7 @@ def test_a_client_initializes_and_lists_the_tools(software, key, conn, pmc):
         "lease_ledger",
         "recent_events",
         "my_drafts",
+        "rent_increase_limit",
         "propose_email",
         "propose_notice",
         "propose_work_order",
@@ -315,3 +318,171 @@ def test_a_tool_asked_wrongly_says_how_to_ask(software, key, monkeypatch):
     monkeypatch.setattr(exports, "run_report", refuse)
     refused = tool(software, key, "run_report", name="rent_roll", args=["2026-11-05"])
     assert refused["content"][0]["text"] == "this key may not run the rent_roll report"
+
+
+# --- the most a rent may rise (src/pms/rent_cap.py, renewals.limit_for) -------------------------
+
+
+def at_address(conn, pmc, state, zip_code):
+    conn.execute(
+        "INSERT INTO trust_property_addresses (pmc_id, property_id, line_1, city, state, zip)"
+        " VALUES (%s, %s, '100 Synthetic Way', 'Demo City', %s, %s)",
+        (pmc.pmc_id, pmc.owners[0].property_id, state, zip_code),
+    )
+
+
+def test_rent_increase_limit_says_what_staff_are_warned_of(client, software, key, conn, pmc, home):
+    at_address(conn, pmc, "CA", "90000")
+    starts = date(2027, 3, 1)
+    # A change of rent in the 12 months before: the cap counts from the lowest, 1,100.00, and
+    # the AI's role reads it without the app's own function (renewals.AI_LOWEST).
+    conn.execute(
+        "INSERT INTO trust_rent_changes (pmc_id, lease_id, effective_on, monthly_rent,"
+        " notice_given_on, served_by) VALUES (%s, %s, '2026-09-01', 1150, '2026-07-01', 'mail')",
+        (pmc.pmc_id, home["lease"]),
+    )
+    first, last = rent_cap.california_months(rent_cap.LOS_ANGELES, starts)
+    cpi.keep(
+        conn,
+        pmc.pmc_id,
+        "fake",
+        {rent_cap.LOS_ANGELES.series: {first: Decimal("300"), last: Decimal("309")}},
+    )
+
+    found = tool(
+        software,
+        key,
+        "rent_increase_limit",
+        lease_id=str(home["lease"]),
+        monthly_rent="1200.00",
+        starts_on=str(starts),
+    )
+
+    assert found["isError"] is False
+    limit = found["structuredContent"]
+    assert (limit["state"], limit["zip"], limit["rent_now"], limit["lowest_rent"]) == (
+        "CA",
+        "90000",
+        "1150.00",
+        "1100.00",
+    )
+    assert (limit["new_rent"], limit["starts_on"], limit["unit"]) == (
+        "1200.00",
+        "2027-03-01",
+        "Unit 7",
+    )
+    assert (limit["cap"]["max_percent"], limit["cap"]["max_rent"], limit["cap"]["over"]) == (
+        "8.0",
+        "1188.00",
+        True,
+    )
+    assert limit["words"].startswith(limit["cap"]["words"])
+    # The same words the staff's warning gives for that rent change (the key's admin, signed in).
+    staff = client.get(
+        f"/api/leasing/renewals/{home['lease']}/rent-change-notice",
+        params={
+            "effective_on": "2027-03-01",
+            "monthly_rent": "1200.00",
+            "notice_given_on": "2026-11-01",
+        },
+    ).json()
+    assert staff["cap"] == limit["cap"]
+
+
+def test_rent_increase_limit_without_a_new_rent_says_the_most_from_next_month(
+    software, key, conn, pmc, home
+):
+    at_address(conn, pmc, "OR", "97000")
+
+    limit = tool(software, key, "rent_increase_limit", lease_id=str(home["lease"]))[
+        "structuredContent"
+    ]
+
+    next_month = (TODAY.replace(day=1) + timedelta(days=32)).replace(day=1)
+    assert (limit["starts_on"], limit["new_rent"], limit["notice"]) == (str(next_month), None, None)
+    assert limit["cap"]["checked"] is False
+    assert "The PMS couldn't work out this year's figure" in limit["words"]
+    assert "This new rent" not in limit["words"]
+
+
+def test_rent_increase_limit_says_when_it_cant_tell_or_the_state_has_no_cap(
+    software, key, conn, pmc, home
+):
+    asked = {"lease_id": str(home["lease"]), "starts_on": "2027-03-01"}
+
+    nowhere = tool(software, key, "rent_increase_limit", **asked)["structuredContent"]
+    assert (nowhere["state"], nowhere["cap"]) == (None, None)
+    assert "this property has no address on file" in nowhere["words"]
+    at_address(conn, pmc, "TX", "75000")
+    texas = tool(software, key, "rent_increase_limit", **asked, monthly_rent="1200.00")
+    assert texas["structuredContent"]["cap"] is None
+    assert (
+        "The PMS records no cap on a year's rent increase in TX"
+        in (texas["structuredContent"]["words"])
+    )
+    lower = tool(software, key, "rent_increase_limit", **asked, monthly_rent="1000.00")
+    assert lower["structuredContent"]["words"].startswith(
+        "$1,000.00 is no increase over the rent now, $1,100.00."
+    )
+
+
+def test_rent_increase_limit_says_when_the_new_rent_starts_too_soon_for_its_notice(
+    software, key, conn, pmc, home
+):
+    at_address(conn, pmc, "CA", "90000")
+    starts = TODAY + timedelta(days=10)
+
+    limit = tool(
+        software,
+        key,
+        "rent_increase_limit",
+        lease_id=str(home["lease"]),
+        monthly_rent="1200.00",
+        starts_on=str(starts),
+    )["structuredContent"]
+
+    # 9.1% over 1,100.00: California asks 30 days' written notice (Civil Code 827), counted from
+    # the key's today, as staff's warning counts it from the day notice goes out.
+    notice = limit["notice"]
+    assert (notice["state"], notice["days"], notice["earliest"]) == (
+        "CA",
+        30,
+        str(TODAY + timedelta(days=30)),
+    )
+    assert notice["warning"].startswith("California asks 30 days' written notice")
+    assert "This new rent starts in 10 days." in notice["warning"]
+    assert limit["words"] == f"{limit['cap']['words']} {notice['warning']}"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "says"),
+    [
+        ({"lease_id": "nope"}, "lease_id is an id from find"),
+        ({"monthly_rent": "abc"}, "monthly_rent is an amount a month, as 1250.00"),
+        ({"monthly_rent": "0"}, "monthly_rent is an amount a month, as 1250.00"),
+        ({"monthly_rent": "10.001"}, "monthly_rent is an amount a month, as 1250.00"),
+        ({"starts_on": "03/01/2027"}, "starts_on is a day as YYYY-MM-DD"),
+    ],
+)
+def test_rent_increase_limit_asked_wrongly_says_how_to_ask(software, key, home, arguments, says):
+    asked = {"lease_id": str(home["lease"]), **arguments}
+
+    refused = tool(software, key, "rent_increase_limit", **asked)
+
+    assert refused["isError"] is True
+    assert refused["content"][0]["text"] == says
+
+
+def test_rent_increase_limit_reads_only_the_keys_company(software, key, conn):
+    other = make_pmc(conn)
+    prop = other.owners[0].property_id
+    unit = add_unit(conn, other.pmc_id, prop, "Unit 1")
+    tenant = add_tenant(conn, other.pmc_id, prop, "Tenant A")
+    theirs = open_lease(conn, other.pmc_id, unit, date(2026, 1, 1), None, "900.00", [tenant])
+
+    refused = tool(software, key, "rent_increase_limit", lease_id=str(theirs))
+
+    assert (refused["isError"], refused["content"][0]["text"]) == (
+        True,
+        "no such lease in this company",
+    )
