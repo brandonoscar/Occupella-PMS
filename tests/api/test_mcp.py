@@ -426,6 +426,34 @@ def test_rent_increase_limit_says_when_it_cant_tell_or_the_state_has_no_cap(
     )
 
 
+def test_rent_increase_limit_says_when_the_new_rent_starts_too_soon_for_its_notice(
+    software, key, conn, pmc, home
+):
+    at_address(conn, pmc, "CA", "90000")
+    starts = TODAY + timedelta(days=10)
+
+    limit = tool(
+        software,
+        key,
+        "rent_increase_limit",
+        lease_id=str(home["lease"]),
+        monthly_rent="1200.00",
+        starts_on=str(starts),
+    )["structuredContent"]
+
+    # 9.1% over 1,100.00: California asks 30 days' written notice (Civil Code 827), counted from
+    # the key's today, as staff's warning counts it from the day notice goes out.
+    notice = limit["notice"]
+    assert (notice["state"], notice["days"], notice["earliest"]) == (
+        "CA",
+        30,
+        str(TODAY + timedelta(days=30)),
+    )
+    assert notice["warning"].startswith("California asks 30 days' written notice")
+    assert "This new rent starts in 10 days." in notice["warning"]
+    assert limit["words"] == f"{limit['cap']['words']} {notice['warning']}"
+
+
 @pytest.mark.parametrize(
     ("arguments", "says"),
     [

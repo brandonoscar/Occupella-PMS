@@ -103,6 +103,30 @@ def test_a_bls_answer_that_isnt_one_is_a_failed_fetch(monkeypatch, answer, says)
         cpi.BlsCPI().fetch([LA], 2025, 2026, date(2026, 11, 15))
 
 
+@pytest.mark.parametrize("value", ["0", "0.000", "-1.5", "NaN", "Infinity"])
+def test_a_figure_bls_couldnt_have_published_is_left_out(monkeypatch, value):
+    answer = {
+        "status": "REQUEST_SUCCEEDED",
+        "Results": {
+            "series": [
+                {
+                    "seriesID": LA,
+                    "data": [
+                        {"year": "2026", "period": "M04", "value": value},
+                        {"year": "2025", "period": "M04", "value": "300"},
+                    ],
+                }
+            ]
+        },
+    }
+    bls_answering(monkeypatch, answer, [])
+
+    got = cpi.BlsCPI().fetch([LA], 2025, 2026, date(2026, 11, 15))
+
+    # A figure of nothing or less, or not a number at all, is no index: never a change of -100%.
+    assert got == {LA: {(2025, 4): Decimal("300.000")}}
+
+
 def test_the_fake_publishes_the_same_figures_each_run_and_nothing_not_out_yet():
     fake = cpi.FakeCPI()
     first = fake.fetch(rent_cap.SERIES, 2025, 2026, date(2026, 5, 14))
@@ -165,6 +189,21 @@ def test_a_process_asks_once_a_day_and_a_failing_source_a_few_times_at_most(capl
     assert "the CPI figures could not be fetched from failing: the BLS API did not" in caplog.text
 
 
+def test_a_process_forgets_what_it_fetched_before_yesterday():
+    daily = cpi.Daily()
+    source = Counting()
+
+    cpi.fetched_today(source, NOV_15, daily)
+    cpi.fetched_today(source, datetime(2026, 11, 16, 1, tzinfo=UTC), daily)
+    assert set(daily.got) == {("fake", date(2026, 11, 15)), ("fake", date(2026, 11, 16))}
+
+    cpi.fetched_today(source, datetime(2026, 11, 17, 1, tzinfo=UTC), daily)
+
+    # Yesterday's stays (a day's run may start before midnight UTC and end after); older goes.
+    assert set(daily.got) == {("fake", date(2026, 11, 16)), ("fake", date(2026, 11, 17))}
+    assert source.calls == 3
+
+
 def month(m):
     return date(m[0], m[1], 1)
 
@@ -207,6 +246,25 @@ def test_a_company_keeps_what_changed_and_reads_one_fetchs_figures(conn, app_con
     # Another company keeps its own.
     other = make_pmc(conn)
     assert cpi.on_file(app_conn, other.pmc_id)(LA, [(2025, 4)]) == {}
+
+
+def test_a_series_no_cap_reads_or_one_with_no_months_keeps_nothing(conn, app_conn):
+    pmc = make_pmc(conn)
+
+    kept = cpi.keep(
+        app_conn,
+        pmc.pmc_id,
+        "fake",
+        {"CUUR0000SA0": {(2026, 4): Decimal("320.000")}, LA: {}, SD: {}},
+    )
+
+    assert kept == 0
+    assert (
+        rows(conn, pmc.pmc_id, "trust_cpi_fetches"),
+        rows(conn, pmc.pmc_id, "trust_cpi_figures"),
+    ) == (0, 0)
+    # Asked for no months, the company's figures are none, without a query.
+    assert cpi.on_file(app_conn, pmc.pmc_id)(LA, []) == {}
 
 
 def test_a_month_no_fetch_answered_with_the_others_is_never_mixed_in(conn, app_conn):
