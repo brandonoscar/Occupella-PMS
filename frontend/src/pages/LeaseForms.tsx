@@ -494,12 +494,15 @@ export function RentChangeForm({ lease, record }: { lease: RentLease; record: Re
     setWarning("");
     if (!/^\d+(\.\d{1,2})?$/.test(amount.trim()) || Number(amount) <= 0 || !day.test(from) || !day.test(notice)) return;
     const run = latest();
-    const asked = new URLSearchParams({ effective_on: from, monthly_rent: amount.trim(), notice_given_on: notice });
+    // How it was served counts: California adds five days for notice by mail (D-069).
+    const asked = new URLSearchParams({
+      effective_on: from, monthly_rent: amount.trim(), notice_given_on: notice, served_by: served,
+    });
     api.get<{ warning: string | null } | null>(`/api/leasing/renewals/${lease.id}/rent-change-notice?${asked}`)
       .then(run.keep((rule) => setWarning(rule?.warning ?? "")))
       .catch(() => {});  // the API refuses an unfinished one; the save says why
     return run.stop;
-  }, [lease.id, amount, from, notice]);
+  }, [lease.id, amount, from, notice, served]);
   return (
     <Form
       className="flex flex-wrap items-end gap-3"

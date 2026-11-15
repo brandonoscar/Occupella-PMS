@@ -218,8 +218,13 @@ describe("RentChangeForm", () => {
 
     expect(await screen.findByText(warning)).toBeTruthy();
     expect(fetch.mock.calls.at(-1)?.[0]).toBe(
-      "/api/leasing/renewals/l1/rent-change-notice?effective_on=2026-03-01&monthly_rent=1050.00&notice_given_on=2026-02-01",
+      "/api/leasing/renewals/l1/rent-change-notice?effective_on=2026-03-01&monthly_rent=1050.00&notice_given_on=2026-02-01&served_by=mail",
     );
+    // How it was served is asked again when it changes (California adds five days for mail, D-069).
+    fireEvent.change(screen.getByLabelText("Served"), { target: { value: "in person" } });
+    await vi.waitFor(() => expect(fetch.mock.calls.at(-1)?.[0]).toBe(
+      "/api/leasing/renewals/l1/rent-change-notice?effective_on=2026-03-01&monthly_rent=1050.00&notice_given_on=2026-02-01&served_by=in+person",
+    ));
     // A warning only: Change rent still records it.
     expect(screen.getByRole("button", { name: "Change rent" })).toHaveProperty("disabled", false);
     fireEvent.change(screen.getByLabelText("New monthly rent"), { target: { value: "1000.00" } });

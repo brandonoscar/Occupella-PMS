@@ -290,6 +290,38 @@ def test_a_rent_change_on_the_rent_page_is_warned_of_a_states_notice_from_the_da
     assert enough["warning"] is None
 
 
+def test_a_california_notice_served_by_mail_asks_five_days_more(client, conn, staff, pmc):
+    """Given 32 days before a 5% increase, a California notice served in person is enough; served
+    by mail it asks 35 days (Code of Civil Procedure 1013(a), D-069), and the warning says so."""
+    in_state(conn, pmc, "CA")
+    lease, _ = lease_of(conn, pmc, date(2025, 1, 1), None)
+    asked = {"effective_on": "2026-04-01", "monthly_rent": "1050.00"}
+
+    in_person = change_notice(
+        client, lease, notice_given_on="2026-02-28", served_by="in person", **asked
+    ).json()
+    mailed = change_notice(client, lease, notice_given_on="2026-02-28", served_by="mail", **asked)
+    mailed_sooner = change_notice(
+        client, lease, notice_given_on="2026-02-25", served_by="mail", **asked
+    ).json()
+
+    assert (in_person["days"], in_person["warning"]) == (30, None)
+    assert mailed.status_code == 200, mailed.text
+    assert mailed.json() == {
+        "state": "CA",
+        "days": 35,
+        "law": "California Civil Code §827 and Code of Civil Procedure §1013(a), served by mail",
+        "increase_percent": "5.0",
+        "earliest": "2026-04-04",
+        "warning": (
+            "California asks 35 days' written notice before a rent increase of 5.0% (California"
+            " Civil Code §827 and Code of Civil Procedure §1013(a), served by mail). This new rent"
+            " starts in 32 days. To give that notice, start it on or after 04/04/2026."
+        ),
+    }
+    assert mailed_sooner["warning"] is None  # 35 days before
+
+
 def test_a_rent_change_with_no_states_rule_or_no_increase_is_warned_of_nothing(
     client, conn, staff, pmc
 ):
@@ -343,6 +375,17 @@ def test_a_rent_changes_notice_asks_for_what_it_needs(client, conn, staff, pmc):
             effective_on="2026-03-01",
             monthly_rent="-5",
             notice_given_on="2026-02-01",
+        ).status_code
+        == 422
+    )
+    assert (
+        change_notice(
+            client,
+            lease,
+            effective_on="2026-03-01",
+            monthly_rent="1100.00",
+            notice_given_on="2026-02-01",
+            served_by="carrier pigeon",
         ).status_code
         == 422
     )

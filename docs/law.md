@@ -191,9 +191,17 @@ it only as its own terms allow. Some states ask for more:
   mid-month keeps its days at the rent in force, the reports show it, and the tenant sees the
   change coming in the portal with the day notice was given.
 
+- California adds five days to a notice served by mail (Code of Civil Procedure 1013(a), the
+  service by mail Civil Code 827 names): the Change rent panel warns at 35 days (95 over 10%) when
+  the notice was mailed, counted from the day it was given (docs/edge-cases.md D-069). Read on
+  2026-11-15 from search excerpts (california.public.law's text of Civil Code 827, which names
+  service by mail under 1013; ezel.ai and alleastbayproperties.com for the five days on 30 and 90):
+  the statutes were not read in full, NOT VERIFIED. 1013's longer periods for mail addressed
+  outside California (10 days) or the United States (20) are not applied.
+
 **Left to the company.** Longer notice where its state or city asks (up to 90 days), rent caps,
-the first-year and once-a-year limits, extra days for notice served by mail, and the notice
-itself, which the PMS records but does not write or send.
+the first-year and once-a-year limits, other states' extra days for notice served by mail, and the
+notice itself, which the PMS records but does not write or send.
 
 ## Renters insurance on file (migration 0062)
 

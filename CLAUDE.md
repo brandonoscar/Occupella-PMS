@@ -891,7 +891,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   month already charged keeps its rent. `trust_rent_on` is the rent in force on a day: the rent
   run charges it, `trust_end_lease` adjusts at it, the rent roll, lease expirations, tenant
   directory and vacancy reports show it. Staff record one on the rent page, which warns of the
-  written notice the property's state asks, counted from the day notice was given
+  written notice the property's state asks, counted from the day notice was given, with
+  California's five days more for a notice served by mail (`served_by`; CCP 1013(a), D-069)
   (`GET /api/leasing/renewals/<lease>/rent-change-notice`, `src/pms/rent_notice.py`; a warning,
   never a refusal; D-065); the tenant sees it coming in the portal.
 - Rent due day (migration 0081, the founder's review q013): a lease's rent is due on the first

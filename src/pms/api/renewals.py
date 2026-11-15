@@ -29,6 +29,9 @@ from pms.api.rent import cents, today
 
 router = APIRouter(prefix="/api/leasing/renewals")
 
+# How a rent change's written notice was served, as the rent page records it (migration 0061).
+ServedBy = Literal["in person", "mail", "posted", "email", "other"]
+
 
 class Expiring(BaseModel):
     lease_id: UUID | None
@@ -184,6 +187,7 @@ def notice_of(
     new_rent: Decimal,
     starts_on: date,
     sent_on: date,
+    served_by: str | None = None,
 ) -> RenewalNotice | None:
     """The written notice the property's state asks before a new rent of `new_rent` (over `now`)
     starts on `starts_on`, the notice going out on `sent_on`; None without an increase or without
@@ -208,6 +212,7 @@ def notice_of(
     rule = rent_notice.needed(address.state, now, lowest, new_rent, max(lived, term))
     if rule is None:
         return None
+    rule = rent_notice.served(rule, served_by)
     return RenewalNotice(
         state=rule.state,
         days=rule.days,
@@ -276,11 +281,13 @@ def rent_change_notice(
     effective_on: Annotated[date, Query()],
     monthly_rent: Annotated[Rent, Query()],
     notice_given_on: Annotated[date, Query()],
+    served_by: Annotated[ServedBy | None, Query()] = None,
 ) -> RenewalNotice | None:
     """The written notice the property's state asks before a rent change recorded on the rent page
-    (docs/edge-cases.md D-065, D-066), counted from the day notice was given: the Change rent panel
-    warns before it is recorded when the new rent starts sooner. A warning only, as every state
-    rule here is (q142); the database still asks a full month."""
+    (docs/edge-cases.md D-065, D-066), counted from the day notice was given, with a state's extra
+    days for a notice served by mail (D-069): the Change rent panel warns before it is recorded
+    when the new rent starts sooner. A warning only, as every state rule here is (q142); the
+    database still asks a full month."""
     with days_counted():
         found = conn.execute(
             LEASE,
@@ -298,4 +305,5 @@ def rent_change_notice(
             Decimal(monthly_rent),
             effective_on,
             notice_given_on,
+            served_by,
         )
