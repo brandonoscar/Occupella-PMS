@@ -9110,6 +9110,45 @@ $$;
 
 
 --
+-- Name: trust_refuse_unapplied_journal_line(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_refuse_unapplied_journal_line() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_found boolean;
+BEGIN
+    IF TG_TABLE_NAME = 'trust_journal_entry_lines' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM trust_ledger_accounts AS a
+            WHERE a.ledger_account_id IN (NEW.from_account, NEW.to_account)
+              AND a.kind = 'unapplied_cash'
+        ) INTO v_found;
+    ELSIF NEW.decision = 'posted' THEN
+        -- An entry proposed before this migration, posted now.
+        SELECT EXISTS (
+            SELECT 1
+            FROM trust_journal_entry_lines AS l
+            JOIN trust_ledger_accounts AS a
+              ON a.ledger_account_id IN (l.from_account, l.to_account)
+            WHERE l.entry_id = NEW.entry_id AND a.kind = 'unapplied_cash'
+        ) INTO v_found;
+    ELSE
+        v_found := false;  -- declining moves nothing
+    END IF;
+    IF v_found THEN
+        RAISE EXCEPTION 'trust: a journal entry moves no money into or out of unapplied cash'
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Apply unapplied cash to a lease or refund it from Banking.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_remove_lease_tenant(uuid, uuid, uuid, date, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -31501,6 +31540,20 @@ CREATE TRIGGER trust_no_negative_balance BEFORE INSERT OR UPDATE OF balance ON p
 
 
 --
+-- Name: trust_journal_entry_decisions trust_no_unapplied_cash; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_no_unapplied_cash BEFORE INSERT ON public.trust_journal_entry_decisions FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_unapplied_journal_line();
+
+
+--
+-- Name: trust_journal_entry_lines trust_no_unapplied_cash; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_no_unapplied_cash BEFORE INSERT ON public.trust_journal_entry_lines FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_unapplied_journal_line();
+
+
+--
 -- Name: trust_notice_template_removals trust_notice_template_removal; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -39241,4 +39294,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261113000100'),
     ('20261113000200'),
     ('20261114000100'),
-    ('20261115000200');
+    ('20261115000200'),
+    ('20261115000210');

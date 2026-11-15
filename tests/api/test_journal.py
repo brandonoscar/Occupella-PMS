@@ -325,3 +325,36 @@ def test_the_portal_reads_no_float(client, pmc, bookkeeper):
     (entry,) = entries(client).values()
     assert entry["lines"][0]["amount"] == "0.10"
     assert date.fromisoformat(entry["event_on"]) == date(2026, 2, 10)
+
+
+def unapplied_cash(conn, pmc):
+    """The operating trust bank account's unapplied cash, holding 200.00 nobody's yet."""
+    account = conn.execute(
+        "SELECT trust_open_ledger_account(%s, %s, 'unapplied_cash')",
+        (pmc.pmc_id, pmc.operating_bank_id),
+    ).fetchone()[0]
+    transfer_batch(
+        conn, [(pmc.operating_cash, account, "200.00")], datetime(2026, 2, 1, tzinfo=UTC)
+    )
+    return account
+
+
+@pytest.mark.parametrize("way", ["out", "in"])
+def test_an_entry_moves_no_unapplied_cash(client, conn, pmc, bookkeeper, manager, way):
+    """docs/edge-cases.md M-154: an entry out of unapplied cash left every receipt reading as
+    held (a refund then paid out another's money), and one into it held money no receipt could
+    apply or refund. The page doesn't offer it, and the API refuses it in words."""
+    account = unapplied_cash(conn, pmc)
+    line = {"from_account": account, "to_account": pmc.owners[0].account, "amount": "50.00"}
+    if way == "in":
+        line = {"from_account": pmc.owners[0].account, "to_account": account, "amount": "50.00"}
+
+    assert account not in {a["id"] for a in ok(client.get("/api/journal"))["accounts"]}
+    refused(
+        client.post("/api/journal", json={**body(pmc), "lines": [line]}),
+        422,
+        "a journal entry moves no money into or out of unapplied cash: apply it to a lease or"
+        " refund it from Banking",
+    )
+    assert entries(client) == {}
+    assert balance(conn, account) == Decimal("200.00")

@@ -1384,6 +1384,15 @@ tests = [
   "tests/api/test_journal.py::test_an_entry_is_dated_no_later_than_the_companys_today",
 ]
 
+[[invariant]]
+id = "a-journal-entry-moves-no-unapplied-cash"
+statement = "No journal entry moves money into or out of unapplied cash (migration 20261115000210; docs/edge-cases.md M-154): what is left of each receipt stays what the account holds, so a refund pays out only its own receipt's money and month-end is never held up by money no receipt can apply or refund. A line naming unapplied cash is refused when proposed, and an entry proposed before the rule when posted."
+tests = [
+  "tests/properties/test_journal_properties.py::test_journal_entries_move_money_only_when_another_approver_posts_them",
+  "tests/test_journal_entries.py::test_an_entry_moves_no_unapplied_cash",
+  "tests/api/test_journal.py::test_an_entry_moves_no_unapplied_cash",
+]
+
 [[report]]
 id = "deposit-return"
 statement = "The itemized statement of a lease's security deposits once returned, as staff send it to the tenants: the property and unit, the tenants and the lease's days, each lease they moved from, each tenant's deposit, what was kept for each charge (naming the home of one of a lease moved from), the totals, what went back to each tenant, and who returned it when. Compared to a checked-in golden file."

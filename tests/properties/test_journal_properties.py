@@ -16,7 +16,8 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
   - a posted entry was posted by a staff member who held approve and did not propose it, and
     its transfers are its lines, in order, dated its day;
   - a declined or undecided entry moved nothing;
-  - no account but a bank's cash is below zero, and each trust bank account ties out.
+  - no account but a bank's cash is below zero, and each trust bank account ties out;
+  - no entry moves money into or out of unapplied cash (migration 20261115000210, M-154).
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
@@ -88,6 +89,11 @@ class JournalMachine(RuleBasedStateMachine):
             pmc.tenant_deposit,
         ]
         self.bank = ["operating"] * 5 + ["deposit"] * 2
+        # Unapplied cash, which no entry moves (migration 20261115000210, M-154).
+        self.unapplied = conn.execute(
+            "SELECT trust_open_ledger_account(%s, %s, 'unapplied_cash')",
+            (self.pmc, pmc.operating_bank_id),
+        ).fetchone()[0]
         self.cash = {0, 5}
         # 1000.00 held in each account.
         transfer_batch(
@@ -171,6 +177,33 @@ class JournalMachine(RuleBasedStateMachine):
             refusal = self.refused(psycopg.errors.UniqueViolation, work)
             assert "was used for a different journal entry" in refusal
 
+    @rule(
+        by=WHO,
+        other=st.integers(0, 6),
+        out=st.booleans(),
+        cents=st.integers(min_value=1, max_value=150000),
+    )
+    def propose_with_unapplied_cash(self, by, other, out, cents):
+        """An entry into or out of unapplied cash is refused: what is left of each receipt
+        would no longer be what the account holds (docs/edge-cases.md M-154)."""
+        line = (self.unapplied, self.accounts[other])
+        if not out:
+            line = (line[1], line[0])
+
+        def work():
+            propose_entry(
+                self.app,
+                self.pmc,
+                self.staff[by],
+                DAY,
+                "Adjusting entry",
+                [(*line, str(Decimal(cents) * CENTS))],
+            )
+
+        event("proposed with unapplied cash: refused")
+        refusal = self.refused(psycopg.errors.CheckViolation, work)
+        assert "moves no money into or out of unapplied cash" in refusal
+
     @rule(by=WHO, later=st.integers(min_value=1, max_value=400))
     def propose_later(self, by, later):
         today = self.conn.execute(
@@ -252,6 +285,20 @@ class JournalMachine(RuleBasedStateMachine):
             event("entry declined")
             work()
             entry.decision = "declined"
+
+    @invariant()
+    def no_entry_names_unapplied_cash(self):
+        assert (
+            self.conn.execute(
+                "SELECT count(*) FROM trust_journal_entry_lines WHERE pmc_id = %s"
+                " AND %s IN (from_account, to_account)",
+                (self.pmc, self.unapplied),
+            ).fetchone()[0]
+            == 0
+        )
+        assert self.conn.execute(
+            "SELECT balance FROM pgledger_accounts WHERE id = %s", (self.unapplied,)
+        ).fetchone()[0] == Decimal(0)
 
     @invariant()
     def balances_are_the_models(self):

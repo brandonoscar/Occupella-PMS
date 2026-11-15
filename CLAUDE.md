@@ -1582,7 +1582,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   entry, with another entry it is refused; C-065, M-135); another who holds approve posts it
   (`trust_post_journal_entry`: once, on its day or later, its lines as ledger transfers dated its
   day, and the same call again returns them), never whoever proposed it; anyone declines it, with
-  why, before it is posted. Posting keeps every trust rule above or moves nothing. Every step names a staff
+  why, before it is posted. Posting keeps every trust rule above or moves nothing, and no line
+  moves unapplied cash (migration 20261115000210, M-154). Every step names a staff
   member (the command line can't take one); entries, lines and decisions are append-only, and the
   AI only reads them. Entries waiting show on the Dashboard.
 - More reports (migration 0054), each read only and on Reports: the balance

@@ -780,6 +780,8 @@ FUNCTIONS = {
     "trust_check_tenant_login()": set(),
     "trust_check_tenant_unlink()": set(),
     "trust_refuse_closed_year()": set(),
+    # A journal entry moves no unapplied cash (migration 20261115000210, M-154).
+    "trust_refuse_unapplied_journal_line()": set(),
     "trust_check_history_line()": set(),
     "trust_check_reserve_event()": set(),
     "trust_check_assistance_record()": set(),

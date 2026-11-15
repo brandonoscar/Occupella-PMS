@@ -45,7 +45,6 @@ LABEL = (
     "   THEN coalesce(a.deposit_kind || ' ', '') || 'deposit: ' || t.display_name"
     "  WHEN 'vendor_payable' THEN 'vendor: ' || v.display_name"
     "  WHEN 'pmc_income' THEN 'company fees'"
-    "  WHEN 'unapplied_cash' THEN 'unapplied cash'"
     " END"
     " FROM trust_ledger_accounts AS a"
     " JOIN trust_bank_accounts AS b ON b.id = a.bank_account_id"
@@ -54,6 +53,9 @@ LABEL = (
     " LEFT JOIN trust_tenants AS t ON t.id = a.tenant_id"
     " LEFT JOIN trust_vendors AS v ON v.id = a.vendor_id"
     " WHERE a.pmc_id = %s"
+    # Unapplied cash is applied to a lease or refunded, never moved by an entry (migration
+    # 20261115000210, docs/edge-cases.md M-154).
+    " AND a.kind <> 'unapplied_cash'"
 )
 KINDS = (
     "bank_cash",
@@ -62,7 +64,11 @@ KINDS = (
     "tenant_deposit",
     "vendor_payable",
     "pmc_income",
-    "unapplied_cash",
+)
+# Why a line naming unapplied cash is refused, in words.
+UNAPPLIED = (
+    "a journal entry moves no money into or out of unapplied cash: apply it to a lease or refund"
+    " it from Banking"
 )
 
 
@@ -184,6 +190,13 @@ def propose(session: Staff, conn: Conn, entry: NewEntry) -> Created:
     """Proposes an entry, dated no later than the company's today (M-135); nothing moves until
     another staff member who holds approve posts it. The same request id again returns the entry
     it proposed; with another entry it is refused (409)."""
+    named = [account for line in entry.lines for account in (line.from_account, line.to_account)]
+    if conn.execute(
+        "SELECT 1 FROM trust_ledger_accounts WHERE pmc_id = %s AND kind = 'unapplied_cash'"
+        " AND ledger_account_id = ANY(%s)",
+        (session.pmc_id, named),
+    ).fetchone():
+        raise HTTPException(422, UNAPPLIED)
     ours = {a.id for a in accounts_of(conn, session.pmc_id)}
     if any(line.from_account not in ours or line.to_account not in ours for line in entry.lines):
         raise HTTPException(404, "no such ledger account")
