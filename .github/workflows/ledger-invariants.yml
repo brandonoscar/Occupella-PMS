@@ -65,7 +65,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
@@ -143,7 +143,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
@@ -213,7 +213,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
@@ -271,7 +271,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
@@ -343,7 +343,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
@@ -388,7 +388,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
@@ -437,7 +437,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
@@ -486,7 +486,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
