@@ -445,6 +445,68 @@ def test_reports_signed_with_a_secret_the_company_doesnt_have_are_told_to_compan
     assert ok(client.get("/api/payments/keys"))["stripe_says"] == []
 
 
+def test_whose_reports_are_refused_is_read_from_the_payment_or_autopay_they_name(
+    conn, app_conn, pmc, lease
+):
+    # P-011: an unsigned report is read only to say whose reports are being refused.
+    tenant = tenant_of(conn, pmc)
+    autopay = conn.execute(
+        "INSERT INTO trust_autopay (pmc_id, lease_id, tenant_id, rule, amount, partner)"
+        " VALUES (%s, %s, %s, 'fixed', 100.00, 'stripe') RETURNING id",
+        (pmc.pmc_id, lease, tenant),
+    ).fetchone()[0]
+
+    def about(subject):
+        return json.dumps({"data": {"object": subject}}).encode()
+
+    saved = about({"id": "seti_1", "metadata": {"autopay_id": str(autopay)}})
+    nobodys = about({"id": "seti_2", "metadata": {"autopay_id": str(uuid4())}})
+    assert op.named_company(app_conn, saved) == pmc.pmc_id
+    assert op.named_company(app_conn, nobodys) is None
+    # A payment of none of the companies, a report naming nothing, and bodies that aren't one.
+    assert op.named_company(app_conn, about({"client_reference_id": str(uuid4())})) is None
+    assert op.named_company(app_conn, about({"id": "cs_1"})) is None
+    assert op.named_company(app_conn, about({"metadata": {"autopay_id": "not-an-id"}})) is None
+    assert op.named_company(app_conn, b"not json") is None
+    assert op.named_company(app_conn, json.dumps({"data": []}).encode()) is None
+
+
+def test_a_report_to_the_servers_own_webhook_refused_is_kept_for_the_company_it_names(
+    database_url, conn, app_conn, pmc, lease, monkeypatch, stripe
+):
+    # P-011 on a server whose own keys take its one company's payments (PMS_PAYMENTS=stripe).
+    monkeypatch.setattr(payments, "many_companies", lambda conn: False)
+    monkeypatch.setenv("PMS_STRIPE_SECRET_KEY", "sk_" + "test_" + "Synthetic000000000000Srv1")
+    monkeypatch.setenv("PMS_STRIPE_WEBHOOK_SECRET", WEBHOOK)
+    settings = Settings(
+        database_url=database_url,
+        public_url="http://testserver",
+        cookie_secure=False,
+        payments="stripe",
+    )
+    with TestClient(create_app(settings)) as staff, TestClient(create_app(settings)) as tenant:
+        join_as_staff(staff, conn, app_conn, pmc)
+        payment = start_payment(staff, tenant, conn, app_conn, pmc, lease, stripe)
+        subject = {"id": "cs_1", "client_reference_id": payment, "payment_intent": "pi_1"}
+        body = json.dumps(
+            {
+                "id": "evt_1",
+                "type": "checkout.session.async_payment_succeeded",
+                "created": int(time.time()),
+                "livemode": False,
+                "data": {"object": subject},
+            }
+        ).encode()
+        forged = staff.post(
+            "/api/payments/webhook/stripe",
+            content=body,
+            headers={"stripe-signature": "t=1,v1=00", "content-type": "application/json"},
+        )
+
+    refused(forged, 400, op.REFUSED_WORDS["signature"])
+    assert refusals(conn, pmc) == [("signature", None)]
+
+
 def test_reports_refused_because_the_servers_clock_is_off_say_so(
     client, other_client, conn, app_conn, pmc, admin, lease, stripe
 ):

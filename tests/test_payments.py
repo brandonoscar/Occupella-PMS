@@ -239,6 +239,56 @@ def test_stripe_reports_a_charge_that_failed_through_its_payment():
     assert "charge.failed" in payments.STRIPE_EVENTS
 
 
+class Refusing(Stripe):
+    """Stripe answering some calls with a refusal: (method, path) -> PartnerFailed."""
+
+    def _call(self, method, path, form, key=""):
+        self.calls.append((method, path, form, key))
+        answer = self.answers[(method, path)]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+def test_a_dispute_on_a_charge_the_pms_didnt_start_through_a_payment_says_nothing():
+    # P-027: a dispute's report names its payment only through its PaymentIntent; one with none
+    # (a charge made in Stripe's dashboard) is no payment of the PMS's, and Stripe isn't asked.
+    stripe = Stripe({})
+    assert stripe.items(*report("charge.dispute.created", {"id": "du_9"})) == []
+    assert stripe.event(*report("charge.dispute.closed", {"id": "du_9", "status": "won"})) is None
+    assert stripe.calls == []
+
+
+def test_a_key_that_may_not_read_the_webhooks_is_kept_with_a_word_and_stripe_down_keeps_none():
+    # P-006, P-007: the account read, its webhooks not.
+    url = "https://pms.example.org/api/payments/webhook/stripe/c1"
+    account = {"id": "acct_Synthetic0001", "charges_enabled": True}
+    locked = Refusing(
+        {
+            ("GET", "/account"): account,
+            ("GET", "/webhook_endpoints"): payments.PartnerFailed("HTTP 403", status=403),
+        }
+    ).check(url)
+    assert locked == payments.KeysChecked(True, (payments.Problem(payments.HOOKS_LOCKED, False),))
+    down = Refusing(
+        {
+            ("GET", "/account"): account,
+            ("GET", "/webhook_endpoints"): payments.PartnerFailed("timed out"),
+        }
+    ).check(url)
+    assert down == payments.KeysChecked(False, (payments.Problem(payments.UNREACHABLE, False),))
+    # Every event sent ("*"), and a list Stripe answered as something else: nothing wrong with
+    # the first, no webhook in the second.
+    everything = {"data": [{"url": url, "status": "enabled", "enabled_events": ["*"]}]}
+    assert Stripe({("GET", "/account"): account, ("GET", "/webhook_endpoints"): everything}).check(
+        url
+    ) == payments.KeysChecked(True, ())
+    odd = Stripe(
+        {("GET", "/account"): account, ("GET", "/webhook_endpoints"): ["not", "a", "dict"]}
+    )
+    assert odd.check(url).problems == (payments.Problem(payments.NO_WEBHOOK.format(url=url), True),)
+
+
 def test_stripes_report_must_be_signed_and_readable():
     stripe = Stripe({})
     body, headers = report("checkout.session.completed", {})

@@ -36,7 +36,7 @@ from helpers import (
 from people import join_as_staff, join_as_tenant, tenant_of
 
 from pms import email, payments
-from pms.api import Settings, create_app
+from pms.api import Settings, create_app, rent
 from pms.api import online_payments as op
 
 TODAY = datetime.now(UTC).date()
@@ -592,6 +592,68 @@ def test_a_payment_paid_during_a_hold_waits_for_staff_to_accept_it(
     ok(client.post(f"/api/payments/{payment}/record", json={"past_hold": True}), 204)
     assert f"payment/{payment}" in keys(conn, pmc)
     assert [w["what"] for w in ok(client.get("/api/payments/waiting"))] == ["partner fee"]
+
+
+def test_a_payment_not_in_the_books_leaves_no_owner_short(
+    client, tenant_client, conn, app_conn, staff, tenant, lease, pmc
+):
+    # M-060: a payment held back by a payment hold moved nothing, so nothing of it can be short.
+    turn_on(client)
+    payment = pay(tenant_client, lease, "300.00")["id"]
+    conn.execute(
+        "INSERT INTO trust_payment_holds (pmc_id, lease_id, starts_on, reason)"
+        " VALUES (%s, %s, %s, 'filed')",
+        (pmc.pmc_id, lease, TODAY - DAY),
+    )
+    bank_says(tenant_client, payment, "paid")
+    assert f"payment/{payment}" not in keys(conn, pmc)
+
+    assert op.owner_short(app_conn, op.row_of(app_conn, payment)) is None
+
+
+def test_a_cover_is_refused_for_a_payment_that_didnt_come_back_or_one_the_books_refuse(
+    client, tenant_client, conn, staff, tenant, lease, pmc, monkeypatch
+):
+    turn_on(client)
+    payment = pay(tenant_client, lease, "1000.00")["id"]
+    bank_says(tenant_client, payment, "paid")
+    record = f"/api/payments/{payment}/record"
+    cover = {"cover_shortfall": True, "request_id": str(uuid4())}
+
+    refused(
+        client.post(record, json=cover),
+        409,
+        "the payments partner hasn't said this payment came back",
+    )
+
+    owner = pmc.owners[0].account
+    conn.execute("SELECT trust_draw_owner(%s, %s, 'draw-9', 100.00, now())", (pmc.pmc_id, owner))
+    bank_says(tenant_client, payment, "returned")
+
+    def refused_by_the_books(*_, **__):
+        raise psycopg.errors.CheckViolation("trust: the books refuse this cover")
+
+    monkeypatch.setattr(rent, "bounce", refused_by_the_books)
+    refused(client.post(record, json=cover), 409, "the books refuse this cover")
+    assert f"bounce/payment/{payment}" not in keys(conn, pmc)
+
+
+def test_a_partner_that_reads_one_thing_a_report_is_read_through_its_event():
+    # A partner without `items` (not Stripe's): its one event, or nothing.
+    payment = uuid4()
+    said = payments.Event(payment, "paid", "evt_1", datetime.now(UTC), Decimal("1.00"))
+
+    class OneThing:
+        name = "one"
+
+        def __init__(self, event):
+            self.answer = event
+
+        def event(self, body, headers):
+            return self.answer
+
+    assert op.items_of(OneThing(said), b"{}", {}) == [said]
+    assert op.items_of(OneThing(None), b"{}", {}) == []
 
 
 def second_owner_account(conn, pmc):

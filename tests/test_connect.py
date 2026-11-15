@@ -294,6 +294,19 @@ def report(kind, subject, account="acct_Synthetic0001"):
     return connect.Report(account, kind, subject, f"evt_{uuid4().hex}", datetime.now(UTC))
 
 
+def test_a_charge_that_failed_names_its_payment_through_its_payment_intent(stripe):
+    # P-026: a charge's report carries the PaymentIntent, whose metadata names the PMS's payment.
+    partner = connect.StripeConnected(PLATFORM_KEY, WEBHOOK, "acct_Synthetic0001")
+    payment = uuid4()
+    stripe[("GET", "/payment_intents/pi_7")] = {"metadata": {"payment_id": str(payment)}}
+
+    failed = partner.read(report("charge.failed", {"id": "ch_7", "payment_intent": "pi_7"}))
+    alone = partner.read(report("charge.failed", {"id": "ch_8"}))  # none: not the PMS's
+
+    assert [(e.payment_id, e.kind) for e in failed] == [(payment, "failed")]
+    assert alone == []
+
+
 def test_a_connected_accounts_reports_read_as_payments_saves_and_disputes(stripe):
     partner = connect.StripeConnected(PLATFORM_KEY, WEBHOOK, "acct_Synthetic0001")
     payment = uuid4()

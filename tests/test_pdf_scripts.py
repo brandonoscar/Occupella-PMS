@@ -75,3 +75,9 @@ def test_one_that_cant_be_read_is_refused_only_when_its_bytes_could_hide_a_scrip
     assert documents.scripted(b"%PDF-1.4\n<< /S /JavaScript /JS (x) >>\n") == documents.UNREADABLE
     assert documents.scripted(b"%PDF-1.4\n<< /Type /ObjStm >>\n") == documents.UNREADABLE
     assert documents.scripted(b"%PDF-1.4\n<< /J#53 (x) >>\n") == documents.UNREADABLE
+
+
+def test_one_with_more_objects_than_are_read_is_refused(monkeypatch):
+    # A PDF too big to read through isn't taken from outside: what it hides can't be told.
+    monkeypatch.setattr(documents, "MOST_OBJECTS", 1)
+    assert documents.scripted(pdf()) == documents.UNREADABLE
