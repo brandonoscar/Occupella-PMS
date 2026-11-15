@@ -5,7 +5,8 @@ harm on a server real people use:
 
 - the fake payments partner (PMS_PAYMENTS=fake) records a payment as paid when its page's button
   is pressed, and its queue (`GET /api/payments/fake`) lists every company's payments started
-  through it, with no sign-in;
+  through it, with no sign-in; the fake Connect platform (PMS_CONNECT=fake) does the same for a
+  company's connected account, its onboarding and a card dispute;
 - the fake screening partner (PMS_SCREENING_PARTNER=fake) makes up an applicant's
   recommendation;
 - the fake geocoder (PMS_GEOCODER=fake) makes up where a property is;
@@ -46,7 +47,13 @@ PLAIN_PATH = re.compile(r"(/[A-Za-z0-9_~-]+(\.[A-Za-z0-9_~-]+)*)*/?")
 ALLOW = "allow"
 
 # Each setting that may name a fake partner.
-PARTNERS = ("PMS_PAYMENTS", "PMS_SCREENING_PARTNER", "PMS_GEOCODER", "PMS_EMAIL_SENDER")
+PARTNERS = (
+    "PMS_PAYMENTS",
+    "PMS_CONNECT",
+    "PMS_SCREENING_PARTNER",
+    "PMS_GEOCODER",
+    "PMS_EMAIL_SENDER",
+)
 
 
 # .env.example's PMS_PUBLIC_URL, which an install must replace (tests/test_deployment.py reads
@@ -143,14 +150,21 @@ class KeysNotLive(ValueError):
     """Stripe's test keys on a live server: their payments would be booked as real money."""
 
 
-def refuse_test_keys(public_url: str, payments: str, secret_key: str, allow: str = "") -> None:
-    """Raise if a live server's own payments partner is Stripe under a test key. The key is
-    never repeated."""
+def refuse_test_keys(
+    public_url: str,
+    payments: str,
+    secret_key: str,
+    allow: str = "",
+    named: str = "PMS_STRIPE_SECRET_KEY",
+) -> None:
+    """Raise if a live server's own payments partner (or its Connect platform, `named` its key's
+    setting) is Stripe under a test key. The key is never repeated."""
     if payments.strip() == "stripe" and is_live(public_url, allow) and not live_key(secret_key):
+        setting = "PMS_CONNECT" if named != "PMS_STRIPE_SECRET_KEY" else "PMS_PAYMENTS"
         raise KeysNotLive(
-            "PMS_STRIPE_SECRET_KEY is not a live key (sk_live_ or rk_live_) on a server at an https"
+            f"{named} is not a live key (sk_live_ or rk_live_) on a server at an https"
             " address real people use: a test payment would go into the trust books as real"
-            " money. Set the live key, or leave PMS_PAYMENTS unset (docs/edge-cases.md P-048)."
+            f" money. Set the live key, or leave {setting} unset (docs/edge-cases.md P-048)."
         )
 
 
@@ -196,4 +210,11 @@ def refuse_fakes_in(environ: Mapping[str, str]) -> None:
         environ.get("PMS_PAYMENTS", ""),
         environ.get("PMS_STRIPE_SECRET_KEY", ""),
         environ.get("PMS_FAKE_PARTNERS", ""),
+    )
+    refuse_test_keys(
+        environ.get("PMS_PUBLIC_URL", ""),
+        environ.get("PMS_CONNECT", ""),
+        environ.get("PMS_STRIPE_CONNECT_SECRET_KEY", ""),
+        environ.get("PMS_FAKE_PARTNERS", ""),
+        "PMS_STRIPE_CONNECT_SECRET_KEY",
     )

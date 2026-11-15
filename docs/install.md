@@ -159,9 +159,17 @@ than `localhost`: there a test payment would be booked as real money, so the ser
 start with a test key in `.env`, Company setup refuses test keys, and test keys kept from before
 take no payment. Try Stripe's test mode on a server at `http://` or `https://localhost`.
 
-Then turn it on in Company setup, Online payments. Payments are by bank (ACH) for now. They were
-tested against answers in the shape Stripe documents, not a live Stripe account: try one small
-payment of your own first (NOT VERIFIED).
+Then turn it on in Company setup, Online payments. Payments through your own keys are by bank
+(ACH). They were tested against answers in the shape Stripe documents, not a live Stripe account:
+try one small payment of your own first (NOT VERIFIED).
+
+Stripe Connect (docs/adr/0014-stripe-connect.md) is for a server that hosts many companies, as
+Occupella's does: the server runs a Stripe platform account (`PMS_CONNECT=stripe`,
+`PMS_STRIPE_CONNECT_SECRET_KEY`, `PMS_STRIPE_CONNECT_WEBHOOK_SECRET`, one Connect webhook at
+`https://pms.example.com/api/payments/connect/webhook`), each company connects its own Stripe
+account from Company setup with no keys pasted, and tenants and owners pay by bank or card with
+the platform's fee on each (`PMS_CONNECT_FEE_ACH`, `PMS_CONNECT_FEE_CARD`). A server of your own
+leaves `PMS_CONNECT` unset. docs/runbooks/connect-test-payment.md walks through a $1 test payment.
 
 ## Every day: backups
 

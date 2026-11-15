@@ -54,6 +54,7 @@ from psycopg import sql
 from pms import (
     autopay,
     autopay_homes,
+    connect,
     days,
     deployment,
     email,
@@ -370,9 +371,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         conn.commit()
         # What it writes to the outbox goes out with `python -m pms.email deliver`.
         sending = bool(os.environ.get("PMS_EMAIL_SENDER"))
-        # The server's partner, and each company's own keys entered in Settings.
-        partner = payments.Resolver(
-            payments.partner_named(os.environ.get("PMS_PAYMENTS", ""), os.environ),
+        # The server's partner, each company's own keys entered in Settings, and a company's
+        # connected Stripe account through the Connect platform (PMS_CONNECT).
+        partner = connect.resolver_from(
+            os.environ.get("PMS_PAYMENTS", ""),
+            os.environ.get("PMS_CONNECT", ""),
+            os.environ,
             live=deployment.is_live(public_url, os.environ.get("PMS_FAKE_PARTNERS", "")),
         )
         done = run_all(conn, None, public_url, sending=sending, partner=partner)

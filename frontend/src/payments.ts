@@ -36,7 +36,9 @@ export type PaymentSettings = {
   partner: string | null;
   changed_at: string | null;
 };
-export type WaitingWhat = "payment" | "return" | "partner fee" | "fee refund" | "no word";
+// Through Stripe Connect (src/pms/api/disputes.py): a card dispute's fee the company's fee account
+// can't cover yet, or a dispute won whose payment the books refuse for now (a payment hold).
+export type WaitingWhat = "payment" | "return" | "partner fee" | "fee refund" | "no word" | "dispute fee" | "dispute won";
 export type Waiting = {
   payment_id: string;
   // A tenant's payment's lease, or the owner of an owner's payment (src/pms/api/owner_payments.py).
@@ -109,6 +111,12 @@ export function waitingLine(item: Waiting): string {
       return `The processor kept ${money(item.company_owes)}; the company's fee account holds ${money(item.company_holds)}`;
     case "fee refund":
       return `The tenant's ${money(item.company_owes)} fee came back; the company's fee account holds ${money(item.company_holds)}`;
+    case "dispute fee":
+      return `A dispute cost a ${money(item.company_owes)} fee; the company's fee account holds ${money(item.company_holds)}`;
+    case "dispute won":
+      return owners
+        ? "The dispute was won and the money came back, not in the owner's account yet: the books refused it"
+        : "The dispute was won and the money came back, not on the lease yet: the lease is on a payment hold, or the books refused it";
     case "no word":
       return `Started online ${usDate(item.started_on ?? null)}, and the payments partner hasn't said since whether the bank paid:`
         + " look it up there. Its report brings it into the books; don't record it by hand.";
@@ -172,6 +180,7 @@ const AUTOPAY_STOPPED: Record<string, string> = {
   "tenant left": "Stopped: the tenant left the lease",
   "failed twice": "Stopped: two payments in a row didn't go through",
   replaced: "Replaced by a newer autopay",
+  "account changed": "Stopped: the manager changed the Stripe account it was saved at. Set it up again.",
 };
 
 // What an autopay pays: "your balance due, up to $1,500.00" or "$1,200.00".

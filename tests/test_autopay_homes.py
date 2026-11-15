@@ -13,7 +13,7 @@ from uuid import uuid4
 import pytest
 from helpers import add_unit, charge, make_pmc, open_lease
 
-from pms import autopay, autopay_homes, nightly, payments
+from pms import autopay, autopay_homes, connect, nightly, payments
 from pms.api import online_payments as op
 
 TODAY = datetime.now(UTC).date()
@@ -39,7 +39,7 @@ class Stripe:
         self.acts_for = account
         self.asked = 0
 
-    def account(self):
+    def account_id(self):
         self.asked += 1
         if isinstance(self.acts_for, Exception):
             raise self.acts_for
@@ -153,9 +153,8 @@ def test_an_autopay_saved_at_another_account_stops_before_it_pays_and_its_tenant
     ).fetchone()
     assert to == "tenant1@example.com" and subject.startswith("Autopay stopped for ")
     assert (
-        "stopped: your property manager now takes payments online through another account,"
-        " which can't use the bank account you saved. Set up autopay again to keep paying"
-        " automatically. Nothing more will be taken from Test bank ••••0000." in body
+        "stopped: your property manager changed the Stripe account it takes payments through, so"
+        " set autopay up again. Nothing more will be taken from Test bank ••••0000." in body
     )
     # The next night it is stopped already: nothing again.
     night(conn, pmc, Stripe("acct_new"), TODAY + DAY)
@@ -201,12 +200,44 @@ def test_a_partner_that_cant_say_its_account_stops_and_notes_nothing(conn, pmc, 
     assert stopped(conn, old) is None and home(conn, unnoted) is None
 
 
-def test_another_partner_s_autopay_is_left_to_it(conn, pmc, lease, tenant):
+def test_one_saved_through_another_kind_of_partner_stops_too(conn, pmc, lease, tenant):
+    """Nothing the company pays through now charges it: the fake partner's before real Stripe,
+    or the company's own keys before it connected through Stripe Connect (whose partner is
+    another kind), whatever its account."""
     theirs = saved(conn, pmc, lease, tenant, at="fake", partner="fake")
 
     night(conn, pmc, Stripe("acct_new"))
 
-    assert stopped(conn, theirs) is None and home(conn, theirs) == ("fake", "saved")
+    assert stopped(conn, theirs) == "account changed"
+    assert started(conn, theirs) == 0
+
+
+def test_a_company_that_connected_through_stripe_connect_stops_those_saved_at_its_keys(
+    conn, pmc, lease, tenant
+):
+    """P-065's case: autopays saved at the company's own keys ('stripe') when it moves to its
+    connected account ('stripe_connect', docs/adr/0014-stripe-connect.md): nothing charges them
+    there, so each stops with its tenant told, rather than never paying again unseen."""
+    mine = saved(conn, pmc, lease, tenant, at="acct_1Own")
+    connected = connect.StripeConnected(
+        "sk_test_" + uuid4().hex, "whsec_" + "y" * 24, "acct_1Connected"
+    )
+
+    moved = autopay_homes.stop_moved(
+        conn, pmc.pmc_id, connected, autopay_homes.account_of(connected), TODAY
+    )
+
+    assert moved.stopped == 1 and stopped(conn, mine) == "account changed"
+
+
+def test_a_connected_partner_says_its_connected_account_without_asking_stripe(monkeypatch):
+    calls = []
+    monkeypatch.setattr(connect, "stripe_call", lambda *a, **k: calls.append(a) or {})
+    stripe = connect.StripeConnected("sk_test_" + uuid4().hex, "whsec_" + "y" * 24, "acct_1A")
+
+    assert autopay_homes.account_of(stripe) == "acct_1A"
+    assert autopay_homes.account_of(connect.FakeConnected("acct_fake_1")) == "acct_fake_1"
+    assert calls == []
 
 
 def test_the_account_is_noted_when_the_partner_reports_the_bank_account_saved(
@@ -254,14 +285,14 @@ def test_stripe_is_asked_its_account_once_per_keys(monkeypatch):
     first = payments.StripePartner(key, "whsec_" + "y" * 24)
     again = payments.StripePartner(key, "whsec_" + "z" * 24)
 
-    assert first.account() == again.account() == "acct_1Test"
+    assert first.account_id() == again.account_id() == "acct_1Test"
     assert calls == [("GET", "/account")]
     # The cache holds the keys' SHA-256, never the keys.
     assert all(key not in held for held in payments.ACCOUNTS)
 
     monkeypatch.setattr(payments.StripePartner, "_call", lambda *a, **k: {"object": "account"})
     with pytest.raises(payments.PartnerFailed, match="account came without"):
-        payments.StripePartner("sk_test_" + uuid4().hex, "whsec_" + "y" * 24).account()
+        payments.StripePartner("sk_test_" + uuid4().hex, "whsec_" + "y" * 24).account_id()
 
 
 def test_stopped_autopays_leave_the_balance_to_pay_by_hand(conn, pmc, lease, tenant):

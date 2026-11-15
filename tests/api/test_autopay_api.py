@@ -287,6 +287,41 @@ def test_run_rent_now_first_stops_an_autopay_saved_at_another_account(
     assert view(tenant_client, lease)["autopays"][0]["runs"] == []
 
 
+def test_run_rent_now_stops_an_ended_leases_autopay_naming_nobody_and_names_its_admin_after(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    # A stop by itself names nobody, even in an admin's Run rent now (the table's checks,
+    # migration 20261114000100); the admin is named again on what the run writes after it.
+    turn_on(client)
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, name="Unit 2")
+    ended = open_lease(
+        conn, pmc.pmc_id, unit, MONTH - 90 * DAY, MONTH - DAY, "900.00", [tenant_of(conn, pmc)]
+    )
+    stopping = conn.execute(
+        "INSERT INTO trust_autopay (pmc_id, lease_id, tenant_id, rule, amount, partner)"
+        " VALUES (%s, %s, %s, 'balance', '1500.00', 'fake') RETURNING id",
+        (pmc.pmc_id, ended, tenant_of(conn, pmc)),
+    ).fetchone()[0]
+    saved_long_ago(conn, pmc, stopping)
+    paying = set_up(tenant_client, lease)["id"]
+    saved_long_ago(conn, pmc, paying)
+
+    done = ok(
+        client.post("/api/rent/run", json={"due_on": str(MONTH), "late_fees_as_of": str(TODAY)})
+    )
+
+    assert done["autopay"] == 1
+    assert conn.execute(
+        "SELECT why, recorded_by FROM trust_autopay_stops WHERE autopay_id = %s", (stopping,)
+    ).fetchone() == ("lease ended", None)
+    audited = (
+        "SELECT staff_id FROM trust_audit_log WHERE table_name = %s"
+        " AND row_data ->> 'autopay_id' = %s"
+    )
+    assert conn.execute(audited, ("trust_autopay_stops", str(stopping))).fetchall() == [(None,)]
+    assert conn.execute(audited, ("trust_autopay_runs", paying)).fetchall() == [(staff.person_id,)]
+
+
 def test_run_rent_now_starts_the_autopay_payment_which_goes_to_the_partner_and_the_books(
     client, tenant_client, conn, staff, tenant, lease, pmc
 ):

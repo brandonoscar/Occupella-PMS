@@ -40,7 +40,8 @@ from uuid import UUID, uuid5
 
 import psycopg
 
-from pms import email, notices, payments
+from pms import connect, email, notices, payments
+from pms.api import connect as connect_api
 from pms.api import online_payments as op
 from pms.api import rent
 from pms.homes import home
@@ -64,12 +65,10 @@ STOPPED_BY_ITSELF: dict[str, str] = {
     "lease ended": "your lease ended",
     "tenant left": "you left the lease",
     "failed twice": "two payments in a row didn't go through",
-    # The company now takes payments through another account than the one it was saved at
-    # (src/pms/autopay_homes.py, P-065).
-    "account changed": (
-        "your property manager now takes payments online through another account, which can't"
-        " use the bank account you saved. Set up autopay again to keep paying automatically"
-    ),
+    # Through Stripe Connect: the company disconnected the account it was saved at, or connected
+    # another (src/pms/api/connect.py).
+    "account changed": "your property manager changed the Stripe account it takes payments"
+    " through, so set autopay up again",
 }
 
 
@@ -216,9 +215,10 @@ def stop(conn: psycopg.Connection[Any], pmc_id: UUID, autopay_id: UUID, why: Why
     (trust.staff_id, set for the request). A payment of it being sent is recorded first."""
     conn.execute(LOCK, (autopay_id,))
     # A stop by itself names nobody, even in a staff member's request (an admin's Run rent now):
-    # only staff's own stop names them (the table's check).
+    # only staff's own stop names them, and one for an account changed names the admin who
+    # disconnected it, or nobody (the table's checks, migration 20261114000100).
     named = None
-    if why != "staff":
+    if why not in ("staff", "account changed"):
         found = conn.execute("SELECT current_setting('trust.staff_id', true)").fetchone()
         named = found[0] if found else None
         if named:
@@ -420,6 +420,21 @@ def start_due(
             continue
         if autopay.partner != partner:
             continue  # saved at another partner than this server's: it can't be charged here
+        if partner in connect.PARTNERS and not connect_api.on_its_account(conn, pmc_id, autopay.id):
+            # Saved at another connected account than the company's now (ADR 0014): it can't be
+            # charged here, so it stops, and the tenant is told to set it up again.
+            if stop(conn, pmc_id, autopay.id, "account changed"):
+                done.stopped += 1
+                if sending:
+                    done.emails += write_email(
+                        conn,
+                        pmc_id,
+                        autopay,
+                        "autopay_stopped",
+                        public_url,
+                        why=STOPPED_BY_ITSELF["account changed"],
+                    )
+            continue
         rent.lock_lease(conn, autopay.lease_id)
         if conn.execute(
             "SELECT 1 FROM trust_autopay_runs WHERE autopay_id = %s AND due_on = %s",
@@ -447,12 +462,27 @@ def start_due(
             )
             done.skipped += 1
             continue
-        fee = op.fee_for(chosen, amount)
         payment = payment_id_for(autopay.id, due)
+        if partner in connect.PARTNERS:
+            # Through Connect: its own method, Occupella's fee, and who pays them (ADR 0014).
+            terms = connect_api.autopay_terms(conn, pmc_id, autopay.id, autopay.lease_id, amount)
+            method, fee, payer, platform_fee = (
+                terms.method,
+                terms.tenant_fee,
+                terms.fee_payer,
+                terms.platform_fee,
+            )
+        else:
+            method, fee, payer, platform_fee = (
+                "ach",
+                op.fee_for(chosen, amount),
+                chosen.ach_fee_payer,
+                ZERO,
+            )
         conn.execute(
             "INSERT INTO trust_online_payments (id, pmc_id, lease_id, tenant_id, amount,"
-            " tenant_fee, fee_payer, method, partner, partner_ref)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, 'ach', %s, %s)",
+            " tenant_fee, fee_payer, method, partner, partner_ref, platform_fee)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 payment,
                 pmc_id,
@@ -460,11 +490,15 @@ def start_due(
                 autopay.tenant_id,
                 amount,
                 fee,
-                chosen.ach_fee_payer,
+                payer,
+                method,
                 partner,
                 f"autopay_{payment.hex}",
+                platform_fee,
             ),
         )
+        if partner in connect.PARTNERS:
+            connect_api.started_on_account(conn, pmc_id, payment, of_autopay=autopay.id)
         conn.execute(
             "INSERT INTO trust_autopay_runs (pmc_id, autopay_id, due_on, payment_id)"
             " VALUES (%s, %s, %s, %s)",

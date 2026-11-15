@@ -5,11 +5,12 @@ A tenant's bank account is saved at one Stripe account, and only that account ca
 account an autopay's was saved at is noted once (trust_autopay_account_homes): when the partner
 reports it saved, the account whose keys the report came through; for one saved before this, the
 company's account at the first nightly look after. Each night (and an admin's Run rent now),
-before any autopay payment starts, an autopay noted at another account than the company's
-partner's now stops by itself ('account changed'), its tenant is emailed to set it up again, and
-the Dashboard lists it for 30 days. New keys of the same account (rolled, or the same account
-linked through Stripe Connect) change nothing. When the partner can't say which account it is
-(down, or keys refused), nothing is stopped or noted that night.
+before any autopay payment starts, an autopay saved through another kind of partner than the
+company's now (its own keys before Stripe Connect, say), or noted at another account than the
+company's partner's now, stops by itself ('account changed'): its tenant is emailed to set it up
+again, and the Dashboard lists it for 30 days. New keys of the same account (rolled, or the same
+account linked through Stripe Connect) change nothing. When the partner can't say which account
+it is (down, or keys refused), nothing of its own kind is stopped or noted that night.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ def account_of(partner: Any) -> str | None:
     if not isinstance(partner, payments.KnowsAccount):
         return None
     try:
-        return partner.account()
+        return partner.account_id()
     except payments.PartnerFailed as failed:
         log.warning("the payments partner didn't say which account it acts for: %s", failed)
         return None
@@ -75,11 +76,14 @@ def stop_moved(
     sending: bool = False,
     public_url: str = "",
 ) -> Moved:
-    """Stops each of the company's autopays saved through `partner` (by its name) at another
-    account than `account`, the account the partner acts for now, emailing its tenant while the
-    server sends email; notes `account` for one with none noted yet. Nothing without an account."""
+    """Stops each of the company's autopays that `partner`, the company's partner now, can't
+    charge, emailing its tenant while the server sends email: one saved through another kind of
+    partner (the company's own keys before it connected through Stripe Connect, say), and one
+    saved through this kind at another account than `account`, the one it acts for now; notes
+    `account` for one with none noted yet. Without a partner nothing stops, and without its
+    account only the first kind do."""
     done = Moved()
-    if partner is None or account is None:
+    if partner is None:
         return done
     homes = dict(
         conn.execute(
@@ -89,11 +93,16 @@ def stop_moved(
     )
     for saved in autopay.active(conn, pmc_id, day):
         if saved.partner != partner.name:
-            continue  # another partner's: start_due leaves it alone
-        home = homes.get(saved.id)
-        if home is None:
-            note(conn, pmc_id, saved.id, account, "first look")
-        elif home != account and autopay.stop(conn, pmc_id, saved.id, "account changed"):
+            moved = True  # nothing the company pays through now charges it
+        elif account is None:
+            continue
+        else:
+            home = homes.get(saved.id)
+            if home is None:
+                note(conn, pmc_id, saved.id, account, "first look")
+                continue
+            moved = home != account
+        if moved and autopay.stop(conn, pmc_id, saved.id, "account changed"):
             done.stopped += 1
             if sending:
                 done.emails += autopay.write_email(
