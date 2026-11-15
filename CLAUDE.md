@@ -168,7 +168,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   503 naming only its failure's kind). The PMS still checks the company is one the host says
   they are staff of today, after its second step, the login not disabled and the company
   active; an owner or a tenant joins only through their invite, at its own email, which it uses
-  up. A person is linked to one login per company (`trust_external_identities`, append-only,
+  up, with the phone and texts answer the host's sign-up page asked (`phone`, `texts_ok`; a bad
+  phone a 422 leaving the invite unused), kept as accepting an invite keeps them (U-171). A person is linked to one login per company (`trust_external_identities`, append-only,
   audited; the AI role never reads it), which has no password. Staff join on their first
   sign-in as the staff login with their email or a new staff member; an admin's first sign-in
   opens the company's books (the host's id, the starting chart and kinds of fee); and each

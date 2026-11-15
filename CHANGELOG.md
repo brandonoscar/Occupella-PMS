@@ -6,6 +6,12 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+- **Owners and tenants who join through the host app give their phone and say whether texts are
+  OK**, as people who set a password on the PMS's own invite page do (item 14 of the founder's
+  review of 11/03; docs/edge-cases.md U-171). `POST /api/external-sign-in` takes `phone` and
+  `texts_ok` with an owner's or a tenant's invite and keeps the answer, in the words shown beside
+  the box, with the phone as their contact phone. A phone that doesn't read is refused in words and
+  leaves the invite unused. Without a phone the sign-in works as before.
 - **Stripe Connect for the hosted product** (docs/adr/0014-stripe-connect.md). A server that runs a
   Stripe platform account (`PMS_CONNECT=stripe`, `PMS_STRIPE_CONNECT_SECRET_KEY`,
   `PMS_STRIPE_CONNECT_WEBHOOK_SECRET`) lets each company connect its own Stripe account from Company

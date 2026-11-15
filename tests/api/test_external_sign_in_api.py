@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 from helpers import add_staff, make_pmc
 from people import invite_token, join_as_staff, login_of, tenant_of
 
-from pms import deployment, external
+from pms import deployment, external, phones
 from pms.api import Settings, create_app, throttle
 
 ISSUER = "occupella"
@@ -133,6 +133,8 @@ def test_a_host_names_itself_in_the_letters_its_links_take(settings):
         {"token": "x", "pmc_id": "not an id"},
         {"token": "x", "invite": "short"},
         {"token": "x", "invite": "y" * 101},
+        {"token": "x", "invite": "y" * 43, "phone": "5" * 41},
+        {"token": "x", "invite": "y" * 43, "texts_ok": "maybe"},
         {"token": 7},
     ],
 )
@@ -480,6 +482,116 @@ def test_a_tenant_joins_through_their_invite_and_signs_in_again(
     again = sign_in(hosted, "t")
     assert again.status_code == 200
     assert again.json()["person_id"] == str(tenant_id)
+
+
+def consents(conn, column: str, person_id: UUID) -> list[tuple[str, bool, str]]:
+    return conn.execute(
+        f"SELECT phone, texts_ok, wording FROM trust_text_consents WHERE {column} = %s",  # noqa: S608
+        (person_id,),
+    ).fetchall()
+
+
+@pytest.mark.parametrize("texts_ok", [True, False])
+def test_a_tenant_joining_through_the_host_gives_their_phone_and_says_whether_to_text(
+    hosted, host, conn, app_conn, texts_ok
+):
+    # With password sign-in off, the host's sign-up page asks what the PMS's invite page asks
+    # (item 14 of the founder's review of 11/03), and the PMS keeps it the same way.
+    pmc = make_pmc(conn)
+    tenant_id = tenant_of(conn, pmc)
+    email = email_for("tenant")
+    token = invite_token(app_conn, pmc.pmc_id, "tenant", tenant_id, email)
+    host.signs_in("t", email, name="Tenant A")
+
+    joined = sign_in(hosted, "t", invite=token, phone="(555) 555-0123", texts_ok=texts_ok)
+
+    assert joined.status_code == 200, joined.text
+    company = conn.execute(
+        "SELECT display_name FROM trust_pmcs WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone()[0]
+    assert consents(conn, "tenant_id", tenant_id) == [
+        ("+15555550123", texts_ok, phones.text_consent(company))
+    ]
+    # The phone is their contact phone too, marked as theirs.
+    assert conn.execute(
+        "SELECT phone, by_person FROM trust_contacts WHERE tenant_id = %s"
+        " ORDER BY created_at DESC LIMIT 1",
+        (tenant_id,),
+    ).fetchone() == ("+15555550123", True)
+
+
+def test_an_owner_joining_through_the_host_keeps_their_answer(hosted, host, conn, app_conn):
+    pmc = make_pmc(conn)
+    owner_id = pmc.owners[0].owner_id
+    email = email_for("owner")
+    token = invite_token(app_conn, pmc.pmc_id, "owner", owner_id, email)
+    host.signs_in("o", email, name="Owner A")
+
+    joined = sign_in(hosted, "o", invite=token, phone="+44 20 7946 0000", texts_ok=True)
+
+    assert joined.status_code == 200, joined.text
+    assert [(phone, ok) for phone, ok, _ in consents(conn, "owner_id", owner_id)] == [
+        ("+442079460000", True)
+    ]
+
+
+def test_a_join_through_the_host_without_a_phone_keeps_no_answer(hosted, host, conn, app_conn):
+    # As before this change: the host may not ask, and the person still gets in.
+    pmc = make_pmc(conn)
+    tenant_id = tenant_of(conn, pmc)
+    email = email_for("tenant")
+    token = invite_token(app_conn, pmc.pmc_id, "tenant", tenant_id, email)
+    host.signs_in("t", email)
+
+    assert sign_in(hosted, "t", invite=token).status_code == 200
+    assert consents(conn, "tenant_id", tenant_id) == []
+
+
+@pytest.mark.parametrize(
+    ("more", "says"),
+    [
+        ({"phone": "12"}, phones.SAY),
+        ({"phone": "  ", "texts_ok": True}, "Enter your phone number."),
+        ({"texts_ok": True}, "Enter your phone number."),
+    ],
+)
+def test_a_phone_that_doesnt_read_leaves_the_invite_unused(
+    hosted, host, conn, app_conn, more, says
+):
+    pmc = make_pmc(conn)
+    tenant_id = tenant_of(conn, pmc)
+    email = email_for("tenant")
+    token = invite_token(app_conn, pmc.pmc_id, "tenant", tenant_id, email)
+    host.signs_in("t", email)
+
+    refused = sign_in(hosted, "t", invite=token, **more)
+
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == says
+    login_id = login_of(app_conn, "tenant", tenant_id)
+    assert not conn.execute(
+        "SELECT accepted_at IS NOT NULL FROM trust_invites WHERE login_id = %s", (login_id,)
+    ).fetchone()[0]
+    assert consents(conn, "tenant_id", tenant_id) == []
+    # Fixed, the same invite still lets them in.
+    assert sign_in(hosted, "t", invite=token, phone="555 555 0123").status_code == 200
+
+
+@pytest.mark.parametrize("more", [{"phone": "555 555 0123"}, {"texts_ok": True}])
+def test_a_phone_comes_only_with_an_owners_or_a_tenants_invite(hosted, host, conn, more):
+    pmc = make_pmc(conn)
+    host.signs_in("s", email_for("staff"), staff_of={pmc.pmc_id: admin_of()})
+
+    refused = sign_in(hosted, "s", **more)
+
+    assert refused.status_code == 422
+    assert "invite" in refused.json()["detail"]
+    assert (
+        conn.execute(
+            "SELECT count(*) FROM trust_text_consents WHERE pmc_id = %s", (pmc.pmc_id,)
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_an_invite_is_used_only_at_its_own_email(hosted, host, conn, app_conn):
