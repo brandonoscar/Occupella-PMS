@@ -13,6 +13,7 @@ import pytest
 from helpers import (
     acting_as,
     add_authority,
+    add_late_fee_policy,
     add_tenant,
     add_unit,
     approve_bank,
@@ -250,21 +251,19 @@ def test_a_charge_dated_in_the_year_waits_for_a_close_under_way_and_then_is_refu
 def test_a_late_fee_that_would_fall_in_a_closed_year_is_never_charged_and_the_run_goes_on(
     conn, app_conn, pmc, closer
 ):
-    """docs/edge-cases.md M-050, D-082: late fee terms entered after a year closed, in force
-    from before it, reach a rent of that year still open. Its fee falls in the closed year, the
-    year's lock refused it, and the company's whole run, rent included, failed every night. Such
-    a rent is charged no late fee, each of them (the year's lock looked up once a run), and the
-    rest of the run goes on."""
+    """docs/edge-cases.md M-050: a rent of a year closed since, still open and past its grace
+    under terms on file then, which no late fee run reached before the year closed (a server off
+    over its last weeks). Its fee falls in the closed year, the year's lock refused it, and the
+    company's whole run, rent included, failed every night. Such a rent is charged no late fee,
+    each of them (the year's lock looked up once a run), and the rest of the run goes on. (Terms
+    entered only after the year closed reach none of its rents at all since M-049.)"""
     lease = a_lease(conn, pmc)
     older = charge(conn, pmc.pmc_id, lease, date(2025, 11, 1), "1000.00")  # unpaid since
     old = charge(conn, pmc.pmc_id, lease, DEC_1, "1000.00")  # unpaid since
     december(conn, pmc)
     close(conn, pmc.pmc_id, 2025, closer)
-    conn.execute(
-        "INSERT INTO trust_late_fee_policies (pmc_id, property_id, starts_on, grace_days,"
-        " flat_fee) VALUES (%s, %s, %s, 5, 50.00)",
-        (pmc.pmc_id, pmc.owners[0].property_id, date(2025, 1, 1)),
-    )
+    # On file since January 2025, before either rent came due.
+    add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2025, 1, 1), 5, "50.00")
     today = datetime.now(UTC).date()
 
     app_conn.execute("SELECT trust_run_rent(%s, %s, %s)", (pmc.pmc_id, today.replace(day=1), today))
