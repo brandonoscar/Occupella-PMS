@@ -1659,7 +1659,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   rent of every one before any of their other charges), into the account each move names
   (`trust_lease_moved_from`), and `trust_return_deposit` keeps it the same way, each lease's for
   its own owner; a lease moved from has no return of its own and leaves
-  Move-outs. The lease page's ⋯ menu has Move to another unit (`POST /api/move-out/<id>/transfer`,
+  Move-outs. A renewal carries what the lease it renews owes the same way, into the property's
+  owners' accounts (`trust_lease_carried_from`, migration 20261115000230, M-073), and the lease
+  it renews has no return of its own and leaves Move-outs. The lease page's ⋯ menu has Move to another unit (`POST /api/move-out/<id>/transfer`,
   area move-out); a lease shows what it carries and where its tenants went.
 - Deposit kinds (migration 0092, `docs/law.md`, the founder's review q043): a tenant's pet or key
   deposit is held in a deposit account of its own beside their security deposit

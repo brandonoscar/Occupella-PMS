@@ -367,17 +367,21 @@ def pair(
     return moves
 
 
-# The leases a lease's tenants moved from (migration 0091), oldest first: what each still owes is
-# paid first, into the owner's account its move names, in that account's trust bank account.
+# The leases a lease's tenants moved from (migration 0091) or renewed (migration 20261115000230,
+# docs/edge-cases.md M-073), oldest first: what each still owes is paid first, into the owner's
+# account its move names, in that account's trust bank account; a lease renewed at the lease's
+# property (no account named) into its owners', as the lease's own rent is.
 MOVED_FROM = """
 SELECT m.lease_id, m.owner_account, a.bank_account_id
-FROM trust_lease_moved_from(%s) WITH ORDINALITY AS m (lease_id, owner_account, n)
-JOIN trust_ledger_accounts AS a ON a.ledger_account_id = m.owner_account
+FROM trust_lease_carried_from(%s) WITH ORDINALITY AS m (lease_id, owner_account, n)
+LEFT JOIN trust_ledger_accounts AS a ON a.ledger_account_id = m.owner_account
 ORDER BY m.n
 """
 
 
-def moved_from(conn: psycopg.Connection[Any], lease_id: UUID) -> list[tuple[UUID, str, UUID]]:
+def moved_from(
+    conn: psycopg.Connection[Any], lease_id: UUID
+) -> list[tuple[UUID, str | None, UUID | None]]:
     return [(row[0], row[1], row[2]) for row in conn.execute(MOVED_FROM, (lease_id,)).fetchall()]
 
 
@@ -670,7 +674,13 @@ def record_payment(
     earlier_leases = moved_from(conn, lease_id)
     for prior, _, _ in earlier_leases:
         lock_lease(conn, prior)
-    wanted = chosen_charges(conn, pmc_id, lease_id, amount, chosen, bool(earlier_leases))
+    # Each lease's part, oldest first. Every lease's rent comes before any lease's other charges.
+    chain = [*(each for each, _, _ in earlier_leases), lease_id]
+    still = {each: open_rent_and_fees(conn, pmc_id, each) for each in chain}
+    # Staff choose no charges while a lease before this one is to be paid first: one moved from,
+    # or one renewed that still owes.
+    before = any(o is not None or sum(still[each]) > 0 for each, o, _ in earlier_leases)
+    wanted = chosen_charges(conn, pmc_id, lease_id, amount, chosen, before)
     metadata: dict[str, Any] = {
         "key": key,
         "kind": "tenant payment",
@@ -685,9 +695,6 @@ def record_payment(
         metadata["charges"] = [[str(charge), cents(part)] for charge, part in chosen]
     if extra:
         metadata |= extra
-    # Each lease's part, oldest first. Every lease's rent comes before any lease's other charges.
-    chain = [*(each for each, _, _ in earlier_leases), lease_id]
-    still = {each: open_rent_and_fees(conn, pmc_id, each) for each in chain}
     shares: dict[UUID, Decimal] = {}
     left = amount
     for kind in (0, 1):  # rent, then the rest
@@ -704,16 +711,23 @@ def record_payment(
         for each in chain
         if each in shares
     }
-    parts: list[tuple[UUID, str, UUID, Decimal, list[list[Any]]]] = [
-        (each, o, b, splits[each].to_owners, splits[each].owners)
-        for each, o, b in earlier_leases
-        if each in splits and splits[each].to_owners > 0
-    ]
+    parts: list[tuple[UUID, str, UUID, Decimal, list[list[Any]]]] = []
+    for each, o, b in earlier_leases:
+        if each not in splits or splits[each].to_owners <= 0:
+            continue
+        if o is not None and b is not None:
+            parts.append((each, o, b, splits[each].to_owners, splits[each].owners))
+        else:  # renewed at this property: its owners', as this lease's own rent
+            parts += [
+                (each, own, bank, p, splits[each].owners)
+                for own, p in owners.parts(conn, splits[each].to_owners)
+                if p > 0
+            ]
     here = splits.get(lease_id, Split([], []))
     parts += [
         (lease_id, o, bank, p, here.owners) for o, p in owners.parts(conn, here.to_owners) if p > 0
     ]
-    banks = {each: b for each, _, b in earlier_leases} | {lease_id: bank}
+    banks = {each: b or bank for each, _, b in earlier_leases} | {lease_id: bank}
     parts += [
         (each, company_income(conn, pmc_id, banks[each]), banks[each], s.to_company, s.company)
         for each, s in splits.items()

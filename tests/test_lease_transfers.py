@@ -7,6 +7,7 @@ lease, and what the old lease still owes stays owed to its owner. trust_return_d
 every lease they moved from still owes first, each lease's for its own owner. The API's side is
 in tests/api/test_lease_transfers_api.py. Every name here is synthetic."""
 
+import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -20,14 +21,20 @@ from helpers import (
     balance,
     bank_sums,
     charge,
+    complete_offer,
     hold_payments,
     make_pmc,
+    offer_lease,
     open_account,
     open_lease,
     release_hold,
     return_deposit,
+    send_offer,
+    sign_offer,
     transfer_batch,
 )
+
+from pms.api import rent
 
 JAN_1, MAR_1, MAR_25, MAR_31 = (
     date(2026, 1, 1),
@@ -495,3 +502,79 @@ def test_a_deposit_short_of_two_leases_moved_from_pays_the_oldest_first(conn, pm
         Decimal("1000.00"),
         Decimal("1500.00"),
     )
+
+
+# --- renewals carry what the old lease owes (migration 20261115000230, M-073) -------------------
+
+
+def renew(conn, pmc, lease, starts_on=APR_1, ends_on=None, rent="1100.00"):
+    """The lease renewed at its unit from starts_on: the old one ends the day before."""
+    staff = add_staff(conn, pmc.pmc_id, f"Leasing {starts_on}")
+    unit = conn.execute("SELECT unit_id FROM trust_leases WHERE id = %s", (lease,)).fetchone()[0]
+    offer = offer_lease(
+        conn, pmc.pmc_id, unit, staff, starts_on, ends_on, rent=rent, renews_lease_id=lease
+    )
+    send_offer(conn, pmc.pmc_id, offer, staff)
+    sign_offer(conn, pmc.pmc_id, offer, 1)
+    return complete_offer(conn, pmc.pmc_id, offer, staff)
+
+
+def test_a_payment_after_a_renewal_pays_what_the_old_lease_still_owes_first(
+    conn, app_conn, pmc, lease
+):
+    """docs/edge-cases.md M-073: March's 1000.00 stays owed on the old lease after the renewal;
+    a payment to the renewal pays it before the renewal's own April rent."""
+    new = renew(conn, pmc, lease)
+    april = charge(conn, pmc.pmc_id, new, APR_1, "1100.00", memo="April rent")
+
+    recorded = rent.record_payment(
+        app_conn, pmc.pmc_id, new, uuid.uuid4(), Decimal("1500.00"), APR_1
+    )
+
+    assert (recorded.to_owner, recorded.to_prepaid) == (Decimal("1500.00"), Decimal(0))
+    assert conn.execute("SELECT trust_lease_owed(%s)", (lease,)).fetchone() == (0,)
+    assert conn.execute(
+        "SELECT o.open FROM trust_open_charges(%s, %s, 'infinity') AS o WHERE o.charge_id = %s",
+        (pmc.pmc_id, new, april),
+    ).fetchone() == (Decimal("600.00"),)
+    assert balance(conn, pmc.owners[0].account) == Decimal("1500.00")
+
+
+def test_the_renewals_return_keeps_for_both_leases_and_the_old_one_has_none(conn, pmc, lease):
+    """The deposit (2500.00) keeps the old lease's March 1000.00 and the renewal's June 1100.00,
+    both Owner 1's, and 400.00 goes back; the old lease, renewed, has no return of its own."""
+    new = renew(conn, pmc, lease, ends_on=JUN_30)
+    charge(conn, pmc.pmc_id, new, JUN_1, "1100.00", memo="June rent")
+
+    with refused("was renewed as lease"):
+        return_deposit(conn, pmc.pmc_id, lease, "early", at(JUL_5))
+    back = return_deposit(conn, pmc.pmc_id, new, "back", at(JUL_5))
+
+    assert back == Decimal("400.00")
+    assert conn.execute(
+        "SELECT c.lease_id, c.memo, x.amount FROM trust_deposit_return_lines AS x"
+        " JOIN trust_charges AS c ON c.id = x.charge_id WHERE x.lease_id = %s ORDER BY x.line_no",
+        (new,),
+    ).fetchall() == [
+        (lease, "March rent", Decimal("1000.00")),
+        (new, "June rent", Decimal("1100.00")),
+    ]
+    assert balance(conn, pmc.owners[0].account) == Decimal("2100.00")
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {0}
+
+
+def test_a_renewal_then_a_move_keeps_for_the_renewed_lease_under_the_moves_owner(
+    conn, pmc, lease, there
+):
+    renewed = renew(conn, pmc, lease)
+    moved = move(conn, pmc.pmc_id, renewed, there, moved_on=JUN_1, ends_on=JUN_30)
+
+    chain = conn.execute("SELECT * FROM trust_lease_carried_from(%s)", (moved,)).fetchall()
+    back = return_deposit(conn, pmc.pmc_id, moved, "back", at(JUL_5))
+
+    assert chain == [(lease, pmc.owners[0].account), (renewed, pmc.owners[0].account)]
+    assert conn.execute("SELECT * FROM trust_lease_carried_from(%s)", (renewed,)).fetchall() == [
+        (lease, None)
+    ]
+    assert back == Decimal("1500.00")
+    assert balance(conn, pmc.owners[0].account) == Decimal("1000.00")

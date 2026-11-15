@@ -139,14 +139,15 @@ def return_by(ends_on: date | None, owes: Decimal) -> date | None:
 
 
 # Each lease of the PMC past its last day on the day whose tenants' deposits are still held, not
-# a lease its tenants moved from: what it and the leases they moved from owe, and what is held.
+# a lease its tenants moved from or renewed: what it and the leases they moved from or renewed
+# owe (M-073), and what is held.
 DUE_BACK = """
 SELECT l.id, p.display_name, u.display_name, l.ends_on,
        array(SELECT t.display_name FROM trust_lease_tenants AS lt
              JOIN trust_tenants AS t ON t.id = lt.tenant_id WHERE lt.lease_id = l.id
              ORDER BY t.display_name COLLATE "C", t.id),
        trust_lease_owed(l.id) + coalesce((SELECT sum(trust_lease_owed(m.lease_id))
-                                          FROM trust_lease_moved_from(l.id) AS m), 0),
+                                          FROM trust_lease_carried_from(l.id) AS m), 0),
        h.held
 FROM trust_leases AS l
 JOIN trust_units AS u ON u.id = l.unit_id
@@ -161,6 +162,9 @@ CROSS JOIN LATERAL (
 WHERE l.pmc_id = %(pmc)s AND l.ends_on < %(day)s AND h.held > 0
   AND NOT EXISTS (SELECT 1 FROM trust_deposit_returns AS r WHERE r.lease_id = l.id)
   AND NOT EXISTS (SELECT 1 FROM trust_lease_transfers AS t WHERE t.from_lease_id = l.id)
+  AND NOT EXISTS (SELECT 1 FROM trust_lease_offers AS o
+                  JOIN trust_lease_offer_completions AS c ON c.offer_id = o.id
+                  WHERE o.renews_lease_id = l.id)
 """
 
 
@@ -256,15 +260,19 @@ JOIN trust_units AS u ON u.id = l.unit_id
 JOIN trust_properties AS p ON p.id = u.property_id
 LEFT JOIN trust_deposit_returns AS r ON r.lease_id = l.id
 WHERE l.pmc_id = %s
-  -- A lease its tenants moved from has no return of its own: their deposits went with them.
+  -- A lease its tenants moved from or renewed has no return of its own: their deposits went
+  -- with them (M-073).
   AND NOT EXISTS (SELECT 1 FROM trust_lease_transfers AS t WHERE t.from_lease_id = l.id)
+  AND NOT EXISTS (SELECT 1 FROM trust_lease_offers AS o
+                  JOIN trust_lease_offer_completions AS c ON c.offer_id = o.id
+                  WHERE o.renews_lease_id = l.id)
 ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.starts_on, l.id
 """
 
-# The leases a lease's tenants moved from, oldest first, each with its home.
+# The leases a lease's tenants moved from or renewed, oldest first, each with its home.
 MOVED_FROM = """
 SELECT m.lease_id, p.display_name || ', ' || u.display_name, trust_lease_owed(m.lease_id)
-FROM trust_lease_moved_from(%s) WITH ORDINALITY AS m (lease_id, owner_account, n)
+FROM trust_lease_carried_from(%s) WITH ORDINALITY AS m (lease_id, owner_account, n)
 JOIN trust_leases AS l ON l.id = m.lease_id
 JOIN trust_units AS u ON u.id = l.unit_id
 JOIN trust_properties AS p ON p.id = u.property_id

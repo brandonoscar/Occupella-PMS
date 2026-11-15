@@ -711,6 +711,7 @@ FUNCTIONS = {
     "trust_lease_owed(uuid)": {"trust_app"},
     # The leases a lease's tenants moved from: the rent and move-out pages read them.
     "trust_lease_moved_from(uuid)": {"trust_app"},
+    "trust_lease_carried_from(uuid)": {"trust_app"},
     # The app approves only month-end preparations, which another staff member made: this one
     # is the owner's, called by trust_approve_bank_reconciliation.
     "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)": set(),

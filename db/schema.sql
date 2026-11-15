@@ -6455,6 +6455,44 @@ $$;
 
 
 --
+-- Name: trust_lease_carried_from(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_lease_carried_from(p_lease_id uuid) RETURNS TABLE(lease_id uuid, owner_account text)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    WITH RECURSIVE back AS (
+        SELECT e.from_lease, e.owner_account, 1 AS step
+        FROM (
+            SELECT t.from_lease_id, t.owner_account
+            FROM trust_lease_transfers AS t WHERE t.to_lease_id = p_lease_id
+            UNION ALL
+            SELECT o.renews_lease_id, NULL::text
+            FROM trust_lease_offer_completions AS c
+            JOIN trust_lease_offers AS o ON o.id = c.offer_id
+            WHERE c.lease_id = p_lease_id AND o.renews_lease_id IS NOT NULL
+        ) AS e (from_lease, owner_account)
+        UNION ALL
+        -- A lease renewed before a move is the moved lease's owner's, as the move names it. Each
+        -- step opens its new lease, so the leases before come first: no cycle.
+        SELECT e.from_lease, coalesce(e.owner_account, b.owner_account), b.step + 1
+        FROM back AS b
+        CROSS JOIN LATERAL (
+            SELECT t.from_lease_id, t.owner_account
+            FROM trust_lease_transfers AS t WHERE t.to_lease_id = b.from_lease
+            UNION ALL
+            SELECT o.renews_lease_id, NULL::text
+            FROM trust_lease_offer_completions AS c
+            JOIN trust_lease_offers AS o ON o.id = c.offer_id
+            WHERE c.lease_id = b.from_lease AND o.renews_lease_id IS NOT NULL
+        ) AS e (from_lease, owner_account)
+    )
+    SELECT b.from_lease, b.owner_account FROM back AS b ORDER BY b.step DESC
+$$;
+
+
+--
 -- Name: trust_lease_cutover(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14242,6 +14280,17 @@ BEGIN
             p_lease_id, v_moved
             USING ERRCODE = 'check_violation';
     END IF;
+    -- A lease renewed: its renewal holds its tenants' deposits and keeps for what it still owes
+    -- (docs/edge-cases.md M-073).
+    SELECT c.lease_id INTO v_moved
+    FROM trust_lease_offers AS o
+    JOIN trust_lease_offer_completions AS c ON c.offer_id = o.id
+    WHERE o.renews_lease_id = p_lease_id;
+    IF FOUND THEN
+        RAISE EXCEPTION 'trust: lease % was renewed as lease %, and its tenants'' deposits are '
+            'returned with the renewal''s', p_lease_id, v_moved
+            USING ERRCODE = 'check_violation';
+    END IF;
     IF v_lease.ends_on IS NULL OR v_lease.ends_on >= v_day THEN
         RAISE EXCEPTION 'trust: lease % has not ended by %; end it first', p_lease_id, v_day
             USING ERRCODE = 'check_violation';
@@ -14279,16 +14328,18 @@ BEGIN
         END IF;
     END IF;
 
-    -- The leases the tenants moved from, oldest first, then this one. Each moved from waits for
-    -- its own rent work too, taken after this lease's as the rent page takes them.
+    -- The leases the tenants moved from or renewed (migration 20261115000230, M-073), oldest
+    -- first, then this one. Each waits for its own rent work too, taken after this lease's as the
+    -- rent page takes them. A lease renewed at this property is kept for as this one is: its
+    -- one owner's account, or (NULL) its owners by their shares.
     FOR v_link IN
         SELECT m.lease_id, m.owner_account
-        FROM trust_lease_moved_from(p_lease_id) WITH ORDINALITY AS m (lease_id, owner_account, n)
+        FROM trust_lease_carried_from(p_lease_id) WITH ORDINALITY AS m (lease_id, owner_account, n)
         ORDER BY m.n
     LOOP
         PERFORM pg_advisory_xact_lock(hashtextextended('rent of lease ' || v_link.lease_id, 0));
         v_leases := v_leases || v_link.lease_id;
-        v_accounts := v_accounts || v_link.owner_account;
+        v_accounts := v_accounts || coalesce(v_link.owner_account, v_owner.ledger_account_id);
     END LOOP;
     v_leases := v_leases || p_lease_id;
     v_accounts := v_accounts || v_owner.ledger_account_id;
@@ -14436,14 +14487,14 @@ BEGIN
                         END LOOP;
                     END IF;
                     -- The rest of it goes to its owners by their shares, a lease moved from to
-                    -- the owner's account its move names.
+                    -- the owner's account its move names (a lease renewed as this one's).
                     FOR v_pay IN
                         SELECT s.ledger_account_id COLLATE "C" AS account, s.amount
                         FROM trust_split_by_ownership(v_property, v_day, v_piece - v_company) AS s
-                        WHERE v_split AND i = cardinality(v_leases) AND v_piece > v_company
+                        WHERE v_split AND v_accounts[i] IS NULL AND v_piece > v_company
                         UNION ALL
                         SELECT v_accounts[i] COLLATE "C", v_piece - v_company
-                        WHERE NOT (v_split AND i = cardinality(v_leases)) AND v_piece > v_company
+                        WHERE NOT (v_split AND v_accounts[i] IS NULL) AND v_piece > v_company
                         ORDER BY account
                     LOOP
                         SELECT t.* INTO v_owner FROM trust_ledger_accounts AS t
@@ -39374,4 +39425,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261114000100'),
     ('20261115000200'),
     ('20261115000210'),
-    ('20261115000220');
+    ('20261115000220'),
+    ('20261115000230');

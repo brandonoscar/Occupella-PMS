@@ -1590,6 +1590,16 @@ tests = [
 ]
 
 [[invariant]]
+id = "renewals-carry-what-the-old-lease-owes"
+statement = "A renewal carries what the lease it renews still owes, as a move does (trust_lease_carried_from, migration 20261115000230; docs/edge-cases.md M-073): the renewal's payments pay every earlier lease's rent first, oldest first, then their other charges, each part into the owners' accounts of that lease's own property; its deposit's return keeps for every one of them the same way; and a lease renewed has no return of its own."
+tests = [
+  "tests/properties/test_lease_transfer_properties.py::test_a_moved_tenant_s_money_pays_each_owner_what_was_owed_to_them",
+  "tests/test_lease_transfers.py::test_a_payment_after_a_renewal_pays_what_the_old_lease_still_owes_first",
+  "tests/test_lease_transfers.py::test_the_renewals_return_keeps_for_both_leases_and_the_old_one_has_none",
+  "tests/test_lease_transfers.py::test_a_renewal_then_a_move_keeps_for_the_renewed_lease_under_the_moves_owner",
+]
+
+[[invariant]]
 id = "deposit-kinds-held-moved-and-returned-apart"
 statement = "A tenant's pet or key deposit is held in a deposit account of its own beside their security deposit, one of each kind per tenant and trust bank account, always in the security-deposit trust bank account (migration 0092). A tenant who leaves moves every kind to the staying tenant's of the same kind; the return keeps what the lease owes from the tenants in name order and from each one's security deposit first, returns the rest of each kind and names each kind on the statement and the register; an assistance animal takes no pet deposit."
 tests = [
