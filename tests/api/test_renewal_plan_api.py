@@ -346,3 +346,49 @@ def test_a_rent_changes_notice_asks_for_what_it_needs(client, conn, staff, pmc):
         ).status_code
         == 422
     )
+
+
+@pytest.mark.parametrize(
+    "effective_on, notice_given_on",
+    [
+        # No day before it, which the rent in force is read on.
+        ("0001-01-01", "0001-01-01"),
+        # A day before it, but not the year before it the lowest rent is read over.
+        ("0001-06-01", "0001-05-01"),
+        # Notice given on the calendar's last day: its earliest start would be after it.
+        ("9999-12-31", "9999-12-31"),
+    ],
+)
+def test_a_rent_change_at_the_calendars_ends_is_refused_not_a_server_error(
+    client, conn, staff, pmc, effective_on, notice_given_on
+):
+    # Issue #228: effective_on=0001-01-01 overflowed the day before it, a 500. A California
+    # property counts its rule over the year before and the days after too.
+    in_state(conn, pmc, "CA")
+    lease, _ = lease_of(conn, pmc, date(2025, 1, 1), None)
+
+    answer = change_notice(
+        client,
+        lease,
+        effective_on=effective_on,
+        monthly_rent="1100.00",
+        notice_given_on=notice_given_on,
+    )
+
+    assert answer.status_code == 422, answer.text
+    assert answer.json() == {"detail": "that day is too far out to count a notice from"}
+
+
+def test_a_renewal_plan_at_the_calendars_start_is_refused_not_a_server_error(
+    client, conn, staff, pmc
+):
+    in_state(conn, pmc, "CA")
+    lease, _ = lease_of(conn, pmc, date(2025, 1, 1), None)
+
+    answer = client.get(
+        f"/api/leasing/renewals/{lease}/plan",
+        params={"starts_on": "0001-01-01", "monthly_rent": "1100.00"},
+    )
+
+    assert answer.status_code == 422, answer.text
+    assert answer.json() == {"detail": "that day is too far out to count a notice from"}
