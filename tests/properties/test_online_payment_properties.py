@@ -191,6 +191,10 @@ class OnlinePaymentsMachine(RuleBasedStateMachine):
             event("a return before paid, sent again later")
             return
         assert refused is None and done is True
+        if kind == "failed" and "paid" in p.reported:
+            # A failure after paid is the money coming back (docs/edge-cases.md P-026).
+            event("a failure after paid, a return")
+            kind = "returned"
         # The database takes a report in order (paid or failed, never both; returned only once
         # paid; expired only before either), the first of each kind; one out of order changes
         # nothing, and nothing is settled (a return after a failure: acknowledged, as no paid

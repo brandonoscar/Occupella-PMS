@@ -709,7 +709,11 @@ class StripeConnected(payments.StripePartner):
             return []
         if kind == "checkout.session.completed" and subject.get("payment_status") != "paid":
             return []
-        payment = payments.payment_of(subject, None)
+        intent = None
+        if kind.startswith("charge.") and subject.get("payment_intent"):
+            # A charge's report names its payment only through its PaymentIntent (P-026).
+            intent = self._call("GET", f"/payment_intents/{subject['payment_intent']}", [])
+        payment = payments.payment_of(subject, intent)
         if payment is None:
             return []
         fee = None

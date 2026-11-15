@@ -279,10 +279,12 @@ def test_paid_is_recorded_as_staff_record_a_payment_and_only_once(
     assert [(p["amount"], p["method"]) for p in mine["payments"]] == [("1000.00", "online")]
     staff_view = ok(client.get(f"/api/leases/{lease}"))
     assert [(p["amount"], p["method"]) for p in staff_view["payments"]] == [("1000.00", "online")]
-    # A failure after it was paid changes nothing.
+    # A failure after it was paid is the money coming back (docs/edge-cases.md P-026): a return,
+    # its tenant's fee back out of the company's account, which holds nothing yet, so it waits.
     assert bank_says(tenant_client, payment, "failed") == {"recorded": True}
-    assert ok(tenant_client.get(f"/api/payments/leases/{lease}"))["payments"][0]["status"] == "paid"
-    assert ok(client.get("/api/payments/waiting")) == []
+    status = ok(tenant_client.get(f"/api/payments/leases/{lease}"))["payments"][0]["status"]
+    assert status == "returned"
+    assert [w["what"] for w in ok(client.get("/api/payments/waiting"))] == ["fee refund"]
 
 
 def test_a_payment_made_online_emails_its_receipt_once(
@@ -520,6 +522,30 @@ def test_a_return_is_a_bounce_and_the_tenants_fee_goes_back_out(
         )
     )
     assert ok(client.get("/api/payments/waiting")) == []
+    assert ok(tenant_client.get(f"/api/payments/leases/{lease}"))["owed"] == "1200.00"
+
+
+def test_a_failure_reported_after_the_payment_was_paid_is_a_return(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    """docs/edge-cases.md P-026: a bank's late failure, by whichever report the partner sends it,
+    undoes the payment as a return does, never ignored with the money still in the books; and a
+    return reported for it too moves nothing twice."""
+    turn_on(client)
+    payment = pay(tenant_client, lease, "1000.00")["id"]
+    owner_before = balance(conn, pmc.owners[0].account)
+    bank_says(tenant_client, payment, "paid")
+    assert balance(conn, pmc.owners[0].account) == owner_before + Decimal("1000.00")
+
+    assert bank_says(tenant_client, payment, "failed") == {"recorded": True}
+    bank_says(tenant_client, payment, "returned")
+
+    assert balance(conn, pmc.owners[0].account) == owner_before
+    assert f"bounce/payment/{payment}" in keys(conn, pmc)
+    assert conn.execute(
+        "SELECT kind FROM trust_online_payment_events WHERE payment_id = %s ORDER BY kind",
+        (payment,),
+    ).fetchall() == [("paid",), ("returned",)]
     assert ok(tenant_client.get(f"/api/payments/leases/{lease}"))["owed"] == "1200.00"
 
 

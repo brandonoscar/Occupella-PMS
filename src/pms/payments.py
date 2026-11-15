@@ -332,7 +332,8 @@ class StripePartner:
             return None
         if kind_of == "checkout.session.completed" and subject.get("payment_status") != "paid":
             return None  # a bank payment is still clearing; the async events say how it ends
-        if kind_of == "charge.dispute.created":
+        if kind_of.startswith("charge.") and subject.get("payment_intent"):
+            # A charge's report names its payment only through its PaymentIntent.
             intent = self._call("GET", f"/payment_intents/{subject.get('payment_intent')}", [])
         else:
             intent = None
@@ -399,6 +400,9 @@ STRIPE_KINDS: dict[str, Kind] = {
     # each kind counts once).
     "payment_intent.succeeded": "paid",
     "payment_intent.payment_failed": "failed",
+    # A charge that failed: before it was paid, the payment failed; after, it came back (P-026;
+    # NOT VERIFIED which of these Stripe sends for a bank's late return).
+    "charge.failed": "failed",
     # A bank payment that comes back after it succeeded (NOT VERIFIED: Stripe's word for an ACH
     # return after success).
     "charge.dispute.created": "returned",

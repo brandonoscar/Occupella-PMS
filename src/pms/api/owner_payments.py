@@ -260,6 +260,7 @@ def apply(conn: psycopg.Connection[Any], event: payments.Event, partner: str) ->
     if row is None or row.partner != partner:
         return False
     lock(conn, row.id)
+    event = online.late_failure(conn, "trust_owner_online_payment_events", event)
     try:
         with conn.transaction():
             conn.execute(

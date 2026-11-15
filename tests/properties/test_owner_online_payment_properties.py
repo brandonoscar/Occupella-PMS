@@ -150,6 +150,10 @@ class OwnerPaymentsMachine(RuleBasedStateMachine):
         assert refused is None and done is True
         # A report about it is no tenant's payment.
         assert op.row_of(self.conn, p.id) is None
+        if kind == "failed" and "paid" in p.reported:
+            # A failure after paid is the money coming back (docs/edge-cases.md P-026).
+            event("a failure after paid, a return")
+            kind = "returned"
         allowed = (
             (kind == "paid" and "failed" not in p.reported)
             or (kind == "failed" and "paid" not in p.reported)

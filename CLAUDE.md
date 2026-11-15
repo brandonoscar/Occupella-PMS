@@ -1070,7 +1070,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   payment hold takes none. Nothing reaches the books until the partner reports the bank paid
   (`trust_online_payment_events`: paid with the partner's fee, failed, returned once paid, or
   expired when the tenant left the partner's page without paying, each kind once a payment; a
-  return reported before paid is refused for now, 409, so the partner sends it again; `POST /api/payments/webhook/stripe`, signed): then the payment is
+  return reported before paid is refused for now, 409, so the partner sends it again, and a failure
+  reported once paid is a return, P-026; `POST /api/payments/webhook/stripe`, signed): then the payment is
   recorded as Receive payment records one (request id the payment's, method "online"), the
   tenant's fee goes to the company's fee account, the partner's fee leaves trust from that
   account once it holds it (never from an owner's), a return is a bounce and the tenant's fee

@@ -155,6 +155,7 @@ def test_an_admin_keeps_the_companys_keys_sealed_and_only_the_last_four_show(
     # docs/edge-cases.md P-012: an endpoint not sent these never reports a bank payment paid.
     assert before["webhook_events"] == [
         "charge.dispute.created",
+        "charge.failed",
         "checkout.session.async_payment_failed",
         "checkout.session.async_payment_succeeded",
         "checkout.session.completed",

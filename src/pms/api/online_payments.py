@@ -25,7 +25,7 @@ payment, and only the partner's report (or the fake partner's page) says it was 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
@@ -664,6 +664,22 @@ def refuse_too_soon(
         raise HTTPException(409, SEND_AGAIN)
 
 
+def late_failure(
+    conn: psycopg.Connection[Any], events: str, event: payments.Event
+) -> payments.Event:
+    """A failure reported of a payment the books hold as paid is the money coming back: a return
+    (docs/edge-cases.md P-026; a bank's late ACH failure, by whichever event Stripe reports it).
+    Ignored as out of order, it left the books holding money the bank took back. Each kind counts
+    once, so a dispute reported for the same return moves nothing twice."""
+    if event.kind != "failed":
+        return event
+    paid = conn.execute(
+        f"SELECT EXISTS (SELECT 1 FROM {events} WHERE payment_id = %s AND kind = 'paid')",  # noqa: S608
+        (event.payment_id,),
+    ).fetchone()
+    return replace(event, kind="returned") if paid is not None and paid[0] else event
+
+
 def apply(conn: psycopg.Connection[Any], event: payments.Event, partner: str) -> bool:
     """Records the partner's report about a payment it took (once per payment and kind) and
     settles what it calls for. False when the payment isn't one this partner took for the PMS."""
@@ -671,6 +687,7 @@ def apply(conn: psycopg.Connection[Any], event: payments.Event, partner: str) ->
     if row is None or row.partner != partner:
         return False
     rent.lock_lease(conn, row.lease_id)
+    event = late_failure(conn, "trust_online_payment_events", event)
     try:
         with conn.transaction():
             conn.execute(

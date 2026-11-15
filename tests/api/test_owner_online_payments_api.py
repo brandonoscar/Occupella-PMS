@@ -238,9 +238,10 @@ def test_paid_is_the_owners_contribution_once_and_the_company_pays_the_fee(
         (f"owner-payment/{payment}",),
     ).fetchone()[0]
     assert memo == "Paid online by bank"
-    # A failure after it was paid changes nothing; nothing waits.
+    # A failure after it was paid is the money coming back (docs/edge-cases.md P-026): taken
+    # back out of the owner's account; nothing waits.
     assert bank_says(owner_client, payment, "failed") == {"recorded": True}
-    assert ok(owner_client.get("/api/payments/owner"))["payments"][0]["status"] == "paid"
+    assert ok(owner_client.get("/api/payments/owner"))["payments"][0]["status"] == "returned"
     assert ok(client.get("/api/payments/waiting")) == []
 
 
@@ -324,6 +325,21 @@ def test_a_return_is_taken_back_out_of_the_owners_account(
     # The partner's fee stays the company's: the bank kept it.
     assert balance(conn, pmc.pmc_income) == Decimal("6.00")
     assert ok(client.get("/api/payments/waiting")) == []
+
+
+def test_a_failure_reported_after_the_owners_payment_was_paid_takes_it_back_out(
+    client, owner_client, conn, staff, owner, pmc
+):
+    # docs/edge-cases.md P-026: a late failure is the money coming back, as a return is.
+    turn_on(client)
+    fund_company(conn, pmc, "10.00")
+    payment = pay(owner_client, pmc.owners[0].account, "500.00")["id"]
+    bank_says(owner_client, payment, "paid")
+    assert balance(conn, pmc.owners[0].account) == Decimal("500.00")
+    assert bank_says(owner_client, payment, "failed") == {"recorded": True}
+    assert balance(conn, pmc.owners[0].account) == Decimal("0.00")
+    assert f"owner-payment-back/{payment}" in keys(conn, pmc)
+    assert ok(owner_client.get("/api/payments/owner"))["payments"][0]["status"] == "returned"
 
 
 def test_a_return_the_owners_account_cant_cover_waits_for_staff(

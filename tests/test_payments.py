@@ -229,6 +229,16 @@ def test_stripe_reports_a_failure_a_return_and_nothing_else():
     )
 
 
+def test_stripe_reports_a_charge_that_failed_through_its_payment():
+    # docs/edge-cases.md P-026: a charge names the PMS's payment only through its PaymentIntent.
+    payment = uuid4()
+    stripe = Stripe({("GET", "/payment_intents/pi_3"): {"metadata": {"payment_id": str(payment)}}})
+    failed = stripe.event(*report("charge.failed", {"id": "ch_3", "payment_intent": "pi_3"}))
+    assert failed is not None and (failed.payment_id, failed.kind) == (payment, "failed")
+    assert stripe.event(*report("charge.failed", {"id": "ch_4"})) is None  # no payment of ours
+    assert "charge.failed" in payments.STRIPE_EVENTS
+
+
 def test_stripes_report_must_be_signed_and_readable():
     stripe = Stripe({})
     body, headers = report("checkout.session.completed", {})
