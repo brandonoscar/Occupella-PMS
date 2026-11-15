@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
+import { Badge } from "../components/Badge";
 import { Button, LinkButton } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
@@ -34,7 +35,9 @@ import {
 } from "lucide-react";
 import { withBase } from "../base";
 
-type Property = { account_id: string; property_id: string; name: string; bank: string; balance: string };
+// owns_today: false for a property they no longer own (sold, docs/edge-cases.md U-085): its money
+// shows, never its units or tenants.
+type Property = { account_id: string; property_id: string; name: string; bank: string; balance: string; owns_today: boolean };
 
 // Cells take the table style's padding (less of it on a phone); only their alignment is set here.
 const CELL = "text-left";
@@ -141,8 +144,12 @@ export function OwnerHome({ me, section = "overview", propertyId }: {
             {properties.map((p) => (
               <tr key={p.account_id} className="border-t border-line">
                 <td className={CELL}>
-                  <a className="font-medium text-iris hover:text-iris-hover hover:underline"
-                    href={withBase(`/properties/${p.property_id}`)}>{p.name}</a>
+                  {p.owns_today ? (
+                    <a className="font-medium text-iris hover:text-iris-hover hover:underline"
+                      href={withBase(`/properties/${p.property_id}`)}>{p.name}</a>
+                  ) : (
+                    <span className="font-medium text-ink">{p.name} <Badge tone="neutral">No longer yours</Badge></span>
+                  )}
                 </td>
                 <td className={`${CELL} text-ink-muted`}>{p.bank}</td>
                 <td className={AMOUNT}>{money(p.balance)}</td>

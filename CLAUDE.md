@@ -443,7 +443,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   in its sidebar (`TENANT_SECTIONS` in `pages/TenantHome.tsx`, `OWNER_SECTIONS` in
   `pages/OwnerHome.tsx`). An owner's: Overview, Properties (each at `/properties/<id>`,
   `src/pms/api/owner_portal.py`: its units, who rents each by name only, the rent, what each lease
-  owes today, what is vacant since when and who gave notice), Statements and reports, Bills,
+  owes today, what is vacant since when and who gave notice), only of a property they own today: once its ownership shares leave
+  their account out (sold), its money and statements stay theirs and its units, tenants, repairs and
+  files don't (U-085), Statements and reports, Bills,
   Repairs (`/api/owner/work-orders`: the work orders at their properties), Documents, Messages and
   Profile (their own contact details, `/api/owner/contact`, which staff see they changed). A
   tenant's: Overview (announcements, the lease and its balance), Payments, Lease (its files,

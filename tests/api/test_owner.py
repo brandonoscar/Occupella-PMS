@@ -34,6 +34,7 @@ def test_an_owner_sees_each_of_their_properties_and_what_it_holds(client, conn, 
             "name": "Property 1",
             "bank": "Synthetic operating trust account",
             "balance": "1500.00",
+            "owns_today": True,
         }
     ]
 

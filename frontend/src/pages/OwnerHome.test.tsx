@@ -32,10 +32,12 @@ const STATEMENT = {
   ],
 };
 
-function server() {
+const OWNED = [{ account_id: "a1", property_id: "pr1", name: "Property 1", bank: "Operating trust account", balance: "250.00", owns_today: true }];
+
+function server(properties: unknown[] = OWNED) {
   const fetch = vi.fn(async (path: string) => {
     const body = path.startsWith("/api/owner/properties")
-      ? [{ account_id: "a1", property_id: "pr1", name: "Property 1", bank: "Operating trust account", balance: "250.00" }]
+      ? properties
       : path.startsWith("/api/owner/statement")
         ? STATEMENT
         : path.startsWith("/api/owner/year-end")
@@ -49,6 +51,20 @@ function server() {
 }
 
 describe("OwnerHome", () => {
+  it("links each property they own today, and only shows the money of one they no longer own", async () => {
+    // docs/edge-cases.md U-085: sold, or its ownership moved to another owner.
+    server([
+      ...OWNED,
+      { account_id: "a2", property_id: "pr2", name: "Property 2", bank: "Operating trust account", balance: "0.00", owns_today: false },
+    ]);
+    render(<OwnerHome me={ME} section="properties" />);
+
+    const owned = await screen.findByRole("link", { name: "Property 1" });
+    expect(owned.getAttribute("href")).toBe("/properties/pr1");
+    expect(screen.queryByRole("link", { name: /Property 2/ })).toBeNull();
+    expect(screen.getByText("No longer yours")).toBeTruthy();
+  });
+
   it("reads the statement in words: the period, and what each posting was and with whom", async () => {
     server();
     render(<OwnerHome me={ME} section="statements" />);

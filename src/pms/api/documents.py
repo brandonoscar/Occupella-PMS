@@ -38,6 +38,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from psycopg import sql
 from pydantic import BaseModel, Field, StringConstraints
 
+from pms import days
 from pms.api import scope
 from pms.api.deps import Conn, Staff
 from pms.api.rentals import Page, Paged, PerPage
@@ -499,23 +500,32 @@ def file_name(title: str, content_type: str) -> str:
     return f"{stem}.{EXTENSION[content_type]}"
 
 
+# An owner's property account (a) is the owner's today unless the property's ownership shares in
+# force on %(day)s leave it out (docs/edge-cases.md U-085: the property sold, or its ownership
+# moved to another owner, recorded as shares from that day).
+OWNS_TODAY = """
+(NOT EXISTS (SELECT 1 FROM trust_ownership_on(a.property_id, %(day)s))
+ OR a.ledger_account_id IN (
+     SELECT o.ledger_account_id FROM trust_ownership_on(a.property_id, %(day)s) AS o))
+"""
 # What an owner sees of the documents (d) in the portal (the founder's review q046): their own
-# owner documents, the documents of each property they hold an account for and of its units, and
-# the receipts of the bills of their accounts. Never a tenant's, a lease's or a vendor's.
-OWNER_SEES = """
+# owner documents, the documents of each property they own today (an account the shares in force
+# on %(day)s don't leave out, U-085) and of its units, and the receipts of the bills of their
+# accounts. Never a tenant's, a lease's or a vendor's.
+OWNER_SEES: str = f"""
 (   (d.kind = 'owner_document' AND d.owner_id = %(owner)s)
  OR (d.kind = 'property_document' AND d.property_id IN (
         SELECT a.property_id FROM trust_ledger_accounts AS a
-        WHERE a.kind = 'owner_property' AND a.owner_id = %(owner)s))
+        WHERE a.kind = 'owner_property' AND a.owner_id = %(owner)s AND {OWNS_TODAY}))
  OR (d.kind = 'unit_document' AND d.unit_id IN (
         SELECT u.id FROM trust_units AS u
         JOIN trust_ledger_accounts AS a ON a.property_id = u.property_id
-        WHERE a.kind = 'owner_property' AND a.owner_id = %(owner)s))
+        WHERE a.kind = 'owner_property' AND a.owner_id = %(owner)s AND {OWNS_TODAY}))
  OR (d.kind = 'receipt' AND d.bill_id IN (
         SELECT b.id FROM trust_bills AS b
         JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id
         WHERE a.kind = 'owner_property' AND a.owner_id = %(owner)s)))
-"""
+"""  # noqa: S608
 
 
 SERVED = f"""
@@ -532,7 +542,10 @@ def served(
 ) -> Response:
     """A document's file as a download, or 404: another PMC's, removed, or (for an owner) not
     one they see (OWNER_SEES)."""
-    row = conn.execute(SERVED, {"pmc": pmc_id, "document": document_id, "owner": owner}).fetchone()
+    day = None if owner is None else days.today(conn, pmc_id)
+    row = conn.execute(
+        SERVED, {"pmc": pmc_id, "document": document_id, "owner": owner, "day": day}
+    ).fetchone()
     if row is None:
         raise HTTPException(404, "no such document")
     title, content_type, content = row

@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from pms import exports
-from pms.api import addresses, directory, leaving, rentals, work_orders
+from pms.api import addresses, directory, documents, leaving, rentals, work_orders
 from pms.api.deps import Conn, Owner
 from pms.api.rent import cents
 from pms.api.rent import today as rent_today
@@ -61,12 +61,16 @@ class OwnedProperty(BaseModel):
 
 
 def owned_properties(conn: psycopg.Connection[Any], pmc: UUID, owner: UUID) -> list[UUID]:
+    """The properties the owner owns today: where they hold an account the shares in force
+    today don't leave out. A former owner keeps their statements, never today's units, tenants,
+    repairs or files (U-085)."""
     return [
         p
         for (p,) in conn.execute(
-            "SELECT DISTINCT property_id FROM trust_ledger_accounts"
-            " WHERE pmc_id = %s AND owner_id = %s AND kind = 'owner_property'",
-            (pmc, owner),
+            "SELECT DISTINCT a.property_id FROM trust_ledger_accounts AS a"  # noqa: S608
+            " WHERE a.pmc_id = %(pmc)s AND a.owner_id = %(owner)s AND a.kind = 'owner_property'"
+            f" AND {documents.OWNS_TODAY}",
+            {"pmc": pmc, "owner": owner, "day": rent_today(conn, pmc)},
         ).fetchall()
     ]
 
