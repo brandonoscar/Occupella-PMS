@@ -14,15 +14,18 @@ import pytest
 from helpers import (
     acting_as,
     add_agreement,
+    add_unit,
     admin_of,
     balance,
     draw_owner,
     enter_bill,
     in_background,
     make_pmc,
+    open_lease,
     pay_bill,
     post_entry,
     propose_entry,
+    return_deposit,
     set_aside_bill,
     sign_for,
     staff_named,
@@ -152,6 +155,38 @@ def test_every_payout_from_the_account_takes_a_signer(conn, pmc, broker, clerk, 
     with acting_as(conn, clerk):
         pay_bill(conn, pmc.pmc_id, payable, at(JAN_15))
         assert withdraw_pmc_fees(conn, pmc.pmc_id, bank, "fees-1", None, at(JAN_15)) == 50
+
+
+@pytest.mark.parametrize("prepaid", ["0.00", "40.00"])
+def test_prepaid_rent_paid_back_at_move_out_takes_the_operating_accounts_signer(
+    conn, pmc, broker, clerk, prepaid
+):
+    """Migration 20261115000240 (docs/edge-cases.md M-072): a deposit's return pays back the
+    tenants' prepaid rent left out of the operating account's cash, so it takes that account's
+    signer, as the deposit returned takes the security-deposit account's. With no prepaid rent
+    held (none to pay back) only the deposit's account is asked, which has no broker here."""
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (pmc.tenant_deposit,),
+    ).fetchone()[0]
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id)
+    lease = open_lease(conn, pmc.pmc_id, unit, JAN_1, JAN_15, "1000.00", [tenant])
+    transfer_batch(conn, [(pmc.deposit_cash, pmc.tenant_deposit, "500.00")], at(JAN_1))
+    if prepaid != "0.00":
+        transfer_batch(conn, [(pmc.operating_cash, pmc.prepaid_rent, prepaid)], at(JAN_1))
+
+    def give_back():
+        with acting_as(conn, clerk):
+            return return_deposit(conn, pmc.pmc_id, lease, "move-out-1", at(JAN_16))
+
+    if prepaid == "0.00":
+        assert give_back() == Decimal("500.00")
+        return
+    with not_allowed("Clerk 1 is not an authorized signer"):
+        give_back()
+    sign_for(conn, pmc.pmc_id, pmc.operating_bank_id, clerk, by=broker)
+    assert give_back() == Decimal("500.00")
+    assert balance(conn, pmc.prepaid_rent) == 0
 
 
 def test_a_journal_entry_that_takes_cash_out_takes_a_signer(conn, pmc, broker):
