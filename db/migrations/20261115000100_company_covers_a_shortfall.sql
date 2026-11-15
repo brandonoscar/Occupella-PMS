@@ -414,15 +414,21 @@ TO trust_app;
 -- migrate:down
 SET LOCAL lock_timeout = '5s';
 
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_repay_company_advance(uuid, text, numeric, text, timestamptz);
 DROP TRIGGER trust_not_an_advance ON trust_assistance_payments;
 DROP TRIGGER trust_not_an_advance ON trust_charge_payments;
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_refuse_matching_an_advance();
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_cover_returned_payment(uuid, text, text, timestamptz);
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_company_advance_owed(text);
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_return_shortfall(uuid, text);
 -- squawk-ignore ban-drop-table
 DROP TABLE trust_company_advance_repayments;
 -- squawk-ignore ban-drop-table
 DROP TABLE trust_company_advances;
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_check_company_advance();

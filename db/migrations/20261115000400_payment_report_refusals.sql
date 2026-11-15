@@ -24,7 +24,7 @@ CREATE TABLE trust_payment_report_refusals (
     pmc_id uuid NOT NULL REFERENCES trust_pmcs (pmc_id),
     reason text NOT NULL CHECK (reason IN ('signature', 'clock')),
     day date NOT NULL,
-    drift_seconds integer CHECK (drift_seconds IS NULL OR abs(drift_seconds) > 300),
+    drift_seconds bigint CHECK (drift_seconds IS NULL OR abs(drift_seconds) > 300),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CHECK ((reason = 'clock') = (drift_seconds IS NOT NULL)),
     UNIQUE (pmc_id, reason, day)

@@ -19917,7 +19917,7 @@ CREATE TABLE public.trust_payment_report_refusals (
     pmc_id uuid NOT NULL,
     reason text NOT NULL,
     day date NOT NULL,
-    drift_seconds integer,
+    drift_seconds bigint,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT trust_payment_report_refusals_check CHECK (((reason = 'clock'::text) = (drift_seconds IS NOT NULL))),
     CONSTRAINT trust_payment_report_refusals_drift_seconds_check CHECK (((drift_seconds IS NULL) OR (abs(drift_seconds) > 300))),
