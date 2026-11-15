@@ -20,7 +20,10 @@ import {
   needsReceipt,
   preview,
   returnBy,
+  returnedLine,
+  returnQuestion,
   sentLine,
+  settledPrepaidLine,
   statementPath,
 } from "../moveout";
 import type { Recorder } from "./useRecord";
@@ -159,6 +162,7 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
             <p className="text-sm" aria-label={`Returned, ${leaseLabel(lease)}`}>
               Returned on {usDate(lease.settled.returned_on)}: kept {money(lease.settled.kept)} of{" "}
               {money(lease.settled.held)}, {money(lease.settled.returned)} back to the tenants.
+              {settledPrepaidLine(lease.settled)}
             </p>
             <div className="flex flex-wrap items-center gap-3">
               {lease.tenants.map((name, i) => (
@@ -209,11 +213,9 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
                     on,
                     owner_account: choose ? owner : null,
                   };
-                  ask(`Return the deposit on ${usDate(on)}: keep ${money(next.kept)} for what the lease owes and`
-                    + ` pay ${money(next.returned)} back to the tenants? This records what you paid at the bank;`
-                    + " it sends no money or email.", () =>
-                    record<{ returned: string }>(`/api/move-out/${id}/return`, body,
-                      (done) => `Returned ${money(done.returned)} to the tenants; the rest paid what the lease owed.`));
+                  ask(returnQuestion(lease, on), () =>
+                    record<{ returned: string; prepaid_returned?: string }>(`/api/move-out/${id}/return`, body,
+                      (done) => returnedLine(done)));
                 }}
               >
                 <Field label="Paid on" id={`on-${id}`} type="date" required value={on}

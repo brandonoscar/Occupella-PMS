@@ -1319,7 +1319,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   to what is open of its charges rent first, the cash moving to the owner's trust bank account;
   the rest goes back to each tenant from the security-deposit account. A tenant still on another lease keeps
   their deposit with it. It takes the disburse role. `trust_report_deposit_return` is the
-  itemized statement for the tenants. READ COMMITTED; append-only. Since migration 0120 (q040,
+  itemized statement for the tenants. READ COMMITTED; append-only. Since migration
+  20261115000240 (M-072) the tenants' prepaid rent pays what is owed first, and what is left
+  of it goes back with the deposits (`prepaid_used`, `prepaid_returned`). Since migration 0120 (q040,
   q039, `docs/law.md`) each lease past its last day shows the day its deposit is due back, 14 days
   after it, 10 while it owes nothing (the strictest found; Move-outs and the Dashboard), staff keep
   receipts for the fees a deposit keeps (`trust_deduction_receipts`: a lease document linked to

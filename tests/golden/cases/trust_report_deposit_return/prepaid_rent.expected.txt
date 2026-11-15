@@ -1,0 +1,20 @@
+line	item	detail	amount
+1	PMC	Golden PMC	NULL
+2	property and unit	Property 1 / Unit 1	NULL
+3	tenants	Tenant A; Tenant B	NULL
+4	lease	2026-01-01 to 2026-06-30	NULL
+5	deposit held	Tenant A	600.00
+6	prepaid rent held	Tenant A (prepaid rent)	1500.00
+7	deposit held	Tenant B	900.00
+8	kept for	2026-06-01 rent: June rent	900.00
+9	kept for	2026-06-30 fee: Cleaning	150.00
+10	kept for	2026-06-30 fee: Broken window	320.00
+11	deposits held, total	NULL	1500.00
+12	kept, total	NULL	0.00
+13	prepaid rent used, total	NULL	1370.00
+14	returned to	Tenant A (prepaid rent)	130.00
+15	returned to	Tenant A	600.00
+16	returned to	Tenant B	900.00
+17	returned, total	NULL	1500.00
+18	prepaid rent returned, total	NULL	130.00
+19	returned on	2026-07-05 (UTC), by Manager 1	NULL

@@ -3499,7 +3499,10 @@ BEGIN
         SELECT DISTINCT a.bank_account_id
         FROM trust_lease_tenants AS lt
         JOIN trust_ledger_accounts AS a
-          ON a.tenant_id = lt.tenant_id AND a.kind = 'tenant_deposit'
+          ON a.tenant_id = lt.tenant_id
+         -- Prepaid rent going back is a payout from its trust bank account too (M-072).
+         AND (a.kind = 'tenant_deposit'
+              OR (a.kind = 'prepaid_rent' AND NEW.prepaid_returned > 0))
         WHERE lt.lease_id = NEW.lease_id
         ORDER BY a.bank_account_id
     LOOP
@@ -10658,10 +10661,11 @@ BEGIN
     RETURN QUERY
     WITH kinds AS (
         -- Each line with its tenant and the kind of deposit it came from (the transfer's).
-        SELECT x.*, tn.display_name || CASE a.deposit_kind
-                                          WHEN 'pet' THEN ' (pet deposit)'
-                                          WHEN 'key' THEN ' (key deposit)'
-                                          ELSE '' END AS whose
+        SELECT x.*, tn.display_name || CASE WHEN a.kind = 'prepaid_rent' THEN ' (prepaid rent)'
+                                            WHEN a.deposit_kind = 'pet' THEN ' (pet deposit)'
+                                            WHEN a.deposit_kind = 'key' THEN ' (key deposit)'
+                                            ELSE '' END AS whose,
+               a.kind = 'prepaid_rent' AS prepaid
         FROM trust_deposit_return_lines AS x
         JOIN trust_tenants AS tn ON tn.id = x.tenant_id
         JOIN pgledger_transfers AS tr ON tr.id = x.transfer_id
@@ -10670,9 +10674,9 @@ BEGIN
     ),
     held AS (
         -- Each tenant's deposit of each kind when it was returned: what was kept and returned.
-        SELECT k.whose AS tenant, sum(k.amount) AS amount
+        SELECT k.whose AS tenant, k.prepaid, sum(k.amount) AS amount
         FROM kinds AS k
-        GROUP BY k.tenant_id, k.whose
+        GROUP BY k.tenant_id, k.whose, k.prepaid
     ),
     lines AS (
         SELECT 0 AS section, 1 AS n, 'PMC' AS item, p.display_name AS detail,
@@ -10706,7 +10710,8 @@ BEGIN
         JOIN trust_units AS u ON u.id = l.unit_id
         JOIN trust_properties AS pr ON pr.id = u.property_id
         UNION ALL
-        SELECT 1, 0, 'deposit held', h.tenant, h.amount, h.tenant, NULL
+        SELECT 1, 0, CASE WHEN h.prepaid THEN 'prepaid rent held' ELSE 'deposit held' END,
+               h.tenant, h.amount, h.tenant, NULL
         FROM held AS h
         UNION ALL
         -- Each charge once, with what all the deposits paid of it; one of a lease moved from
@@ -10728,13 +10733,20 @@ BEGIN
         UNION ALL
         SELECT 3, 1, 'kept, total', NULL, v_done.kept, NULL, NULL
         UNION ALL
+        -- What the tenants' prepaid rent paid, and what of it went back (M-072), when any.
+        SELECT 3, 2, 'prepaid rent used, total', NULL, v_done.prepaid_used, NULL, NULL
+        WHERE v_done.prepaid_used + v_done.prepaid_returned > 0
+        UNION ALL
         SELECT 4, 0, 'returned to', k.whose, k.amount, NULL, k.line_no
         FROM kinds AS k
         WHERE k.charge_id IS NULL
         UNION ALL
         SELECT 5, 0, 'returned, total', NULL, v_done.returned, NULL, NULL
         UNION ALL
-        SELECT 5, 1, 'returned on', to_char(v_done.returned_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+        SELECT 5, 1, 'prepaid rent returned, total', NULL, v_done.prepaid_returned, NULL, NULL
+        WHERE v_done.prepaid_used + v_done.prepaid_returned > 0
+        UNION ALL
+        SELECT 5, 2, 'returned on', to_char(v_done.returned_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')
                    || ' (UTC), by ' || coalesce(
                        (SELECT s.display_name FROM trust_staff AS s
                         WHERE s.id = v_done.returned_by), 'staff not recorded'),
@@ -14209,6 +14221,9 @@ DECLARE
     v_held numeric;
     v_kept numeric;
     v_keep numeric;
+    -- The tenants' prepaid rent, and what of it pays what the leases owe (M-072).
+    v_prepaid numeric;
+    v_used numeric;
     v_owners bigint;
     v_line bigint := 0::bigint;
     v_deposit record;
@@ -14362,33 +14377,50 @@ BEGIN
     JOIN trust_ledger_accounts AS t ON t.ledger_account_id = a.id
     JOIN trust_lease_tenants AS lt ON lt.tenant_id = t.tenant_id
     WHERE lt.lease_id = p_lease_id AND t.kind = 'tenant_deposit';
-    IF v_held <= 0 THEN
+    -- Their prepaid rent (migration 20261115000240, docs/edge-cases.md M-072): it pays what the
+    -- leases owe before any deposit is kept, and what is left of it goes back with the deposits.
+    SELECT coalesce(sum(a.balance), 0) INTO v_prepaid FROM pgledger_accounts AS a
+    JOIN trust_ledger_accounts AS t ON t.ledger_account_id = a.id
+    JOIN trust_lease_tenants AS lt ON lt.tenant_id = t.tenant_id
+    WHERE lt.lease_id = p_lease_id AND t.kind = 'prepaid_rent';
+    IF v_held <= 0 AND v_prepaid <= 0 THEN
         RAISE EXCEPTION 'trust: no security deposit is held for lease %', p_lease_id
             USING ERRCODE = 'check_violation';
     END IF;
-    v_kept := least(
-        (SELECT sum(o) FROM unnest(v_rent) AS o) + (SELECT sum(o) FROM unnest(v_fees) AS o), v_held
+    v_used := least(
+        (SELECT sum(o) FROM unnest(v_rent) AS o) + (SELECT sum(o) FROM unnest(v_fees) AS o),
+        v_prepaid
     );
-    v_keep := v_kept;  -- what is left to keep, deposit by deposit
+    v_kept := least(
+        (SELECT sum(o) FROM unnest(v_rent) AS o) + (SELECT sum(o) FROM unnest(v_fees) AS o)
+            - v_used,
+        v_held
+    );
+    -- What is left to take: prepaid rent first, then deposit by deposit.
+    v_keep := v_used + v_kept;
 
     INSERT INTO trust_deposit_returns (
-        lease_id, pmc_id, request_key, returned_at, held, kept, returned, returned_by
+        lease_id, pmc_id, request_key, returned_at, held, kept, returned, returned_by,
+        prepaid_used, prepaid_returned
     ) VALUES (
         p_lease_id, p_pmc_id, p_request_key, p_event_at, v_held, v_kept, v_held - v_kept,
-        nullif(current_setting('trust.staff_id', true), '')::uuid
+        nullif(current_setting('trust.staff_id', true), '')::uuid, v_used, v_prepaid - v_used
     );
 
     FOR v_deposit IN
         SELECT t.ledger_account_id AS account, t.tenant_id, a.balance,
+               t.kind = 'prepaid_rent' AS prepaid,
                (SELECT c.ledger_account_id FROM trust_ledger_accounts AS c
                 WHERE c.bank_account_id = t.bank_account_id AND c.kind = 'bank_cash') AS cash
         FROM trust_ledger_accounts AS t
         JOIN pgledger_accounts AS a ON a.id = t.ledger_account_id
         JOIN trust_lease_tenants AS lt ON lt.tenant_id = t.tenant_id
         JOIN trust_tenants AS tn ON tn.id = t.tenant_id
-        WHERE lt.lease_id = p_lease_id AND t.kind = 'tenant_deposit'
-        -- Each tenant's security deposit first, then their key and pet deposits (0092).
-        ORDER BY tn.display_name COLLATE "C", t.tenant_id,
+        WHERE lt.lease_id = p_lease_id
+          AND (t.kind = 'tenant_deposit' OR (t.kind = 'prepaid_rent' AND a.balance > 0))
+        -- Every tenant's prepaid rent first (M-072), then each tenant's security deposit, then
+        -- their key and pet deposits (0092).
+        ORDER BY t.kind <> 'prepaid_rent', tn.display_name COLLATE "C", t.tenant_id,
                  CASE t.deposit_kind WHEN 'key' THEN 1 WHEN 'pet' THEN 2 ELSE 0 END,
                  t.ledger_account_id
     LOOP
@@ -14452,12 +14484,17 @@ BEGIN
                         WHERE t.bank_account_id = v_bank AND t.kind = 'bank_cash';
                         SELECT t.id INTO v_transfer
                         FROM pgledger_create_transfers(
-                            ARRAY[
-                                (v_deposit.account, v_fee_account, v_company)::transfer_request,
-                                (v_owner_cash, v_deposit.cash, v_company)::transfer_request
-                            ],
+                            ARRAY[(v_deposit.account, v_fee_account, v_company)::transfer_request]
+                            -- Its cash moves only from another trust bank account (prepaid rent
+                            -- is held in the owner's own, as a rule).
+                            || CASE WHEN v_owner_cash = v_deposit.cash
+                                    THEN ARRAY[]::transfer_request[]
+                                    ELSE ARRAY[(v_owner_cash, v_deposit.cash, v_company)
+                                               ::transfer_request] END,
                             p_event_at,
-                            jsonb_build_object('memo', 'Security deposit kept')
+                            jsonb_build_object('memo', CASE WHEN v_deposit.prepaid
+                                                            THEN 'Prepaid rent used'
+                                                            ELSE 'Security deposit kept' END)
                         ) AS t
                         WHERE t.from_account_id = v_deposit.account;
                         v_left := v_company;
@@ -14505,13 +14542,16 @@ BEGIN
                           AND t.kind = 'bank_cash';
                         SELECT t.id INTO v_transfer
                         FROM pgledger_create_transfers(
-                            ARRAY[
-                                (v_deposit.account, v_owner.ledger_account_id, v_pay.amount)
-                                    ::transfer_request,
-                                (v_owner_cash, v_deposit.cash, v_pay.amount)::transfer_request
-                            ],
+                            ARRAY[(v_deposit.account, v_owner.ledger_account_id, v_pay.amount)
+                                  ::transfer_request]
+                            || CASE WHEN v_owner_cash = v_deposit.cash
+                                    THEN ARRAY[]::transfer_request[]
+                                    ELSE ARRAY[(v_owner_cash, v_deposit.cash, v_pay.amount)
+                                               ::transfer_request] END,
                             p_event_at,
-                            jsonb_build_object('memo', 'Security deposit kept')
+                            jsonb_build_object('memo', CASE WHEN v_deposit.prepaid
+                                                            THEN 'Prepaid rent used'
+                                                            ELSE 'Security deposit kept' END)
                         ) AS t
                         WHERE t.from_account_id = v_deposit.account;
                         v_left := v_pay.amount;
@@ -14554,13 +14594,16 @@ BEGIN
         END LOOP;
         v_keep := v_keep - v_take;
         IF v_deposit.balance > v_take THEN
-            -- Returned: out of the security-deposit trust bank account's cash.
+            -- Returned: out of the security-deposit trust bank account's cash, prepaid rent out
+            -- of its own trust bank account's (M-072).
             SELECT t.id INTO v_transfer
             FROM pgledger_create_transfers(
                 ARRAY[(v_deposit.account, v_deposit.cash, v_deposit.balance - v_take)
                       ::transfer_request],
                 p_event_at,
-                jsonb_build_object('memo', 'Security deposit returned')
+                jsonb_build_object('memo', CASE WHEN v_deposit.prepaid
+                                                THEN 'Prepaid rent returned'
+                                                ELSE 'Security deposit returned' END)
             ) AS t;
             v_line := v_line + 1;
             INSERT INTO trust_deposit_return_lines (
@@ -17489,9 +17532,12 @@ CREATE TABLE public.trust_deposit_returns (
     returned numeric NOT NULL,
     returned_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    prepaid_used numeric DEFAULT 0 NOT NULL,
+    prepaid_returned numeric DEFAULT 0 NOT NULL,
     CONSTRAINT trust_deposit_returns_check CHECK (((kept + returned) = held)),
-    CONSTRAINT trust_deposit_returns_held_check CHECK ((held > (0)::numeric)),
+    CONSTRAINT trust_deposit_returns_held_check CHECK (((held >= (0)::numeric) AND (((held + prepaid_used) + prepaid_returned) > (0)::numeric))),
     CONSTRAINT trust_deposit_returns_kept_check CHECK ((kept >= (0)::numeric)),
+    CONSTRAINT trust_deposit_returns_prepaid_check CHECK (((prepaid_used >= (0)::numeric) AND (prepaid_returned >= (0)::numeric))),
     CONSTRAINT trust_deposit_returns_request_key_check CHECK ((request_key <> ''::text)),
     CONSTRAINT trust_deposit_returns_returned_check CHECK ((returned >= (0)::numeric))
 );
@@ -39426,4 +39472,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261115000200'),
     ('20261115000210'),
     ('20261115000220'),
-    ('20261115000230');
+    ('20261115000230'),
+    ('20261115000240');

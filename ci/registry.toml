@@ -1340,6 +1340,17 @@ tests = [
 ]
 
 [[invariant]]
+id = "prepaid-rent-at-move-out"
+statement = "A deposit's return takes the tenants' prepaid rent first for what the lease and the leases it carries owe, rent first, each part for its own owners, then keeps what is still owed from the deposits, and pays back what is left of both, so no prepaid rent stays held for a lease returned (migration 20261115000240; docs/edge-cases.md M-072)."
+tests = [
+  "tests/properties/test_lease_transfer_properties.py::test_a_moved_tenant_s_money_pays_each_owner_what_was_owed_to_them",
+  "tests/test_move_out.py::test_prepaid_rent_pays_what_is_owed_before_the_deposit_and_the_rest_goes_back",
+  "tests/test_move_out.py::test_prepaid_rent_short_of_what_is_owed_leaves_the_rest_to_the_deposit",
+  "tests/test_move_out.py::test_a_lease_holding_prepaid_rent_but_no_deposit_returns_it",
+  "tests/api/test_moveout.py::test_a_return_uses_the_tenants_prepaid_rent_first_and_pays_back_the_rest",
+]
+
+[[invariant]]
 id = "a-document-is-its-file-and-its-bytes-stay-out-of-the-log"
 statement = "A document is a PDF, a JPEG or a PNG of at most 5 MB about one record of its own PMC (a vendor's W-9, a bill's receipt, a lease's move-out photo, an owner's document), and has its file at commit: bytes of the type, size and SHA-256 its row says. Documents and removals are append-only; the bytes are never copied into the audit log and trust_ai_agent never reads them. An owner downloads only their own owner documents, the files about the properties they hold an account for and those properties' units, and their accounts' bills' receipts (q046)."
 tests = [

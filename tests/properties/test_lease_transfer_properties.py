@@ -12,8 +12,10 @@ the end returns the deposit. A model works out what each lease owes; the databas
     is prepaid rent;
   - every payment matched to a charge went into the owner's account of the charge's own
     property, so each owner is paid what was owed to them and no more;
-  - the deposit's return keeps what every lease still owes, the same way, each for its own
-    owner, or the whole deposit if that is less, and returns the rest;
+  - the deposit's return takes the tenant's prepaid rent first for what every lease still owes
+    (migration 20261115000240, M-072; a fee charged at move-out after the payments makes them
+    owe), then keeps what is still owed from the deposit, the same way, each for its own owner,
+    or the whole deposit if that is less, and returns the rest of both;
   - no lease before the last has a return of its own: the last returns the deposit;
   - every trust bank account ties out after every step.
 
@@ -64,9 +66,10 @@ MONEY = st.integers(min_value=1, max_value=200_000).map(lambda c: Decimal(c) / 1
         max_size=8,
     ),
     payments=st.lists(MONEY, max_size=3),
+    move_out_fee=st.none() | MONEY,
     deposit=st.one_of(st.just(Decimal(0)), MONEY),
 )
-def check(conn, app, steps, charges, payments, deposit):
+def check(conn, app, steps, charges, payments, move_out_fee, deposit):
     pmc = make_pmc(conn, owners=3)
     staff = add_staff(conn, pmc.pmc_id, "Leasing 1")
     tenant = conn.execute(
@@ -174,11 +177,18 @@ def check(conn, app, steps, charges, payments, deposit):
         assert set(bank_sums(conn, pmc.pmc_id).values()) == {0}
     event("payments: " + ("none" if not payments else "some prepaid" if prepaid else "all owed"))
 
-    if deposit:
+    if move_out_fee is not None:  # charged after the payments: prepaid rent may pay it
+        charge(conn, pmc.pmc_id, leases[-1], LAST_DAY, move_out_fee, "fee")
+        charged[-1][1] += move_out_fee
+
+    if deposit or prepaid:
         app.execute("SELECT trust_end_lease(%s, %s, %s)", (pmc.pmc_id, leases[-1], LAST_DAY))
+        used = min(sum(owing(), Decimal(0)), prepaid)
+        assert pay(used) == 0
         keep = min(sum(owing(), Decimal(0)), deposit)
         assert pay(keep) == 0
         event("kept all" if keep == deposit else "kept none" if keep == 0 else "kept some")
+        event("prepaid rent used" if used else "no prepaid rent used")
 
         for earlier in leases[:-1]:  # moved from or renewed: its deposit went with its tenants
             try:
@@ -198,6 +208,12 @@ def check(conn, app, steps, charges, payments, deposit):
 
         assert back == deposit - keep
         assert balance(conn, pmc.tenant_deposit) == 0
+        assert balance(conn, pmc.prepaid_rent) == 0
+        assert app.execute(
+            "SELECT kept, prepaid_used, prepaid_returned FROM trust_deposit_returns"
+            " WHERE lease_id = %s",
+            (leases[-1],),
+        ).fetchone() == (keep, used, prepaid - used)
         assert [
             app.execute("SELECT trust_lease_owed(%s)", (lease,)).fetchone()[0] for lease in leases
         ] == owing()
