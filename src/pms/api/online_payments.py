@@ -827,6 +827,16 @@ def named_company(conn: psycopg.Connection[Any], body: bytes) -> UUID | None:
     return None
 
 
+REFUSED_WORDS = {
+    "signature": "the report isn't signed for this company's payments, or can't be read",
+    "clock": "the report was signed too long ago: check the server's clock",
+}
+
+
+def reason_of(why: payments.NotTheirs) -> str:
+    return "clock" if isinstance(why, payments.SignedTooLongAgo) else "signature"
+
+
 def refused_report(
     conn: psycopg.Connection[Any], pmc_id: UUID | None, why: payments.NotTheirs
 ) -> JSONResponse:
@@ -834,9 +844,9 @@ def refused_report(
     once a day per reason, each admin emailed while the server sends email. The answer is sent
     after the request commits, so what it recorded stays (an exception would roll it back)."""
     late = why if isinstance(why, payments.SignedTooLongAgo) else None
+    reason = reason_of(why)
     if pmc_id is not None:
         day = days.today(conn, pmc_id)
-        reason = "signature" if late is None else "clock"
         made = conn.execute(
             "INSERT INTO trust_payment_report_refusals (pmc_id, reason, day, drift_seconds)"
             " VALUES (%s, %s, %s, %s) ON CONFLICT (pmc_id, reason, day) DO NOTHING RETURNING id",
@@ -847,7 +857,8 @@ def refused_report(
             email.write_admin_alert(
                 conn, pmc_id, "payment_reports_refused", day, words, outbox.PUBLIC_URL.get()
             )
-    return JSONResponse(status_code=400, content={"detail": str(why)})
+    # Fixed words, never the exception's: a report that can't be read carries a library's message.
+    return JSONResponse(status_code=400, content={"detail": REFUSED_WORDS[reason]})
 
 
 def refusal_words(

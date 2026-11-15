@@ -461,6 +461,25 @@ def test_reports_refused_because_the_servers_clock_is_off_say_so(
     assert not paid(conn, payment)
 
 
+def test_a_refused_report_answers_in_fixed_words_never_the_errors_own(
+    client, other_client, conn, pmc, admin
+):
+    # Signed with the company's own secret, but not JSON: the reader's own message (a library's)
+    # never reaches whoever sent it (CodeQL, information exposure through an exception).
+    ok(keep(client))
+    when = int(time.time())
+    body = b"<not json at all>"
+    mac = hmac.new(WEBHOOK.encode(), f"{when}.".encode() + body, hashlib.sha256).hexdigest()
+    answer = other_client.post(
+        f"/api/payments/webhook/stripe/{pmc.pmc_id}",
+        content=body,
+        headers={"stripe-signature": f"t={when},v1={mac}", "content-type": "application/json"},
+    )
+    refused(answer, 400, op.REFUSED_WORDS["signature"])
+    late = signed_at(other_client, pmc.pmc_id, str(uuid4()), WEBHOOK, when - 600)
+    refused(late, 400, op.REFUSED_WORDS["clock"])
+
+
 def test_a_report_refused_emails_each_admin_once_a_day_while_the_server_sends_email(
     client, conn, app_conn, pmc, admin
 ):
