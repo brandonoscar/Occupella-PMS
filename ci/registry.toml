@@ -2036,3 +2036,13 @@ tests = [
   "tests/api/test_autopay_api.py::test_run_rent_now_first_stops_an_autopay_saved_at_another_account",
   "tests/api/test_today.py::test_an_autopay_stopped_as_the_payments_account_changed_is_noted_until_set_up_again",
 ]
+
+[[invariant]]
+id = "dashboard-past-due-is-the-delinquency-report"
+statement = "The Dashboard's past due figures (issue #231) are the delinquency report's for each day it shows, the day and the same day a month before, read in one pass instead of the report once a day: each day's total is the report's total, and its tenants are those on the report's lease lines, each counted once. For random charges, monthly fees of every payee, lease end credits, credits, waivers, payments in full or in part at any time of day and bounces, any days asked together or alone."
+tests = [
+  "tests/properties/test_dashboard_past_due_properties.py::test_the_dashboards_past_due_is_the_delinquency_reports_for_every_day_asked",
+  "tests/api/test_dashboard.py::test_each_figure_now_and_a_month_before",
+  "tests/api/test_dashboard.py::test_rent_paid_in_full_after_a_day_was_past_due_on_it",
+  "tests/api/test_dashboard.py::test_a_tenant_whose_name_has_a_comma_counts_once",
+]

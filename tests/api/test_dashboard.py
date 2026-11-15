@@ -136,6 +136,53 @@ def test_each_figure_now_and_a_month_before(client, conn, staff, pmc):
     assert figures["unreconciled"] == {"accounts": 0, "then_accounts": 0}
 
 
+def delinquency(conn, pmc, day):
+    """The delinquency report's total, and the tenants named on its lease lines."""
+    rows = conn.execute(
+        "SELECT item, tenants, total FROM trust_report_delinquency(%s, %s)"
+        " WHERE item IN ('lease', 'total')",
+        (pmc.pmc_id, day),
+    ).fetchall()
+    total = sum((t for item, _, t in rows if item == "total"), 0)
+    return f"{total:.2f}", sum(len(n.split(", ")) for item, n, _ in rows if item == "lease")
+
+
+def test_rent_paid_in_full_after_a_day_was_past_due_on_it(client, conn, staff, pmc):
+    # Due two days before a month ago and paid in full at the first moment after that day's end:
+    # past due then, not now. The lease paid in full that day owed nothing either day.
+    _, late = lease_of(conn, pmc, "Unit 1", tenants=2)
+    rent = charge(conn, pmc.pmc_id, late, THEN - 2 * DAY, "1500.00")
+    pay(conn, pmc, rent, "1500.00", datetime.combine(THEN + DAY, time(0), tzinfo=UTC))
+    _, prompt = lease_of(conn, pmc, "Unit 2")
+    pay(
+        conn,
+        pmc,
+        charge(conn, pmc.pmc_id, prompt, THEN - 2 * DAY, "1200.00"),
+        "1200.00",
+        datetime.combine(THEN + DAY, time(0), tzinfo=UTC) - timedelta(microseconds=1),
+    )
+
+    figures = client.get("/api/dashboard").json()["past_due"]
+
+    assert figures == {"total": "0.00", "tenants": 0, "then_total": "1500.00", "then_tenants": 2}
+    assert (figures["total"], figures["tenants"]) == delinquency(conn, pmc, TODAY)
+    assert (figures["then_total"], figures["then_tenants"]) == delinquency(conn, pmc, THEN)
+
+
+def test_a_tenant_whose_name_has_a_comma_counts_once(client, conn, staff, pmc):
+    # The report names a lease's tenants joined by ", "; the Dashboard counts the tenants, not
+    # the pieces of their names.
+    prop = pmc.owners[0].property_id
+    unit = unit_of(conn, pmc, "Unit 1")
+    tenant = add_tenant(conn, pmc.pmc_id, prop, "Okafor-Lindqvist, Synthetic")
+    lease = open_lease(conn, pmc.pmc_id, unit, START, None, "1500.00", [tenant])
+    charge(conn, pmc.pmc_id, lease, TODAY - DAY, "1500.00")
+
+    figures = client.get("/api/dashboard").json()["past_due"]
+
+    assert (figures["total"], figures["tenants"]) == ("1500.00", 1)
+
+
 def test_an_archived_unit_counts_in_no_occupancy(client, conn, staff, pmc):
     lease_of(conn, pmc, "Unit 1")
     gone = unit_of(conn, pmc, "Unit 2")
@@ -156,8 +203,10 @@ def test_a_unit_added_in_the_companys_evening_counts_on_its_day(conn):
     unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "Unit 9")
     conn.execute("UPDATE trust_units SET created_at = '2026-03-10 02:00+00' WHERE id = %s", (unit,))
 
-    assert units_on(conn, pmc.pmc_id, date(2026, 3, 9)) == (1, 1, 0)
-    assert units_on(conn, pmc.pmc_id, date(2026, 3, 8)) == (0, 0, None)
+    assert units_on(conn, pmc.pmc_id, [date(2026, 3, 9), date(2026, 3, 8)]) == {
+        date(2026, 3, 9): (1, 1, 0),
+        date(2026, 3, 8): (0, 0, None),
+    }
 
 
 def test_the_next_draw_is_the_draw_day_coming_and_what_a_draw_would_pay(client, conn, staff, pmc):

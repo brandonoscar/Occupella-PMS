@@ -45,6 +45,7 @@ nightly_factor = 60
 "tests/properties/test_cutover_bills_properties.py::test_unpaid_bills_carried_over_hold_back_draws_and_wait_for_their_owner" = 11.8
 "tests/properties/test_cutover_matching_properties.py::test_cutover_invariants_hold_under_random_items_statements_matches_and_approvals" = 36.6
 "tests/properties/test_cutover_properties.py::test_cutover_invariants_hold_under_random_openings_postings_and_reconciliations" = 51.5
+"tests/properties/test_dashboard_past_due_properties.py::test_the_dashboards_past_due_is_the_delinquency_reports_for_every_day_asked" = 13.1
 "tests/properties/test_deduction_receipt_properties.py::test_a_deposit_is_due_back_14_days_after_the_last_day_or_10_owing_nothing" = 0.2
 "tests/properties/test_deduction_receipt_properties.py::test_a_receipt_is_a_lease_document_of_its_fees_lease_listed_until_removed" = 8.3
 "tests/properties/test_departure_properties.py::test_a_leaving_tenants_deposit_moves_whole_and_someone_always_stays" = 8.8
