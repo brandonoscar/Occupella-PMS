@@ -1324,7 +1324,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   20261115000240 (M-072) the tenants' prepaid rent pays what is owed first, and what is left
   of it goes back with the deposits (`prepaid_used`, `prepaid_returned`). Since migration 0120 (q040,
   q039, `docs/law.md`) each lease past its last day shows the day its deposit is due back, 14 days
-  after it, 10 while it owes nothing (the strictest found; Move-outs and the Dashboard), staff keep
+  after it, 10 while it owes nothing of what was charged by the tenth day (the strictest found, a
+  later fee never moving a missed deadline, D-128; Move-outs and the Dashboard), staff keep
   receipts for the fees a deposit keeps (`trust_deduction_receipts`: a lease document linked to
   one of its fees, once, append-only, naming who), and each tenant's statement is a letter to
   their forwarding address (their contact mailing address) carrying the receipts and the lease's

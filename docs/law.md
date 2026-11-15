@@ -357,8 +357,10 @@ did not resolve from the container, so no statute was read in full.
 **What the PMS does.**
 - Each lease past its last day whose deposit is still held shows the day it is due back: 14 days
   after its last day, 10 while the lease owes nothing (so nothing would be kept), the strictest
-  found. The Move-outs page shows it on each lease, past due once the day has passed, and the
-  Dashboard lists every one until the deposit is returned.
+  found. Only what was charged by the tenth day counts: a fee charged once the ten days had run out
+  never moves a deadline already missed to fourteen (docs/edge-cases.md D-128). The Move-outs
+  page shows it on each lease, past due once the day has passed, and the Dashboard lists every
+  one until the deposit is returned.
 - Staff keep a receipt or invoice for each fee a deposit keeps (one of the lease's documents,
   linked to the fee), before or after the return; a fee over $125 with none on file is marked.
 - Each tenant's statement is a letter on the company's letterhead to their forwarding address

@@ -139,10 +139,38 @@ NOTHING_KEPT_WITHIN = timedelta(days=10)
 
 def return_by(ends_on: date | None, owes: Decimal) -> date | None:
     """The day a lease's deposit is due back by the strictest deadline found, counted from its
-    last day: none until it has one."""
+    last day: none until it has one. `owes` is what it owes of the charges made by the tenth day
+    after it (owing_in_time), so a fee charged once the ten days had run out never moves a
+    deadline already missed to fourteen (docs/edge-cases.md D-128)."""
     if ends_on is None:
         return None
     return ends_on + (RETURN_WITHIN if owes > 0 else NOTHING_KEPT_WITHIN)
+
+
+# What a lease, and the leases its tenants moved from, still owe of the charges made (the
+# company's day each was charged) by a day: the tenth after its last day, when the ten days
+# nothing kept allows run out (D-128).
+OWING_IN_TIME = """
+SELECT coalesce(sum(o.open), 0)
+FROM (SELECT %(lease)s::uuid AS id
+      UNION ALL SELECT m.lease_id FROM trust_lease_moved_from(%(lease)s) AS m) AS each
+CROSS JOIN LATERAL trust_open_charges(%(pmc)s, each.id, 'infinity') AS o
+JOIN trust_charges AS c ON c.id = o.charge_id
+WHERE o.open > 0 AND trust_pmc_day(c.pmc_id, c.created_at) <= %(by)s
+"""
+
+
+def owing_in_time(
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID, ends_on: date | None
+) -> Decimal:
+    """What the lease owes now of what was charged by the tenth day after its last day: a fee
+    charged after that keeps nothing it could have kept in time (D-128)."""
+    if ends_on is None:
+        return Decimal(0)
+    row = conn.execute(
+        OWING_IN_TIME, {"pmc": pmc_id, "lease": lease_id, "by": ends_on + NOTHING_KEPT_WITHIN}
+    ).fetchone()
+    return Decimal(0) if row is None else Decimal(row[0])
 
 
 # Each lease of the PMC past its last day on the day whose tenants' deposits are still held, not
@@ -203,7 +231,7 @@ def due_back(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> list[Due
     for lease, prop, unit, ends, tenants, owes, held in conn.execute(
         DUE_BACK, {"pmc": pmc_id, "day": day}
     ).fetchall():
-        due = return_by(ends, owes)
+        due = return_by(ends, owing_in_time(conn, pmc_id, lease, ends) if owes > 0 else owes)
         assert due is not None
         found.append(
             DueBack(
@@ -383,7 +411,14 @@ def move_outs(session: Staff, conn: Conn) -> list[MoveOut]:
                     prepaid_used=cents(done[4]),
                     prepaid_returned=cents(done[5]),
                 ),
-                return_by=None if done[0] is not None else return_by(ends, owed + carried),
+                return_by=None
+                if done[0] is not None
+                else return_by(
+                    ends,
+                    owing_in_time(conn, session.pmc_id, lease, ends)
+                    if owed + carried > 0
+                    else owed + carried,
+                ),
                 fees=fees_of(conn, lease, ends),
                 owner_held=owners_hold.get(lease, []),
             )

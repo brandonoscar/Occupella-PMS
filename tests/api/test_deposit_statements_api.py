@@ -7,7 +7,7 @@ and emailed. Every name and address is synthetic."""
 import base64
 import io
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 from fpdf import FPDF
@@ -154,6 +154,31 @@ def test_a_lease_shows_when_its_deposit_is_due_back_and_its_fees_with_their_rece
 
     give_back(client, lease)
     assert shown(client, lease)["return_by"] is None
+
+
+def test_a_fee_charged_after_the_ten_days_keeps_the_deadline_it_missed(
+    client, conn, staff, pmc, lease
+):
+    """Owing nothing, the deposit was due back ten days after the last day; a fee charged on the
+    twelfth day doesn't move that to fourteen and hide the deadline missed (D-128), on Move-outs
+    or the Dashboard. One charged within the ten days still gives fourteen."""
+    ended = today() - timedelta(days=12)
+    end(client, lease, ended)
+    charge(client, lease, ended)  # charged today, the twelfth day
+
+    assert shown(client, lease)["return_by"] == str(ended + timedelta(days=10))
+    due = ok(client.get("/api/today"))["deposits_to_return"]
+    assert [(d["return_by"], d["standing"]) for d in due] == [
+        (str(ended + timedelta(days=10)), "2 days late")
+    ]
+
+    # A fee charged on the tenth day (as recorded) and still owed: the fourteen days hold.
+    conn.execute(
+        "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo, created_at)"
+        " VALUES (%s, %s, %s, 'fee', 40, 'Broken blind', %s)",
+        (pmc.pmc_id, lease, ended, datetime.combine(ended + timedelta(days=10), time(12), UTC)),
+    )
+    assert shown(client, lease)["return_by"] == str(ended + timedelta(days=14))
 
 
 def test_a_receipt_is_for_a_fee_of_the_lease(client, conn, staff, pmc, lease):
