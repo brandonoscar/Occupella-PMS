@@ -168,6 +168,10 @@ def run_pmc(
         # (migration 0154), so the month's rent below charges it.
         rolled = conn.execute("SELECT trust_roll_over_leases(%s, %s)", (pmc_id, day)).fetchone()
         assert rolled is not None
+        # A rent this night charges after its grace ran out takes its grace from this day, the
+        # catch-up's months run as of their own last days included (D-083, migration
+        # 20261115000310).
+        conn.execute("SELECT set_config('trust.charged_on', %s, true)", (day.isoformat(),))
         missed = catch_up(conn, pmc_id, day)
         made = conn.execute(
             "SELECT trust_run_rent(%s, %s, %s)", (pmc_id, day.replace(day=1), day)

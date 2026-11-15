@@ -867,7 +867,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   those on file by the day its fee comes due, migration 20261115000200, M-049), reaching
   its rents in the order their grace ends so one run charges what a run every day would (a late
   fee is an open charge too; migration 0056), never one whose fee would fall in a closed year
-  (migration 20261105000700). A payment online counts from the company's day the tenant (or
+  (migration 20261105000700); a rent a rent run first charged after its grace had run out takes
+  its grace from the day it was charged (`trust_rents_charged_late`, `trust_late_fee_grace_ends`,
+  the night's own day in a catch-up, `trust.charged_on`; migration 20261115000310, D-083). A
+  payment online counts from the company's day the tenant (or
   autopay) started it (migration 20261113000100, `trust_online_started_by`, D-080, D-081): while
   one started by the end of the grace is on its way (`trust_online_on_its_way`: reported paid, or
   started in the last 14 days, and neither failed, expired, returned nor in the books) the fee

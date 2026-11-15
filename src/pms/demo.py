@@ -1618,6 +1618,11 @@ def collect_rent(
     """The month's rent run and each lease paying what it owes: one late (a late fee, then
     paid), one bounced and paid again."""
     conn = b.conn
+    # The month's rent was posted on its first day then, as its manager's run of that day: rent
+    # Run rent now charges today takes its grace from today (D-083), so the history's late fee
+    # needs its rent charged on its day.
+    with b.as_staff(manager):
+        conn.execute("SELECT trust_run_rent(%s, %s, %s)", (b.pmc_id, month, month))
     with b.as_staff(manager) as s:
         rent.run_rent(s, conn, rent.RunRent(due_on=month, late_fees_as_of=month))
     for n, (key, lease) in enumerate(demo.leases.items()):

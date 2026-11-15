@@ -65,6 +65,9 @@ TABLES = {
     "trust_work_order_details": {"SELECT", "INSERT"},
     "trust_late_fee_policies": {"SELECT", "INSERT"},
     "trust_late_fees": {"SELECT"},  # written only by trust_assess_late_fees
+    # Rents a rent run charged after their due day (D-083): written only by
+    # trust_note_rents_charged_late, as the owner.
+    "trust_rents_charged_late": {"SELECT"},
     "trust_nsf_fee_policies": {"SELECT", "INSERT"},
     "trust_nsf_fees": {"SELECT"},  # written only by trust_charge_nsf_fee
     "trust_opening_balances": {"SELECT"},  # written only by trust_post_opening_balances
@@ -605,6 +608,10 @@ FUNCTIONS = {
     # read only by trust_assess_late_fees, which runs as the owner.
     "trust_online_started_by(pgledger_transfers,date)": set(),
     "trust_online_on_its_way(uuid,date)": set(),
+    # A rent charged after its grace takes its grace from that day (D-083): the run notes its
+    # own rents charged late; the grace is read only by the late fee functions, as the owner.
+    "trust_note_rents_charged_late(uuid,date,date)": {"trust_app"},
+    "trust_late_fee_grace_ends(uuid,date,integer)": set(),
     # Where a charge comes in the order money pays them: rent first (migration 0093).
     "trust_pay_rank(trust_charges)": {"trust_app"},
     # The chart of accounts (migrations 20261106000205 to 20261106000220): its fixed lines, each
@@ -974,6 +981,7 @@ SECURITY_DEFINER = {
     "trust_roll_over_leases(uuid,date)",
     "trust_pay_bill_amount(trust_bills,numeric,text,timestamptz)",
     "trust_assess_late_fees(uuid,date)",
+    "trust_note_rents_charged_late(uuid,date,date)",
     "trust_charge_nsf_fee(uuid,text)",
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",
     "trust_analyze_after_import()",  # ANALYZE needs the tables' owner; it writes no record

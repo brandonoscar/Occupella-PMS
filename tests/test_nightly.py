@@ -32,7 +32,7 @@ def pmc(conn):
 
 
 DAY = timedelta(days=1)
-OCT_16 = date(2026, 10, 16)
+OCT_1, OCT_16 = date(2026, 10, 1), date(2026, 10, 16)
 
 
 def lease_since(conn, pmc, starts, rent="1000.00"):
@@ -66,10 +66,15 @@ def test_a_night_charges_the_months_rent_late_fees_and_bills_once(conn, app_conn
     )
     accounts.accept_invite(conn, invite.token, "a long synthetic passphrase")
 
+    # The first's night charges the rent on time; the 16th's, past its grace, its late fee (a rent
+    # first charged after its grace takes its grace from that night: D-083).
+    early = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_1, URL)
     first = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL)
     again = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL)
 
-    assert (first.rents, first.recurring, first.late_fees, first.bills) == (1, 1, 1, 2)
+    assert (early.rents, early.recurring, early.late_fees) == (1, 1, 0)
+    assert (first.rents, first.recurring, first.late_fees) == (0, 0, 1)
+    assert early.bills + first.bills == 2
     assert (again.rents, again.recurring, again.late_fees, again.bills) == (0, 0, 0, 0)
     # October's rent and pet rent, due on its first day, and its rent's late fee.
     assert charges(conn, lease) == [
@@ -90,8 +95,9 @@ def test_a_night_charges_the_months_rent_late_fees_and_bills_once(conn, app_conn
         (pmc.pmc_id,),
     ).fetchall()
     assert runs == [
-        (date(2026, 10, 1), OCT_16, 1, 1, 1, None),
-        (date(2026, 10, 1), OCT_16, 0, 0, 0, None),
+        (OCT_1, OCT_1, 1, 1, 0, None),
+        (OCT_1, OCT_16, 0, 0, 1, None),
+        (OCT_1, OCT_16, 0, 0, 0, None),
     ]
 
 
@@ -128,6 +134,58 @@ def test_a_lease_starting_later_in_the_month_is_charged_its_part_month(conn, app
     nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL)
 
     assert charges(conn, lease) == [(date(2026, 10, 20), "rent", "1200.00")]  # 12 of 31 days
+
+
+def test_a_rent_first_charged_after_its_grace_takes_its_grace_from_that_night(conn, app_conn, pmc):
+    """A lease entered on the 16th that began on the 1st: its rent, five days past its grace,
+    is charged that night with no late fee, and is late only once five days from then pass
+    unpaid (D-083)."""
+    lease = lease_since(conn, pmc, date(2026, 10, 1))
+    add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 9, 1), 5, "50.00")
+
+    entered = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL)
+    in_grace = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16 + 5 * DAY, URL)
+    late = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16 + 6 * DAY, URL)
+
+    assert (entered.rents, entered.late_fees, in_grace.late_fees, late.late_fees) == (1, 0, 0, 1)
+    assert charges(conn, lease) == [
+        (date(2026, 10, 1), "rent", "1000.00"),
+        (date(2026, 10, 22), "fee", "50.00"),  # the day after its grace from the 16th
+    ]
+    assert conn.execute(
+        "SELECT charged_on FROM trust_rents_charged_late WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchall() == [(OCT_16,)]
+
+
+def test_a_month_caught_up_after_the_server_was_down_takes_its_grace_from_the_night_back(
+    conn, app_conn, pmc
+):
+    """Down all of October, back on November 2: the catch-up runs October as of its last day,
+    but its rent was first charged on the 2nd, so its grace counts from the 2nd and its late fee
+    comes only once five days from then pass unpaid (D-083 with H-089's catch-up)."""
+    lease = lease_since(conn, pmc, date(2026, 9, 1))
+    add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 9, 1), 5, "50.00")
+    nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 9, 1), URL)
+    nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 9, 30), URL)  # September's fee, on time
+
+    back = nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 11, 2), URL)
+    seventh = nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 11, 7), URL)
+    eighth = nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 11, 8), URL)
+
+    # None the night back; November's (charged a day late, its grace to the 6th as ever) on the
+    # 7th; October's (its grace from the 2nd, to the 7th) on the 8th.
+    assert (back.late_fees, seventh.late_fees, eighth.late_fees) == (0, 1, 1)
+    assert [c for c in charges(conn, lease) if c[1] == "fee"] == [
+        (date(2026, 9, 7), "fee", "50.00"),
+        (date(2026, 11, 7), "fee", "50.00"),
+        (date(2026, 11, 8), "fee", "50.00"),
+    ]
+    assert conn.execute(
+        "SELECT c.due_on, l.charged_on FROM trust_rents_charged_late AS l"
+        " JOIN trust_charges AS c ON c.id = l.rent_charge_id WHERE l.pmc_id = %s"
+        " ORDER BY c.due_on",
+        (pmc.pmc_id,),
+    ).fetchall() == [(date(2026, 10, 1), date(2026, 11, 2)), (date(2026, 11, 1), date(2026, 11, 2))]
 
 
 def test_a_night_takes_a_fixed_term_that_ran_out_month_to_month_once(conn, app_conn, pmc):

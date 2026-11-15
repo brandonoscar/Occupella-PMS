@@ -1732,6 +1732,12 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
         "SELECT trust_roll_over_leases(%s, %s)", (session.pmc_id, today(conn, session.pmc_id))
     ).fetchone()
     assert rolled is not None
+    # Charged today, whatever day its late fees are as of: a rent charged after its grace ran out
+    # takes its grace from today (D-083, migration 20261115000310).
+    conn.execute(
+        "SELECT set_config('trust.charged_on', %s, true)",
+        (today(conn, session.pmc_id).isoformat(),),
+    )
     made = conn.execute(
         "SELECT trust_run_rent(%s, %s, %s)", (session.pmc_id, run.due_on, run.late_fees_as_of)
     ).fetchone()

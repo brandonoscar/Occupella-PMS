@@ -2089,6 +2089,15 @@ tests = [
 ]
 
 [[invariant]]
+id = "late-fee-grace-from-a-late-charge"
+statement = "A rent a rent run (the nightly run, a month it catches up, an admin's Run rent now) first charges after its own grace had run out takes its grace from the day it was charged, the night's own day in a catch-up (migration 20261115000310; docs/edge-cases.md D-083): no late fee the night it is charged, and one only once that grace runs out with its own payments by then leaving it open, due the day after. A rent charged on or before the end of its grace keeps its grace."
+tests = [
+  "tests/properties/test_late_charge_grace_properties.py::test_a_rent_charged_after_its_grace_takes_its_grace_from_that_day",
+  "tests/test_nightly.py::test_a_rent_first_charged_after_its_grace_takes_its_grace_from_that_night",
+  "tests/test_nightly.py::test_a_month_caught_up_after_the_server_was_down_takes_its_grace_from_the_night_back",
+]
+
+[[invariant]]
 id = "payments-stripe-never-reported-recorded-once"
 statement = "A payment online Stripe sent no report of reaches the books (docs/edge-cases.md C-090): once a company's day the nightly run asks the partner about each one with no report a week to 60 days after it started and records what it says through the report's own apply, once per payment and kind and under the payment's own posting keys, so a report before or after it records nothing twice. A payment of the same amount staff record by hand while one online is not in the books is refused until staff say it is another."
 tests = [

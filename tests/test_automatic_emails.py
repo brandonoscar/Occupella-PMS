@@ -288,6 +288,8 @@ def test_a_tenant_who_left_the_lease_hears_no_more_of_its_rent(conn, app_conn, p
         (pmc.pmc_id, lease, first, date(2026, 10, 15)),
     )
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 9, 1), 5, "50.00")
+    # October's rent charged on its day: one first charged past its grace would wait (D-083).
+    nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 10, 1), URL)
     ran = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL, sending=True)
     assert ran.late_fees == 1
     assert notices.write_rent_reminders(app_conn, pmc.pmc_id, date(2026, 10, 27), 5, URL) == 1
@@ -331,6 +333,8 @@ def test_a_late_notice_goes_to_each_tenant_for_the_late_fee_the_run_charged(conn
     contact(conn, pmc.pmc_id, "tenant_id", tenant, "tenant.one@example.com")
     lease = lease_of(conn, pmc)
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 9, 1), 5, "50.00")
+    # October's rent charged on its day: one first charged past its grace would wait (D-083).
+    nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 10, 1), URL)
 
     first = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL, sending=True)
     again = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16 + DAY, URL, sending=True)
@@ -357,6 +361,8 @@ def test_late_fees_charged_before_notices_were_on_get_none(conn, app_conn, pmc):
     contact(conn, pmc.pmc_id, "tenant_id", tenant, "tenant.one@example.com")
     lease_of(conn, pmc)
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 9, 1), 5, "50.00")
+    # October's rent charged on its day: one first charged past its grace would wait (D-083).
+    nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 10, 1), URL)
     assert nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL, sending=True).late_fees == 1
     turn_on(conn, pmc.pmc_id, late_notices=True)
     assert nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16 + DAY, URL, sending=True).emails == 0

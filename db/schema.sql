@@ -1063,7 +1063,8 @@ BEGIN
     -- The rents past their grace without a late fee, locked one by one in id order: one lock
     -- order for every run, so two at once can't deadlock.
     FOR v_rent IN
-        SELECT c.id, c.lease_id, c.due_on + p.grace_days AS grace_ends
+        SELECT c.id, c.lease_id, trust_late_fee_grace_ends(c.id, c.due_on, p.grace_days)
+                   AS grace_ends
         FROM trust_charges AS c
         JOIN trust_leases AS l ON l.id = c.lease_id
         JOIN trust_units AS u ON u.id = l.unit_id
@@ -1075,12 +1076,13 @@ BEGIN
               -- On file by the day its fee comes due (docs/edge-cases.md M-049, D-082): terms
               -- entered later, from a day in the past, charge no fee on a rent whose grace had
               -- run out, as a run every day would have charged none then.
-              AND trust_pmc_day(t.pmc_id, t.created_at) <= c.due_on + t.grace_days + 1
+              AND trust_pmc_day(t.pmc_id, t.created_at)
+                  <= trust_late_fee_grace_ends(c.id, c.due_on, t.grace_days) + 1
             ORDER BY t.starts_on DESC
             LIMIT 1
         ) AS p ON true
         WHERE c.pmc_id = p_pmc_id AND c.kind = 'rent'
-          AND c.due_on + p.grace_days < p_as_of
+          AND trust_late_fee_grace_ends(c.id, c.due_on, p.grace_days) < p_as_of
           AND NOT EXISTS (
               SELECT f.rent_charge_id FROM trust_late_fees AS f WHERE f.rent_charge_id = c.id
           )
@@ -1093,15 +1095,18 @@ BEGIN
                   FROM trust_charge_payments AS cp
                   JOIN pgledger_transfers AS t ON t.id = cp.transfer_id
                   WHERE cp.charge_id = c.id
-                    AND (t.event_at < (c.due_on + p.grace_days + 1)::timestamp AT TIME ZONE 'UTC'
-                         OR trust_online_started_by(t, c.due_on + p.grace_days))
+                    AND (t.event_at < (trust_late_fee_grace_ends(c.id, c.due_on, p.grace_days)
+                                       + 1)::timestamp AT TIME ZONE 'UTC'
+                         OR trust_online_started_by(
+                             t, trust_late_fee_grace_ends(c.id, c.due_on, p.grace_days)))
               ), 0)
               - coalesce((
                   SELECT sum(r.amount)
                   FROM trust_payment_reversals AS r
                   JOIN pgledger_transfers AS t ON t.id = r.reversal_id
                   WHERE r.charge_id = c.id
-                    AND t.event_at < (c.due_on + p.grace_days + 1)::timestamp AT TIME ZONE 'UTC'
+                    AND t.event_at < (trust_late_fee_grace_ends(c.id, c.due_on, p.grace_days)
+                                      + 1)::timestamp AT TIME ZONE 'UTC'
               ), 0)
         ORDER BY c.id
     LOOP
@@ -1120,7 +1125,8 @@ BEGIN
     -- Then each, in the order its grace ends, as a run every day would reach them.
     FOR v_rent IN
         SELECT c.id, c.lease_id, c.due_on, p.id AS policy_id, p.grace_days, p.flat_fee,
-               p.percent, p.maximum
+               p.percent, p.maximum,
+               trust_late_fee_grace_ends(c.id, c.due_on, p.grace_days) AS grace_ends
         FROM trust_charges AS c
         JOIN trust_leases AS l ON l.id = c.lease_id
         JOIN trust_units AS u ON u.id = l.unit_id
@@ -1128,14 +1134,15 @@ BEGIN
             SELECT t.id, t.grace_days, t.flat_fee, t.percent, t.maximum
             FROM trust_late_fee_policies AS t
             WHERE t.property_id = u.property_id AND t.starts_on <= c.due_on
-              AND trust_pmc_day(t.pmc_id, t.created_at) <= c.due_on + t.grace_days + 1
+              AND trust_pmc_day(t.pmc_id, t.created_at)
+                  <= trust_late_fee_grace_ends(c.id, c.due_on, t.grace_days) + 1
             ORDER BY t.starts_on DESC
             LIMIT 1
         ) AS p ON true
         WHERE c.id = ANY (v_due)
-        ORDER BY c.due_on + p.grace_days, c.due_on, c.id
+        ORDER BY trust_late_fee_grace_ends(c.id, c.due_on, p.grace_days), c.due_on, c.id
     LOOP
-        v_fee_day := v_rent.due_on + v_rent.grace_days + 1;
+        v_fee_day := v_rent.grace_ends + 1;
         -- A fee that would fall in a closed year is never charged: the year is locked (migration
         -- 20261021000106), and the one charge it refuses stopped the company's whole run, rent
         -- included, every night (docs/edge-cases.md M-050). The PMC is locked FOR SHARE first,
@@ -1147,7 +1154,7 @@ BEGIN
             END IF;
             CONTINUE WHEN v_fee_day <= v_closed;
         END IF;
-        v_cutoff := (v_rent.due_on + v_rent.grace_days + 1)::timestamp AT TIME ZONE 'UTC';
+        v_cutoff := (v_rent.grace_ends + 1)::timestamp AT TIME ZONE 'UTC';
         -- What is open of it then: payments and bounces dated before then, and the lease's
         -- credits due by its last day of grace, oldest charges first (the fees this run charged
         -- for the rents whose grace ended before its own among them)...
@@ -1161,7 +1168,7 @@ BEGIN
             FROM trust_charge_payments AS cp
             JOIN pgledger_transfers AS t ON t.id = cp.transfer_id
             WHERE cp.charge_id = v_rent.id AND t.event_at >= v_cutoff
-              AND trust_online_started_by(t, v_rent.due_on + v_rent.grace_days)
+              AND trust_online_started_by(t, v_rent.grace_ends)
         ), 0);
         CONTINUE WHEN v_unpaid <= 0;
         v_fee := least(
@@ -6624,6 +6631,23 @@ $$;
 
 
 --
+-- Name: trust_late_fee_grace_ends(uuid, date, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_late_fee_grace_ends(p_rent_id uuid, p_due_on date, p_grace_days integer) RETURNS date
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT CASE
+        WHEN r.charged_on > p_due_on + p_grace_days THEN r.charged_on + p_grace_days
+        ELSE p_due_on + p_grace_days
+    END
+    FROM (SELECT (SELECT l.charged_on FROM trust_rents_charged_late AS l
+                  WHERE l.rent_charge_id = p_rent_id) AS charged_on) AS r
+$$;
+
+
+--
 -- Name: trust_lease_billed(uuid, text, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7303,6 +7327,36 @@ CREATE FUNCTION public.trust_next_account_code(p_pmc_id uuid, p_from integer, p_
       )
     ORDER BY n
     LIMIT 1
+$$;
+
+
+--
+-- Name: trust_note_rents_charged_late(uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_note_rents_charged_late(p_pmc_id uuid, p_month date, p_day date) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_noted integer;
+    v_on date := greatest(
+        p_day, nullif(current_setting('trust.charged_on', true), '')::date
+    );
+BEGIN
+    INSERT INTO trust_rents_charged_late (rent_charge_id, pmc_id, charged_on)
+    SELECT c.id, c.pmc_id, v_on
+    FROM trust_charges AS c
+    WHERE c.pmc_id = p_pmc_id AND c.kind = 'rent'
+      AND c.due_on >= date_trunc('month', p_month::timestamp)::date
+      AND c.due_on < (date_trunc('month', p_month::timestamp) + interval '1 month')::date
+      AND c.due_on < v_on
+      AND c.created_at = now()  -- charged in this transaction, by this run
+    ORDER BY c.id
+    ON CONFLICT (rent_charge_id) DO NOTHING;
+    GET DIAGNOSTICS v_noted = ROW_COUNT;
+    RETURN v_noted;
+END;
 $$;
 
 
@@ -15236,6 +15290,9 @@ BEGIN
         + trust_charge_rent_on_due_days(p_pmc_id, p_due_on, p_late_fees_as_of);
     v_recurring := trust_charge_recurring_due(p_pmc_id, p_due_on)
         + trust_charge_recurring_on_due_days(p_pmc_id, p_due_on, p_late_fees_as_of);
+    -- A rent this run charged after its grace had run out takes its grace from the run's day
+    -- (docs/edge-cases.md D-083).
+    PERFORM trust_note_rents_charged_late(p_pmc_id, p_due_on, p_late_fees_as_of);
     v_late_fees := trust_assess_late_fees(p_pmc_id, p_late_fees_as_of);
     INSERT INTO trust_rent_runs (pmc_id, due_on, late_fees_as_of, rents, recurring, late_fees)
     VALUES (p_pmc_id, p_due_on, p_late_fees_as_of, v_rents, v_recurring, v_late_fees)
@@ -20256,6 +20313,18 @@ CREATE TABLE public.trust_renters_insurance_terms (
 
 
 --
+-- Name: trust_rents_charged_late; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_rents_charged_late (
+    rent_charge_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    charged_on date NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: trust_reserve_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -24227,6 +24296,14 @@ ALTER TABLE ONLY public.trust_renters_insurance_terms
 
 
 --
+-- Name: trust_rents_charged_late trust_rents_charged_late_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rents_charged_late
+    ADD CONSTRAINT trust_rents_charged_late_pkey PRIMARY KEY (rent_charge_id);
+
+
+--
 -- Name: trust_reserve_events trust_reserve_events_ledger_account_id_number_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27328,6 +27405,13 @@ CREATE INDEX trust_renters_insurance_terms_recorded_by ON public.trust_renters_i
 
 
 --
+-- Name: trust_rents_charged_late_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_rents_charged_late_pmc ON public.trust_rents_charged_late USING btree (pmc_id);
+
+
+--
 -- Name: trust_screening_criteria_pmc; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -29379,6 +29463,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_rents_charged_late trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_rents_charged_late FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_reserve_events trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -31217,6 +31308,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_rent
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_renters_insurance_terms FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_rents_charged_late trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_rents_charged_late FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -38756,6 +38854,22 @@ ALTER TABLE ONLY public.trust_renters_insurance_terms
 
 
 --
+-- Name: trust_rents_charged_late trust_rents_charged_late_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rents_charged_late
+    ADD CONSTRAINT trust_rents_charged_late_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_rents_charged_late trust_rents_charged_late_pmc_id_rent_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rents_charged_late
+    ADD CONSTRAINT trust_rents_charged_late_pmc_id_rent_charge_id_fkey FOREIGN KEY (pmc_id, rent_charge_id) REFERENCES public.trust_charges(pmc_id, id);
+
+
+--
 -- Name: trust_reserve_events trust_reserve_events_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -40099,4 +40213,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261115000220'),
     ('20261115000230'),
     ('20261115000240'),
+    ('20261115000310'),
     ('20261115000400');
