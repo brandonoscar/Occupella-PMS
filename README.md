@@ -1,18 +1,90 @@
 # Occupella PMS
 
-**Free, open-source property management software with real trust accounting**, for residential
-property management companies that hold owners' money and tenants' deposits in trust. A
-double-entry ledger that ties out at every save, owner and tenant portals, rent and autopay
-online, leasing with e-signatures, maintenance, month-end bank reconciliation and reports. Run it
-on your own server for free.
+**Free, open-source property management software with real trust accounting.** For property
+management companies that hold owners' money and tenants' deposits in trust: the rent roll,
+leases and e-signing, owner and tenant portals, bills, owner draws, month-end bank
+reconciliation and reports, on a double-entry ledger that refuses any entry that would leave a
+trust account out of balance. Run it on your own server, free.
 
 [![License: Apache-2.0](https://img.shields.io/github/license/brandonoscar/Occupella-PMS)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/brandonoscar/Occupella-PMS)](https://github.com/brandonoscar/Occupella-PMS/releases)
 [![CI](https://github.com/brandonoscar/Occupella-PMS/actions/workflows/ci.yml/badge.svg)](https://github.com/brandonoscar/Occupella-PMS/actions/workflows/ci.yml)
 
-An open-source alternative to hosted property management systems such as Buildium, AppFolio,
-Rentvine and DoorLoop. [Try the demo](#try-the-demo) · [Install it](docs/install.md) ·
-[What changed](CHANGELOG.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+![A tour of Occupella PMS: the rent roll, a trust bank account's month-end tying out, an owner's page with their bills, an owner statement and a tenant's page](docs/screenshots/tour.gif)
+
+[Try the demo](#try-the-demo) · [Install it](docs/install.md) · [What it does](#what-it-does) ·
+[What changed](CHANGELOG.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) ·
+[occupella.com](https://occupella.com)
+
+## Why
+
+- **The books can't drift from the bank.** Every trust bank account is checked when each
+  transaction commits: its cash must equal what it holds for owners, tenants, vendors and you,
+  or nothing is saved. Nothing in the ledger is edited or deleted; a mistake is fixed with a
+  reversing entry. These are rules in the database, with the tests that prove them
+  (`tests/properties/`), not settings.
+- **Your books are yours.** Export every record, document and ledger line any day, read how the
+  money rules work in the code, and keep running it on your own server whatever happens to us.
+- **Free.** No per-unit price, no minimum, no card. Apache-2.0.
+- **AI that can't move money.** Any AI (Claude, say) can plug in through the API or the MCP
+  server with a key whose database role can only read, and propose drafts your staff approve.
+
+If it's useful to you, a star helps other property managers find it.
+
+## Screens
+
+Every name and figure below is made up: the screens come from the demo company
+(`python -m pms.demo`).
+
+| | |
+|---|---|
+| ![The rent roll: each lease with its property, unit, tenants, dates, rent, market rent, deposit and balance](docs/screenshots/rent-roll.jpg) | ![A trust bank account's month-end: bank balance, outstanding withdrawals, book cash, a difference of $0.00 and the badge Ties out, prepared by one person and waiting for another to approve](docs/screenshots/month-end.jpg) |
+| **The rent roll.** Every lease, its rent, deposit and balance; receive a payment from the row. | **Month-end.** The bank statement against the trust journal to the cent, prepared by one person and approved by another. |
+| ![An owner's page: what each of their properties holds in trust and their bills, one paid, one approved and one short of funds](docs/screenshots/owner-overview.jpg) | ![A tenant's page: the lease, rent and due day, the deposit held, the balance and the next charge](docs/screenshots/tenant-overview.jpg) |
+| **The owner portal.** What each property holds, statements, and bills over their limit to approve or decline. | **The tenant portal.** What they owe and why, payments and receipts, autopay, repairs and messages. |
+
+## Compared with hosted property management software
+
+| | Occupella PMS | Buildium, AppFolio and similar |
+|---|---|---|
+| Price | Free | Monthly subscription |
+| Source code | Open, Apache-2.0 | Closed |
+| Where it runs | Your own server, or Occupella's hosted version | The vendor's servers |
+| Trust accounting rules | In the database, with public tests | Not published as code |
+| Leaving | Export everything any day, and the software stays yours | Per the vendor's terms |
+
+Buildium and AppFolio are trademarks of their owners. Occupella isn't affiliated with them.
+
+## Try the demo
+
+With Docker (Docker Desktop on Windows or a Mac), from the repository's folder:
+
+```sh
+docker compose -f compose.demo.yaml up --build
+```
+
+The first run builds the image (several minutes), applies the migrations, adds a synthetic PMC
+and prints links to sign in as its manager, an owner with three properties and a tenant; then
+the PMS answers at http://localhost:8100. Open the manager's link: last month's reconciliation
+is prepared and waits for their approval, with a check not yet cleared at the bank. Every other
+page has something on it, and the Dashboard lists what else waits: a journal entry, the
+company's fees still in trust, a vendor's insurance running out and a lease without renters
+insurance. Like every staff member, the manager signs in with a password and an authenticator
+app (any app that shows six-digit codes). The partners are the test ones: payments online are
+paid on the PMS's own test page, emails stay in the PMS (each person's Email tab), and nothing
+reaches anyone.
+
+- Ctrl+C stops it; the same command starts it again with the same books, and adds no second
+  demo. The links are printed once: `docker compose -f compose.demo.yaml logs demo` shows them
+  again.
+- `docker compose -f compose.demo.yaml down -v` deletes its books, so the next start is a fresh
+  demo with new links.
+- Port 8100 taken? Start it with another: `PMS_DEMO_PORT=8200` in front of the command (in
+  PowerShell, `$env:PMS_DEMO_PORT = "8200"` first).
+
+Without Docker: on a migrated database (`dbmate up`), `PYTHONPATH=src python -m pms.demo` adds
+the demo and prints its links; serve it with `python -m pms.api`, with `PMS_STATIC_DIR=frontend/dist`
+and `PMS_PUBLIC_URL` set to where it's served.
 
 ## What it does
 
@@ -105,37 +177,6 @@ Still true:
 The placement decision and the Phase 0 plan live in AgenticHelixis:
 `docs/decisions/ADR-free-pms-placement.md` (section "Phase 0 plan"), with the research in
 `docs/research/free-pms-gaps.md`.
-
-## Try the demo
-
-With Docker (Docker Desktop on Windows or a Mac), from the repository's folder:
-
-```sh
-docker compose -f compose.demo.yaml up --build
-```
-
-The first run builds the image (several minutes), applies the migrations, adds a synthetic PMC
-and prints links to sign in as its manager, an owner with three properties and a tenant; then
-the PMS answers at http://localhost:8100. Open the manager's link: last month's reconciliation
-is prepared and waits for their approval, with a check not yet cleared at the bank. Every other
-page has something on it, and the Dashboard lists what else waits: a journal entry, the
-company's fees still in trust, a vendor's insurance running out and a lease without renters
-insurance. Like every staff member, the manager signs in with a password and an authenticator
-app (any app that shows six-digit codes). The partners are the test ones: payments online are
-paid on the PMS's own test page, emails stay in the PMS (each person's Email tab), and nothing
-reaches anyone.
-
-- Ctrl+C stops it; the same command starts it again with the same books, and adds no second
-  demo. The links are printed once: `docker compose -f compose.demo.yaml logs demo` shows them
-  again.
-- `docker compose -f compose.demo.yaml down -v` deletes its books, so the next start is a fresh
-  demo with new links.
-- Port 8100 taken? Start it with another: `PMS_DEMO_PORT=8200` in front of the command (in
-  PowerShell, `$env:PMS_DEMO_PORT = "8200"` first).
-
-Without Docker: on a migrated database (`dbmate up`), `PYTHONPATH=src python -m pms.demo` adds
-the demo and prints its links; serve it with `python -m pms.api`, with `PMS_STATIC_DIR=frontend/dist`
-and `PMS_PUBLIC_URL` set to where it's served.
 
 ## Simulate people using it
 
