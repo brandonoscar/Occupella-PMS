@@ -520,7 +520,16 @@ def create_app(settings: Settings) -> FastAPI:
                 runs.stop()
             pool.close()
 
-    app = FastAPI(title="Occupella PMS", lifespan=lifespan, docs_url=None, redoc_url=None)
+    # The API's map (/openapi.json) serves development, the browser and API tests, the fuzzer and
+    # ZAP; a live server keeps it to itself, so nobody gets every path for free.
+    live = deployment.is_live(settings.public_url, settings.fake_partners)
+    app = FastAPI(
+        title="Occupella PMS",
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None if live else "/openapi.json",
+    )
     if settings.trusted_proxies:
         # uvicorn's own: from a trusted proxy only, the visitor's address (and the scheme) come
         # from X-Forwarded-For (and -Proto); from anyone else the headers are ignored.
@@ -541,7 +550,7 @@ def create_app(settings: Settings) -> FastAPI:
         settings.payments,
         settings.connect,
         os.environ,
-        live=deployment.is_live(settings.public_url, settings.fake_partners),
+        live=live,
     )
     # The SMTP settings come straight from the environment, so a password is never part of
     # Settings (which a log or an error could print).

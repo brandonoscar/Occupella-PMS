@@ -30,7 +30,7 @@ docs/install.md run it for a real company. The first release, `v2026.11.0`, star
 ## The self-host image
 
 A company builds its image from the tag, on its own machine, with the pinned base images the
-`Dockerfile` names: `git checkout v2026.11.0 && docker compose build`. selfhost.yml builds the
+`Dockerfile` names: `git checkout v2026.11.0 && docker compose -f compose.selfhost.yaml build`. selfhost.yml builds the
 same image every night and on every PR that touches it, lists what it holds (Syft) and fails on
 a known high or critical vulnerability with a fix (Grype); the daily scan does the same for
 `main` every morning.
@@ -66,15 +66,16 @@ and that the result backs up and restores whole (docs/CI.md, db.yml).
 ## Upgrading a company
 
 1. Read the changelog entries between the version you run and the one you are taking.
-2. Get the code: `git fetch --tags && git checkout v2026.11.0 && docker compose build`.
+2. Get the code: `git fetch --tags && git checkout v2026.11.0 && docker compose -f compose.selfhost.yaml build`.
 3. **Back up** (docs/backup.md), and keep that backup apart: it is the only way back if step 5
    fails.
-4. Stop the app: `docker compose stop app`.
-5. Apply the migrations: `docker compose run --rm migrate`. It lists each one it applied.
-6. Start the app: `docker compose up -d --wait app`. It waits until `/health` answers. Then open
+4. Stop the app: `docker compose -f compose.selfhost.yaml stop app`.
+5. Apply the migrations: `docker compose -f compose.selfhost.yaml run --rm migrate`. It lists each one it
+   applied.
+6. Start the app: `docker compose -f compose.selfhost.yaml up -d --wait app`. It waits until `/health` answers. Then open
    the Dashboard and the trial balance as staff.
 
-Never run `docker compose run --rm smoke` against a company's books: the smoke check seeds a
+Never run `docker compose -f compose.yaml run --rm smoke` against a company's books: the smoke check seeds a
 synthetic 50-door company into whatever database it is given.
 
 ## No rollback: a bad release is fixed forward

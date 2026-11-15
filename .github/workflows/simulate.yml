@@ -1,7 +1,7 @@
 name: simulate
 
-# scripts/simulate.ps1 (README, "Simulate people using it"): every browser test played against a
-# fresh synthetic company (compose.e2e.yaml), in each browser and time zone picked, by PowerShell
+# scripts/simulate.ps1 (CONTRIBUTING.md, "Simulate people using it"): every browser test played
+# against a fresh synthetic company (compose.e2e.yaml), in each browser and time zone picked, by PowerShell
 # as on a Windows machine (pwsh is on GitHub's runners). A PR that changes the script, its stack,
 # the browser tests' config or this file runs it once, in Chromium and UTC as e2e.yml does, to
 # show the script itself works (the job budget in docs/CI.md: no other PR runs it). By hand (Run

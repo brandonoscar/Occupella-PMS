@@ -27,6 +27,11 @@ There is no paid bug bounty.
 Fixes go into the next release tag (`docs/release.md`). Only the latest release is supported:
 upgrade to it (`docs/install.md`, "Upgrading") before reporting, if you can.
 
+The only release so far, v2026.11.0, connects the self-host app to the database as its
+superuser, which can turn the ledger's triggers off; `main` connects as `pms_app`, which can't.
+Security fixes made since it are on `main` and listed under Unreleased in `CHANGELOG.md` until
+the next tag. Reports against `main` are welcome.
+
 ## What is in scope
 
 - This repository's code: the API (`src/pms/api`), the database schema and its functions
@@ -37,11 +42,12 @@ upgrade to it (`docs/install.md`, "Upgrading") before reporting, if you can.
   (`trust_ai_agent`) must never read.
 
 Out of scope: a server you don't run, denial of service by flooding, findings that need a
-person's own compromised device, and the fake test partners (`src/pms/deployment.py`), which a
-server reached over https refuses to run.
+person's own compromised device, and the fake test partners. From the next release (on `main`
+now, not in v2026.11.0) a server reached over https refuses to run them (`src/pms/deployment.py`).
 
 ## What the project does already
 
 Pull requests run CodeQL, dependency review and gitleaks. Every day the dependencies are audited
 (pip-audit, npm audit), the self-host image is scanned with Grype, and OWASP ZAP runs against
-the running PMS (`docs/CI.md`). Release images are signed with Sigstore (`docs/release.md`).
+the running PMS (`docs/CI.md`). From the next tag, release images are signed with Sigstore and
+carry an SBOM (`docs/release.md`); v2026.11.0 has no published image.

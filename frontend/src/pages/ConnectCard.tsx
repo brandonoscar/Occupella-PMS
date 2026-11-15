@@ -91,7 +91,9 @@ export function ConnectCard() {
           {!view.may_change && !view.connected && (
             <p className="mt-2 text-sm text-ink-muted">An admin connects the company's Stripe account.</p>
           )}
-          <CardFees view={view} save={(payer) =>
+          {/* Keyed by what the server holds, so a change there starts the choice again: never an
+              effect copying it in, which on a slow machine landed after staff picked (CI, 11/15). */}
+          <CardFees key={view.card_fee_payer} view={view} save={(payer) =>
             record(`${CONNECT}/card-fees`, { card_fee_payer: payer }, () => "Saved who pays the card fee.")} />
         </>
       )}
@@ -101,7 +103,6 @@ export function ConnectCard() {
 
 function CardFees({ view, save }: { view: ConnectView; save: (payer: FeePayer) => unknown }) {
   const [payer, setPayer] = useState<FeePayer>(view.card_fee_payer);
-  useEffect(() => setPayer(view.card_fee_payer), [view.card_fee_payer]);
   return (
     <div className="mt-4 flex flex-col gap-2">
       <p className="text-base" data-testid="card-fees">{cardFeeLine(view)}</p>

@@ -1,10 +1,10 @@
 # The law each feature follows
 
-Founder, 2026-10-15: "make sure what we are doing is by law like ones that apply in all states,
-like commingling is in wv too". Each feature below meets the rule that applies in every state
-(the floor) and, where states differ, the strictest one found, so a company in any state can use
-it as it is. A state's own choices beyond that (deadlines, caps, notice periods) stay the
-company's, as CLAUDE.md keeps state rules out of the PMS unless the founder adds one here.
+**Scope:** the rules that hold in every state, plus the strictest version found where states
+differ. Not legal advice. Each feature below aims at the rule that applies in every state (the
+floor) and, where states differ, the strictest one found. That is a design goal, not a promise
+that a company in any state can use it as it is: no attorney has reviewed this page. A state's
+own choices beyond that (deadlines, caps, notice periods) stay the company's.
 
 **How this was checked (2026-10-15).** Research from search excerpts that quote the official
 pages: the legal sites themselves (code.wvlegislature.gov, law.cornell.edu, dre.ca.gov,

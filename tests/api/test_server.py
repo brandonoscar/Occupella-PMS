@@ -134,3 +134,15 @@ def test_the_server_starts_and_stops_the_webhook_courier(database_url, monkeypat
     with TestClient(create_app(on)):
         assert seen == [("made", "trust_app"), "started"]
     assert seen[-1] == "stopped"
+
+
+def test_only_a_server_that_isnt_live_serves_the_apis_map(database_url):
+    # Development, the tests, the fuzzer and ZAP read /openapi.json; a live server (https at a
+    # host other than this machine) doesn't hand anyone every path it has.
+    local = Settings(database_url=database_url, public_url="http://localhost:8000")
+    live = Settings(database_url=database_url, public_url="https://rentals.example.com")
+    with TestClient(create_app(local)) as client:
+        assert "/api/me" in client.get("/openapi.json").json()["paths"]
+    with TestClient(create_app(live), base_url="https://rentals.example.com") as client:
+        assert client.get("/openapi.json").status_code == 404
+        assert client.get("/health").status_code == 200

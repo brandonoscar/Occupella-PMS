@@ -611,7 +611,7 @@ now get.
 `frontend/playwright.config.ts` or the workflow): `scripts/simulate.ps1`, the browser tests played
 against a fresh synthetic company in Docker (`compose.e2e.yaml`: the API with e2e.yml's settings,
 on 127.0.0.1:8123) in each browser and time zone picked, by PowerShell (`pwsh`, on GitHub's
-runners) as on a Windows machine (README, "Simulate people using it"). The e2e job runs the tests
+runners) as on a Windows machine (CONTRIBUTING.md, "Simulate people using it"). The e2e job runs the tests
 in Chromium in UTC only; a date that is a day off for someone in Los Angeles or Kiritimati, or a
 page that breaks in Firefox or Edge, shows here. On a PR it runs once, Chromium in UTC, to show
 the script works; by hand it takes any browsers and time zones (default nine runs). What fails

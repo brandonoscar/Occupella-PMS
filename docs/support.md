@@ -40,14 +40,14 @@ What does **not** reach anyone by itself:
 - **An error answering a request** (a 500). It is in the log, with its traceback.
 - **A backup that failed.** That shows in the backup job's own output (docs/backup.md), and once
   no good dump is less than 26 hours old the backup service reads unhealthy in
-  `docker compose ps` (a monitoring service of the company's own can watch it). No admin is
+  `docker compose -f compose.selfhost.yaml ps` (a monitoring service of the company's own can watch it). No admin is
   emailed and the Dashboard says nothing: a server may hold several companies, and whom to tell
   about the server's backup is not decided (NOT VERIFIED that anyone looks at `ps`).
 
 ## Where the logs are
 
-The server writes its log to standard output and standard error. With `compose.yaml`:
-`docker compose logs app` (and `docker compose logs db` for Postgres). In it:
+The server writes its log to standard output and standard error. With `compose.selfhost.yaml`:
+`docker compose -f compose.selfhost.yaml logs app` (and `... logs db` for Postgres). In it:
 
 - one line per request (uvicorn's access log; a calendar link's token is printed as "…");
 - the traceback of every error answering a request;
@@ -79,13 +79,13 @@ The books keep their own record, which staff read in the portal:
 
 **Emails are not going out.**
 1. Check the server's sender settings (above) and the mail server.
-2. Then `python -m pms.email deliver` (`docker compose run --rm app python -m pms.email deliver`)
+2. Then `python -m pms.email deliver` (`docker compose -f compose.selfhost.yaml run --rm app python -m pms.email deliver`)
    sends what still waits.
 3. An email given up on stays given up on: write it again from the person's Email tab, or send a
    new invite or reset. An invite's link was never written down (docs/adr/0007-email.md).
 
 **The server is down, or `/health` says the database is unavailable.** Check
-`docker compose ps` and `docker compose logs db`, then the disk and the database's own settings.
+`docker compose -f compose.selfhost.yaml ps` and `docker compose -f compose.selfhost.yaml logs db`, then the disk and the database's own settings.
 Nothing is lost while it is down: nothing is posted either.
 
 **The books are wrong, or the database is lost.**
@@ -103,7 +103,7 @@ against their own and touch nothing on a schema they were never tested on.
   backup was restored under an older tag. Run the tag that migrated it, or restore a backup made
   by the tag that runs.
 - "Lacks this PMS's migration": the migrations weren't applied. Run them
-  (`docker compose run --rm migrate`, or `dbmate up`), then restart the app.
+  (`docker compose -f compose.selfhost.yaml run --rm migrate`, or `dbmate up`), then restart the app.
 
 **An upgrade went wrong.** docs/release.md, "No rollback: a bad release is fixed forward".
 - The only way back is before anything was posted on the new release: restore the backup taken
@@ -115,10 +115,7 @@ against their own and touch nothing on a schema they were never tested on.
 - what was done, what happened and what was expected;
 - the log lines, with ids kept and people's details replaced.
 
-There is no `SECURITY.md` yet, and whether this repository takes private vulnerability reports
-is NOT VERIFIED. Until there is one, don't describe a way to get at another company's or person's
-data in a public issue: ask the maintainers, in an issue that says only that you have a security
-problem to report, how to send it to them privately.
+A security problem is never an issue: report it privately as [SECURITY.md](../SECURITY.md) says.
 
 ## Every month
 

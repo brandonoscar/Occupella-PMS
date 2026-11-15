@@ -1705,5 +1705,5 @@ python -m tools.check_synthetic_data                 # no real-looking personal 
 
 Mutation testing and the rest: `docs/CI.md`. On Windows (or anywhere with Docker and Node),
 `scripts/simulate.ps1` plays every browser test against a fresh synthetic company in Edge, Firefox
-and Chromium, in UTC, Los Angeles and Kiritimati time, and says what failed (README, "Simulate
+and Chromium, in UTC, Los Angeles and Kiritimati time, and says what failed (CONTRIBUTING.md, "Simulate
 people using it").

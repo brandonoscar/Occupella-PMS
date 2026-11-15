@@ -94,6 +94,19 @@ describe("ConnectCard", () => {
     expect(JSON.parse(String(post?.[1]?.body))).toEqual({ card_fee_payer: "tenant" });
   });
 
+  it("shows what the server holds once the save comes back, and keeps a choice not yet saved", async () => {
+    server(VIEW, { ...VIEW, card_fee_payer: "tenant" });
+    render(<ConnectCard />);
+    const choice = (await screen.findByLabelText("Who pays the card fee")) as HTMLSelectElement;
+    fireEvent.change(choice, { target: { value: "tenant" } });
+    expect(choice.value).toBe("tenant");
+    fireEvent.click(screen.getByRole("button", { name: "Save card fee" }));
+    await vi.waitFor(() => expect(screen.getByTestId("card-fees").textContent).not.toBe("The company pays the card fee."));
+    const saved = screen.getByLabelText("Who pays the card fee") as HTMLSelectElement;
+    expect(saved.value).toBe("tenant");
+    expect((screen.getByRole("button", { name: "Save card fee" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("asks Stripe on the admin's return from onboarding", async () => {
     vi.stubGlobal("location", { ...window.location, search: "?connect=back" });
     const fetch = server({ ...VIEW, connected: true, charges_enabled: true, using: true, account_ends: "a1b2" });

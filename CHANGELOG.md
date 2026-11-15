@@ -6,6 +6,13 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+- **A live server keeps the API's map to itself.** `/openapi.json` is served only by a server that
+  isn't live (development, the tests, the fuzzer and ZAP); one at an https address other than this
+  machine answers 404, so nobody gets every path for free. The browser tab reads "Occupella PMS".
+- **The operator docs name the self-host stack.** docs/release.md, docs/backup.md and
+  docs/support.md ran bare `docker compose`, which reads `compose.yaml`, the development stack.
+  Every command now says `-f compose.selfhost.yaml`, as docs/install.md does. docs/support.md
+  sends security reports to SECURITY.md.
 - **Owners and tenants who join through the host app give their phone and say whether texts are
   OK**, as people who set a password on the PMS's own invite page do (item 14 of the founder's
   review of 11/03; docs/edge-cases.md U-171). `POST /api/external-sign-in` takes `phone` and
