@@ -248,9 +248,11 @@ test("staff charge this month's rent and its late fees, and the Dashboard shows 
   await expect(monthEnd.filter({ hasText: "Demo operating trust account" })).toHaveCount(1);
   await expect(monthEnd.filter({ hasText: "Demo security deposit account" })).toHaveCount(1);
 
-  // Rent posts by itself every night (off for these tests); an admin runs it by hand from the
-  // rent roll's ⋯ menu: this month's rent and recurring charges, and rent unpaid past five
-  // days' grace takes a $50.00 late fee.
+  // Rent posts by itself every night (off for these tests): the night of this month's first day
+  // posted its rent and recurring charges then (e2e/seed.py plays it). An admin runs the night by
+  // hand from the rent roll's ⋯ menu: everything is charged already, and rent unpaid past five
+  // days' grace takes a $50.00 late fee. (Rent Run rent now charges itself takes its grace from
+  // today, D-083: the journey and the prepaid rent test below show that.)
   await section(page, "Rent roll");
   const runRent = async () => {
     await page.getByRole("button", { name: "Actions for the rent roll" }).click();
@@ -264,16 +266,20 @@ test("staff charge this month's rent and its late fees, and the Dashboard shows 
   const late = dayOfMonth() > 6;
   await runRent();
   await expect(page.getByRole("main")).toContainText(
-    `6 rents, 1 recurring charge and ${late ? 6 : 0} late fees charged.`,
+    `0 rents, 0 recurring charges and ${late ? 6 : 0} late fees charged.`,
   );
   // Once per lease and due date: the same run again charges nothing, and it is listed.
   await runRent();
   await expect(page.getByRole("main")).toContainText("0 rents, 0 recurring charges and 0 late fees charged.");
   await page.getByRole("button", { name: "Actions for the rent roll" }).click();
   await page.getByRole("menuitem", { name: "Run rent now" }).click();
-  // The demo's own four (two a month), then these two, newest first.
+  // The demo's own six (three a month: the rent on its first day, Run rent now, the late fees),
+  // the night of this month's first day, then these two, newest first.
   const runs = page.getByRole("list", { name: "Latest rent runs" }).getByRole("listitem");
-  await expect(runs).toHaveCount(6);
+  await expect(runs).toHaveCount(9);
+  await expect(runs.nth(2)).toContainText(
+    "nightly: 6 rents, 1 recurring charge and 0 late fees charged.",
+  );
   await expect(runs.first()).toContainText("Demo Manager: 0 rents, 0 recurring charges and 0 late fees charged.");
   await page.getByRole("dialog", { name: "Run rent now" }).getByRole("button", { name: "Close" }).click();
   const lease = (name: string) => page.getByRole("row", { name, exact: true });
@@ -2684,18 +2690,23 @@ test("staff move a tenant in mid-month on a year's lease and the rent run charge
   const people = seed.features["rent-terms"]!;
   await joinAsStaff(page, people.manager);
 
-  // Birch Flats' late fees from this month: no grace, $25.00 and 10% of what is unpaid, up to
-  // $60.00 (the cap a state's law may set; the PMS knows none, so staff type it).
+  // Birch Flats' late fees from this month: $25.00 and 10% of what is unpaid, up to $60.00 (the
+  // cap a state's law may set; the PMS knows none, so staff type it). Entered today, they count
+  // for a rent whose fee comes due today or later (M-049): grace to yesterday, so the rent due on
+  // the 1st, which the night of the 1st posted then (e2e/seed.py), is late today from the 2nd on.
+  const grace = Math.max(dayOfMonth() - 2, 0);
   await openProperty(page, "Birch Flats");
   const fees = await setupPanel(page, "Set late fees");
   await fees.getByLabel("Late fees from").fill(firstOfThisMonth());
-  await fees.getByLabel("Grace days").fill("0");
+  await fees.getByLabel("Grace days").fill(String(grace));
   await fees.getByLabel("Flat fee").fill("25.00");
   await fees.getByLabel("Percent of unpaid").fill("10");
   await fees.getByLabel("Up to").fill("60.00");
   await fees.getByRole("button", { name: "Set late fees" }).click();
   await expect(page.getByTestId("late-fees")).toContainText(
-    /After 0 days' grace: \$25\.00 and 10(\.0+)?% of what is unpaid, up to \$60\.00/,
+    new RegExp(
+      `After ${grace === 1 ? "1 day's" : `${grace} days'`} grace: \\$25\\.00 and 10(\\.0+)?% of what is unpaid, up to \\$60\\.00`,
+    ),
   );
 
   // A year's lease on Aspen Row's vacant unit, from the 16th of this month.
@@ -2716,8 +2727,9 @@ test("staff move a tenant in mid-month on a year's lease and the rent run charge
   await adding.getByRole("button", { name: "Add lease" }).click();
   await expect(page.getByRole("row", { name: "Avery Sample" })).toContainText(`${us(starts)} – ${us(ends)}`);
 
-  // The month's run charges the six leases in effect and the new one its days from the 16th, due
-  // that day; Birch Flats' rents are late from the 2nd, each fee capped at $60.00.
+  // The month's run charges the new lease its days from the 16th, due that day (the six leases
+  // in effect had theirs on the 1st); Birch Flats' two rents are late from the 2nd, each fee
+  // capped at $60.00.
   await section(page, "Rent roll");
   await page.getByRole("button", { name: "Actions for the rent roll" }).click();
   await page.getByRole("menuitem", { name: "Run rent now" }).click();
@@ -2725,7 +2737,12 @@ test("staff move a tenant in mid-month on a year's lease and the rent run charge
   await run.getByLabel("Late fees as of").fill(today());
   await run.getByRole("button", { name: "Run rent now" }).click();
   await expect(run).toHaveCount(0);
-  await expect(page.getByRole("main")).toContainText(/7 rents, 1 recurring charge and \d+ late fees? charged\./);
+  // Late fees: Birch Flats' two rents from the 2nd, the other four properties' leases (five days'
+  // grace on file since the demo began) from the 7th.
+  const lateFees = (dayOfMonth() > 1 ? 2 : 0) + (dayOfMonth() > 6 ? 4 : 0);
+  await expect(page.getByRole("main")).toContainText(
+    `1 rent, 0 recurring charges and ${lateFees} late fees charged.`,
+  );
   const unitB = await openLease(page, "Birch Flats, Unit B");
   const lateFee = `Late fee, rent due ${us(firstOfThisMonth())}`;
   if (dayOfMonth() > 1) {
@@ -3472,8 +3489,9 @@ test("a company has tenants' prepaid rent pay their new rent by itself, and Run 
   await pay.getByRole("button", { name: "Record payment" }).click();
   await expect(aspen).toContainText("$500.00 held as prepaid rent.");
 
-  // Run rent now charges this month's $1,180.00 rent, then the prepaid rent pays $500.00 of it
-  // (a rent past its five days' grace took its $50.00 late fee first).
+  // Run rent now charges this month's $1,180.00 rent, then the prepaid rent pays $500.00 of it.
+  // Rent it charges now takes its five days' grace from today (D-083), so no late fee, whatever
+  // the day of the month.
   await section(page, "Rent roll");
   await page.getByRole("button", { name: "Actions for the rent roll" }).click();
   await page.getByRole("menuitem", { name: "Run rent now" }).click();
@@ -3481,10 +3499,11 @@ test("a company has tenants' prepaid rent pay their new rent by itself, and Run 
   await run.getByLabel("Late fees as of").fill(today());
   await run.getByRole("button", { name: "Run rent now" }).click();
   await expect(run).toHaveCount(0);
-  await expect(page.getByRole("main")).toContainText("Prepaid rent paid what 1 lease owed.");
-  const late = dayOfMonth() > 6;
+  await expect(page.getByRole("main")).toContainText(
+    "6 rents, 1 recurring charge and 0 late fees charged. Prepaid rent paid what 1 lease owed.",
+  );
   await expect(page.getByRole("row", { name: "Aspen Row, Unit 1", exact: true }).getByTestId("balance")).toHaveText(
-    late ? "$730.00" : "$680.00",
+    "$680.00",
   );
 });
 

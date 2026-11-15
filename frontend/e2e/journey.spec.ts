@@ -408,8 +408,8 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await expect(drew).toContainText("owes $0.00");
 
     // An admin's Run rent now, as the nightly run does: the month's rent for the five leases in
-    // effect on its first, Birch Flats Unit A's pet rent, and a $50.00 late fee on each rent still
-    // open once its five days' grace ran out.
+    // effect on its first and Birch Flats Unit A's pet rent. Rent first charged now takes its five
+    // days' grace from today (D-083): no late fee tonight, whatever the day of the month.
     await section(page, "Rent roll");
     await page.getByRole("button", { name: "Actions for the rent roll" }).click();
     await page.getByRole("menuitem", { name: "Run rent now" }).click();
@@ -417,23 +417,20 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await run.getByLabel("Rent due on").fill(month);
     const asOf = today();
     await run.getByLabel("Late fees as of").fill(asOf);
-    const late = asOf >= addDays(month, 6);
     await run.getByRole("button", { name: "Run rent now" }).click();
     await expect(run).toHaveCount(0);
-    await expect(page.getByRole("main")).toContainText(
-      `5 rents, 1 recurring charge and ${late ? "5 late fees" : "0 late fees"} charged.`,
-    );
-    const fee = late ? 5000 : 0;
+    await expect(page.getByRole("main")).toContainText("5 rents, 1 recurring charge and 0 late fees charged.");
 
-    // Birch Flats Unit B, late in the demo's first month, owes its rent and, once late, its late fee.
+    // Birch Flats Unit B, late in the demo's first month, owes this month's rent and no late fee
+    // on it yet: only the demo's own, paid, is in its ledger.
     const unitB = page.getByRole("row", { name: "Birch Flats, Unit B", exact: true });
-    await expect(unitB.getByTestId("balance")).toHaveText(money(161_000 + fee));
+    await expect(unitB.getByTestId("balance")).toHaveText(money(161_000));
     await openLease(page, "Birch Flats, Unit B");
-    await expect(page.getByTestId("balance-due")).toHaveText(money(161_000 + fee));
+    await expect(page.getByTestId("balance-due")).toHaveText(money(161_000));
     const open = page.getByRole("list", { name: "Open charges" });
-    await expect(open.getByRole("listitem").filter({ hasText: "Late fee" })).toHaveCount(late ? 1 : 0);
+    await expect(open.getByRole("listitem").filter({ hasText: "Late fee" })).toHaveCount(0);
     await page.getByRole("tab", { name: "Ledger", exact: true }).click();
-    await expect(page.getByRole("table", { name: "Ledger" }).getByRole("row").filter({ hasText: "Late fee" })).toHaveCount(late ? 2 : 1);
+    await expect(page.getByRole("table", { name: "Ledger" }).getByRole("row").filter({ hasText: "Late fee" })).toHaveCount(1);
 
     // Cedar House charges a $35.00 NSF fee from this month, set on its page.
     await section(page, "Properties");
@@ -448,10 +445,10 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     // Taylor Demo and Quinn Demo pay Cedar House's $2,250.00 by two checks; payments pay rent first.
     await openLease(page, "Cedar House, House");
     const owed = page.getByTestId("balance-due");
-    await expect(owed).toHaveText(money(225_000 + fee));
+    await expect(owed).toHaveText(money(225_000));
     await receive(page, "1200.00", "Check 2101", "$1,200.00 paid what is owed.");
     await receive(page, "1050.00", "Check 2102", "$1,050.00 paid what is owed.");
-    await expect(owed).toHaveText(money(fee));
+    await expect(owed).toHaveText(money(0));
 
     // Taylor's check has its receipt.
     await page.getByRole("tab", { name: "Ledger", exact: true }).click();
@@ -470,7 +467,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await page.getByRole("menuitem", { name: "It bounced" }).click();
     await bounced.getByRole("button", { name: "Record the $1,050.00 bounce" }).click();
     await expect(page.getByRole("main")).toContainText("The $1,050.00 payment bounced and is undone; a $35.00 NSF fee is charged.");
-    cedarOwes = 105_000 + 3_500 + fee;
+    cedarOwes = 105_000 + 3_500;
     await expect(owed).toHaveText(money(cedarOwes));
     const ledger = page.getByRole("table", { name: "Ledger" });
     await expect(ledger.getByRole("row").filter({ hasText: "NSF fee" })).toContainText("$35.00");
