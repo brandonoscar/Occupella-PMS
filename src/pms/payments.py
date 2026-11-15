@@ -300,6 +300,12 @@ class StripePartner:
             raise PartnerFailed(f"Stripe's saved account can't be read: {failed}") from None
 
     def event(self, body: bytes, headers: Mapping[str, str]) -> Event | Saved | None:
+        """The payment or saved account a report is about (a dispute's fee and close aside)."""
+        return next((i for i in self.items(body, headers) if not isinstance(i, Dispute)), None)
+
+    def items(self, body: bytes, headers: Mapping[str, str]) -> list[Event | Saved | Dispute]:
+        """What a signed report says: a payment's report, an autopay's saved account, or a
+        dispute's (the payment returned with its fee, won or lost; P-027, P-030)."""
         verify_signature(body, headers.get("stripe-signature", ""), self._webhook_secret)
         try:
             report = json.loads(body)
@@ -318,20 +324,27 @@ class StripePartner:
                 "live" if report.get("livemode") is True else "test or unstated",
                 "live" if self.live else "test",
             )
-            return None
+            return []
         if kind_of == "checkout.session.completed" and subject.get("mode") == "setup":
             if not subject.get("setup_intent"):
-                return None
-            return self.saved(str(subject["setup_intent"]), event_id, happened)
+                return []
+            saved = self.saved(str(subject["setup_intent"]), event_id, happened)
+            return [] if saved is None else [saved]
         if kind_of == "setup_intent.succeeded":
             if not (subject.get("metadata") or {}).get("autopay_id"):
-                return None  # not an account the PMS asked to save
-            return self.saved(str(subject["id"]), event_id, happened)
+                return []  # not an account the PMS asked to save
+            saved = self.saved(str(subject["id"]), event_id, happened)
+            return [] if saved is None else [saved]
+        if kind_of.startswith("charge.dispute."):
+            if not subject.get("payment_intent"):
+                return []  # a charge the PMS didn't start through a payment
+            intent = self._call("GET", f"/payment_intents/{subject['payment_intent']}", [])
+            return list(dispute_items(kind_of, subject, intent, event_id, happened))
         kind = STRIPE_KINDS.get(kind_of)
         if kind is None:
-            return None
+            return []
         if kind_of == "checkout.session.completed" and subject.get("payment_status") != "paid":
-            return None  # a bank payment is still clearing; the async events say how it ends
+            return []  # a bank payment is still clearing; the async events say how it ends
         if kind_of.startswith("charge.") and subject.get("payment_intent"):
             # A charge's report names its payment only through its PaymentIntent.
             intent = self._call("GET", f"/payment_intents/{subject.get('payment_intent')}", [])
@@ -339,14 +352,14 @@ class StripePartner:
             intent = None
         payment = payment_of(subject, intent)
         if payment is None:
-            return None  # not a payment the PMS started
+            return []  # not a payment the PMS started
         if kind == "paid":
             # A payment's own report names itself; a session's names its payment.
             is_intent = subject.get("object") == "payment_intent"
             fee = self.fee_of(subject["id"] if is_intent else subject["payment_intent"])
         else:
             fee = None
-        return Event(payment, kind, event_id, happened, fee)
+        return [Event(payment, kind, event_id, happened, fee)]
 
     def fee_of(self, payment_intent: str) -> Decimal:
         """Stripe's fee on a payment, from its charge's balance transaction."""
@@ -391,6 +404,77 @@ class StripePartner:
         return looked_up(payment_id, ref, session, intent, now)
 
 
+DisputeKind = Literal["opened", "won", "lost"]
+
+
+@dataclass(frozen=True)
+class Dispute:
+    """A card dispute (or a bank's late return, as Stripe reports one) on a payment."""
+
+    payment_id: UUID
+    dispute_id: str
+    kind: DisputeKind
+    # Opened: the dispute fee Stripe took. Won: what of it came back. Lost: None.
+    fee: Decimal | None
+    event_id: str
+    happened_at: datetime
+
+
+def cents_of(value: Any) -> Decimal:
+    return (Decimal(int(value)) / 100).quantize(CENT)
+
+
+def dispute_fees(subject: Mapping[str, Any]) -> tuple[Decimal, Decimal]:
+    """A dispute's fee as its balance transactions say: what was taken when funds were withdrawn,
+    and what of it came back when they were reinstated."""
+    taken, back = Decimal(0), Decimal(0)
+    for moved in subject.get("balance_transactions") or []:
+        if not isinstance(moved, dict):
+            continue
+        fee = cents_of(moved.get("fee") or 0)
+        if int(moved.get("amount") or 0) < 0:
+            taken += fee
+        else:
+            back -= fee  # a reinstatement's fee is negative when the fee comes back
+    return taken, max(back, Decimal(0))
+
+
+def dispute_items(
+    kind: str, subject: Mapping[str, Any], intent: Any, event_id: str, at: datetime
+) -> list[Event | Dispute]:
+    """What a dispute's report says of the PMS's payment (`intent`, its PaymentIntent): created,
+    the payment came back and the dispute fee was taken; closed won or lost; funds reinstated,
+    won. Nothing for a payment the PMS didn't start."""
+    payment = payment_of(None, intent)
+    if payment is None:
+        return []
+    dispute_id = str(subject.get("id") or "")[:200] or event_id
+    taken, back = dispute_fees(subject)
+    if kind == "charge.dispute.created":
+        return [
+            Event(payment, "returned", event_id, at),
+            Dispute(payment, dispute_id, "opened", taken, event_id, at),
+        ]
+    status = subject.get("status")
+    if kind == "charge.dispute.funds_reinstated" or (
+        kind == "charge.dispute.closed" and status == "won"
+    ):
+        return [Dispute(payment, dispute_id, "won", back, event_id, at)]
+    if kind == "charge.dispute.closed" and status == "lost":
+        return [Dispute(payment, dispute_id, "lost", None, event_id, at)]
+    return []
+
+
+@runtime_checkable
+class ReadsAll(Protocol):
+    """A partner whose one report may say more than one thing: a dispute opened is the payment
+    returned and the dispute's fee (docs/edge-cases.md P-027, P-030)."""
+
+    name: str
+
+    def items(self, body: bytes, headers: Mapping[str, str]) -> list[Event | Saved | Dispute]: ...
+
+
 # Stripe's reports the PMS reads, and what each says happened.
 STRIPE_KINDS: dict[str, Kind] = {
     "checkout.session.completed": "paid",
@@ -414,7 +498,17 @@ STRIPE_KINDS: dict[str, Kind] = {
 # Every event the PMS reads from Stripe, which the company's webhook endpoint must be sent
 # (docs/edge-cases.md P-012): one not subscribed to the bank's async reports never sees a bank
 # payment paid. Settings, Company setup lists them.
-STRIPE_EVENTS = tuple(sorted({*STRIPE_KINDS, "setup_intent.succeeded"}))
+STRIPE_EVENTS = tuple(
+    sorted(
+        {
+            *STRIPE_KINDS,
+            "setup_intent.succeeded",
+            # A dispute that closes: won, the money comes back (P-027).
+            "charge.dispute.closed",
+            "charge.dispute.funds_reinstated",
+        }
+    )
+)
 
 
 def checkout_form(

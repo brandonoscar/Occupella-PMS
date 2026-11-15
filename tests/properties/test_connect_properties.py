@@ -111,6 +111,9 @@ class Paying:
     tenant_fee: Decimal
     kept: Decimal  # Stripe's fee and Occupella's, as Stripe reports them on paid
     reported: set
+    # Through the company's own Stripe keys instead of Connect: a bank payment, no Occupella fee,
+    # its disputes read alike (docs/edge-cases.md P-027, P-030).
+    keys: bool = False
 
 
 # Keys of everything a payment moves, and where each may move money from.
@@ -159,27 +162,33 @@ class ConnectMachine(RuleBasedStateMachine):
         method=METHODS,
         tenant_pays=st.booleans(),
         owner=st.booleans(),
+        keys=st.booleans(),
     )
-    def start(self, amount, method, tenant_pays, owner):
+    def start(self, amount, method, tenant_pays, owner, keys):
         payment = uuid.uuid4()
-        platform_fee = connect.DEFAULT_FEES[method].on(amount)
+        if keys:
+            method, amount = "ach", min(amount, Decimal("10000.00"))
+        platform_fee = ZERO if keys else connect.DEFAULT_FEES[method].on(amount)
+        partner = "stripe" if keys else "fake_connect"
         tenant_fee = ZERO
         if owner:
             self.conn.execute(
                 "INSERT INTO trust_owner_online_payments (id, pmc_id, ledger_account_id, amount,"
                 " method, partner, partner_ref, platform_fee)"
-                " VALUES (%s, %s, %s, %s, %s, 'fake_connect', %s, %s)",
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     payment,
                     self.pmc.pmc_id,
                     self.pmc.owners[0].account,
                     amount,
                     method,
-                    f"fake_connect_{payment.hex}",
+                    partner,
+                    f"{partner}_{payment.hex}",
                     platform_fee,
                 ),
             )
-            connect_api.started_on_account(self.conn, self.pmc.pmc_id, owner_payment=payment)
+            if not keys:
+                connect_api.started_on_account(self.conn, self.pmc.pmc_id, owner_payment=payment)
         else:
             if tenant_pays:
                 tenant_fee = (
@@ -190,7 +199,7 @@ class ConnectMachine(RuleBasedStateMachine):
             self.conn.execute(
                 "INSERT INTO trust_online_payments (id, pmc_id, lease_id, tenant_id, amount,"
                 " tenant_fee, fee_payer, method, partner, partner_ref, platform_fee)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'fake_connect', %s, %s)",
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     payment,
                     self.pmc.pmc_id,
@@ -200,13 +209,16 @@ class ConnectMachine(RuleBasedStateMachine):
                     tenant_fee,
                     "tenant" if tenant_fee > 0 else "company",
                     method,
-                    f"fake_connect_{payment.hex}",
+                    partner,
+                    f"{partner}_{payment.hex}",
                     platform_fee,
                 ),
             )
-            connect_api.started_on_account(self.conn, self.pmc.pmc_id, payment=payment)
+            if not keys:
+                connect_api.started_on_account(self.conn, self.pmc.pmc_id, payment=payment)
         kept = connect.stripe_fee(method, amount + tenant_fee) + platform_fee
-        self.paying.append(Paying(payment, owner, amount, tenant_fee, kept, set()))
+        self.paying.append(Paying(payment, owner, amount, tenant_fee, kept, set(), keys))
+        event("through the company's own keys" if keys else "through Connect")
 
     @precondition(lambda self: self.paying)
     @rule(
@@ -231,9 +243,14 @@ class ConnectMachine(RuleBasedStateMachine):
         else:
             back = connect.DISPUTE_FEE if kind == "won" else None
             items = [connect.Dispute(p.id, dispute_id, kind, back, said, now)]
-        _, refused = self.call(
-            connect_api.record_items, self.conn, self.partner, self.pmc.pmc_id, items
-        )
+        if p.keys:
+            # The company's own webhook: the same report, read by its keys' partner.
+            keys = SimpleNamespace(name="stripe")
+            _, refused = self.call(op.receive_all, self.conn, keys, items, self.pmc.pmc_id)
+        else:
+            _, refused = self.call(
+                connect_api.record_items, self.conn, self.partner, self.pmc.pmc_id, items
+            )
         if refused is not None:
             # A return before paid, or a close before its dispute opened: sent again later.
             assert refused.status_code == 409

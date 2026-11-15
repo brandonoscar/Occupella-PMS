@@ -389,20 +389,12 @@ class AccountState:
     reported_at: datetime
 
 
-DisputeKind = Literal["opened", "won", "lost"]
-
-
-@dataclass(frozen=True)
-class Dispute:
-    """A card dispute (or a bank's late return, as Stripe reports one) on a payment."""
-
-    payment_id: UUID
-    dispute_id: str
-    kind: DisputeKind
-    # Opened: the dispute fee Stripe took. Won: what of it came back. Lost: None.
-    fee: Decimal | None
-    event_id: str
-    happened_at: datetime
+# A dispute's report, read the same through Connect and through a company's own keys
+# (payments.py; docs/edge-cases.md P-027).
+DisputeKind = payments.DisputeKind
+Dispute = payments.Dispute
+dispute_fees = payments.dispute_fees
+cents_of = payments.cents_of
 
 
 Item = payments.Event | payments.Saved | Dispute | AccountState
@@ -432,25 +424,6 @@ CONNECT_EVENTS = tuple(
         }
     )
 )
-
-
-def cents_of(value: Any) -> Decimal:
-    return (Decimal(int(value)) / 100).quantize(CENT)
-
-
-def dispute_fees(subject: Mapping[str, Any]) -> tuple[Decimal, Decimal]:
-    """A dispute's fee as its balance transactions say: what was taken when funds were withdrawn,
-    and what of it came back when they were reinstated."""
-    taken, back = ZERO, ZERO
-    for moved in subject.get("balance_transactions") or []:
-        if not isinstance(moved, dict):
-            continue
-        fee = cents_of(moved.get("fee") or 0)
-        if int(moved.get("amount") or 0) < 0:
-            taken += fee
-        else:
-            back -= fee  # a reinstatement's fee is negative when the fee comes back
-    return taken, max(back, ZERO)
 
 
 def account_state(subject: Mapping[str, Any], event_id: str | None, at: datetime) -> AccountState:
@@ -730,25 +703,11 @@ class StripeConnected(payments.StripePartner):
         if not intent_id:
             return []  # a charge the PMS didn't start through a payment
         intent = self._call("GET", f"/payment_intents/{intent_id}", [])
-        payment = payments.payment_of(None, intent)
-        if payment is None:
-            return []
-        dispute_id = str(subject.get("id") or "")[:200] or report.event_id
-        taken, back = dispute_fees(subject)
-        at = report.happened_at
-        if report.kind == "charge.dispute.created":
-            return [
-                payments.Event(payment, "returned", report.event_id, at),
-                Dispute(payment, dispute_id, "opened", taken, report.event_id, at),
-            ]
-        status = subject.get("status")
-        if report.kind == "charge.dispute.funds_reinstated" or (
-            report.kind == "charge.dispute.closed" and status == "won"
-        ):
-            return [Dispute(payment, dispute_id, "won", back, report.event_id, at)]
-        if report.kind == "charge.dispute.closed" and status == "lost":
-            return [Dispute(payment, dispute_id, "lost", None, report.event_id, at)]
-        return []
+        return list(
+            payments.dispute_items(
+                report.kind, subject, intent, report.event_id, report.happened_at
+            )
+        )
 
 
 def charge_terms(conn: Any, payment_id: UUID, account: str) -> tuple[Method, Decimal]:

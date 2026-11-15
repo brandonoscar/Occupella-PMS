@@ -23,10 +23,12 @@ from helpers import (
     approve_bank,
     balance,
     charge,
+    contribute,
     import_statement,
     in_background,
     open_account,
     open_lease,
+    post,
     set_ownership,
     staff_named,
     wait_until_blocked,
@@ -839,6 +841,68 @@ def test_stripes_signed_report_records_the_payment(stripe_app, conn, app_conn, p
     assert ok(stripe_report(browser, "customer.created", {})) == {"recorded": False}
     refused(browser.post("/api/payments/webhook/paypal", json={}), 404)
     assert staff  # signed in as staff to turn it on
+
+
+def test_a_dispute_through_stripe_keys_takes_its_fee_from_the_company_and_once_won_puts_it_back(
+    stripe_app, conn, app_conn, pmc, lease
+):
+    """docs/edge-cases.md P-027, P-030: a dispute on a payment through Stripe keys (not Connect)
+    is a return whose dispute fee leaves trust from the company's fee account, never an owner's,
+    and once won (funds reinstated) the payment is in the books again with the fee back."""
+    browser, tenant_browser, answers = stripe_app
+    join_as_staff(browser, conn, app_conn, pmc)
+    turn_on(browser)
+    answers[("POST", "/checkout/sessions")] = {"id": "cs_test_9", "url": "https://checkout.test/9"}
+    join_as_tenant(tenant_browser, conn, app_conn, pmc)
+    payment = pay(tenant_browser, lease, "1000.00")["id"]
+    answers[("GET", "/payment_intents/pi_9")] = {
+        "latest_charge": {"balance_transaction": {"fee": 500}},
+        "metadata": {"payment_id": payment},
+    }
+    subject = {"id": "cs_test_9", "client_reference_id": payment, "payment_intent": "pi_9"}
+    ok(stripe_report(browser, "checkout.session.async_payment_succeeded", subject))
+    owner_before = balance(conn, pmc.owners[0].account)
+    # The company's earned fees, enough for the partner's fee and the dispute's.
+    contribute(conn, pmc.pmc_id, pmc.owners[1].account, f"fund/{uuid4()}", "50.00")
+    post(conn, pmc.pmc_id, f"fee/{uuid4()}", [(pmc.owners[1].account, pmc.pmc_income, "50.00")])
+    company_before = balance(conn, pmc.pmc_income)
+
+    dispute = {
+        "id": "du_test_9",
+        "payment_intent": "pi_9",
+        "status": "needs_response",
+        "balance_transactions": [{"amount": -100000, "fee": 1500}],
+    }
+    assert ok(stripe_report(browser, "charge.dispute.created", dispute)) == {"recorded": True}
+    assert ok(stripe_report(browser, "charge.dispute.created", dispute)) == {"recorded": True}
+
+    assert balance(conn, pmc.owners[0].account) == owner_before - Decimal("1000.00")
+    assert f"bounce/payment/{payment}" in keys(conn, pmc)
+    # The partner's 5.00, waiting until the company's account held it, and the dispute's 15.00.
+    assert balance(conn, pmc.pmc_income) == company_before - Decimal("20.00")
+    assert conn.execute(
+        "SELECT kind, fee FROM trust_connect_disputes WHERE online_payment_id = %s", (payment,)
+    ).fetchall() == [("opened", Decimal("15.00"))]
+
+    won = dispute | {
+        "status": "won",
+        "balance_transactions": [
+            {"amount": -100000, "fee": 1500},
+            {"amount": 100000, "fee": -1500},
+        ],
+    }
+    assert ok(stripe_report(browser, "charge.dispute.funds_reinstated", won)) == {"recorded": True}
+    ok(stripe_report(browser, "charge.dispute.closed", won))  # its close says the same
+
+    assert balance(conn, pmc.owners[0].account) == owner_before
+    assert balance(conn, pmc.pmc_income) == company_before - Decimal("5.00")
+    assert sorted(
+        kind
+        for (kind,) in conn.execute(
+            "SELECT kind FROM trust_connect_disputes WHERE online_payment_id = %s", (payment,)
+        ).fetchall()
+    ) == ["opened", "won"]
+    assert ok(browser.get("/api/payments/waiting")) == []
 
 
 def test_a_payment_whose_day_month_end_closed_is_recorded_in_the_next_open_one(

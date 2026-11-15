@@ -738,16 +738,45 @@ async def raw_body(request: Request) -> bytes:
     return await request.body()
 
 
-def read(
-    partner: payments.Partner, body: bytes, headers: Any
-) -> payments.Event | payments.Saved | None:
+Item = payments.Event | payments.Saved | payments.Dispute
+
+
+def items_of(partner: payments.Partner, body: bytes, headers: Any) -> list[Item]:
+    """What a partner's signed report says: a dispute's report may say two things (P-027)."""
+    if isinstance(partner, payments.ReadsAll):
+        return partner.items(body, headers)
+    event = partner.event(body, headers)
+    return [] if event is None else [event]
+
+
+def read(partner: payments.Partner, body: bytes, headers: Any) -> list[Item]:
     """A partner's signed report, read; refused when its signature isn't the partner's."""
     try:
-        return partner.event(body, headers)
+        return items_of(partner, body, headers)
     except payments.NotTheirs as wrong:
         raise HTTPException(400, str(wrong)) from None
     except payments.PartnerFailed:
         raise HTTPException(502, "the payments partner didn't answer: send it again") from None
+
+
+def receive_all(
+    conn: psycopg.Connection[Any],
+    partner: payments.Partner,
+    items: list[Item],
+    pmc_id: UUID | None = None,
+) -> Received:
+    """Records each thing a partner's report says, in order: a dispute's report after the return
+    it opens on (src/pms/api/disputes.py), and with `pmc_id` only about that company's own."""
+    from pms.api import disputes  # it reads this module
+
+    recorded = False
+    for item in items:
+        if isinstance(item, payments.Dispute):
+            if pmc_id is None or company_of(conn, item) == pmc_id:
+                recorded = disputes.record(conn, item, partner.name) or recorded
+        else:
+            recorded = receive(conn, partner, item, pmc_id).recorded or recorded
+    return Received(recorded=recorded)
 
 
 def receive(
@@ -777,9 +806,7 @@ def receive(
     )
 
 
-def company_of(
-    conn: psycopg.Connection[Any], event: payments.Event | payments.Saved
-) -> UUID | None:
+def company_of(conn: psycopg.Connection[Any], event: Item) -> UUID | None:
     """The company whose payment (a tenant's or an owner's) or autopay a report is about."""
     from pms.api import owner_payments  # it reads this module's helpers; owners pay in online too
 
@@ -802,7 +829,7 @@ def webhook(
     partner = server_partner(request)
     if partner is None or partner.name != name or name == "fake":
         raise HTTPException(404, "no such payments partner on this server")
-    return receive(conn, partner, read(partner, body, request.headers))
+    return receive_all(conn, partner, read(partner, body, request.headers))
 
 
 @router.post("/webhook/{name}/{pmc_id}")
@@ -821,12 +848,12 @@ def company_webhook(
         raise HTTPException(404, "no such payments partner for this company")
     for partner in keys:
         try:
-            event = partner.event(body, request.headers)
+            items = items_of(partner, body, request.headers)
         except payments.NotTheirs:
             continue
         except payments.PartnerFailed:
             raise HTTPException(502, "the payments partner didn't answer: send it again") from None
-        return receive(conn, partner, event, pmc_id)
+        return receive_all(conn, partner, items, pmc_id)
     raise HTTPException(400, "the report's signature isn't this company's")
 
 

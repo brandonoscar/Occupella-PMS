@@ -14,8 +14,10 @@ dispute is recorded the way a bank return is, and a dispute the company wins put
 - Lost: nothing more moves; it is kept to say so.
 
 Each is recorded once (`trust_connect_disputes`, unique per payment and kind), each posting under
-a key of its own, so Stripe reporting twice moves nothing twice. Only payments through Connect
-are read here; a company's own keys' disputes keep online_payments' path.
+a key of its own, so Stripe reporting twice moves nothing twice. Payments through Connect and
+through Stripe keys (a company's own or the server's) are read alike: Stripe takes the dispute fee
+from the account's balance and gives a won dispute's money back whichever (docs/edge-cases.md
+P-027, P-030, P-061).
 """
 
 from __future__ import annotations
@@ -33,6 +35,8 @@ from pms.api import online_payments as op
 from pms.api import owner_payments, rent
 
 ZERO = Decimal(0)
+# The partners whose disputes are read: Stripe's, through Connect or through keys.
+READ_FROM = (*connect.PARTNERS, "stripe")
 SEND_AGAIN = "this dispute isn't open in the books yet, so it can't close: send this again later"
 
 
@@ -194,7 +198,7 @@ def settle_tenant(conn: psycopg.Connection[Any], row: op.Row, on: date | None = 
     """What a tenant's payment's dispute calls for that isn't in the books yet, as far as they
     take it now (online_payments.settle calls it last). The company's part is dated `on` when
     staff cover it later, else the day of the report."""
-    if row.partner not in connect.PARTNERS:
+    if row.partner not in READ_FROM:
         return
     disputes = found(conn, "online_payment_id", row.id)
     if "opened" not in disputes or not op.posted(conn, row.pmc_id, op.bounce_key(row.id)):
@@ -251,7 +255,7 @@ def settle_owner(
 ) -> None:
     """What an owner's payment's dispute calls for (owner_payments.settle calls it last): the
     dispute fee from the company, and once won, the contribution again."""
-    if row.partner not in connect.PARTNERS:
+    if row.partner not in READ_FROM:
         return
     disputes = found(conn, "owner_payment_id", row.id)
     if "opened" not in disputes or not op.posted(
@@ -309,14 +313,19 @@ def owner_reinstated(conn: psycopg.Connection[Any], row: owner_payments.Row) -> 
 # --- recording what Stripe reports ------------------------------------------------------------
 
 
-def record(conn: psycopg.Connection[Any], dispute: connect.Dispute) -> bool:
-    """Records a dispute's report about a payment through Connect (once per payment and kind)
-    and settles what it calls for. False when the payment isn't one through Connect. A close
-    reported before its opening is refused for now (409), so Stripe sends it again."""
+def record(
+    conn: psycopg.Connection[Any], dispute: connect.Dispute, partner: str | None = None
+) -> bool:
+    """Records a dispute's report about a payment through Stripe (once per payment and kind)
+    and settles what it calls for. False when the payment isn't one through Stripe, or (with
+    `partner`) not that partner's. A close reported before its opening is refused for now
+    (409), so Stripe sends it again."""
     tenant = op.row_of(conn, dispute.payment_id)
     owner = None if tenant is not None else owner_payments.row_of(conn, dispute.payment_id)
     row = tenant or owner
-    if row is None or row.partner not in connect.PARTNERS:
+    if row is None or row.partner not in READ_FROM:
+        return False
+    if partner is not None and row.partner != partner:
         return False
     column: Column = "online_payment_id" if tenant is not None else "owner_payment_id"
     if tenant is not None:

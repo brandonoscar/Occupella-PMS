@@ -154,7 +154,9 @@ def test_an_admin_keeps_the_companys_keys_sealed_and_only_the_last_four_show(
     assert before["webhook_url"] == f"http://testserver/api/payments/webhook/stripe/{pmc.pmc_id}"
     # docs/edge-cases.md P-012: an endpoint not sent these never reports a bank payment paid.
     assert before["webhook_events"] == [
+        "charge.dispute.closed",
         "charge.dispute.created",
+        "charge.dispute.funds_reinstated",
         "charge.failed",
         "checkout.session.async_payment_failed",
         "checkout.session.async_payment_succeeded",

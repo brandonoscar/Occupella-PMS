@@ -497,6 +497,40 @@ def test_stripes_signed_report_records_an_owners_payment(stripe_app, conn, app_c
     refused(browser.get(f"/api/payments/fake/{payment}"), 404)
 
 
+def test_a_dispute_on_an_owners_payment_through_stripe_keys_won_is_their_contribution_again(
+    stripe_app, conn, app_conn, pmc
+):
+    # docs/edge-cases.md P-061, P-030: taken back out, its fee the company's; won, paid back in.
+    browser, owner_browser, answers = stripe_app
+    join_as_staff(browser, conn, app_conn, pmc)
+    turn_on(browser)
+    fund_company(conn, pmc, "30.00")
+    answers[("POST", "/checkout/sessions")] = {"id": "cs_owner_9", "url": "https://checkout.test/9"}
+    join_as_owner(owner_browser, app_conn, pmc)
+    payment = pay(owner_browser, pmc.owners[0].account, "500.00")["id"]
+    answers[("GET", "/payment_intents/pi_o9")] = {
+        "latest_charge": {"balance_transaction": {"fee": 400}},
+        "metadata": {"payment_id": payment},
+    }
+    subject = {"id": "cs_owner_9", "client_reference_id": payment, "payment_intent": "pi_o9"}
+    ok(stripe_report(browser, "checkout.session.async_payment_succeeded", subject))
+    assert balance(conn, pmc.owners[0].account) == Decimal("500.00")
+    dispute = {
+        "id": "du_owner_9",
+        "payment_intent": "pi_o9",
+        "status": "needs_response",
+        "balance_transactions": [{"amount": -50000, "fee": 1500}],
+    }
+    assert ok(stripe_report(browser, "charge.dispute.created", dispute)) == {"recorded": True}
+    assert balance(conn, pmc.owners[0].account) == Decimal("0.00")
+    assert balance(conn, pmc.pmc_income) == Decimal("11.00")  # 30.00 less 4.00 and 15.00
+
+    won = dispute | {"status": "won"}
+    assert ok(stripe_report(browser, "charge.dispute.closed", won)) == {"recorded": True}
+    assert balance(conn, pmc.owners[0].account) == Decimal("500.00")
+    assert ok(browser.get("/api/payments/waiting")) == []
+
+
 def test_a_payment_whose_day_month_end_closed_is_recorded_in_the_next_open_one(
     stripe_app, conn, app_conn, pmc
 ):

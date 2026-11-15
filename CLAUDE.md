@@ -1137,7 +1137,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   property's state allows a surcharge, not on autopay, at most 3% or the state's cap, by credit card
   only (`connect.card_fee_terms`); an owner never pays one. A card payment is $10,000.00 at most. A
   dispute is a return with its dispute fee from the company's fee account, and one won puts the
-  payment back (`trust_connect_disputes`). The platform's one webhook (`POST
+  payment back (`trust_connect_disputes`), as through a company's own keys or the server's (P-027). The platform's one webhook (`POST
   /api/payments/connect/webhook`) maps each report's `account` to its company (404 for none),
   books nothing from another account or the other mode, and a live server refuses the platform's
   test key. Disconnecting stops the autopays saved at the account ('account changed', emailed).
