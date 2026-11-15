@@ -11,6 +11,7 @@ import pytest
 from helpers import (
     add_late_fee_policy,
     add_nsf_fee_policy,
+    add_tenant,
     add_unit,
     approve,
     balance,
@@ -19,10 +20,13 @@ from helpers import (
     draw_owner,
     fresh,
     hold_payments,
+    make_pmc,
     open_account,
     open_lease,
 )
 from people import join_as_owner, join_as_staff, join_as_tenant
+
+from pms.api import rent
 
 DAY = timedelta(days=1)
 
@@ -1111,3 +1115,24 @@ def test_allocation_fills_the_oldest_charge_first(open_, amount, matched):
 
     charges = [(c, Decimal(v)) for c, v in open_]
     assert rent.allocate(charges, Decimal(amount)) == [(c, Decimal(v)) for c, v in matched]
+
+
+@pytest.mark.parametrize(
+    ("prop", "unit", "home"),
+    [
+        ("Cedar House", "House", "Cedar House"),  # never "Cedar House House"
+        ("Cedar House", " house ", "Cedar House"),
+        ("Birch Flats", "Unit A", "Birch Flats Unit A"),
+        ("Greenhouse", "House", "Greenhouse House"),  # only a whole word at the end
+        ("Harbor Tower", "Tower 2", "Harbor Tower Tower 2"),
+    ],
+)
+def test_a_payments_memo_names_the_home_once(conn, prop, unit, home):
+    pmc = make_pmc(conn, owners=1)
+    property_id = pmc.owners[0].property_id
+    conn.execute("UPDATE trust_properties SET display_name = %s WHERE id = %s", (prop, property_id))
+    tenant = add_tenant(conn, pmc.pmc_id, property_id, "Tenant A")
+    made = add_unit(conn, pmc.pmc_id, property_id, unit)
+    lease = open_lease(conn, pmc.pmc_id, made, date(2026, 1, 1), None, "1000.00", [tenant])
+
+    assert rent.lease_memo(conn, lease) == f"Tenant A, {home}"

@@ -76,6 +76,9 @@ describe("OwnerBills", () => {
     // Only a bill waiting for them has anything to press.
     expect(within(table).getAllByRole("button", { name: "Approve…" })).toHaveLength(1);
     expect(screen.getByTestId("waiting-count").textContent).toBe("1 bill waits for your approval.");
+    // Titled for every bill it lists, paid ones too, not only those waiting for them.
+    expect(screen.getByRole("heading", { name: "Your bills" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Bills waiting for you" })).toBeNull();
   });
 
   it("says what a bill waiting for them is short of", async () => {

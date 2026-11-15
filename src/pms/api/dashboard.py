@@ -118,7 +118,8 @@ class Dashboard(BaseModel):
 # The units the company manages on a day (not archived, added to the PMS by then), each occupied
 # when a lease is in effect, else vacant since the day after its last lease ended or, never
 # leased, since the day it was added: the vacancy report's rules, without the units archived
-# (no longer managed) or not added yet, which it lists too.
+# (no longer managed) or not added yet, which it lists too. The day a unit was added is the
+# company's (its time zone), as `day` is: a unit added at 8 pm in New York counts that evening.
 UNITS = """
 SELECT count(*),
        count(*) FILTER (WHERE NOT occupied),
@@ -129,10 +130,10 @@ FROM (
                    AND (l.ends_on IS NULL OR l.ends_on >= %(day)s)) AS occupied,
          coalesce((SELECT max(l.ends_on) + 1 FROM trust_leases AS l
                    WHERE l.unit_id = u.id AND l.ends_on < %(day)s),
-                  (u.created_at AT TIME ZONE 'UTC')::date) AS since
+                  trust_pmc_day(u.pmc_id, u.created_at)) AS since
   FROM trust_units AS u
   WHERE u.pmc_id = %(pmc)s AND NOT trust_is_archived(NULL, u.id)
-    AND (u.created_at AT TIME ZONE 'UTC')::date <= %(day)s
+    AND trust_pmc_day(u.pmc_id, u.created_at) <= %(day)s
 ) AS units
 """
 

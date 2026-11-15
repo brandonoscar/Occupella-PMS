@@ -85,7 +85,9 @@ def lease_of(conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID) -> Lea
 
 def lease_memo(conn: psycopg.Connection[Any], lease_id: UUID) -> str:
     """Whose money and for which home, for a receipt's memo: "Morgan Demo, Birch Flats Unit A"
-    (the punch list, ADR 0006: the books side of a reconciliation said "No memo")."""
+    (the punch list, ADR 0006: the books side of a reconciliation said "No memo"). A unit whose
+    name the property's already ends with is left out, so a house's unit named "House" reads
+    "Cedar House", never "Cedar House House", on the owner's statement and the register."""
     row = conn.execute(
         "SELECT (SELECT string_agg(t.display_name, ', '"
         '                           ORDER BY t.display_name COLLATE "C", t.id)'
@@ -97,6 +99,8 @@ def lease_memo(conn: psycopg.Connection[Any], lease_id: UUID) -> str:
     ).fetchone()
     assert row is not None
     names, prop, unit = row
+    if f" {prop.casefold().strip()}".endswith(f" {unit.casefold().strip()}"):
+        return f"{names}, {prop}"
     return f"{names}, {prop} {unit}"
 
 
