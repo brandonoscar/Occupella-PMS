@@ -282,6 +282,11 @@ class RentRollMachine(RuleBasedStateMachine):
         # (unpaid when its grace ran out, fee, the fee's charge).
         self.late_terms: dict[tuple[int, date], LateTerms] = {}
         self.late_fees: dict[UUID, tuple[Decimal, Decimal, UUID]] = {}
+        # Each late fee's rent's terms and late day, and what of each fee was waived by a payment
+        # dated within its grace that came in after it (migration 20261115000320, D-078).
+        self.late_fee_terms: dict[UUID, tuple[LateTerms, date]] = {}
+        self.waived: dict[UUID, Decimal] = {}
+        self.waiver_of: dict[UUID, UUID] = {}  # each such waiver's credit: the fee it waives
         # Payment holds, and the (hold, transfer) pairs allowed despite one.
         self.holds: dict[UUID, Hold] = {}
         self.allowed: set[tuple[UUID, str]] = set()
@@ -805,7 +810,9 @@ class RentRollMachine(RuleBasedStateMachine):
                 refusal = (psycopg.errors.UniqueViolation, "already pays")
         elif self.held_back(bill.lease_id, transfer_id):
             refusal = (psycopg.errors.CheckViolation, "is on a payment hold")
-        elif self.paid_on(charge_id) + amount > bill.amount:
+        elif self.paid_on(charge_id) + self.waived.get(charge_id, Decimal(0)) + amount > (
+            bill.amount
+        ):
             refusal = (psycopg.errors.CheckViolation, "and already paid")
         elif self.used_of(transfer_id) + amount > paid.amount:
             refusal = (psycopg.errors.CheckViolation, "and already pays")
@@ -818,6 +825,45 @@ class RentRollMachine(RuleBasedStateMachine):
         else:
             assert send() == amount
             self.matches[(charge_id, transfer_id)] = amount
+            self.waive_what_the_night_would_not_have_charged(charge_id, paid)
+
+    def waive_what_the_night_would_not_have_charged(self, charge_id, paid):
+        """A payment dated within its rent's grace, matched after the rent's late fee: the fee
+        the night would have charged with it in the books stays, the rest is waived, a credit of
+        the company's day (D-078), never past what is left of the fee."""
+        if charge_id not in self.late_fees:
+            return
+        terms, late_day = self.late_fee_terms[charge_id]
+        cutoff = datetime.combine(late_day, time(0), tzinfo=UTC)
+        if paid.event_at >= cutoff:
+            return
+        _, fee, fee_id = self.late_fees[charge_id]
+        unpaid = self.open_by(charge_id, cutoff)
+        owed = Decimal(0)
+        if unpaid > 0:
+            owed = to_cents(terms.flat + terms.percent / 100 * unpaid)
+            if terms.maximum is not None:
+                owed = min(owed, terms.maximum)
+        waived = self.waived.get(fee_id, Decimal(0))
+        waive = min(fee - owed - waived, fee - self.paid_on(fee_id) - waived)
+        made = self.conn.execute(
+            "SELECT k.id, k.amount FROM trust_charge_waivers AS w"
+            " JOIN trust_charges AS k ON k.id = w.credit_charge_id"
+            " WHERE w.waived_charge_id = %s ORDER BY w.created_at",
+            (fee_id,),
+        ).fetchall()
+        known = {c for c in self.charges}
+        new = [(c, a) for c, a in made if c not in known]
+        if waive <= 0:
+            assert new == []
+            return
+        assert [a for _, a in new] == [waive]
+        event("a late fee waived by a payment dated within its grace")
+        self.waived[fee_id] = waived + waive
+        self.waiver_of[new[0][0]] = fee_id
+        self.charges[new[0][0]] = Charge(
+            self.charges[fee_id].lease_id, datetime.now(UTC).date(), "credit", waive
+        )
 
     # --- rules: owners' contributions ----------------------------------------------------
 
@@ -1565,13 +1611,29 @@ class RentRollMachine(RuleBasedStateMachine):
         what is owed before the charges after it."""
         lease_id = self.charges[charge_id].lease_id
         mine = {c: b for c, b in self.charges.items() if b.lease_id == lease_id}
+        # A waiver comes off the charge it waives first (D-078's, the only waivers here), and
+        # what it can't take joins the other credits.
+        waivers: dict[UUID, Decimal] = {}
+        for c, b in mine.items():
+            if c in self.waiver_of and b.due_on < cutoff.date():
+                waivers[self.waiver_of[c]] = waivers.get(self.waiver_of[c], Decimal(0)) + b.amount
         credits = sum(
-            (b.amount for b in mine.values() if b.kind == "credit" and b.due_on < cutoff.date()),
+            (
+                b.amount
+                for c, b in mine.items()
+                if b.kind == "credit" and b.due_on < cutoff.date() and c not in self.waiver_of
+            ),
             Decimal(0),
         )
+        owing = {}
+        for c in (c for c, b in mine.items() if b.kind != "credit"):
+            left = self.unpaid_by(c, cutoff)
+            taken = min(max(left, Decimal(0)), waivers.get(c, Decimal(0)))
+            owing[c] = left - taken
+            credits += waivers.get(c, Decimal(0)) - taken
         before = Decimal(0)
         for c in sorted((c for c, b in mine.items() if b.kind != "credit"), key=self.pay_order):
-            left = self.unpaid_by(c, cutoff)
+            left = owing[c]
             if c == charge_id:
                 return left - min(left, max(credits - before, Decimal(0)))
             before += left
@@ -1660,6 +1722,7 @@ class RentRollMachine(RuleBasedStateMachine):
             if fee > 0:
                 fee_id = fee_ids.get(charge_id) or uuid4()
                 self.late_fees[charge_id] = (unpaid, fee, fee_id)
+                self.late_fee_terms[charge_id] = (terms, late_day)
                 # Its fee is open from now on: the lease's credits may come off it before the
                 # rents whose grace ends later.
                 lease_id = self.charges[charge_id].lease_id
@@ -2010,6 +2073,7 @@ class RentRollMachine(RuleBasedStateMachine):
         cutoff = datetime.combine(last + timedelta(days=1), time(0), UTC)
 
         adjusts = {a: c for c, adjustments in self.adjusted.items() for a in adjustments}
+        adjusts |= self.waiver_of  # a waiver counts as what it waives
         recurring_of = {c: r for (r, _), c in self.recurring_charged.items()}
         late = {fee for _, _, fee in self.late_fees.values()}
 
@@ -2657,6 +2721,7 @@ def test_the_model_counts_a_charge_paid_twice_by_then_as_the_database_does(conn)
     }
     model.transfers, model.matches, model.reversals = {}, {}, {}
     model.recurring_charged, model.adjusted = {}, {}
+    model.waived, model.waiver_of = {}, {}
 
     def post(source, target, day):
         when = datetime.combine(BASE + timedelta(days=day), time(12), tzinfo=UTC)

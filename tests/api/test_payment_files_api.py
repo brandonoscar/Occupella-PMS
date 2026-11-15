@@ -11,8 +11,10 @@ from decimal import Decimal
 
 import pytest
 from helpers import (
+    add_late_fee_policy,
     add_tenant,
     add_unit,
+    assess_late_fees,
     balance,
     bank_sums,
     charge,
@@ -186,6 +188,39 @@ def test_a_file_records_each_line_to_the_lease_it_names_and_the_rest_wait(
     listed = ok(client.get("/api/rent/payment-files"))
     assert listed["total"] == 1
     assert listed["items"][0] == {k: v for k, v in came.items() if k != "items"}
+
+
+def test_a_line_dated_within_grace_brought_in_after_the_late_fee_takes_the_fee_off(
+    client, conn, staff, pmc
+):
+    """A lockbox line dated within the rent's grace, brought in after the night charged its late
+    fee: the fee is waived by itself, saying why, and the lease owes nothing (D-079)."""
+    prop = pmc.owners[0].property_id
+    add_late_fee_policy(conn, pmc.pmc_id, prop, START, 5, "50.00")
+    tenant = add_tenant(conn, pmc.pmc_id, prop, "Sage Sample")
+    lease = open_lease(
+        conn, pmc.pmc_id, add_unit(conn, pmc.pmc_id, prop, "3C"), START, None, "1200.00", [tenant]
+    )
+    due = TODAY - 20 * DAY
+    charge(conn, pmc.pmc_id, lease, due, Decimal("1200.00"))
+    assert assess_late_fees(conn, pmc.pmc_id, TODAY) == 1
+    assert rent.owed(conn, lease) == Decimal("1250.00")
+
+    came = ok(bring(client, a_file(f"{due + 4 * DAY},1200.00,Property 1,3C,,2207,check")), 201)
+
+    assert came["recorded"] == 1
+    assert rent.owed(conn, lease) == 0
+    assert conn.execute(
+        "SELECT k.amount::text, w.reason FROM trust_charge_waivers AS w"
+        " JOIN trust_charges AS k ON k.id = w.credit_charge_id WHERE w.pmc_id = %s",
+        (pmc.pmc_id,),
+    ).fetchall() == [
+        (
+            "50.00",
+            f"Paid within its grace: a payment dated {due + 4 * DAY:%m/%d/%Y} came into the"
+            " books after the late fee was charged",
+        )
+    ]
 
 
 def test_a_file_comes_in_once(client, conn, staff, pmc, homes):

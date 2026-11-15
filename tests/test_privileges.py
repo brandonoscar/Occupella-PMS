@@ -612,6 +612,9 @@ FUNCTIONS = {
     # own rents charged late; the grace is read only by the late fee functions, as the owner.
     "trust_note_rents_charged_late(uuid,date,date)": {"trust_app"},
     "trust_late_fee_grace_ends(uuid,date,integer)": set(),
+    # A payment dated within grace that reaches the books after its late fee waives what the
+    # night would not have charged (D-078, D-079): a trigger, as the owner.
+    "trust_waive_late_fee_paid_in_grace()": set(),
     # Where a charge comes in the order money pays them: rent first (migration 0093).
     "trust_pay_rank(trust_charges)": {"trust_app"},
     # The chart of accounts (migrations 20261106000205 to 20261106000220): its fixed lines, each
@@ -1007,6 +1010,9 @@ SECURITY_DEFINER = {
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
     "trust_check_bill_decision()",  # locks the bill's owner account, which the app can't
     "trust_check_charge_waiver()",  # locks the waived charge, which the app can't
+    # Waives a late fee a payment dated within grace shows was never owed (D-078): it writes the
+    # waiver credit and locks the fee whichever role the payment came in as.
+    "trust_waive_late_fee_paid_in_grace()",
     # Takes a lock on the vendor's reference, and sees a vendor's bills and shared invoices
     # whatever the caller reads.
     "trust_check_bill_reference()",

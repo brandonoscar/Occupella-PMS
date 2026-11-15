@@ -975,6 +975,23 @@ not checked: its help pages weren't reachable from where this was built, and sea
 only that it keeps pending bank payments apart until they clear (NOT VERIFIED). The books still
 date the money on the day the bank paid it, so statements and month-end follow the bank.
 
+**When a payment dated within grace reaches the books after its late fee** (migration
+20261115000320, docs/edge-cases.md D-078, D-079). A check received on the last day of grace and
+recorded the next morning, dated the day it came, or a lockbox file's line dated within grace
+brought in after the night: the tenant paid on time, so the fee is not owed. As the payment is
+matched to the rent, the PMS works the fee out again as the night would have with the payment in
+the books, and waives by itself what it would not have charged (all of it when the rent was paid,
+part of a percent fee when part was), a credit linked to the fee saying why, as a waiver staff
+make by hand; nothing is deleted. What of the fee was already paid stays paid (staff refund or
+credit it as they choose). No statute was read on this; it is what a payment dated in time means.
+
+**Late fee terms and a rent charged late** (migrations 20261115000200 and 20261115000310, M-049,
+D-082, D-083). Terms entered with a start day in the past count only for a rent whose fee comes
+due once they are on file: a tenant is not charged under terms nobody had on file when the rent
+was late. A rent the PMS first charges after its grace had run out (a lease entered late, a month
+caught up after the server was down) gets its grace from the day it was charged, so it is never
+charged a late fee before the tenant could see it.
+
 **A payment the partner never reported** (docs/edge-cases.md C-090). Stripe stops sending a report
 after about three days of failed deliveries (NOT VERIFIED). A week after a payment online started
 with no report, the nightly run asks Stripe what became of it and records what it says, as its

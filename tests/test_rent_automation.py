@@ -256,6 +256,46 @@ def test_a_payment_counts_only_if_dated_before_the_grace_runs_out(conn, pmc, lat
     assert [row[2] for row in charges(conn, lease, "fee")] == fee
 
 
+def test_a_check_dated_on_the_last_grace_day_recorded_after_the_fee_takes_the_fee_off(
+    conn, pmc, late
+):
+    """A check received on the last day of grace and recorded the next morning, dated back: the
+    night's late fee is waived by itself, a credit linked to it saying why, nothing deleted; one
+    dated after the grace leaves the fee; one paying part leaves the fee on what was left
+    (docs/edge-cases.md D-078)."""
+    lease, rent = late
+    assert assess_late_fees(conn, pmc.pmc_id, date(2026, 2, 7)) == 1  # 200.00 on 1500.00
+    fee = conn.execute(
+        "SELECT fee_charge_id FROM trust_late_fees WHERE rent_charge_id = %s", (rent,)
+    ).fetchone()[0]
+
+    def waived():
+        return conn.execute(
+            "SELECT k.amount, k.kind, w.reason FROM trust_charge_waivers AS w"
+            " JOIN trust_charges AS k ON k.id = w.credit_charge_id"
+            " WHERE w.waived_charge_id = %s ORDER BY w.created_at",
+            (fee,),
+        ).fetchall()
+
+    pay(conn, pmc, rent, Decimal("100.00"), at(date(2026, 2, 7), 9))  # after the grace
+    assert waived() == []
+    pay(conn, pmc, rent, Decimal("1000.00"), at(date(2026, 2, 6), 0))  # the last grace day
+    # 50.00 + 10% of the 500.00 then left is 100.00: the other 100.00 comes off.
+    assert waived() == [
+        (
+            Decimal("100.00"),
+            "credit",
+            "Paid within its grace: a payment dated 02/06/2026 came into the books after the"
+            " late fee was charged",
+        )
+    ]
+    # 400.00 more on that day leaves 100.00 open then: a fee of 60.00, so 40.00 more comes off.
+    pay(conn, pmc, rent, Decimal("400.00"), at(date(2026, 2, 6), 0))
+    assert [row[0] for row in waived()] == [Decimal("100.00"), Decimal("40.00")]
+    assert assess_late_fees(conn, pmc.pmc_id, date(2026, 3, 1)) == 0
+    assert len(charges(conn, lease, "fee")) == 1  # the fee stays, waived
+
+
 def test_the_percent_is_of_what_is_left_unpaid(conn, pmc, late):
     lease, rent = late
     pay(conn, pmc, rent, "1000.00", at(date(2026, 2, 3)))

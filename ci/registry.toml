@@ -2098,6 +2098,15 @@ tests = [
 ]
 
 [[invariant]]
+id = "late-fee-undone-by-a-payment-in-grace"
+statement = "A payment dated within a rent's grace (or online and started by then) that reaches the books after the night charged its late fee leaves the lease owing exactly the fee the night would have charged with it in the books, nothing when the rent was paid (migration 20261115000320; docs/edge-cases.md D-078, D-079): the rest is waived by itself, a credit of the company's day linked to the fee saying why, never past what is left of the fee once its payments and earlier waivers count; nothing is deleted, and a run again charges nothing."
+tests = [
+  "tests/properties/test_paid_in_grace_properties.py::test_a_payment_dated_in_grace_leaves_the_late_fee_the_night_would_have_charged",
+  "tests/test_rent_automation.py::test_a_check_dated_on_the_last_grace_day_recorded_after_the_fee_takes_the_fee_off",
+  "tests/api/test_payment_files_api.py::test_a_line_dated_within_grace_brought_in_after_the_late_fee_takes_the_fee_off",
+]
+
+[[invariant]]
 id = "payments-stripe-never-reported-recorded-once"
 statement = "A payment online Stripe sent no report of reaches the books (docs/edge-cases.md C-090): once a company's day the nightly run asks the partner about each one with no report a week to 60 days after it started and records what it says through the report's own apply, once per payment and kind and under the payment's own posting keys, so a report before or after it records nothing twice. A payment of the same amount staff record by hand while one online is not in the books is refused until staff say it is another."
 tests = [

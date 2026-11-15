@@ -883,7 +883,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   it waives, with why, naming who: it comes off that charge first, never past what is left of it
   once payments and earlier waivers count (its trigger takes the charge's lock, as a match does);
   `trust_apply_payment` never matches past what was paid and waived, and `trust_return_deposit`
-  keeps nothing for what was waived. A property's NSF fee is in force from a date too (migration 0044, 0 charges
+  keeps nothing for what was waived; a payment dated within a rent's grace that reaches the books
+  after its late fee waives by itself what the night would not have charged, saying why
+  (`trust_waive_late_fee_paid_in_grace`, migration 20261115000320, D-078, D-079). A property's NSF fee is in force from a date too (migration 0044, 0 charges
   none); `trust_charge_nsf_fee` charges the lease of a returned payment (postings under one key
   moving money back to a trust bank account's cash) the fee in force the day it came back
   (UTC), due that day, once per returned payment. Neither fee counts toward the other.
