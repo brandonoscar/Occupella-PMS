@@ -58,6 +58,9 @@ export type Waiting = {
   // The owner accounts staff choose among to record a payment whose property has several and no
   // ownership shares (docs/edge-cases.md P-040), or none.
   choose_account: { account_id: string; owner: string }[];
+  // A return its owners' accounts can't take: what they are short together, which the company may
+  // cover from its own money, the owner owing it back (docs/edge-cases.md M-060).
+  owner_short?: string | null;
 };
 
 export const PAYMENT_SETTINGS = "/api/payments/settings";

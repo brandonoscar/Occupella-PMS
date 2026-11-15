@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Button } from "../components/Button";
+import { useConfirm } from "../components/Confirm";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { RowMenu } from "../components/RowMenu";
@@ -16,6 +17,7 @@ import {
   PAYMENT_METHODS,
   alikePayment,
   bounceSummary,
+  coverQuestion,
   chargeLabel,
   chosenCharges,
   earliestRentChange,
@@ -27,6 +29,7 @@ import {
   paymentSummary,
   recurringLabel,
   requestId,
+  shortLine,
   withPart,
 } from "../rent";
 import { sharesLine } from "../rentals";
@@ -43,9 +46,18 @@ export type Recorder = <T>(path: string, body: object, done: (answer: T) => stri
 
 // A payment as a row; It bounced is in its ⋯ menu and asks for the day it came back, naming the
 // amount, before it is recorded, since it moves the money back and charges the property's NSF fee.
+// One the owner's account can't take back (docs/edge-cases.md M-060) says how much it is short;
+// recording it then has the company cover that from its own money, the owner owing it back, once
+// staff confirm a question naming both amounts.
 export function PaymentRow({ payment, record }: { payment: RentLease["payments"][number]; record: Recorder }) {
   const [asking, setAsking] = useState(false);
   const [on, setOn] = useState(companyDay());
+  const [coverId] = useState(requestId);
+  const { ask, prompt } = useConfirm();
+  const short = payment.short_by ?? null;
+  const send = (cover: boolean) => record<Bounce>(`/api/rent/payments/${payment.transfer_id}/bounce`,
+    cover ? { on, cover_shortfall: true, request_id: coverId } : { on },
+    (answer) => bounceSummary(payment.amount, answer));
   return (
     <tr>
       <td>
@@ -74,21 +86,34 @@ export function PaymentRow({ payment, record }: { payment: RentLease["payments"]
             className="flex flex-wrap items-center justify-end gap-2"
             onSubmit={async (event) => {
               event.preventDefault();
-              const done = await record<Bounce>(`/api/rent/payments/${payment.transfer_id}/bounce`,
-                { on }, (answer) => bounceSummary(payment.amount, answer));
-              if (done) setAsking(false);
+              if (short !== null) {
+                ask(coverQuestion(short, payment.amount), async () => {
+                  if (await send(true)) setAsking(false);
+                }, `Cover ${money(short)} and record`);
+                return;
+              }
+              if (await send(false)) setAsking(false);
             }}
           >
+            {short !== null && <p className="w-full text-right text-sm text-ink">{shortLine(short)}</p>}
             <input type="date" aria-label={`Bounced on, ${usDate(payment.received_on)} payment`} value={on}
               onChange={(e) => setOn(e.target.value)} required
               className="h-8 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink" />
-            <Button type="submit" variant="danger" size="sm"
-              says="What it paid is owed again and the money it brought in comes back out; the property's NSF fee, if any, is charged.">
-              Record the {money(payment.amount)} bounce
-            </Button>
+            {short !== null ? (
+              <Button type="submit" variant="danger" size="sm"
+                says="The company's own money goes into trust for the owner's shortfall, and the owner owes it back; what the payment paid is owed again and the property's NSF fee, if any, is charged.">
+                Cover {money(short)} and record the bounce
+              </Button>
+            ) : (
+              <Button type="submit" variant="danger" size="sm"
+                says="What it paid is owed again and the money it brought in comes back out; the property's NSF fee, if any, is charged.">
+                Record the {money(payment.amount)} bounce
+              </Button>
+            )}
             <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(false)}>
               Cancel
             </Button>
+            {prompt}
           </Form>
         ) : (
           <RowMenu label={`${usDate(payment.received_on)} payment of ${money(payment.amount)}`}

@@ -628,6 +628,9 @@ class AuthorityPaymentRow(BaseModel):
     method: str | None
     # The day the bank returned it, once it bounced.
     bounced_on: date | None
+    # Not bounced: what the owners' accounts it paid would be short if it bounced now, which the
+    # company may cover from its own money (docs/edge-cases.md M-060).
+    short_by: str | None = None
 
 
 class AuthorityPage(BaseModel):
@@ -739,6 +742,7 @@ def authority_page(session: Staff, conn: Conn, authority_id: UUID) -> AuthorityP
                 reference=reference,
                 method=method,
                 bounced_on=None if bounced is None else bounced.astimezone(UTC).date(),
+                short_by=None if bounced is not None else short_by(conn, session.pmc_id, first),
             )
             for first, received, amount, reference, method, bounced in conn.execute(
                 PAYMENTS, (session.pmc_id, str(authority_id))
@@ -918,13 +922,21 @@ def shrink(charges: list[tuple[UUID, Decimal]], amount: Decimal) -> list[tuple[U
 # --- an authority's payment the bank returned (migration 0116) ---------------------------------
 
 
-class AuthorityReturn(BaseModel):
-    on: date
+class AuthorityReturn(rent.Return):
+    """The day it came back; and the company's cover of what the owners' accounts are short, as
+    for a tenant's payment (rent.Return)."""
 
 
 class AuthorityReturned(BaseModel):
     transfers: list[str]
     amount: str
+    # What the company covered of the owners' shortfall from its own money, if any.
+    covered: str | None = None
+
+
+def short_by(conn: psycopg.Connection[Any], pmc_id: UUID, transfer_id: str) -> str | None:
+    short = rent.shortfall(conn, pmc_id, transfer_id)
+    return rent.cents(short) if short > 0 else None
 
 
 @router.post("/payments/{transfer_id}/bounce", status_code=201)
@@ -933,7 +945,17 @@ def bounce(
 ) -> AuthorityReturned:
     """An authority's payment the bank returned: every transfer it posted moves back to cash, and
     what each paid of the authority's charges is reversed (trust_reverse_assistance_payment), so
-    they are owed again. Once per payment."""
+    they are owed again. Once per payment. When an owner's account can't take it, the answer says
+    how much it is short (409), unless staff have the company cover that (`cover_shortfall`)."""
+    try:
+        return bounce_payment(session, conn, transfer_id, returned)
+    except psycopg.errors.CheckViolation as refused:  # an account would go negative
+        raise HTTPException(409, refusal(refused)) from None
+
+
+def bounce_payment(
+    session: Staff, conn: Conn, transfer_id: str, returned: AuthorityReturn
+) -> AuthorityReturned:
     rent.not_after_today(conn, session.pmc_id, returned.on)
     rows = conn.execute(
         "SELECT t.id, t.from_account_id, t.to_account_id, t.amount, t.metadata, t.event_at"
@@ -954,6 +976,19 @@ def bounce(
         raise HTTPException(422, "a payment bounces on or after the day it was received")
     name = authority_named(conn, session.pmc_id, UUID(metadata["housing_authority_id"]))
     key = f"bounce/{metadata['key']}"
+    cover = returned.cover
+    if cover is not None:
+        earlier_cover = rent.covered_by(conn, session.pmc_id, cover)
+        if earlier_cover == metadata["key"]:  # the same cover again: the bounce as it was
+            moved = conn.execute(rent.POSTED_UNDER, (session.pmc_id, key)).fetchall()
+            return AuthorityReturned(
+                transfers=[str(t) for t, _ in moved],
+                amount=rent.cents(sum((Decimal(a) for _, a in moved), ZERO)),
+                covered=rent.cents(rent.covered_amount(conn, session.pmc_id, cover)),
+            )
+        if earlier_cover is not None:
+            raise HTTPException(409, "this request id covered another payment's return")
+    covered = rent.cover_return(conn, session.pmc_id, str(rows[0][0]), returned.on, cover)
     back = {
         "key": key,
         "kind": "bounced housing authority payment",
@@ -976,5 +1011,7 @@ def bounce(
                 (session.pmc_id, charge, payment, reversal, matched),
             )
     return AuthorityReturned(
-        transfers=posted, amount=rent.cents(sum((t[2] for t in transfers), ZERO))
+        transfers=posted,
+        amount=rent.cents(sum((t[2] for t in transfers), ZERO)),
+        covered=rent.cents(covered) if covered > 0 else None,
     )

@@ -633,6 +633,7 @@ FEATURES = (
     "lease-people",
     "rent-due-day",
     "owner-fees",
+    "company-covers",
     "prepaid-rent",
     "shared-bills",
     "ownership",

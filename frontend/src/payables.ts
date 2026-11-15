@@ -237,6 +237,9 @@ export type OwnerMoney = {
   // account of theirs to pay into.
   payout_method: PayoutMethod;
   bank_on_file?: boolean;
+  // What the account owes the company back: its cover of a shortfall when a payment bounced
+  // (docs/edge-cases.md M-060), less what was repaid.
+  owed_to_company?: string;
 };
 export type Fee = {
   account: string;
@@ -325,6 +328,16 @@ export const OWNER_FEE_KINDS: [OwnerFeeKind, string][] = [
 export function ownerFeeSummary(kind: OwnerFeeKind, amount: string, property: string): string {
   const label = (OWNER_FEE_KINDS.find(([value]) => value === kind)?.[1] ?? "Fee").toLowerCase();
   return `A ${money(amount)} ${label} is taken from ${property}.`;
+}
+
+// What an owner owes the company back, account by account (docs/edge-cases.md M-060): the
+// company's cover of a shortfall when a payment bounced, less what was repaid. Only those owing.
+export function owedToCompany(accounts: OwnerMoney[]): OwnerMoney[] {
+  return accounts.filter((a) => Number(a.owed_to_company ?? "0") > 0);
+}
+
+export function owedLine(account: OwnerMoney): string {
+  return `${account.property} owes the company ${money(account.owed_to_company ?? "0")}: it covered the account when a payment bounced and the account was short.`;
 }
 
 // An owner's income statement from the first of the year through today (UTC), as a PDF: every

@@ -37,6 +37,9 @@ class Property(BaseModel):
     # Whether they own it today: false once the property's ownership shares leave their account
     # out (sold, or moved to another owner; U-085), when only its money shows, never its units.
     owns_today: bool = True
+    # What the owner owes the company back for this account: the company covered it from its own
+    # money when a payment bounced and the account was short (docs/edge-cases.md M-060).
+    owed_to_company: str = "0.00"
 
 
 @router.get("/properties")
@@ -45,7 +48,8 @@ def properties(session: Owner, conn: Conn) -> list[Property]:
     rows = conn.execute(
         "SELECT t.ledger_account_id, p.id, p.display_name, b.display_name, g.balance,"  # noqa: S608
         " EXISTS (SELECT 1 FROM trust_ledger_accounts AS a"
-        f"  WHERE a.ledger_account_id = t.ledger_account_id AND {documents.OWNS_TODAY})"
+        f"  WHERE a.ledger_account_id = t.ledger_account_id AND {documents.OWNS_TODAY}),"
+        " trust_company_advance_owed(t.ledger_account_id)"
         " FROM trust_ledger_accounts AS t"
         " JOIN trust_properties AS p ON p.id = t.property_id"
         " JOIN trust_bank_accounts AS b ON b.id = t.bank_account_id"
@@ -66,8 +70,9 @@ def properties(session: Owner, conn: Conn) -> list[Property]:
             bank=b,
             balance=exports.text(balance),
             owns_today=owns,
+            owed_to_company=f"{owed:.2f}",
         )
-        for a, p, n, b, balance, owns in rows
+        for a, p, n, b, balance, owns, owed in rows
     ]
 
 

@@ -115,6 +115,9 @@ export type AuthorityPayment = {
   reference: string | null;
   method: PaymentMethod | null;
   bounced_on: string | null;
+  // Not bounced: what the owners' accounts it paid would be short if it bounced now, which the
+  // company covers from its own money when staff record it (docs/edge-cases.md M-060).
+  short_by?: string | null;
 };
 
 export type AuthorityPage = {

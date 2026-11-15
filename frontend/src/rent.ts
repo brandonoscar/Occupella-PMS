@@ -21,6 +21,10 @@ export type Paid = {
   // tenant never sees the note (ADR 0010 phase 1c).
   note?: string | null;
   attachments?: string[];
+  // On a lease's own page, for a payment not bounced: what its owners' accounts would be short if
+  // it bounced now, which the company covers from its own money if staff say (docs/edge-cases.md
+  // M-060). Null or absent: nothing would be short.
+  short_by?: string | null;
 };
 // How a payment came; recorded as said, nothing sent (ADR 0006).
 export type PaymentMethod = "check" | "cashier's check" | "money order" | "EFT" | "cash";
@@ -137,7 +141,8 @@ export type LeaseOwner = { account: string; owner: string; percent: string | nul
 export type Payment = { transfers: string[]; to_owner: string; to_prepaid: string };
 // A payment the bank returned: nsf_fee is the NSF fee the lease was charged for it, if the
 // property's terms charge one.
-export type Bounce = { transfers: string[]; nsf_fee: string | null };
+// covered is what the company covered of the owner's shortfall from its own money, if any.
+export type Bounce = { transfers: string[]; nsf_fee: string | null; covered?: string | null };
 // What a rent run charged: leases their rent, recurring charges and late fees.
 // A run by hand also says how many emails it wrote (rent reminders, late notices, statements).
 export type RentRun = {
@@ -192,7 +197,21 @@ export function alikePayment(
 // paid of the lease's charges is owed again, and what it held as prepaid rent is gone.
 export function bounceSummary(amount: string, bounce: Bounce): string {
   const fee = bounce.nsf_fee === null ? "" : `; a ${money(bounce.nsf_fee)} NSF fee is charged`;
-  return `The ${money(amount)} payment bounced and is undone${fee}.`;
+  const covered = bounce.covered
+    ? ` The company covered the owner's ${money(bounce.covered)} shortfall; the owner owes it back.`
+    : "";
+  return `The ${money(amount)} payment bounced and is undone${fee}.${covered}`;
+}
+
+// A payment the owner's account can't take back (docs/edge-cases.md M-060): what staff read before
+// they record the bounce, and the question that asks them to confirm the company's cover.
+export function shortLine(short: string): string {
+  return `The owner's account is ${money(short)} short. The company covers it from its own money and the owner owes it back.`;
+}
+
+export function coverQuestion(short: string, amount: string): string {
+  return `Cover the owner's ${money(short)} shortfall with the company's own money and record the ${money(amount)} bounce?`
+    + " This records the company's deposit into trust; make it at the bank yourself. The owner owes it back.";
 }
 
 // The open charges staff chose for a payment to pay first, as the API takes them: each ticked one

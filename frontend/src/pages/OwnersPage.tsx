@@ -23,7 +23,7 @@ import type { Keep } from "../latest";
 import { keepAll, latest } from "../latest";
 import { companyDate, companyDay, day, money, usDate } from "../money";
 import type { OwnerFeeKind, OwnerMoney } from "../payables";
-import { OWNER_FEE_KINDS, incomeStatementHref, ownerFeeSummary } from "../payables";
+import { OWNER_FEE_KINDS, incomeStatementHref, owedLine, owedToCompany, ownerFeeSummary } from "../payables";
 import { requestId } from "../rent";
 import type { Paged } from "../rentals";
 import { navigate } from "../router";
@@ -300,6 +300,9 @@ function OwnerProperties({ accounts }: { accounts: OwnerMoney[] }) {
           ))}
         </tbody>
       </table>
+      {owedToCompany(accounts).map((account) => (
+        <p key={account.account} className="mt-2 text-sm text-ink">{owedLine(account)}</p>
+      ))}
     </Wide>
   );
 }
@@ -313,7 +316,8 @@ function OwnerFinancials({ owner, refresh }: { owner: Owner; refresh: () => void
   const [end, setEnd] = useState(today);
   const [statement, setStatement] = useState<StatementData | null>(null);
   const [error, setError] = useState("");
-  const [adding, setAdding] = useState<"contribution" | "fee" | null>(null);
+  const [adding, setAdding] = useState<"contribution" | "fee" | "repayment" | null>(null);
+  const owing = owedToCompany(owner.accounts);
   const [runs, setRuns] = useState(0);
   const { said, error: refused, record } = useRecord(() => { setRuns((n) => n + 1); refresh(); });
 
@@ -350,9 +354,13 @@ function OwnerFinancials({ owner, refresh }: { owner: Owner; refresh: () => void
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => setAdding("contribution")}>Record contribution</Button>
             <Button variant="secondary" onClick={() => setAdding("fee")}>Take a fee</Button>
+            {owing.length > 0 && (
+              <Button variant="secondary" onClick={() => setAdding("repayment")}>Take repayment</Button>
+            )}
           </div>
         )}
       </div>
+      {owing.map((account) => <p key={account.account} className="text-sm text-ink">{owedLine(account)}</p>)}
       <Said>{said}</Said>
       {!adding && <Notice tone="error">{refused}</Notice>}
       <Notice tone="error">{error}</Notice>
@@ -369,7 +377,56 @@ function OwnerFinancials({ owner, refresh }: { owner: Owner; refresh: () => void
           <Notice tone="error">{refused}</Notice>
         </SidePanel>
       )}
+      {adding === "repayment" && (
+        <SidePanel title="Take repayment" onClose={() => setAdding(null)}>
+          <RepaymentForm owner={owner} record={recordThenClose} />
+          <Notice tone="error">{refused}</Notice>
+        </SidePanel>
+      )}
     </div>
+  );
+}
+
+// The owner pays back what the company covered of their account's shortfall when a payment
+// bounced (docs/edge-cases.md M-060): from their balance to the company's fee account, inside
+// trust, never more than is owed, once per request id; staff who hold disburse take it.
+export function RepaymentForm({ owner, record }: { owner: Owner; record: Recorder }) {
+  const owing = owedToCompany(owner.accounts);
+  const [id, setId] = useState(requestId);
+  const [account, setAccount] = useState(owing[0]?.account ?? "");
+  const owed = owing.find((a) => a.account === account)?.owed_to_company ?? "0.00";
+  const [amount, setAmount] = useState(owed);
+  const [on, setOn] = useState(companyDay());
+  const property = owing.find((a) => a.account === account)?.property ?? "";
+  return (
+    <Form
+      className="flex flex-col gap-3"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        const body = { request_id: id, account, amount, on };
+        if (await record("/api/payables/advance-repayments", body,
+          () => `${money(amount)} repaid to the company from ${property}.`)) {
+          setId(requestId());
+        }
+      }}
+    >
+      <Select label="From" id="repayment-account" value={account} onChange={(event) => {
+        setAccount(event.target.value);
+        setAmount(owing.find((a) => a.account === event.target.value)?.owed_to_company ?? "");
+      }}>
+        {owing.map((a) => <option key={a.account} value={a.account}>{a.property}</option>)}
+      </Select>
+      <p className="text-sm text-ink-muted">{`Owed to the company: ${money(owed)}`}</p>
+      <Field label="Amount" id="repayment-amount" inputMode="decimal" required value={amount}
+        onChange={(event) => setAmount(event.target.value)} />
+      <Field label="Taken on" id="repayment-on" type="date" required value={on}
+        onChange={(event) => setOn(event.target.value)} />
+      <div>
+        <Button type="submit" says="Moves it from the owner's balance back to the company, which covered their shortfall, and shows on their statement. Nothing leaves trust.">
+          Take repayment of {money(amount || "0")}
+        </Button>
+      </div>
+    </Form>
   );
 }
 

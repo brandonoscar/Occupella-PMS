@@ -226,3 +226,44 @@ describe("RentChangeForm", () => {
     await vi.waitFor(() => expect(screen.queryByText(warning)).toBeNull());
   });
 });
+
+// docs/edge-cases.md M-060: a payment its owner's account can't take back.
+describe("PaymentRow, an owner short of a bounce", () => {
+  const SHORT: Paid = {
+    transfer_id: "tr9", received_on: "2026-10-02", amount: "2250.00", reference: null, method: "check",
+    bounced: false, note: null, attachments: [], short_by: "110.00",
+  };
+
+  it("says how much is short and has the company cover it once staff confirm both amounts", async () => {
+    const record = recorder();
+    render(<table><tbody><PaymentRow payment={SHORT} record={record} /></tbody></table>);
+    fireEvent.click(screen.getByRole("button", { name: "Actions for 10/02/2026 payment of $2,250.00" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "It bounced" }));
+    expect(screen.getByText(
+      "The owner's account is $110.00 short. The company covers it from its own money and the owner owes it back.",
+    )).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Cover \$110\.00 and record the bounce/ }));
+    expect(record).not.toHaveBeenCalled();
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog.textContent).toContain(
+      "Cover the owner's $110.00 shortfall with the company's own money and record the $2,250.00 bounce?",
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cover $110.00 and record" }));
+    await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(1));
+    const [path, body] = record.mock.calls[0]!;
+    expect(path).toBe("/api/rent/payments/tr9/bounce");
+    expect(body).toMatchObject({ on: companyDay(), cover_shortfall: true });
+    expect(typeof (body as Body).request_id).toBe("string");
+  });
+
+  it("records a bounce the owner can take as before, with no cover", async () => {
+    const record = recorder();
+    render(<table><tbody><PaymentRow payment={{ ...SHORT, short_by: null }} record={record} /></tbody></table>);
+    fireEvent.click(screen.getByRole("button", { name: "Actions for 10/02/2026 payment of $2,250.00" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "It bounced" }));
+    expect(screen.queryByText(/short\. The company covers it/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Record the \$2,250\.00 bounce/ }));
+    await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(1));
+    expect(record.mock.calls[0]![1]).toEqual({ on: companyDay() });
+  });
+});

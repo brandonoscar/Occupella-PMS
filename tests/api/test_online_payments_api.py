@@ -986,3 +986,42 @@ def test_a_server_without_a_partner_takes_no_payment_online(
             "Online payments aren't available.",
         )
         refused(browser.post("/api/payments/webhook/stripe", json={}), 404)
+
+
+def test_a_return_the_owner_cant_take_waits_until_the_company_covers_it(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    """docs/edge-cases.md M-060: the owner was paid part of the payment before it came back; the
+    return waits on Banking, saying how much the owner's account is short, until staff have the
+    company cover it from its own money (the owner owes it back)."""
+    turn_on(client)
+    payment = pay(tenant_client, lease, "1000.00")["id"]
+    bank_says(tenant_client, payment, "paid")
+    owner = pmc.owners[0].account
+    conn.execute("SELECT trust_draw_owner(%s, %s, 'draw-1', 100.00, now())", (pmc.pmc_id, owner))
+    bank_says(tenant_client, payment, "returned")
+    [waits] = [w for w in ok(client.get("/api/payments/waiting")) if w["what"] == "return"]
+    assert waits["owner_short"] == "100.00"
+    record = f"/api/payments/{payment}/record"
+    refused(client.post(record, json={"cover_shortfall": True}), 422)
+    # Trying again without the cover leaves it waiting.
+    ok(client.post(record, json={}), 204)
+    assert f"bounce/payment/{payment}" not in keys(conn, pmc)
+
+    request = str(uuid4())
+    ok(client.post(record, json={"cover_shortfall": True, "request_id": request}), 204)
+
+    assert f"bounce/payment/{payment}" in keys(conn, pmc)
+    assert balance(conn, owner) == Decimal("0.00")
+    assert "return" not in [w["what"] for w in ok(client.get("/api/payments/waiting"))]
+    ok(client.post(record, json={"cover_shortfall": True, "request_id": request}), 204)
+    covered = conn.execute(
+        "SELECT amount FROM trust_company_advances WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchall()
+    assert covered == [(Decimal("100.00"),)]
+    # A cover of a payment whose return is in the books already covers nothing.
+    refused(
+        client.post(record, json={"cover_shortfall": True, "request_id": str(uuid4())}),
+        409,
+        "this payment's return is in the books already",
+    )

@@ -603,7 +603,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `trust_prepare_bank_reconciliation`, `trust_approve_bank_reconciliation`,
   `trust_match_cutover_opening`, `trust_return_deposit`, `trust_pay_deposit_interest`, `trust_transfer_lease`, `trust_open_deposit_account`, `trust_propose_journal_entry`,
   `trust_post_journal_entry`, `trust_decline_journal_entry`, `trust_apply_assistance_payment`,
-  `trust_bill_back_utility`, `trust_refund_unapplied_cash` and `trust_close_year`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
+  `trust_bill_back_utility`, `trust_refund_unapplied_cash`, `trust_cover_returned_payment`,
+  `trust_repay_company_advance` and `trust_close_year`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
   `trust_run_rent` run with the app's own grants). It can't call pgledger's posting functions: every posting it makes goes through
   `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
   retry: the same key returns the original transfers, and a different posting under it is
@@ -955,6 +956,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Owner contributions: `trust_record_owner_contribution` moves cash into an owner's property
   account as its own kind (`trust_owner_contributions`), once per request key, and
   `trust_apply_payment` never matches one to a tenant's charge.
+- The company covers an owner's shortfall (migration 20261115000100, docs/edge-cases.md M-060,
+  the founder, 2026-11-15): a payment (a tenant's, a housing authority's, one online) whose bounce
+  would take an owner's property account below zero is refused saying how much is short
+  (`trust_return_shortfall`), unless staff have the company cover it: `trust_cover_returned_payment`
+  posts the company's own money from the cash into each short account, exactly the shortfall,
+  once per returned payment and request key, by a named staff member whose roles allow rent work
+  (money comes in, so not disburse), and at commit the bounce posted and took the account to
+  exactly zero (`trust_company_advances`). The owner owes it back (`trust_company_advance_owed`,
+  on their page and portal) until staff who hold disburse take it from their account into the
+  company's fee account, never more than is owed (`trust_repay_company_advance`,
+  `trust_company_advance_repayments`); draws don't hold it back. No charge is matched to an
+  advance. Append-only, audited; the AI role reads both tables.
 - Recurring bills: a bill that comes every month (`trust_recurring_bills`: vendor, owner's
   property account, amount, day of the month 1 to 28, first day; an end row stops it).
   `trust_enter_recurring_bills` enters each month's bill through a day, under the vendor
@@ -1193,7 +1206,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   lease's lock, until staff say it is another (`not_a_duplicate`, which Receive payment asks
   first; H-008). The page lists each payment as it came in (its whole amount, prepaid rent
   included), and a bounce moves back what the payment moved, reverses its matches and charges
-  the property's NSF fee, once. A
+  the property's NSF fee, once (`cover_shortfall`: the company first covers what the owner's
+  account is short, above). A
   lease's rent work takes an advisory lock on the lease, before it reads the lease's tenants and
   owners, so a departure or a share change waited for counts (C-014). The PMS records what the bank did;
   it sends no money. A payment came by check, cashier's check, money order, EFT or cash. Each has

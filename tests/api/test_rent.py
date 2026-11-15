@@ -615,7 +615,14 @@ def test_a_payment_the_owner_was_paid_out_of_cannot_bounce_into_the_negative(
 
     answer = call(client, f"payments/{payment}/bounce", on=TODAY)
 
-    refused(answer, 409, "not enough money: the owner's account would be $1,500.00 short")
+    # Refused, saying how much, unless staff have the company cover it (M-060,
+    # tests/api/test_company_covers_api.py).
+    refused(
+        answer,
+        409,
+        "not enough money: the owner's account would be $1,500.00 short. The company can cover it"
+        " from its own money, and the owner owes it back",
+    )
     assert lease_row(client, home)["owed"] == "0.00"
 
 

@@ -322,7 +322,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
     insured = rent_api.renters_insurance(conn, session.pmc_id, on)
     paid: dict[UUID, list[rent_api.Paid]] = {}
     # What staff wrote about a payment and its files stay with staff.
-    for lease, transfer, event_at, amount, reference, method, bounced, _note, _files in (
+    for lease, transfer, event_at, amount, reference, method, bounced, _note, _files, _short in (
         found
         for row in rows
         for found in conn.execute(

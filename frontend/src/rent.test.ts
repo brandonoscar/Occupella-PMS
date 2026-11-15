@@ -4,6 +4,8 @@ import {
   alikePayment,
   balanceDue,
   bounceSummary,
+  coverQuestion,
+  shortLine,
   depositAskedLine,
   depositKindsLine,
   moveHome,
@@ -114,6 +116,22 @@ describe("rent", () => {
     );
     expect(bounceSummary("1500.00", { transfers: ["r", "s"], nsf_fee: "35.00" })).toBe(
       "The $1,500.00 payment bounced and is undone; a $35.00 NSF fee is charged.",
+    );
+    // The company covered the owner's shortfall (docs/edge-cases.md M-060).
+    expect(bounceSummary("2250.00", { transfers: ["r"], nsf_fee: null, covered: "110.00" })).toBe(
+      "The $2,250.00 payment bounced and is undone. The company covered the owner's $110.00 shortfall; the owner owes it back.",
+    );
+    expect(bounceSummary("2250.00", { transfers: ["r"], nsf_fee: null, covered: null })).toBe(
+      "The $2,250.00 payment bounced and is undone.",
+    );
+  });
+  it("says how much an owner is short of a bounce, and asks before the company covers it", () => {
+    expect(shortLine("1110")).toBe(
+      "The owner's account is $1,110.00 short. The company covers it from its own money and the owner owes it back.",
+    );
+    expect(coverQuestion("110.00", "2250.00")).toBe(
+      "Cover the owner's $110.00 shortfall with the company's own money and record the $2,250.00 bounce?"
+        + " This records the company's deposit into trust; make it at the bank yourself. The owner owes it back.",
     );
   });
   it("reads an open charge", () => {

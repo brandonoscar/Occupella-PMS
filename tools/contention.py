@@ -106,7 +106,7 @@ class Worker:
             return
         transfer = self.payments.pop(self.rng.randrange(len(self.payments)))
         with self.request() as s:
-            rent.bounced(s, self.conn, transfer, rent.Day(on=self.today))
+            rent.bounced(s, self.conn, transfer, rent.Return(on=self.today))
 
     def bill(self) -> None:
         self.bills += 1

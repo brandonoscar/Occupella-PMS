@@ -128,6 +128,11 @@ TABLES = {
     # with each at move-out: records the app writes; no money moves.
     "trust_owner_held_deposits": {"SELECT", "INSERT"},
     "trust_owner_held_deposit_outcomes": {"SELECT", "INSERT"},
+    # The company's cover of an owner's shortfall when a payment bounced, and the owner paying it
+    # back (migration 20261115000100): written only by trust_cover_returned_payment and
+    # trust_repay_company_advance.
+    "trust_company_advances": {"SELECT"},
+    "trust_company_advance_repayments": {"SELECT"},
     # QuickBooks names (migration 0102): staff name a ledger account for QuickBooks; the latest
     # row holds, so a change is an insert. The ids order the rows.
     "trust_quickbooks_accounts": {"SELECT", "INSERT"},
@@ -628,6 +633,16 @@ FUNCTIONS = {
     "trust_check_unapplied_use()": set(),
     "trust_refund_unapplied_cash(uuid,uuid,numeric,text,text,text,timestamptz)": {"trust_app"},
     "trust_check_owner_held_deposit()": set(),
+    # The company covers an owner's shortfall when a payment bounces, and the owner pays it back
+    # (migration 20261115000100): what a bounce would leave short, what is owed back, the two
+    # write paths, the commit check that a cover was the shortfall, and that no charge is paid
+    # by one.
+    "trust_return_shortfall(uuid,text)": {"trust_app"},
+    "trust_company_advance_owed(text)": {"trust_app"},
+    "trust_cover_returned_payment(uuid,text,text,timestamptz)": {"trust_app"},
+    "trust_repay_company_advance(uuid,text,numeric,text,timestamptz)": {"trust_app"},
+    "trust_check_company_advance()": set(),
+    "trust_refuse_matching_an_advance()": set(),
     "trust_check_owner_held_outcome()": set(),
     # A company's time zone and its day (migration 20261104000900): read from its profile, which
     # the AI role never reads.
@@ -1003,6 +1018,10 @@ SECURITY_DEFINER = {
     "trust_refund_unapplied_cash(uuid,uuid,numeric,text,text,text,timestamptz)",
     # Locks the receipt an application or a refund takes from, which the app can't.
     "trust_check_unapplied_use()",
+    # The company's cover of a returned payment's shortfall, and its repayment (migration
+    # 20261115000100): each posts and writes a record only it writes.
+    "trust_cover_returned_payment(uuid,text,text,timestamptz)",
+    "trust_repay_company_advance(uuid,text,numeric,text,timestamptz)",
     # Reads the chart of accounts for the AI role through the app's helpers (codes, names today,
     # archivals, payees), returning only the chart (migration 20261106000230).
     "trust_report_chart_of_accounts(uuid)",

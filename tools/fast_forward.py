@@ -49,6 +49,7 @@ from typing import Any
 from uuid import UUID
 
 import psycopg
+from fastapi import HTTPException
 from psycopg import sql
 
 from pms import demo, nightly
@@ -219,9 +220,26 @@ def tenants_pay(conn: psycopg.Connection[Any], life: Life, day: date) -> None:
 
 
 def bounces_come_back(conn: psycopg.Connection[Any], life: Life, day: date) -> None:
+    """Each payment due back that day bounces. One its owner's account can't take (the owner was
+    paid, or the month's fee taken, since it came in) is refused in words saying how much is
+    short; then the company covers that from its own money and it bounces, as staff now would
+    (docs/edge-cases.md M-060)."""
     for _, transfer in [b for b in life.bounces if b[0] == day]:
-        with as_manager(conn, life) as s:
-            rent.bounced(s, conn, transfer, rent.Day(on=day))
+        try:
+            with as_manager(conn, life) as s:
+                rent.bounced(s, conn, transfer, rent.Return(on=day))
+        except HTTPException as refused:
+            if refused.status_code != 409 or rent.CAN_COVER not in str(refused.detail):
+                raise
+            with as_manager(conn, life) as s:
+                done = rent.bounced(
+                    s,
+                    conn,
+                    transfer,
+                    rent.Return(on=day, cover_shortfall=True, request_id=request_id(life)),
+                )
+            assert done.covered is not None and Decimal(done.covered) > 0
+            life.count("shortfalls covered")
         life.count("bounces")
     life.bounces = [b for b in life.bounces if b[0] != day]
 

@@ -232,6 +232,21 @@ browser = [
 ]
 
 [[feature]]
+id = "company-covers"
+statement = "A tenant's payment that comes back after the owner's money went out (a draw, a fee) is refused saying how much the owner's account is short; staff have the company cover exactly that from its own money as the bounce is recorded (once per returned payment, the same request again recording nothing new), the owner's page says what they owe the company back, and staff take the repayment from the owner's account into the company's fee account, never more than is owed (docs/edge-cases.md M-060). A housing authority's payment and a payment online whose return waits on Banking are covered the same way."
+operations = [
+  "GET /api/leases/{lease_id}",
+  "POST /api/rent/payments/{transfer_id}/bounce",
+  "GET /api/owners/{owner_id}",
+  "POST /api/payables/owner-fees",
+  "POST /api/payables/contributions",
+  "POST /api/payables/advance-repayments",
+]
+browser = [
+  "features.spec.ts › the company covers an owner's shortfall when a payment bounces, and the owner pays it back",
+]
+
+[[feature]]
 id = "prepaid-rent"
 statement = "A company turns on tenants' prepaid rent paying what their lease owes by itself: the nightly run, and an admin's Run rent now, use it once a day per lease once new charges post, rent first, oldest first, as Use prepaid rent does, leaving a lease on a payment hold or whose owner's account staff choose. Off until a company turns it on."
 operations = [

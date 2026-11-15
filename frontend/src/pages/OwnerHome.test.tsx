@@ -1,7 +1,7 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
-import { OwnerHome } from "./OwnerHome";
+import { OwnerHome, youOweLine } from "./OwnerHome";
 
 afterEach(() => {
   cleanup();
@@ -82,5 +82,14 @@ describe("OwnerHome", () => {
     // No ledger kind reaches the owner, and money is in the page's own face, not mono.
     expect(statement.textContent).not.toMatch(/bank_cash|pmc_income/);
     expect(statement.querySelector(".font-mono")).toBeNull();
+  });
+});
+
+// docs/edge-cases.md M-060: what the owner owes the company back, in plain words.
+describe("youOweLine", () => {
+  it("says what the owner owes the company and why", () => {
+    expect(youOweLine("Property 1", "110.00")).toBe(
+      "You owe the company $110.00 for Property 1: a tenant's payment came back after your money had gone out, and the company covered your account from its own money.",
+    );
   });
 });

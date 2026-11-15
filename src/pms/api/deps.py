@@ -71,6 +71,10 @@ FEES_KEY_USED = re.compile(
 )
 # trust_take_owner_fee's (migration 0082) names the owner's account by its id.
 OWNER_FEE_KEY_USED = re.compile(rf"^request key \S+ already took a fee of {NUMBER} from \S+$")
+# trust_repay_company_advance's (migration 20261115000100) names the owner's account by its id.
+OWED_TOO_MUCH = re.compile(
+    rf"^{NUMBER} is owed back to the company from \S+; {NUMBER} is too much$"
+)
 
 # trust_staff_roles' check (migration 0034) names the staff member by their id.
 LAST_ADMIN = re.compile(r"^staff member \S+ is the PMC's last admin$")
@@ -128,6 +132,14 @@ def refusal(error: psycopg.Error) -> str:
     if used is not None:
         return (
             f"this request already took {dollars(used[1])} of the company's fees: start a new one"
+        )
+    owed = OWED_TOO_MUCH.match(text)
+    if owed is not None:
+        if Decimal(owed[1]) <= 0:
+            return "nothing is owed back to the company from this account"
+        return (
+            f"only {dollars(owed[1])} is owed back to the company; {dollars(owed[2])} is more"
+            " than that"
         )
     taken = OWNER_FEE_KEY_USED.match(text)
     if taken is not None:
@@ -220,6 +232,7 @@ AREA_PATHS = (
     ("/api/payables/management-fees", "owners"),
     ("/api/payables/leasing-fees", "owners"),
     ("/api/payables/owner-fees", "owners"),
+    ("/api/payables/advance-repayments", "owners"),  # an owner paying back the company's cover
     ("/api/payables/draws", "owners"),
     ("/api/payables/contributions", "owners"),
     ("/api/payables/company-fees", "owners"),

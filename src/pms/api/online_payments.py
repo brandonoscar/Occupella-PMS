@@ -35,7 +35,7 @@ from uuid import UUID, uuid4
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from pms import days, email, notices, payments
 from pms.api import outbox, rent, tenant
@@ -609,6 +609,39 @@ def record_return(conn: psycopg.Connection[Any], row: Row, day: date) -> bool:
     return attempt(conn, step)
 
 
+def owner_short(conn: psycopg.Connection[Any], row: Row) -> str | None:
+    """What the owners' accounts a paid payment went into would be short if its return were
+    recorded now; None when they can take it."""
+    first = conn.execute(POSTED, (row.pmc_id, payment_key(row.id))).fetchone()
+    if first is None:
+        return None
+    short = rent.shortfall(conn, row.pmc_id, first[0])
+    return rent.cents(short) if short > 0 else None
+
+
+def cover_return(
+    conn: psycopg.Connection[Any], row: Row, events: dict[str, Any], request_id: UUID
+) -> None:
+    """Staff have the company cover an owner's shortfall for a return that waits (Cover the
+    shortfall): the company's money in for exactly what is short, then the bounce, as rent.bounce
+    records one with a cover; a refusal of either is a 409 in words, recording nothing. The same
+    request id again, once the bounce is in, records nothing new."""
+    if "returned" not in events:
+        raise HTTPException(409, "the payments partner hasn't said this payment came back")
+    first = conn.execute(POSTED, (row.pmc_id, payment_key(row.id))).fetchone()
+    assert first is not None  # the caller recorded the payment first
+    if posted(conn, row.pmc_id, bounce_key(row.id)):
+        if rent.covered_by(conn, row.pmc_id, request_id) == payment_key(row.id):
+            return  # a retry: covered and bounced already
+        raise HTTPException(409, "this payment's return is in the books already")
+    day = open_day(conn, row, day_of(conn, row.pmc_id, events["returned"][0]))
+    try:
+        with conn.transaction():
+            rent.bounce(conn, row.pmc_id, first[0], day, cover=request_id)
+    except psycopg.errors.CheckViolation as refused:
+        raise HTTPException(409, refusal(refused)) from None
+
+
 def settle(conn: psycopg.Connection[Any], row: Row, on: date | None = None) -> None:
     """Whatever the payment's reports call for that isn't in the books yet, as far as the books
     take it now: the payment and the tenant's fee in, the partner's fee out, a return undone and
@@ -1050,6 +1083,9 @@ class Waiting(BaseModel):
     cover_needed: str = "0.00"
     # The owner accounts staff choose among to record the payment (P-040), or none.
     choose_account: list[OwnerChoice] = []
+    # A return its owners' accounts can't take: what they are short together, which the company
+    # may cover from its own money, the owner owing it back (docs/edge-cases.md M-060).
+    owner_short: str | None = None
 
 
 def waiting(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Waiting]:
@@ -1091,6 +1127,7 @@ def waiting(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Waiting]:
         bank = bank_of(conn, row, paid_on, choices[0].account_id if choices else None)
         holds = rent.cents(held(conn, company_account(conn, pmc_id, bank)))
         memo = rent.lease_memo(conn, row.lease_id)
+        short = owner_short(conn, row) if any(what == "return" for what, _ in items) else None
         found += [
             Waiting(
                 payment_id=row.id,
@@ -1102,6 +1139,7 @@ def waiting(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[Waiting]:
                 bank_account_id=bank,
                 company_holds=holds,
                 choose_account=choices,
+                owner_short=short if what == "return" else None,
             )
             for what, owes in items
         ]
@@ -1171,6 +1209,16 @@ class Record(BaseModel):
     past_hold: bool = False
     # The owner's account it goes to, when the lease's property has several and no shares.
     account: Annotated[str | None, Field(max_length=40)] = None
+    # A return the owner's account can't take: the company covers what it is short from its own
+    # money (the owner owes it back), with the page's request id (docs/edge-cases.md M-060).
+    cover_shortfall: bool = False
+    request_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def a_cover_has_a_request_id(self) -> Record:
+        if self.cover_shortfall and self.request_id is None:
+            raise ValueError("covering the shortfall needs the page's request id")
+        return self
 
 
 @router.post("/{payment_id}/record", status_code=204)
@@ -1200,6 +1248,9 @@ def record(session: Staff, conn: Conn, payment_id: UUID, body: Record) -> None:
                 record_payment(conn, row, day, past_hold_by, body.account)
         except psycopg.Error as error:
             raise HTTPException(409, refusal(error)) from None
+    if body.cover_shortfall:
+        assert body.request_id is not None  # the model checks it
+        cover_return(conn, row, events, body.request_id)
     settle(conn, row, on=rent.today(conn, session.pmc_id))
 
 

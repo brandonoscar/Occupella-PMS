@@ -26,7 +26,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException
 from psycopg import sql
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from pms import autopay, autopay_homes, days, exports, notices
 from pms.api import outbox
@@ -899,12 +899,97 @@ def use_prepaid(
 class Returned:
     transfers: list[str]
     nsf_fee: Decimal | None  # the NSF fee charged for it, if the property's terms charge one
+    # What the company covered of the owners' accounts' shortfall from its own money (migration
+    # 20261115000100): 0 when no account was short.
+    covered: Decimal = ZERO
 
 
-def bounce(conn: psycopg.Connection[Any], pmc_id: UUID, transfer_id: str, on: date) -> Returned:
+# --- the company covers an owner's shortfall (migration 20261115000100, docs/edge-cases.md M-060)
+#
+# A payment that comes back after the owner's money went out (a draw, a fee) would take the
+# owner's property account below zero, which the ledger refuses. The company deposits its own
+# money into trust for exactly what the account is short, as the bounce posts, and the owner owes
+# it back (trust_company_advance_owed; trust_repay_company_advance pays it back).
+
+CAN_COVER = "The company can cover it from its own money, and the owner owes it back"
+
+
+def short_words(short: Decimal) -> str:
+    """A bounce an owner's account can't take, refused in words: how much it is short, and that
+    the company may cover it (`cover_shortfall`)."""
+    return f"not enough money: the owner's account would be ${short:,.2f} short. {CAN_COVER}"
+
+
+def shortfall(conn: psycopg.Connection[Any], pmc_id: UUID, transfer_id: str) -> Decimal:
+    """What the owners' accounts a payment paid into would be short together if it bounced now
+    (trust_return_shortfall): 0 when they hold what it brought them."""
+    found = conn.execute(
+        "SELECT coalesce(sum(short), 0) FROM trust_return_shortfall(%s, %s)",
+        (pmc_id, transfer_id),
+    ).fetchone()
+    return ZERO if found is None else Decimal(found[0])
+
+
+def cover_key(request_id: UUID) -> str:
+    return f"return cover/{request_id}"
+
+
+def covered_by(conn: psycopg.Connection[Any], pmc_id: UUID, request_id: UUID) -> str | None:
+    """The key of the payment a cover's request id covered, if it covered one."""
+    found = conn.execute(
+        "SELECT payment_key FROM trust_company_advances WHERE pmc_id = %s AND request_key = %s"
+        " LIMIT 1",
+        (pmc_id, cover_key(request_id)),
+    ).fetchone()
+    return None if found is None else str(found[0])
+
+
+def cover_return(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    transfer_id: str,
+    on: date,
+    request_id: UUID | None,
+) -> Decimal:
+    """Before a payment's bounce posts: when it would leave an owner's account short, the
+    company's cover of exactly that (trust_cover_returned_payment, which checks at commit that the
+    bounce posted after it), or a 409 saying how much is short when staff didn't ask for one
+    (`request_id`, the page's). What the company covered; 0 when nothing was short."""
+    short = shortfall(conn, pmc_id, transfer_id)
+    if short <= 0:
+        return ZERO
+    if request_id is None:
+        raise HTTPException(409, short_words(short))
+    found = conn.execute(
+        "SELECT trust_cover_returned_payment(%s, %s, %s, %s)",
+        (pmc_id, transfer_id, cover_key(request_id), at(on)),
+    ).fetchone()
+    return ZERO if found is None else Decimal(found[0])
+
+
+def covered_amount(conn: psycopg.Connection[Any], pmc_id: UUID, request_id: UUID) -> Decimal:
+    found = conn.execute(
+        "SELECT coalesce(sum(amount), 0) FROM trust_company_advances"
+        " WHERE pmc_id = %s AND request_key = %s",
+        (pmc_id, cover_key(request_id)),
+    ).fetchone()
+    return ZERO if found is None else Decimal(found[0])
+
+
+def bounce(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    transfer_id: str,
+    on: date,
+    cover: UUID | None = None,
+) -> Returned:
     """A payment the bank returned: its transfers move back to cash, their matches to charges
     are reversed (trust_reverse_payment), and the lease is charged the property's NSF fee
-    (trust_charge_nsf_fee). Once per payment."""
+    (trust_charge_nsf_fee). Once per payment. One that would take an owner's account below zero
+    is refused in words saying how much (409), unless staff have the company cover it (`cover`,
+    the page's request id): then the company's own money goes into each short account, exactly
+    what it is short, and the bounce posts after it in the same transaction. The same cover's
+    request id again returns the bounce as it was recorded."""
     rows = conn.execute(
         "SELECT t.id, t.from_account_id, t.to_account_id, t.amount, t.metadata, t.event_at"
         " FROM pgledger_transfers AS t"
@@ -929,6 +1014,13 @@ def bounce(conn: psycopg.Connection[Any], pmc_id: UUID, transfer_id: str, on: da
     if on < rows[0][5].astimezone(UTC).date():
         raise HTTPException(422, "a payment bounces on or after the day it was received")
     key = f"bounce/{payment_key}"
+    if cover is not None:
+        earlier_cover = covered_by(conn, pmc_id, cover)
+        if earlier_cover == payment_key:
+            return returned_as_it_was(conn, pmc_id, key, cover)
+        if earlier_cover is not None:
+            raise HTTPException(409, "this request id covered another payment's return")
+    covered = cover_return(conn, pmc_id, str(rows[0][0]), on, cover)
     metadata = {
         "key": key,
         "kind": "bounced payment",
@@ -953,7 +1045,31 @@ def bounce(conn: psycopg.Connection[Any], pmc_id: UUID, transfer_id: str, on: da
     charged = conn.execute("SELECT trust_charge_nsf_fee(%s, %s)", (pmc_id, key)).fetchone()
     fee = charged[0] if charged else None  # None: the terms charge none
     amount = conn.execute("SELECT amount FROM trust_charges WHERE id = %s", (fee,)).fetchone()
-    return Returned(posted, None if amount is None else amount[0])
+    return Returned(posted, None if amount is None else amount[0], covered)
+
+
+# The transfers a posting under a key moved, in order, with their amounts.
+POSTED_UNDER = """
+SELECT t.id, t.amount FROM pgledger_transfers AS t
+JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id
+WHERE a.pmc_id = %s AND t.metadata ->> 'key' = %s ORDER BY t.created_at, t.id
+"""
+
+
+def returned_as_it_was(
+    conn: psycopg.Connection[Any], pmc_id: UUID, key: str, request_id: UUID
+) -> Returned:
+    """A bounce the company covered, as it was recorded: its transfers, its NSF fee and what the
+    company covered (the same cover sent again)."""
+    transfers = [str(row[0]) for row in conn.execute(POSTED_UNDER, (pmc_id, key)).fetchall()]
+    fee = conn.execute(
+        "SELECT fee FROM trust_nsf_fees WHERE pmc_id = %s AND returned_key = %s", (pmc_id, key)
+    ).fetchone()
+    return Returned(
+        transfers,
+        None if fee is None else Decimal(fee[0]),
+        covered_amount(conn, pmc_id, request_id),
+    )
 
 
 def record_deposit(
@@ -1036,6 +1152,9 @@ class Paid(BaseModel):
     # What staff wrote about it as they received it, and its files (a check's photo, a PDF).
     note: str | None = None
     attachments: list[UUID] = []
+    # On a lease's own page, for a payment not bounced: what its owners' accounts would be short
+    # if it bounced now, which the company covers from its own money if staff say (M-060).
+    short_by: str | None = None
 
 
 # A deposit's kind (migration 0092): each held in its own account.
@@ -1330,7 +1449,12 @@ SELECT p.lease_id, p.first_id, p.received_at, p.amount, p.reference, p.method,
              WHERE o.metadata ->> 'key' = p.key AND d.kind = 'payment_attachment'
                AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r
                                WHERE r.document_id = d.id)
-             ORDER BY d.created_at, d.id)
+             ORDER BY d.created_at, d.id),
+       -- On one lease's page: what its owners' accounts would be short if it bounced now
+       -- (migration 20261115000100), which the company may cover.
+       CASE WHEN %(lease)s::uuid IS NOT NULL THEN
+           (SELECT coalesce(sum(s.short), 0) FROM trust_return_shortfall(%(pmc)s, p.first_id) AS s)
+       END
 FROM (SELECT t.metadata ->> 'key' AS key,
              (t.metadata ->> 'lease_id')::uuid AS lease_id,
              (array_agg(t.id ORDER BY t.created_at, t.id))[1] AS first_id,
@@ -1412,9 +1536,18 @@ def built(
             )
         )
     payments: dict[UUID, list[Paid]] = {}
-    for lease, transfer, event_at, amount, reference, method, bounced, note, files in conn.execute(
-        PAYMENTS, names
-    ).fetchall():
+    for (
+        lease,
+        transfer,
+        event_at,
+        amount,
+        reference,
+        method,
+        bounced,
+        note,
+        files,
+        short,
+    ) in conn.execute(PAYMENTS, names).fetchall():
         payments.setdefault(lease, []).append(
             Paid(
                 transfer_id=transfer,
@@ -1425,6 +1558,7 @@ def built(
                 bounced=bounced,
                 note=note,
                 attachments=list(files),
+                short_by=cents(short) if short and not bounced else None,
             )
         )
     charges: dict[UUID, list[OpenCharge]] = {}
@@ -2329,20 +2463,44 @@ def deposit(session: Staff, conn: Conn, new: NewDeposit) -> Posted:
 
 class Bounced(Posted):
     nsf_fee: str | None  # the NSF fee charged for it, if the property's terms charge one
+    # What the company covered of the owners' shortfall from its own money, if any.
+    covered: str | None = None
+
+
+class Return(Day):
+    """The day a payment came back; and, when the owner's account can't take it, whether the
+    company covers what it is short from its own money (the owner owes it back), with the page's
+    request id, so the same cover sent again records nothing new."""
+
+    cover_shortfall: bool = False
+    request_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def a_cover_has_a_request_id(self) -> Return:
+        if self.cover_shortfall and self.request_id is None:
+            raise ValueError("covering the shortfall needs the page's request id")
+        return self
+
+    @property
+    def cover(self) -> UUID | None:
+        return self.request_id if self.cover_shortfall else None
 
 
 @router.post("/payments/{transfer_id}/bounce", status_code=201)
-def bounced(session: Staff, conn: Conn, transfer_id: str, returned: Day) -> Bounced:
+def bounced(session: Staff, conn: Conn, transfer_id: str, returned: Return) -> Bounced:
     """Records a returned payment: its money leaves the owner's account (and prepaid rent)
     back to cash, what it paid of each charge is owed again, and the lease is charged the
-    property's NSF fee in force that day."""
+    property's NSF fee in force that day. When the owner's account can't take it, the answer says
+    how much it is short (409), unless staff have the company cover that (`cover_shortfall`)."""
     not_after_today(conn, session.pmc_id, returned.on)
     try:
-        done = bounce(conn, session.pmc_id, transfer_id, returned.on)
-    except psycopg.errors.CheckViolation as refused:  # the owner's account would go negative
+        done = bounce(conn, session.pmc_id, transfer_id, returned.on, returned.cover)
+    except psycopg.errors.CheckViolation as refused:  # another account would go negative
         raise HTTPException(409, refusal(refused)) from None
     return Bounced(
-        transfers=done.transfers, nsf_fee=None if done.nsf_fee is None else cents(done.nsf_fee)
+        transfers=done.transfers,
+        nsf_fee=None if done.nsf_fee is None else cents(done.nsf_fee),
+        covered=cents(done.covered) if done.covered > 0 else None,
     )
 
 

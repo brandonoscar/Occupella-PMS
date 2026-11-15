@@ -3377,6 +3377,79 @@ test("a company has its management fees taken each month, staff set a flat fee a
   await expect((await ownerProperty(page, "Demo Owner A", "Birch Flats")).getByRole("cell").nth(2)).toHaveText("$210.00");
 });
 
+// docs/edge-cases.md M-060 (GitHub issue #232; the founder, 2026-11-15): a tenant's $2,250.00
+// payment comes back after the owner's money went out, so Cedar House's account would be $110.00
+// short. Staff have the company cover that from its own money as the bounce is recorded; the owner
+// owes it back, which their page says until staff take the repayment.
+test("the company covers an owner's shortfall when a payment bounces, and the owner pays it back", async ({
+  page,
+}) => {
+  const people = seed.features["company-covers"]!;
+  await joinAsStaff(page, people.manager);
+
+  // A $2,250.00 repair charge, paid by check: all of it the owner's.
+  let lease = await openLease(page, "Cedar House, House");
+  const charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Add a").selectOption("fee");
+  await charge.getByLabel("Amount", { exact: true }).fill("2250.00");
+  await charge.getByLabel("What for").fill("Deck repair");
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(lease).toContainText("Fee of $2,250.00 added.");
+  const pay = await leasePanel(page, "Receive payment");
+  await pay.getByLabel("Payment received").fill("2250.00");
+  await pay.getByLabel("Check or reference").fill("Check 2250");
+  await pay.getByRole("button", { name: "Record payment" }).click();
+  await expect(lease).toContainText("$2,250.00 paid what is owed.");
+
+  // The owner's money goes out: a fee leaves Cedar House holding $2,140.00.
+  const held = (await ownerProperty(page, "Demo Owner A", "Cedar House")).getByRole("cell").nth(2);
+  const fee = (Number((await held.textContent())!.replace(/[$,]/g, "")) - 2140).toFixed(2);
+  await page.getByRole("tab", { name: "Financials", exact: true }).click();
+  await page.getByRole("button", { name: "Take a fee" }).click();
+  const taking = page.getByRole("dialog", { name: "Take a fee" });
+  await taking.getByLabel("From").selectOption({ label: "Cedar House" });
+  await taking.getByLabel("Amount").fill(fee);
+  await taking.getByLabel("What it is for").fill("Inspection");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await taking.getByRole("button", { name: "Take fee" }).click();
+  await expect(taking).toHaveCount(0);
+  await expect((await ownerProperty(page, "Demo Owner A", "Cedar House")).getByRole("cell").nth(2)).toHaveText("$2,140.00");
+
+  // The check bounces: the row says how much the owner is short, and asks before the company
+  // covers it.
+  lease = await openLease(page, "Cedar House, House");
+  await leaseTab(page, "Ledger");
+  const payment = lease.getByRole("table", { name: "Payments received" }).getByRole("row", { name: /Check 2250/ });
+  await payment.getByRole("button", { name: /^Actions for / }).click();
+  await page.getByRole("menuitem", { name: "It bounced" }).click();
+  await expect(payment).toContainText(
+    "The owner's account is $110.00 short. The company covers it from its own money and the owner owes it back.",
+  );
+  await payment.getByRole("button", { name: /^Cover \$110\.00 and record the bounce/ }).click();
+  const asking = page.getByRole("alertdialog");
+  await expect(asking).toContainText(
+    "Cover the owner's $110.00 shortfall with the company's own money and record the $2,250.00 bounce?",
+  );
+  await asking.getByRole("button", { name: "Cover $110.00 and record" }).click();
+  await expect(lease).toContainText("The company covered the owner's $110.00 shortfall; the owner owes it back.");
+  await expect(payment.getByText("Bounced")).toBeVisible();
+
+  // The owner's page says what they owe the company; staff take it back once the owner sends money.
+  const account = await ownerProperty(page, "Demo Owner A", "Cedar House");
+  await expect(account.getByRole("cell").nth(2)).toHaveText("$0.00");
+  const owes = "Cedar House owes the company $110.00: it covered the account when a payment bounced and the account was short.";
+  await expect(page.getByRole("main")).toContainText(owes);
+  await recordContribution(page, "Demo Owner A", "Cedar House", "200.00");
+  await page.getByRole("button", { name: "Take repayment" }).click();
+  const repaying = page.getByRole("dialog", { name: "Take repayment" });
+  await expect(repaying).toContainText("Owed to the company: $110.00");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await repaying.getByRole("button", { name: /^Take repayment of \$110\.00/ }).click();
+  await expect(page.getByRole("main")).toContainText("$110.00 repaid to the company from Cedar House.");
+  await expect(page.getByRole("main")).not.toContainText(owes);
+  await expect((await ownerProperty(page, "Demo Owner A", "Cedar House")).getByRole("cell").nth(2)).toHaveText("$90.00");
+});
+
 test("a company has tenants' prepaid rent pay their new rent by itself, and Run rent now uses it", async ({ page }) => {
   const people = seed.features["prepaid-rent"]!;
   await joinAsStaff(page, people.manager);

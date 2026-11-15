@@ -660,6 +660,21 @@ tests = [
 ]
 
 [[invariant]]
+id = "company-covers-an-owners-shortfall"
+statement = "A tenant's or housing authority's payment whose bounce would take an owner's property account below zero is refused, moving nothing, unless staff have the company cover it (migration 20261115000100, M-060): then the company's own money goes from the trust bank account's cash into each short account, exactly what it is short and no more, once per returned payment and safe to retry with the same request key, by a named staff member whose roles allow rent work, and at commit the payment's bounce posted and took each account to exactly zero. The owner owes it back; a repayment into the company's fee account takes disburse and never exceeds what is owed. No account but cash goes below zero, every trust bank account ties out, an advance is never a payment of a charge, and both records are append-only."
+tests = [
+  "tests/properties/test_company_advance_properties.py::test_a_bounce_the_owner_cant_take_is_refused_or_covered_by_exactly_the_shortfall",
+  "tests/test_company_advances.py::test_a_bounce_the_owner_cannot_take_is_refused_saying_how_much_and_moves_nothing",
+  "tests/test_company_advances.py::test_the_company_covers_exactly_the_shortfall_and_the_bounce_posts",
+  "tests/test_company_advances.py::test_a_cover_without_its_bounce_is_refused_at_commit",
+  "tests/test_company_advances.py::test_a_cover_larger_than_its_bounce_needed_is_refused_at_commit",
+  "tests/test_company_advances.py::test_the_same_cover_again_records_nothing_new_and_a_used_key_covers_nothing_else",
+  "tests/test_company_advances.py::test_a_cover_is_never_a_payment_of_a_charge",
+  "tests/test_company_advances.py::test_the_owner_repays_no_more_than_is_owed_into_the_companys_fee_account",
+  "tests/api/test_company_covers_api.py::test_the_company_covers_the_shortfall_and_the_payment_bounces",
+]
+
+[[invariant]]
 id = "recurring-bill-enters-each-month-once"
 statement = "A recurring bill enters each month's bill from its first day until its end, due on its day of the month, once: running again, or two runs at once, enter no month twice, and a month whose reference the vendor already has is left as it is. Entered bills follow every bill rule (approval limit, set aside, paid)."
 tests = [

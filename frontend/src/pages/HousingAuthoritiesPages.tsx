@@ -18,7 +18,7 @@ import { Wide } from "../components/Wide";
 import type { Keep } from "../latest";
 import { keepAll, latest } from "../latest";
 import { companyDay, money, usDate } from "../money";
-import { methodLabel } from "../rent";
+import { coverQuestion, methodLabel, requestId } from "../rent";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { ReceivePayment } from "./ReceivePayment";
@@ -163,9 +163,18 @@ function AuthorityPaymentRow({ payment, record }: { payment: AuthorityPayment; r
         ) : (
           <RowMenu label={`${usDate(payment.received_on)} payment of ${money(payment.amount)}`} actions={[{
             label: "It bounced", danger: true,
-            confirm: `Mark the ${money(payment.amount)} payment bounced today? Its money moves back out of the owners' accounts and the authority owes it again. Tenants' balances don't change.`,
+            // One the owners' accounts can't take back: the company covers what they are short
+            // from its own money, the owner owing it back (docs/edge-cases.md M-060).
+            confirm: payment.short_by
+              ? coverQuestion(payment.short_by, payment.amount)
+              : `Mark the ${money(payment.amount)} payment bounced today? Its money moves back out of the owners' accounts and the authority owes it again. Tenants' balances don't change.`,
             onSelect: () => record(`/api/assistance/payments/${encodeURIComponent(payment.transfer_id)}/bounce`,
-              { on: companyDay() }, () => `The ${money(payment.amount)} payment bounced; the authority owes it again.`),
+              payment.short_by
+                ? { on: companyDay(), cover_shortfall: true, request_id: requestId() }
+                : { on: companyDay() },
+              () => payment.short_by
+                ? `The ${money(payment.amount)} payment bounced; the company covered the owner's ${money(payment.short_by)} shortfall, which they owe back.`
+                : `The ${money(payment.amount)} payment bounced; the authority owes it again.`),
           }]} />
         )}
       </td>
