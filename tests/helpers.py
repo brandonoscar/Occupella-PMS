@@ -287,6 +287,25 @@ def open_lease(connection, pmc_id, unit_id, starts_on, ends_on, rent, tenant_ids
 
 # Synthetic files of each type a document may be: just their first bytes and a few more.
 PDF = b"%PDF-1.4\n% synthetic\n"
+
+
+def pdf_with_script() -> bytes:
+    """A real one-page PDF that runs a (synthetic) script when opened (docs/edge-cases.md F-010)."""
+    import io
+    import warnings
+
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(72, 72)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        writer.add_js("app.alert('synthetic')")
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
 PNG = b"\x89PNG\r\n\x1a\n synthetic"
 JPEG = b"\xff\xd8\xff\xe0 synthetic"
 

@@ -9,10 +9,19 @@ import base64
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from helpers import PDF, add_tenant, add_unit, add_work_order, make_pmc, open_lease, step_work_order
+from helpers import (
+    PDF,
+    add_tenant,
+    add_unit,
+    add_work_order,
+    make_pmc,
+    open_lease,
+    pdf_with_script,
+    step_work_order,
+)
 from people import join_as, join_as_owner, join_as_staff, join_as_tenant, tenant_of
 
-from pms.api import messages
+from pms.api import documents, messages
 from pms.api import tenant as tenant_api
 
 
@@ -516,6 +525,22 @@ def test_a_tenants_file_must_be_what_it_says_and_of_their_lease(
     assert not_a_pdf.status_code == 422
     assert not_mine.status_code == 404
     assert no_title.status_code == 422
+
+
+def test_a_tenants_pdf_that_runs_a_script_by_itself_is_refused(
+    other_client, conn, app_conn, pmc, home
+):
+    # docs/edge-cases.md F-010: staff and co-tenants open it in a desktop reader.
+    join_as_tenant(other_client, conn, app_conn, pmc)
+    scripted = pdf_with_script()
+
+    sent = other_client.post(
+        f"/api/tenant/leases/{home['lease']}/documents", json=document(content=scripted)
+    )
+
+    assert sent.status_code == 422
+    assert sent.json()["detail"] == documents.SCRIPTED
+    assert ok(other_client.get("/api/tenant/leases"))[0]["files"] == []
 
 
 def test_a_lease_takes_so_many_files_a_day_from_its_tenants(

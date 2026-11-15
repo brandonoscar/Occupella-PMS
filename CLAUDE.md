@@ -1401,7 +1401,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   PDF, JPEG or PNG of at most 5 MB. Its bytes sit apart (`trust_document_files`, checked at
   insert against the type's first bytes, the size and SHA-256 its row says, and there at
   commit): never audited and never read by `trust_ai_agent`. A removal is a row
-  (`trust_document_removals`); nothing is deleted. The PMS reads nothing out of a file. An
+  (`trust_document_removals`); nothing is deleted. The PMS reads nothing out of a file, but a PDF a
+  tenant or an applicant sends is read for what runs or opens by itself (a script, a launch, a form
+  that submits, an attachment) and refused with it (`documents.scripted`, F-010). An
   owner downloads their own owner documents in the portal, and since q046 the files about the
   properties they hold an account for and those properties' units, and the receipts of their
   accounts' bills (`OWNER_SEES` in `src/pms/api/documents.py`), each named with what it is about. The company's logo is a document too
