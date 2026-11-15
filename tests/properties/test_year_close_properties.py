@@ -18,6 +18,7 @@ from datetime import UTC, date, datetime, timedelta
 import psycopg
 from helpers import (
     acting_as,
+    add_late_fee_policy,
     add_tenant,
     add_unit,
     approve_bank,
@@ -104,11 +105,8 @@ def check(conn, requests):
         [(pmc.operating_cash, pmc.owners[0].account, "100.00")],
         datetime(FIRST.year, 1, 5, 12, tzinfo=UTC),
     )
-    conn.execute(
-        "INSERT INTO trust_late_fee_policies (pmc_id, property_id, starts_on, grace_days,"
-        " flat_fee) VALUES (%s, %s, %s, %s, 50.00)",
-        (pmc.pmc_id, prop, FIRST, GRACE),
-    )
+    # On file from the day they start: terms entered later reach no rent already late (M-049).
+    add_late_fee_policy(conn, pmc.pmc_id, prop, FIRST, GRACE, flat_fee="50.00")
     rents: set[date] = set()
     fees_for: set[date] = set()
     importer = staff_named(conn, pmc.pmc_id, "Importer 1")
