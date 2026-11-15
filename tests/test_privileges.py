@@ -300,6 +300,9 @@ TABLES = {
     # A property's street address and where it is (migration 0109); the AI reads both.
     "trust_property_addresses": {"SELECT", "INSERT"},
     "trust_property_locations": {"SELECT", "INSERT"},
+    # The price index a rent cap counts (migration 20261115000100): written by the nightly run.
+    "trust_cpi_fetches": {"SELECT", "INSERT"},
+    "trust_cpi_figures": {"SELECT", "INSERT"},
     # A bank's or lockbox's payment files (migration 0118): what each line says, and the payment
     # it became or why staff set it aside. The money moves through rent.record_payment.
     "trust_payment_files": {"SELECT", "INSERT"},
@@ -742,6 +745,7 @@ FUNCTIONS = {
     "trust_lock_autopay_stop()": set(),  # a trigger's: no one calls it
     "trust_check_bill_reference()": set(),  # a trigger's: no one calls it
     "trust_check_shared_bill()": set(),
+    "trust_check_cpi_figure()": set(),
     "trust_check_ownership_share_line()": set(),
     "trust_check_ownership_shares()": set(),
     "trust_check_rent_assistance()": set(),

@@ -81,7 +81,8 @@ export function RenewLeaseForm({ leaseId, record }: { leaseId: string; record: R
 
   function send() {
     if (plan === null) return;
-    const warning = plan.notice?.warning;
+    const warning = [plan.notice?.warning, plan.notice?.cap?.over ? plan.notice.cap.words : null]
+      .filter(Boolean).join(" ");
     const question = `Send the renewal of ${where}, ${money(rent)} a month from ${usDate(startsOn)}, to sign to `
       + `${whoSigns(plan.signers)}?${warning ? ` ${warning}` : ""}`;
     ask(question, () => record<Offered>(`/api/leasing/leases/${leaseId}/renewal`, {
@@ -113,6 +114,9 @@ export function RenewLeaseForm({ leaseId, record }: { leaseId: string; record: R
           onChange={(e) => setEndsOn(e.target.value)} />
       </div>
       {plan.notice?.warning && <Notice tone="error">{plan.notice.warning}</Notice>}
+      {plan.notice?.cap && (
+        <Notice tone={plan.notice.cap.over ? "error" : "info"}>{plan.notice.cap.words}</Notice>
+      )}
       {plan.notice && !plan.notice.warning && (
         <p className="text-sm text-ink-subtle" data-testid="renew-notice">
           {plan.notice.days} days' written notice asked ({plan.notice.law}); this start gives it.

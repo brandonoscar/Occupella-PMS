@@ -11,6 +11,7 @@ import type { ContentType } from "../documents";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
 import { companyDate, companyDay, money, usDate } from "../money";
 import type { Bounce, DepositKind, Hold, OpenCharge, Payment, PaymentMethod, RecurringCharge, RentChange, RentLease } from "../rent";
+import type { RenewalNotice, RentCap } from "../offers";
 import {
   DEPOSIT_KINDS,
   PAYMENT_METHODS,
@@ -456,7 +457,9 @@ export function RecurringForm({ lease, record }: { lease: RentLease; record: Rec
 // with an end date names the term that lets its rent change during it. Where the property's state
 // asks more notice before an increase (src/pms/rent_notice.py, docs/law.md), the panel says so,
 // counted from the day notice was given (docs/edge-cases.md D-065, D-066): a warning, not a
-// refusal. A cap, or a city's rule, stays the company's to check.
+// refusal. Where the state caps a year's increase by inflation (src/pms/rent_cap.py), it says the
+// most this one may be and how it was worked out, or that it couldn't work it out; a city's own
+// rule stays the company's to check.
 export function RentChangeForm({ lease, record }: { lease: RentLease; record: Recorder }) {
   const [from, setFrom] = useState(earliestRentChange(companyDate()));
   const [amount, setAmount] = useState("");
@@ -464,14 +467,19 @@ export function RentChangeForm({ lease, record }: { lease: RentLease; record: Re
   const [served, setServed] = useState<RentChange["served_by"]>("mail");
   const [terms, setTerms] = useState("");
   const [warning, setWarning] = useState("");
+  const [cap, setCap] = useState<RentCap | null>(null);
   useEffect(() => {
     const day = /^\d{4}-\d{2}-\d{2}$/;
     setWarning("");
+    setCap(null);
     if (!/^\d+(\.\d{1,2})?$/.test(amount.trim()) || Number(amount) <= 0 || !day.test(from) || !day.test(notice)) return;
     const run = latest();
     const asked = new URLSearchParams({ effective_on: from, monthly_rent: amount.trim(), notice_given_on: notice });
-    api.get<{ warning: string | null } | null>(`/api/leasing/renewals/${lease.id}/rent-change-notice?${asked}`)
-      .then(run.keep((rule) => setWarning(rule?.warning ?? "")))
+    api.get<RenewalNotice | null>(`/api/leasing/renewals/${lease.id}/rent-change-notice?${asked}`)
+      .then(run.keep((rule) => {
+        setWarning(rule?.warning ?? "");
+        setCap(rule?.cap ?? null);
+      }))
       .catch(() => {});  // the API refuses an unfinished one; the save says why
     return run.stop;
   }, [lease.id, amount, from, notice]);
@@ -510,6 +518,7 @@ export function RentChangeForm({ lease, record }: { lease: RentLease; record: Re
           maxLength={500} value={terms} onChange={(e) => setTerms(e.target.value)} />
       )}
       <Notice tone="info">{warning}</Notice>
+      {cap && <Notice tone={cap.over ? "error" : "info"}>{cap.words}</Notice>}
       <Button type="submit" variant="secondary">
         Change rent
       </Button>

@@ -13,7 +13,7 @@ from pathlib import Path
 from pypdf import PdfReader
 
 from pms import exports
-from pms.api import owner, receipts, rent
+from pms.api import owner, receipts, renewals, rent
 from pms.payouts import checks, nacha
 from tools import golden
 
@@ -138,3 +138,26 @@ def test_printed_checks(request):
         ],
     )
     matches(request, "checks", pdf_text(printed))
+
+
+def test_what_a_rent_cap_says(conn, request):
+    """docs/law.md, "A year's rent increase capped by inflation": the words staff and the AI are
+    given for each of five homes, from rent_cap.sql's index figures (worked by hand there)."""
+    asked = {"1": "1100.00", "2": "1050.00", "3": "1120.00", "4": "1100.00", "5": "1080.00"}
+    lines = []
+    with conn.transaction(force_rollback=True):
+        setup(conn, FILES / "rent_cap.sql")
+        homes = conn.execute(
+            "SELECT l.id, p.display_name, right(u.id::text, 1) FROM trust_leases AS l"
+            " JOIN trust_units AS u ON u.id = l.unit_id"
+            " JOIN trust_properties AS p ON p.id = u.property_id"
+            " WHERE l.pmc_id = %s ORDER BY u.id",
+            (PMC,),
+        ).fetchall()
+        for lease, home, n in homes:
+            limit = renewals.limit_for(
+                conn, PMC, lease, date(2027, 3, 1), Decimal(asked[n]), date(2026, 11, 15)
+            )
+            assert limit is not None and limit.cap is not None
+            lines += [f"{home}: {limit.cap.max_percent}%, {limit.cap.max_rent}", limit.words, ""]
+    matches(request, "rent_cap", "\n".join(lines))

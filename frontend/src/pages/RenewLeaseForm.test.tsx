@@ -49,7 +49,7 @@ function server(plan: RenewalPlan = PLAN, templates = TEMPLATES) {
       new_rent: rent ?? plan.new_rent,
       new_starts_on: asked.get("starts_on") ?? plan.new_starts_on,
       notice: raised
-        ? { state: "CA", days: 90, law: "California Civil Code §827", increase_percent: "15.0", earliest: "2027-01-23", warning: WARNING }
+        ? { state: "CA", days: 90, law: "California Civil Code §827", increase_percent: "15.0", earliest: "2027-01-23", warning: WARNING, cap: plan.notice?.cap ?? null }
         : plan.notice,
     };
     return new Response(JSON.stringify(found), { status: 200 });
@@ -141,11 +141,41 @@ describe("RenewLeaseForm (ADR 0010 phase 3, part L)", () => {
     expect(posted(fetch)).toEqual([]);
 
     // Started on the first day that gives the notice, nothing is said but the notice it gives.
-    server({ ...PLAN, notice: { state: "CA", days: 90, law: "California Civil Code §827", increase_percent: "15.0", earliest: "2027-01-23", warning: null } });
+    server({ ...PLAN, notice: { state: "CA", days: 90, law: "California Civil Code §827", increase_percent: "15.0", earliest: "2027-01-23", warning: null, cap: null } });
     cleanup();
     render(<Panel />);
     expect((await screen.findByTestId("renew-notice")).textContent)
       .toBe("90 days' written notice asked (California Civil Code §827); this start gives it.");
+  });
+
+  it("says the most a year's increase may be where the state caps it, and asks again when over it", async () => {
+    const words = "California caps a year's rent increase at 5% plus the change in the cost of living, or 10%,"
+      + " whichever is lower (California Civil Code §1947.12). So the most is 8.0% over $1,000.00: $1,080.00 a month."
+      + " This new rent, $1,150.00, is 15.0% over it: more than that. A warning, not legal advice.";
+    const cap = {
+      state: "CA", law: "California Civil Code §1947.12", checked: true, max_percent: "8.0", max_rent: "1080.00",
+      base_rent: "1000.00", index: "Los Angeles-Long Beach-Anaheim", increase_percent: "15.0", over: true, words,
+    };
+    const fetch = server({ ...PLAN, notice: { state: "CA", days: 90, law: "California Civil Code §827", increase_percent: "15.0", earliest: "2026-12-01", warning: null, cap } });
+    render(<Panel />);
+
+    expect((await screen.findByText(words)).closest("[role=alert]")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Send for signing" }));
+    const ask = await screen.findByRole("alertdialog");
+    expect(ask.textContent).toContain(words);
+    expect(within(ask).getByRole("button", { name: "Send anyway" })).toBeTruthy();
+    fireEvent.click(within(ask).getByRole("button", { name: "Cancel" }));
+    expect(posted(fetch)).toEqual([]);
+
+    // Within the cap it is said, but asks nothing more.
+    server({ ...PLAN, notice: { state: "CA", days: 90, law: "California Civil Code §827", increase_percent: "8.0", earliest: "2026-12-01", warning: null, cap: { ...cap, over: false, words: "Within it." } } });
+    cleanup();
+    render(<Panel />);
+    expect((await screen.findByText("Within it.")).getAttribute("role")).toBe("status");
+    fireEvent.click(screen.getByRole("button", { name: "Send for signing" }));
+    const plain = await screen.findByRole("alertdialog");
+    expect(plain.textContent).not.toContain("Within it.");
+    expect(within(plain).getByRole("button", { name: "Send" })).toBeTruthy();
   });
 
   it("won't send while a tenant has no email on file, nor with no lease document", async () => {

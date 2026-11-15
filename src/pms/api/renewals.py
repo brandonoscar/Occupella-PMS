@@ -4,7 +4,9 @@ trust_report_lease_expirations has them, so the page, the Dashboard and the down
 Each names its lease when exactly one lease of that property and unit ends that day. Drafting a
 renewal is the lease offers' (`offers.py`); the plan here (ADR 0010 phase 3, part L) gives the
 Renew lease panel its starting terms, who signs, and the notice the property's state asks before a
-rent increase (src/pms/rent_notice.py), so it can warn before sending. Nothing here moves money.
+rent increase (src/pms/rent_notice.py), so it can warn before sending; where the state caps a
+year's increase by inflation, the most it may be and how it was worked out (src/pms/rent_cap.py).
+Nothing here moves money.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from fastapi import APIRouter, HTTPException, Query
 from psycopg import Connection
 from pydantic import BaseModel
 
-from pms import notices, rent_notice
+from pms import cpi, notices, rent_cap, rent_notice
 from pms.api import addresses
 from pms.api.deps import Conn, Staff
 from pms.api.offers import Rent
@@ -83,6 +85,47 @@ class PlanSigner(BaseModel):
     email: str | None
 
 
+class RentCap(BaseModel):
+    """Where the property's state caps a year's increase by inflation (src/pms/rent_cap.py): the
+    most this one may be, how it was worked out, and whether the new rent is over it. A warning,
+    never a refusal."""
+
+    state: str
+    law: str
+    # Whether this year's figure was worked out; False says why in `words`, and the most is then
+    # the 10% the cap never exceeds.
+    checked: bool
+    max_percent: str
+    max_rent: str
+    # What the cap counts from: the lowest rent in the 12 months before, or the rent now.
+    base_rent: str
+    # The BLS index counted; None when the PMS can't tell which.
+    index: str | None
+    # The new rent over base_rent, in percent; None when no new rent was asked about.
+    increase_percent: str | None
+    over: bool
+    words: str
+
+
+def cap_of(found: rent_cap.Cap | None) -> RentCap | None:
+    if found is None:
+        return None
+    return RentCap(
+        state=found.state,
+        law=found.law,
+        checked=found.checked,
+        max_percent=rent_cap.percent(found.max_percent),
+        max_rent=cents(found.max_rent),
+        base_rent=cents(found.base_rent),
+        index=None if found.index is None else found.index.name,
+        increase_percent=(
+            None if found.increase_percent is None else rent_cap.percent(found.increase_percent)
+        ),
+        over=found.over,
+        words=found.words,
+    )
+
+
 class RenewalNotice(BaseModel):
     state: str
     days: int
@@ -92,6 +135,8 @@ class RenewalNotice(BaseModel):
     earliest: date
     # Said before sending when the new rent starts sooner; None when it gives the notice.
     warning: str | None
+    # Where the state caps a year's increase by inflation (California, Oregon, Washington).
+    cap: RentCap | None = None
 
 
 class RenewalPlan(BaseModel):
@@ -185,7 +230,9 @@ def notice_of(
 ) -> RenewalNotice | None:
     """The written notice the property's state asks before a new rent of `new_rent` (over `now`)
     starts on `starts_on`, the notice going out on `sent_on`; None without an increase or without
-    a rule recorded for its state (docs/law.md, src/pms/rent_notice.py)."""
+    a rule recorded for its state (docs/law.md, src/pms/rent_notice.py). Where the state caps a
+    year's increase by inflation, the cap too (src/pms/rent_cap.py), from the company's CPI
+    figures (src/pms/cpi.py)."""
     address = addresses.address_of(conn, home.property_id)
     if address is None or address.state not in rent_notice.STATES:
         return None
@@ -206,6 +253,9 @@ def notice_of(
     rule = rent_notice.needed(address.state, now, lowest, new_rent, max(lived, term))
     if rule is None:
         return None
+    capped = rent_cap.cap(
+        address.state, address.zip, starts_on, now, lowest, lived, cpi.on_file(conn, pmc), new_rent
+    )
     return RenewalNotice(
         state=rule.state,
         days=rule.days,
@@ -213,6 +263,7 @@ def notice_of(
         increase_percent=str(rule.increase_percent),
         earliest=rent_notice.earliest(sent_on, rule),
         warning=rent_notice.warning(rule, sent_on, starts_on),
+        cap=cap_of(capped),
     )
 
 
@@ -282,4 +333,145 @@ def rent_change_notice(
         Decimal(monthly_rent),
         effective_on,
         notice_given_on,
+    )
+
+
+# --- the most a rent may rise, read as the AI's role (src/pms/api/mcp.py) ------------------------
+
+# A lease's rent in force on a day as trust_rent_on works it out, written over the tables the AI's
+# role reads, as it calls no function but the reports (the MCP tests compare the two).
+RENT_ON = (
+    "coalesce((SELECT c.monthly_rent FROM trust_rent_changes AS c"
+    " WHERE c.lease_id = {lease} AND c.effective_on <= {day}"
+    " ORDER BY c.effective_on DESC LIMIT 1), {rent})"
+)
+AI_LEASE = f"""
+SELECT l.unit_id, p.id, p.display_name, u.display_name, l.starts_on, l.ends_on,
+       {
+    RENT_ON.format(
+        lease="l.id",
+        day="greatest(l.starts_on, least(%(day)s, coalesce(l.ends_on, %(day)s)))",
+        rent="l.monthly_rent",
+    )
+}
+FROM trust_leases AS l
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+WHERE l.pmc_id = %(pmc)s AND l.id = %(lease)s
+"""  # noqa: S608
+AI_LOWEST = LOWEST.replace(
+    "trust_rent_on(h.id, d.day)", RENT_ON.format(lease="h.id", day="d.day", rent="h.monthly_rent")
+)
+AI_ADDRESS = """
+SELECT state, zip FROM trust_property_addresses
+WHERE pmc_id = %(pmc)s AND property_id = %(property)s
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+"""
+
+
+class RentLimit(BaseModel):
+    """The most a lease's rent may rise from a day, as the PMS warns staff of it, for software
+    reading the books (the MCP tool rent_increase_limit). `words` is what to say."""
+
+    lease_id: UUID
+    property: str
+    unit: str
+    # The property's state and ZIP code; None without an address on file.
+    state: str | None
+    zip: str | None
+    rent_now: str
+    # The lowest rent charged in the 12 months before the new rent starts.
+    lowest_rent: str
+    new_rent: str | None
+    starts_on: date
+    # Where the state caps a year's increase by inflation.
+    cap: RentCap | None
+    # The written notice the state asks before the new rent, when one was asked about.
+    notice: RenewalNotice | None
+    words: str
+
+
+def limit_for(
+    conn: Connection[Any],
+    pmc: UUID,
+    lease_id: UUID,
+    starts_on: date,
+    new_rent: Decimal | None,
+    sent_on: date,
+) -> RentLimit | None:
+    """The cap and the notice the staff's warning gives for a new rent from `starts_on` (with
+    `new_rent`, if one is asked about), read only from tables the AI's role reads; None when the
+    company has no such lease."""
+    window = {
+        "pmc": pmc,
+        "lease": lease_id,
+        "day": starts_on - timedelta(days=1),
+        "from": starts_on - timedelta(days=365),
+        "to": starts_on - timedelta(days=1),
+    }
+    found = conn.execute(AI_LEASE, window).fetchone()
+    if found is None:
+        return None
+    unit, property_id, prop, unit_name, began, ends_on, rent = found
+    now = Decimal(rent)
+    window["unit"] = unit
+    row = conn.execute(AI_LOWEST, window).fetchone()
+    lowest = Decimal(row[0]) if row and row[0] is not None else now
+    first = conn.execute(LIVED_FROM, window).fetchone()
+    lived = rent_notice.whole_years(first[0] if first and first[0] else began, starts_on)
+    term = rent_notice.whole_years(began, ends_on + timedelta(days=1)) if ends_on else 0
+    address = conn.execute(AI_ADDRESS, {"pmc": pmc, "property": property_id}).fetchone()
+    raised = new_rent if new_rent is not None and new_rent > now else None
+    said: list[str] = []
+    if new_rent is not None and raised is None:
+        said.append(
+            f"{rent_cap.dollars(new_rent)} is no increase over the rent now,"
+            f" {rent_cap.dollars(now)}."
+        )
+    capped = None
+    notice = None
+    if address is None:
+        said.append(
+            "The PMS can't check a cap: this property has no address on file, so it can't tell"
+            " which state's rules apply."
+        )
+    else:
+        state, zip_code = address
+        capped = rent_cap.cap(
+            state, zip_code, starts_on, now, lowest, lived, cpi.on_file(conn, pmc), raised
+        )
+        if capped is None:
+            said.append(rent_cap.no_cap_words(state))
+        else:
+            said.append(capped.words)
+        rule = (
+            None
+            if raised is None
+            else rent_notice.needed(state, now, lowest, raised, max(lived, term))
+        )
+        if rule is not None:
+            notice = RenewalNotice(
+                state=rule.state,
+                days=rule.days,
+                law=rule.law,
+                increase_percent=str(rule.increase_percent),
+                earliest=rent_notice.earliest(sent_on, rule),
+                warning=rent_notice.warning(rule, sent_on, starts_on),
+            )
+            if notice.warning:
+                said.append(notice.warning)
+    return RentLimit(
+        lease_id=lease_id,
+        property=prop,
+        unit=unit_name,
+        state=None if address is None else address[0],
+        zip=None if address is None else address[1],
+        rent_now=cents(now),
+        lowest_rent=cents(min(lowest, now)),
+        new_rent=None if new_rent is None else cents(new_rent),
+        starts_on=starts_on,
+        cap=cap_of(capped),
+        notice=notice,
+        words=" ".join(said),
     )

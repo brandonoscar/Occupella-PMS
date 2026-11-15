@@ -6,6 +6,16 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+- **The most a year's rent increase may be in California, Oregon and Washington** (docs/law.md, "A
+  year's rent increase capped by inflation"; docs/edge-cases.md D-165 to D-169, P-181 to P-185,
+  A-058). Where a property's address is in one of the three states, Change rent and Renew lease say
+  the most an increase may be under the state's cap (5% or 7% plus the change in its price index,
+  never above 10%), in percent and dollars, how it was worked out, and whether the new rent is over
+  it; some homes are exempt and the PMS can't tell which, so it is a warning, never a refusal, and
+  no legal advice. The price index comes from the Bureau of Labor Statistics' free API on the
+  nightly run when `PMS_CPI=bls` (no key); without it the warning says it couldn't work the figure
+  out and gives the 10%. The AI reads the same words (`rent_increase_limit`). Migration
+  `20261115000100`.
 - **Owners and tenants who join through the host app give their phone and say whether texts are
   OK**, as people who set a password on the PMS's own invite page do (item 14 of the founder's
   review of 11/03; docs/edge-cases.md U-171). `POST /api/external-sign-in` takes `phone` and

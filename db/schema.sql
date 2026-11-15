@@ -3376,6 +3376,27 @@ $$;
 
 
 --
+-- Name: trust_check_cpi_figure(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_cpi_figure() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_cpi_fetches AS f
+        WHERE f.id = NEW.fetch_id AND NEW.month BETWEEN f.first_month AND f.last_month
+    ) THEN
+        RAISE EXCEPTION 'trust: a CPI figure is of a month its fetch answered for'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_cutover_entry(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -17212,6 +17233,43 @@ CREATE TABLE public.trust_contacts (
 
 
 --
+-- Name: trust_cpi_fetches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_cpi_fetches (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    source text NOT NULL,
+    series_id text NOT NULL,
+    first_month date NOT NULL,
+    last_month date NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_cpi_fetches_check CHECK ((last_month >= first_month)),
+    CONSTRAINT trust_cpi_fetches_first_month_check CHECK ((EXTRACT(day FROM first_month) = (1)::numeric)),
+    CONSTRAINT trust_cpi_fetches_last_month_check CHECK ((EXTRACT(day FROM last_month) = (1)::numeric)),
+    CONSTRAINT trust_cpi_fetches_series_id_check CHECK ((series_id ~ '^[A-Z0-9]{8,20}$'::text)),
+    CONSTRAINT trust_cpi_fetches_source_check CHECK ((source = ANY (ARRAY['bls'::text, 'fake'::text])))
+);
+
+
+--
+-- Name: trust_cpi_figures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_cpi_figures (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    fetch_id uuid NOT NULL,
+    series_id text NOT NULL,
+    month date NOT NULL,
+    value numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_cpi_figures_month_check CHECK ((EXTRACT(day FROM month) = (1)::numeric)),
+    CONSTRAINT trust_cpi_figures_value_check CHECK (((value > (0)::numeric) AND (value = round(value, 3))))
+);
+
+
+--
 -- Name: trust_custom_role_areas; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21523,6 +21581,38 @@ ALTER TABLE ONLY public.trust_contacts
 
 
 --
+-- Name: trust_cpi_fetches trust_cpi_fetches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cpi_fetches
+    ADD CONSTRAINT trust_cpi_fetches_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_cpi_fetches trust_cpi_fetches_pmc_id_id_series_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cpi_fetches
+    ADD CONSTRAINT trust_cpi_fetches_pmc_id_id_series_id_key UNIQUE (pmc_id, id, series_id);
+
+
+--
+-- Name: trust_cpi_figures trust_cpi_figures_fetch_id_month_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cpi_figures
+    ADD CONSTRAINT trust_cpi_figures_fetch_id_month_key UNIQUE (fetch_id, month);
+
+
+--
+-- Name: trust_cpi_figures trust_cpi_figures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cpi_figures
+    ADD CONSTRAINT trust_cpi_figures_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_custom_role_areas trust_custom_role_areas_area_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25028,6 +25118,27 @@ CREATE INDEX trust_contacts_vendor ON public.trust_contacts USING btree (pmc_id,
 
 
 --
+-- Name: trust_cpi_fetches_series; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_cpi_fetches_series ON public.trust_cpi_fetches USING btree (pmc_id, series_id, created_at);
+
+
+--
+-- Name: trust_cpi_figures_fetch; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_cpi_figures_fetch ON public.trust_cpi_figures USING btree (pmc_id, fetch_id, series_id);
+
+
+--
+-- Name: trust_cpi_figures_series; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_cpi_figures_series ON public.trust_cpi_figures USING btree (pmc_id, series_id, month);
+
+
+--
 -- Name: trust_custom_role_areas_role; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -27744,6 +27855,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_cpi_fetches trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_cpi_fetches FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_cpi_figures trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_cpi_figures FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_custom_role_areas trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -29550,6 +29675,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_cont
 
 
 --
+-- Name: trust_cpi_fetches trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_cpi_fetches FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_cpi_figures trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_cpi_figures FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_custom_role_areas trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -31087,6 +31226,13 @@ CREATE TRIGGER trust_check_connected_account_state BEFORE INSERT ON public.trust
 --
 
 CREATE TRIGGER trust_check_connected_payment BEFORE INSERT ON public.trust_connected_payments FOR EACH ROW EXECUTE FUNCTION public.trust_check_connected_payment();
+
+
+--
+-- Name: trust_cpi_figures trust_check_cpi_figure; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_cpi_figure BEFORE INSERT ON public.trust_cpi_figures FOR EACH ROW EXECUTE FUNCTION public.trust_check_cpi_figure();
 
 
 --
@@ -34368,6 +34514,22 @@ ALTER TABLE ONLY public.trust_contacts
 
 ALTER TABLE ONLY public.trust_contacts
     ADD CONSTRAINT trust_contacts_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
+-- Name: trust_cpi_fetches trust_cpi_fetches_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cpi_fetches
+    ADD CONSTRAINT trust_cpi_fetches_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_cpi_figures trust_cpi_figures_pmc_id_fetch_id_series_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cpi_figures
+    ADD CONSTRAINT trust_cpi_figures_pmc_id_fetch_id_series_id_fkey FOREIGN KEY (pmc_id, fetch_id, series_id) REFERENCES public.trust_cpi_fetches(pmc_id, id, series_id);
 
 
 --
@@ -39235,4 +39397,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261107000200'),
     ('20261113000100'),
     ('20261113000200'),
-    ('20261114000100');
+    ('20261114000100'),
+    ('20261115000100');

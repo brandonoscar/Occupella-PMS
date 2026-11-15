@@ -191,9 +191,85 @@ it only as its own terms allow. Some states ask for more:
   mid-month keeps its days at the rent in force, the reports show it, and the tenant sees the
   change coming in the portal with the day notice was given.
 
-**Left to the company.** Longer notice where its state or city asks (up to 90 days), rent caps,
-the first-year and once-a-year limits, extra days for notice served by mail, and the notice
-itself, which the PMS records but does not write or send.
+**Left to the company.** Longer notice where its state or city asks (up to 90 days), a city's rent
+caps (the states' inflation caps are warned of: the next section), extra days for notice served by
+mail, and the notice itself, which the PMS records but does not write or send.
+
+## A year's rent increase capped by inflation (migration 20261115000100)
+
+**The rule.** Three states cap how much rent may rise in a year by a formula tied to a Consumer
+Price Index (CPI-U, all items, not seasonally adjusted, published by the Bureau of Labor
+Statistics), each never above 10%. Recorded 2026-11-15 from search excerpts that quote the
+statutes and the states' own pages: leginfo.legislature.ca.gov, oregon.public.law,
+oregonlegislature.gov, app.leg.wa.gov and api.bls.gov all refused this session's requests, so no
+statute was read in full. Every point below is NOT VERIFIED against the statute's own text.
+
+- California, Civil Code 1947.12 (AB 1482, the Tenant Protection Act of 2019): over any 12
+  months, at most 5% plus the percentage change in the cost of living, or 10%, whichever is lower,
+  over the lowest gross rent charged at any time in the 12 months before the increase takes
+  effect (subdivision (a)(1)). The change in the cost of living (subdivision (g)) is the change
+  from April of one year to April of the next in the BLS regional CPI-U of the region where the
+  home is, rounded to the nearest tenth of a percent; an increase taking effect before August 1
+  counts the April two years before to the April before, one on or after it the April before to
+  that April; where BLS publishes no April for the area (San Diego, published every other month),
+  March to March; with no regional index, the California CPI as the Department of Industrial
+  Relations determines it. Exempt among others: a home first occupied in the last 15 years, a
+  single-family home or condominium owned by a natural person whose tenants were given the
+  required notice of the exemption, an owner-occupied duplex, deed-restricted affordable housing,
+  and a home under a stricter local rent control. It ends January 1, 2030 (Sources:
+  codes.findlaw.com, law.justia.com and law-firm summaries of § 1947.12, read through search
+  excerpts, 2026-11-15).
+- Oregon, ORS 90.323 (one increase in 12 months, none in a tenancy's first year, at most the
+  year's maximum) and 90.324 (the Department of Administrative Services calculates and publishes,
+  by September 30, the next calendar year's maximum: 7% plus the September annual 12-month
+  average change in the CPI-U, West Region, all items), capped at 10% since SB 611 (2023). Exempt:
+  a home whose first certificate of occupancy is less than 15 years old, and some regulated
+  affordable housing. DAS published 9.5% for 2026 and lists 10% for 2027 (Sources: oregon.gov's
+  DAS Office of Economic Analysis rent stabilization page and ORS 90.324 on oregon.public.law,
+  through search excerpts, 2026-11-15). How DAS works out the "12-month average change", and
+  whether it forecasts the September figure it can't yet have on September 30, is NOT VERIFIED:
+  the PMS takes the average of the 12 monthly indexes through September of the year before
+  against the 12 before them.
+- Washington, HB 1217 (2025), in chapter 59.18 RCW: after a tenancy's first 12 months, in any 12
+  months at most 7% plus the June 12-month percent change in the Seattle-Tacoma-Bellevue CPI-U,
+  or 10%, whichever is lower; none in its first 12 months. The Department of Commerce publishes
+  each calendar year's maximum (9.683% for 2026, 7% plus 2.683%; reportedly 10% for 2027).
+  Exempt (RCW 59.18.710, NOT VERIFIED): a home whose certificate of occupancy is 12 years old or
+  less, public, nonprofit and tax credit housing, and some homes the owner lives in. It ends
+  July 1, 2040 (Sources: commerce.wa.gov's HB 1217 landlord resource center, news of the bill's
+  signing and landlord guides, through search excerpts, 2026-11-15).
+- The BLS series used (NOT VERIFIED but for Los Angeles's, seen on a BLS release page): Los
+  Angeles-Long Beach-Anaheim CUURS49ASA0, San Francisco-Oakland-Hayward CUURS49BSA0,
+  Riverside-San Bernardino-Ontario CUURS49CSA0, San Diego-Carlsbad CUURS49ESA0,
+  Seattle-Tacoma-Bellevue CUURS49DSA0, West Region CUUR0400SA0. BLS rebased several series to
+  December 2024 = 100 in May 2026, so a change is worked out only from figures of one fetch.
+- Cities have their own rent control (Los Angeles, San Francisco, Oakland and others), stricter
+  than the state's: none is recorded here.
+
+**What the PMS does.**
+- The rent page's Change rent and the Renew lease panel, where a property's address is in one of
+  the three states and the new rent is an increase, say the most a year's increase may be from
+  the day it starts (in percent, and in dollars over the rent the state counts from), how it was
+  worked out (the statute, the index, the two months or years and their change), whether the new
+  rent is over it, the first-year and once-a-year rules where they apply, that some homes are
+  exempt and the PMS can't tell which, and that it is a warning, not legal advice
+  (`src/pms/rent_cap.py`). It never refuses the change (D-065).
+- The index figures come from the BLS's Public Data API, version 1 (no key, 25 requests a day),
+  fetched once a day on the nightly run for every company and kept in each one's books
+  (`trust_cpi_fetches`, `trust_cpi_figures`), when the server's `PMS_CPI` is "bls" (none by
+  default; "fake" for development and CI).
+- Unknown is never "no cap": with no figures on file, a ZIP code the PMS can't place in a BLS
+  area, or a day after the law was set to end, it says it couldn't work out this year's figure and
+  gives the 10% the cap never exceeds. California's area is read from the ZIP code's first three
+  digits only where every ZIP code of the prefix lies in one BLS area (the PMS's own reading of
+  USPS's prefixes, NOT VERIFIED): Los Angeles and Orange counties' 900-908, 910-912, 914-916,
+  918 and 926-928; San Diego's 919-921; Riverside's 925; San Francisco's 941, San Mateo's 944,
+  Alameda's and Contra Costa's 946-948. Any other California ZIP code says it can't tell.
+- The AI reads the same words (the MCP tool `rent_increase_limit`).
+
+**Left to the company.** Whether a home is exempt, a city's own rent control, the figure the
+state publishes where it differs from the PMS's (Oregon's and Washington's govern), and the law
+itself: no attorney has reviewed these rules.
 
 ## Renters insurance on file (migration 0062)
 

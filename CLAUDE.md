@@ -563,7 +563,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `ping`; `tools/list`; `tools/call`), answered as JSON, a notification with 202; no session or
   event stream. Read tools: `find` (tenants, owners, vendors, properties, units, leases in effect
   or to come, work orders, with their ids, by a part of the name), `list_reports`, `run_report`,
-  `rent_roll`, `delinquency`, `work_orders`, `lease_ledger`, `recent_events`, `my_drafts`;
+  `rent_roll`, `delinquency`, `work_orders`, `lease_ledger`, `recent_events`, `my_drafts`,
+  `rent_increase_limit` (a lease's cap by inflation, in the staff warning's words);
   propose tools write drafts (`propose_email`, `_notice`, `_work_order`, `_vendor`, `_visit`,
   `_note`). A tool refused says why as its result (`isError`), in a savepoint; none moves money.
   The key carries its company's day (`Key.today`, read before the role changes), the default day.
@@ -890,6 +891,20 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   written notice the property's state asks, counted from the day notice was given
   (`GET /api/leasing/renewals/<lease>/rent-change-notice`, `src/pms/rent_notice.py`; a warning,
   never a refusal; D-065); the tenant sees it coming in the portal.
+- Rent caps by inflation (migration 20261115000100, `docs/law.md`, `src/pms/rent_cap.py`): at a
+  property in California (Civil Code 1947.12), Oregon (ORS 90.323, 90.324) or Washington (HB 1217),
+  the rent change and renewal warnings (`RenewalNotice.cap`) say the most a year's increase may be
+  (the state's 5% or 7% plus its CPI-U's change, never above 10%, in percent and dollars over the
+  rent the state counts from), how it was worked out, whether the new rent is over it, that some
+  homes are exempt and the PMS can't tell which, and that it is no legal advice; never a refusal.
+  The figures come from the nightly run (`src/pms/cpi.py`, `PMS_CPI`: "bls", the BLS Public Data
+  API v1, keyless, fetched once a day for every company; "fake" for development and CI, refused
+  over https; none by default), kept per company (`trust_cpi_fetches`, `trust_cpi_figures`:
+  append-only, only what changed, a series' months read as one fetch saw them, so a rebase never
+  mixes bases; the AI role reads them). Unknown is never "no cap": no figures, a California ZIP
+  code the PMS can't place in a BLS area (`rent_cap.CALIFORNIA_AREAS`, by prefix) or a day past
+  the law's end says it couldn't work it out and gives the 10%. The AI reads the same words
+  through the MCP tool `rent_increase_limit`; `rent_cap.limit_words` gives them with no database.
 - Rent due day (migration 0081, the founder's review q013): a lease's rent is due on the first
   unless it picks another day, 1 to 28, from the first of a month (`trust_rent_due_days`,
   append-only, one per lease and month, naming who recorded it), within the lease's months and

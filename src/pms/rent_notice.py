@@ -14,9 +14,10 @@ records them; a state with none recorded gets no warning, and nothing is guessed
   lived there (or holds a lease) less than a year, 60 for one to two years, 90 for two or more.
 
 Left out, as docs/law.md records them: Colorado's 60 days (C.R.S. 38-12-701) applies only
-without a written lease, and a renewal is one; West Virginia has no statute on increases. Rent
-control and caps (California 1947.12, Oregon 90.324, Washington's) are not checked, nor Oregon's
-no increase in a tenancy's first year.
+without a written lease, and a renewal is one; West Virginia has no statute on increases. The
+states' caps on a year's increase by inflation (California 1947.12, Oregon 90.323 and 90.324,
+Washington's HB 1217), with Oregon's and Washington's first-year rules, are src/pms/rent_cap.py's;
+a city's rent control is not checked.
 """
 
 from __future__ import annotations

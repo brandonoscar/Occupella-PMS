@@ -963,6 +963,17 @@ tests = [
   "tests/api/test_fee_payees_api.py::test_the_owners_statements_and_management_fee_leave_the_companys_fees_out",
 ]
 
+[[invariant]]
+id = "a-rent-cap-never-reads-as-no-cap"
+statement = "Where a property is in California, Oregon or Washington, the rent change and renewal warnings say the most a year's increase may be: the state's 5% or 7% plus the change in the CPI-U its law names, rounded as it says, never above 10% nor below nothing, in dollars rounded down to the cent over the rent the state counts from, worked out from one fetch's figures only. Without the figures, a California ZIP code the PMS can't place, or past the law's end, it says it couldn't work it out and gives the 10%, never \"no cap\". A warning, never a refusal; the AI reads the same words."
+tests = [
+  "tests/properties/test_rent_cap_properties.py::test_the_most_is_the_fixed_percent_plus_the_change_within_ten",
+  "tests/properties/test_rent_cap_properties.py::test_a_higher_index_never_lowers_the_most",
+  "tests/properties/test_rent_cap_properties.py::test_no_figures_on_file_reads_as_couldnt_check_and_the_ten_percent",
+  "tests/test_cpi.py::test_a_month_no_fetch_answered_with_the_others_is_never_mixed_in",
+  "tests/api/test_mcp.py::test_rent_increase_limit_says_what_staff_are_warned_of",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]

@@ -5,6 +5,7 @@ the API's scheduler, which runs it when the API starts and then every day at 06:
 
 import logging
 import uuid
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 
 import psycopg
@@ -369,10 +370,12 @@ def test_a_scheduler_that_cannot_reach_the_database_tries_again(caplog):
 
 def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     seen = []
+    sources = []
 
-    def run_all(conn, day, url, sending, partner=None):
+    def run_all(conn, day, url, sending, partner=None, cpi_source=None):
         # The server's partner, which each company without keys of its own pays through.
         seen.append((day, url, sending, partner.server and partner.server.name))
+        sources.append(cpi_source and cpi_source.name)
         return [
             nightly.Ran(
                 pmc_id=None,
@@ -391,10 +394,13 @@ def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     monkeypatch.setenv("PMS_PUBLIC_URL", "https://rentals.example.com")
     monkeypatch.delenv("PMS_EMAIL_SENDER", raising=False)
     monkeypatch.delenv("PMS_PAYMENTS", raising=False)
+    monkeypatch.delenv("PMS_CPI", raising=False)
 
     assert nightly.main([]) == 0
     # No day: each company runs for its own (src/pms/days.py).
     assert seen == [(None, "https://rentals.example.com", False, None)]
+    # No PMS_CPI: no price index fetched.
+    assert sources == [None]
     assert capsys.readouterr().out == (
         "1 companies: 2 rents, 1 late fees, 3 bills, 4 emails, 5 management fees, 6 work orders,"
         " 0 autopay payments, 0 payments looked up\n"
@@ -410,6 +416,10 @@ def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     monkeypatch.setenv("PMS_PAYMENTS", "fake")
     assert nightly.main([]) == 0
     assert seen[-1][3] == "fake"
+    # A server that names a CPI source fetches the price index a rent cap counts (pms.cpi).
+    monkeypatch.setenv("PMS_CPI", "bls")
+    assert nightly.main([]) == 0
+    assert sources[-1] == "bls"
 
 
 def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url):
@@ -418,8 +428,8 @@ def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url
     started = []
 
     class Fake:
-        def __init__(self, url, role, public_url, sender, payments=None):
-            started.append(("made", role, public_url))
+        def __init__(self, url, role, public_url, sender, payments=None, cpi_source=None):
+            started.append(("made", role, public_url, cpi_source and cpi_source.name))
 
         def start(self):
             started.append("started")
@@ -430,8 +440,11 @@ def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url
     monkeypatch.setattr(nightly, "Scheduler", Fake)
     settings = api_app.Settings(database_url=database_url, nightly=True)
     with TestClient(api_app.create_app(settings)):
-        assert started == [("made", "trust_app", "http://localhost:8000"), "started"]
+        assert started == [("made", "trust_app", "http://localhost:8000", None), "started"]
     assert started[-1] == "stopped"
+    # The server's CPI source goes to the nightly run (pms.cpi).
+    with TestClient(api_app.create_app(replace(settings, cpi="fake"))):
+        assert started[-2] == ("made", "trust_app", "http://localhost:8000", "fake")
 
     monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.delenv("PMS_NIGHTLY", raising=False)
