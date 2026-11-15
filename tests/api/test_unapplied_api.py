@@ -452,6 +452,9 @@ def test_a_refund_takes_the_disburse_role(client, other_client, conn, app_conn, 
         {"amount": "1.001"},
         {"method": "bitcoin"},
         {"payer": ""},
+        # Into the posting's jsonb metadata, which Postgres refuses (22P05): a 422, not a 500
+        # (issue #229).
+        {"payer": "J. \x00Sample"},
         {"received_on": str(TODAY + DAY)},
     ],
 )
@@ -470,6 +473,26 @@ def test_bad_unapplied_cash_is_refused_and_records_nothing(client, conn, staff, 
     assert conn.execute(
         "SELECT count(*) FROM trust_unapplied_receipts WHERE pmc_id = %s", (pmc.pmc_id,)
     ).fetchone() == (0,)
+
+
+def test_a_payer_with_a_nul_character_is_told_so_and_the_next_receipt_goes_in(
+    client, conn, staff, pmc
+):
+    # The payer goes into the posting's jsonb metadata, where Postgres refuses \u0000 (22P05):
+    # it was a 500 (issue #229).
+    answer = send(
+        client,
+        "/api/unapplied",
+        request_id=uuid.uuid4(),
+        amount="10.00",
+        received_on=TODAY,
+        payer="J. \x00Sample",
+        method="check",
+    )
+
+    refused(answer, 422, "text can't contain a NUL character")
+    receive(client)
+    assert [r["payer"] for r in ok(client.get("/api/unapplied"), 200)] == ["J. Sample"]
 
 
 def test_another_companys_unapplied_cash_and_lease_are_not_found(client, conn, staff, pmc, lease):

@@ -674,10 +674,14 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.exception_handler(psycopg.DataError)
     async def unstorable(request: Request, error: psycopg.DataError) -> JSONResponse:
-        # Text with a NUL character, which Postgres can't store and psycopg refuses before it is
-        # sent: refused as bad input (the transaction is rolled back). Any other data error is
-        # still a server error, to be found and fixed.
-        if "NUL (0x00)" not in str(error):
+        # Text with a NUL character, which Postgres can't store: psycopg refuses it in a text
+        # parameter before it is sent, and Postgres refuses it as \u0000 in a jsonb one (22P05,
+        # a payer in a posting's metadata; issue #229). Refused as bad input (the transaction is
+        # rolled back). Any other data error is still a server error, to be found and fixed.
+        jsonb_nul = isinstance(error, psycopg.errors.UntranslatableCharacter) and "\\u0000" in (
+            error.diag.message_detail or ""
+        )
+        if "NUL (0x00)" not in str(error) and not jsonb_nul:
             raise error
         return JSONResponse({"detail": "text can't contain a NUL character"}, 422)
 
