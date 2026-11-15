@@ -233,14 +233,12 @@ BEGIN
         WHERE s.short > 0
         ORDER BY s.ledger_account_id COLLATE "C"
     LOOP
-        SELECT c.ledger_account_id INTO v_cash
+        -- The account's trust bank account has its cash: the payment brought it money, and money
+        -- reaches a trust bank account only through its cash (the tie-out), so STRICT never
+        -- finds none.
+        SELECT c.ledger_account_id INTO STRICT v_cash
         FROM trust_ledger_accounts AS c
         WHERE c.bank_account_id = v_short.bank_account_id AND c.kind = 'bank_cash';
-        IF NOT FOUND THEN
-            RAISE EXCEPTION 'trust: open the cash account (bank_cash) of trust bank account % first',
-                v_short.bank_account_id
-                USING ERRCODE = 'invalid_parameter_value';
-        END IF;
         v_requests := v_requests || (v_cash, v_short.ledger_account_id, v_short.short)::transfer_request;
         v_total := v_total + v_short.short;
     END LOOP;
@@ -350,7 +348,8 @@ BEGIN
         RAISE EXCEPTION 'trust: name the staff member who takes the owner''s repayment'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
-    IF coalesce(p_request_key, '') = '' OR length(p_request_key) > 200 THEN
+    -- Its posting's key is 'advance repaid/' and it, which trust_idempotency_keys keeps to 200.
+    IF coalesce(p_request_key, '') = '' OR length(p_request_key) > 185 THEN
         RAISE EXCEPTION 'trust: a repayment needs a request key, so a retry can''t take it twice'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;

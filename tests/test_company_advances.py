@@ -27,7 +27,9 @@ from helpers import (
     draw_owner,
     give_roles,
     make_pmc,
+    open_account,
     open_lease,
+    post,
 )
 
 from pms.api import rent
@@ -360,3 +362,265 @@ def test_the_ai_reads_covers_and_repayments_and_calls_none_of_it(ai_conn, books)
             "SELECT trust_cover_returned_payment(%s, %s, 'ai', now())",
             (books.pmc.pmc_id, books.payment),
         )
+
+
+# --- every refusal of the two write paths, word for word (CI's PL/pgSQL coverage) ---------------
+
+
+def cover(conn, books, key="k-1", payment=None):
+    return conn.execute(
+        "SELECT trust_cover_returned_payment(%s, %s, %s, now())",
+        (books.pmc.pmc_id, payment or books.payment, key),
+    ).fetchone()[0]
+
+
+@pytest.mark.parametrize("key", ["", "k" * 201])
+def test_a_cover_needs_a_request_key_of_200_characters_at_most(app_conn, books, key):
+    with (
+        acting_as(app_conn, books.staff),
+        pytest.raises(
+            psycopg.errors.InvalidParameterValue,
+            match="(?m)^trust: a cover needs a request key, so a retry can't cover twice$",
+        ),
+    ):
+        cover(app_conn, books, key)
+    assert books.advances() == []
+
+
+def test_a_cover_with_a_key_of_200_characters_is_taken(conn, books):
+    with acting_as(conn, books.staff), conn.transaction():
+        assert cover(conn, books, "k" * 200) == Decimal("110.00")
+        rent.bounce(conn, books.pmc.pmc_id, books.payment, TODAY)
+    assert [row[0] for row in books.advances()] == ["k" * 200]
+
+
+@pytest.mark.parametrize("which", ["unknown", "a draw", "another company's"])
+def test_a_cover_is_only_of_a_tenants_or_housing_authoritys_payment_of_the_company(
+    conn, app_conn, books, which
+):
+    if which == "unknown":
+        payment = "pglt_not_a_transfer"
+    elif which == "a draw":
+        payment = conn.execute(
+            "SELECT transfer_id FROM trust_owner_draws WHERE pmc_id = %s", (books.pmc.pmc_id,)
+        ).fetchone()[0]
+    else:
+        payment = Books(conn).payment
+    with (
+        acting_as(app_conn, books.staff),
+        pytest.raises(
+            psycopg.errors.InvalidParameterValue,
+            match=f"(?m)^trust: {payment} is not a tenant's or housing authority's payment in PMC "
+            f"{books.pmc.pmc_id}$",
+        ),
+    ):
+        cover(app_conn, books, payment=payment)
+    assert books.advances() == []
+
+
+def test_unapplied_cash_applied_to_a_lease_takes_no_cover(conn, app_conn, books):
+    """Unapplied cash came in before it found its lease, so it never bounces from the lease
+    (src/pms/api/rent.py says so first); the database refuses its cover too."""
+    key = f"payment/{uuid.uuid4()}"
+    [applied] = post(
+        conn,
+        books.pmc.pmc_id,
+        key,
+        [(books.pmc.operating_cash, books.owner, Decimal("50.00"))],
+        metadata={
+            "key": key,
+            "kind": "tenant payment",
+            "lease_id": str(books.lease),
+            "unapplied_id": str(uuid.uuid4()),
+        },
+    )
+    with (
+        acting_as(app_conn, books.staff),
+        pytest.raises(
+            psycopg.errors.InvalidParameterValue,
+            match=f"(?m)^trust: {applied} is unapplied cash applied to a lease: it does not"
+            " bounce$",
+        ),
+    ):
+        cover(app_conn, books, payment=applied)
+
+
+def test_a_payment_that_bounced_already_takes_no_cover(conn, app_conn):
+    on_this_day()
+    books = Books(conn, draw=None)
+    books.bounce()  # nothing was short: it bounced with no cover
+
+    with (
+        acting_as(app_conn, books.staff),
+        pytest.raises(
+            psycopg.errors.InvalidParameterValue,
+            match=f"(?m)^trust: the payment {books.payment} bounced already$",
+        ),
+    ):
+        cover(app_conn, books, "k-late")
+    assert books.advances() == []
+
+
+def test_a_cover_of_a_payment_nothing_is_short_of_records_nothing(conn, app_conn):
+    on_this_day()
+    books = Books(conn, draw=None)
+
+    with acting_as(app_conn, books.staff), app_conn.transaction():
+        assert cover(app_conn, books) == Decimal("0")
+        posted = app_conn.execute(
+            "SELECT count(*) FROM pgledger_transfers WHERE metadata ->> 'key' LIKE 'advance/%%'"
+            " AND to_account_id = %s",
+            (books.owner,),
+        ).fetchone()[0]
+    assert posted == 0
+    assert books.advances() == []
+    assert balance(conn, books.owner) == Decimal("2250.00")
+
+
+def repay(conn, books, key, amount):
+    return conn.execute(
+        "SELECT trust_repay_company_advance(%s, %s, %s, %s, now())",
+        (books.pmc.pmc_id, books.owner, amount, key),
+    ).fetchone()[0]
+
+
+@pytest.fixture
+def owed(conn, books):
+    """Books whose owner owes the company $110.00 and holds $500.00 to repay it from."""
+    books.bounce(cover=uuid.uuid4())
+    conn.execute(
+        "SELECT trust_record_owner_contribution(%s, %s, 'in-1', 500.00, now(), NULL)",
+        (books.pmc.pmc_id, books.owner),
+    )
+    return books
+
+
+@pytest.mark.parametrize("key", ["", None, "r" * 186])
+def test_a_repayment_needs_a_request_key_its_posting_key_can_hold(app_conn, owed, key):
+    with (
+        acting_as(app_conn, owed.staff),
+        pytest.raises(
+            psycopg.errors.InvalidParameterValue,
+            match="(?m)^trust: a repayment needs a request key, so a retry can't take it twice$",
+        ),
+    ):
+        repay(app_conn, owed, key, Decimal("10.00"))
+    assert owed.owed() == Decimal("110.00")
+
+
+def test_a_repayment_with_a_key_of_185_characters_is_taken(app_conn, owed):
+    with acting_as(app_conn, owed.staff):
+        repay(app_conn, owed, "r" * 185, Decimal("110.00"))
+    assert owed.owed() == Decimal("0.00")
+
+
+@pytest.mark.parametrize(
+    ("amount", "says"),
+    [
+        (None, "<NULL>"),
+        (Decimal("0"), "0"),
+        (Decimal("-1.00"), "-1.00"),
+        (Decimal("1.005"), "1.005"),
+    ],
+)
+def test_a_repayment_is_a_positive_amount_in_cents(app_conn, owed, amount, says):
+    with (
+        acting_as(app_conn, owed.staff),
+        pytest.raises(
+            psycopg.errors.InvalidParameterValue,
+            match=f"(?m)^trust: a repayment is a positive amount in cents, not {says}$",
+        ),
+    ):
+        repay(app_conn, owed, "r-1", amount)
+    assert owed.owed() == Decimal("110.00")
+
+
+def test_a_repayment_of_exactly_what_is_owed_and_one_cent_are_taken(app_conn, owed):
+    with acting_as(app_conn, owed.staff):
+        repay(app_conn, owed, "r-1", Decimal("0.01"))
+        repay(app_conn, owed, "r-2", Decimal("109.99"))
+    assert owed.owed() == Decimal("0.00")
+
+
+def test_a_repayment_needs_the_companys_fee_account_in_the_owners_trust_bank_account(
+    conn, app_conn
+):
+    """An owner's account in a trust bank account the company's fee account was never opened in:
+    the repayment has nowhere to go, and is refused, moving nothing."""
+    on_this_day()
+    pmc = make_pmc(conn)
+    pmc_id = pmc.pmc_id
+    bank = conn.execute(
+        "INSERT INTO trust_bank_accounts (pmc_id, kind, display_name)"
+        " VALUES (%s, 'operating', 'Synthetic second operating trust account') RETURNING id",
+        (pmc_id,),
+    ).fetchone()[0]
+    open_account(conn, pmc_id, bank, "bank_cash")
+    owner = conn.execute(
+        "INSERT INTO trust_owners (pmc_id, display_name) VALUES (%s, 'Owner C') RETURNING id",
+        (pmc_id,),
+    ).fetchone()[0]
+    prop = conn.execute(
+        "INSERT INTO trust_properties (pmc_id, display_name) VALUES (%s, 'Property C')"
+        " RETURNING id",
+        (pmc_id,),
+    ).fetchone()[0]
+    account = open_account(conn, pmc_id, bank, "owner_property", owner, prop)
+    tenant = add_tenant(conn, pmc_id, prop, "Tenant C")
+    unit = add_unit(conn, pmc_id, prop, "Unit C")
+    lease = open_lease(conn, pmc_id, unit, TODAY - 40 * DAY, None, "900.00", [tenant])
+    charge(conn, pmc_id, lease, TODAY - 10 * DAY, "900.00")
+    with conn.transaction():
+        paid = rent.record_payment(conn, pmc_id, lease, uuid.uuid4(), Decimal("900.00"), TODAY)
+    staff = add_staff(conn, pmc_id, "Manager C")
+    give_roles(conn, pmc_id, staff, ["disburse"])
+    with acting_as(conn, staff):
+        draw_owner(conn, pmc_id, account, "draw-c", "100.00", datetime.now(UTC))
+    with acting_as(conn, staff), conn.transaction():
+        rent.bounce(conn, pmc_id, paid.transfers[0], TODAY, uuid.uuid4())
+    conn.execute(
+        "SELECT trust_record_owner_contribution(%s, %s, 'in-c', 500.00, now(), NULL)",
+        (pmc_id, account),
+    )
+
+    with (
+        acting_as(app_conn, staff),
+        pytest.raises(
+            psycopg.errors.InvalidParameterValue,
+            match=f"(?m)^trust: open the PMC's fee account \\(pmc_income\\) in trust bank account "
+            f"{bank} first$",
+        ),
+    ):
+        app_conn.execute(
+            "SELECT trust_repay_company_advance(%s, %s, 50.00, 'r-c', now())", (pmc_id, account)
+        )
+    assert conn.execute("SELECT trust_company_advance_owed(%s)", (account,)).fetchone()[0] == (
+        Decimal("100.00")
+    )
+    assert balance(conn, account) == Decimal("500.00")
+
+
+def test_what_is_owed_reads_zero_for_an_account_never_covered_and_less_what_was_repaid(
+    conn, app_conn, owed
+):
+    other = owed.pmc.owners[1].account
+    assert conn.execute("SELECT trust_company_advance_owed(%s)", (other,)).fetchone()[0] == 0
+    with acting_as(app_conn, owed.staff):
+        repay(app_conn, owed, "r-1", Decimal("40.00"))
+    assert owed.owed() == Decimal("70.00")
+
+
+def test_a_payment_with_nothing_for_an_owner_reads_no_shortfall(conn, books):
+    """A payment all of it prepaid rent brought no owner's account anything: nothing would be
+    short, whatever the owner holds."""
+    with conn.transaction():
+        prepaid = rent.record_payment(
+            conn, books.pmc.pmc_id, books.lease, uuid.uuid4(), Decimal("75.00"), TODAY
+        )
+    assert (
+        conn.execute(
+            "SELECT * FROM trust_return_shortfall(%s, %s)",
+            (books.pmc.pmc_id, prepaid.transfers[0]),
+        ).fetchall()
+        == []
+    )

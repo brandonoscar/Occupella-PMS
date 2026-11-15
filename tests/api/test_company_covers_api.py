@@ -15,6 +15,7 @@ import pytest
 from helpers import (
     add_authority,
     add_unit,
+    approve,
     assist,
     balance,
     bank_sums,
@@ -324,3 +325,75 @@ def test_the_company_covers_an_authority_payment_that_came_back(client, conn, st
         ok(client.post(path, json=body(on=TODAY, cover_shortfall=True, request_id=request))) == done
     )
     assert len(advances(conn, pmc)) == 1
+
+
+def authority_paid(client, conn, pmc, parts=("800.00",)):
+    """A lease of Owner 1's property from the first of START's month whose housing authority
+    pays $800.00 of its rent, and the authority's payments of it (one per part), received on
+    START. Returns the payments' first transfers."""
+    first = START.replace(day=1)
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id)
+    lease = open_lease(conn, pmc.pmc_id, unit, first, None, "1000.00", [tenant_of(conn, pmc)])
+    authority = add_authority(conn, pmc.pmc_id)
+    assist(conn, pmc.pmc_id, lease, authority, first, "800.00")
+    ok(client.post("/api/rent/run", json=body(due_on=first, late_fees_as_of=first)), 200)
+    return [
+        ok(
+            client.post(
+                "/api/assistance/payments",
+                json=body(
+                    request_id=uuid.uuid4(),
+                    housing_authority_id=authority,
+                    received_on=START,
+                    lines=[{"lease_id": lease, "amount": part}],
+                ),
+            )
+        )["transfers"][0]
+        for part in parts
+    ]
+
+
+def test_a_cover_request_id_covers_no_second_authority_payment(client, conn, staff, pmc):
+    first, second = authority_paid(client, conn, pmc, ("400.00", "400.00"))
+    draw_owner(conn, pmc.pmc_id, pmc.owners[0].account, "draw-1", "800.00", datetime.now(UTC))
+    request = uuid.uuid4()
+    ok(
+        client.post(
+            f"/api/assistance/payments/{first}/bounce",
+            json=body(on=TODAY, cover_shortfall=True, request_id=request),
+        )
+    )
+
+    refused(
+        client.post(
+            f"/api/assistance/payments/{second}/bounce",
+            json=body(on=TODAY, cover_shortfall=True, request_id=request),
+        ),
+        409,
+        "this request id covered another payment's return",
+    )
+    assert advances(conn, pmc) == [(Decimal("400.00"), staff.person_id)]
+    assert balance(conn, pmc.owners[0].account) == Decimal("0.00")
+
+
+def test_an_authority_payment_bouncing_in_a_closed_period_is_refused_in_words(
+    client, conn, staff, pmc
+):
+    [paid] = authority_paid(client, conn, pmc)
+    approve(
+        conn,
+        pmc.pmc_id,
+        pmc.operating_bank_id,
+        datetime.combine(START - DAY, datetime.min.time(), UTC),
+        datetime.combine(TODAY - 2 * DAY, datetime.min.time(), UTC),
+    )
+
+    refused(
+        client.post(f"/api/assistance/payments/{paid}/bounce", json=body(on=TODAY - 3 * DAY)),
+        409,
+        "that day is in a period already reconciled and closed: date it in the next open one",
+    )
+    assert balance(conn, pmc.owners[0].account) == Decimal("800.00")
+    # Dated in the open period, it bounces.
+    ok(client.post(f"/api/assistance/payments/{paid}/bounce", json=body(on=TODAY)))
+    assert balance(conn, pmc.owners[0].account) == Decimal("0.00")
