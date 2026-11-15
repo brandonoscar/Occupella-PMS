@@ -152,7 +152,7 @@ DECLARE
     v_short record;
     v_requests transfer_request[] := ARRAY[]::transfer_request[];
     v_cash text;
-    v_total numeric := 0;
+    v_total numeric := 0::numeric;
 BEGIN
     IF v_staff IS NULL THEN
         RAISE EXCEPTION 'trust: name the staff member who covers an owner''s shortfall'
@@ -245,7 +245,7 @@ BEGIN
         v_total := v_total + v_short.short;
     END LOOP;
     IF cardinality(v_requests) = 0 THEN
-        RETURN 0;  -- nothing is short: the bounce posts as it is
+        RETURN 0::numeric;  -- nothing is short: the bounce posts as it is
     END IF;
 
     -- One posting, one transfer into each short account (each account once).

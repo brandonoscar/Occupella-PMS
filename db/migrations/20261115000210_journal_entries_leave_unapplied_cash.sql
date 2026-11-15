@@ -17,28 +17,12 @@ CREATE FUNCTION trust_refuse_unapplied_journal_line() RETURNS trigger
     LANGUAGE plpgsql
     SET search_path TO 'public', 'pg_temp'
     AS $$
-DECLARE
-    v_found boolean;
 BEGIN
-    IF TG_TABLE_NAME = 'trust_journal_entry_lines' THEN
-        SELECT EXISTS (
-            SELECT 1 FROM trust_ledger_accounts AS a
-            WHERE a.ledger_account_id IN (NEW.from_account, NEW.to_account)
-              AND a.kind = 'unapplied_cash'
-        ) INTO v_found;
-    ELSIF NEW.decision = 'posted' THEN
-        -- An entry proposed before this migration, posted now.
-        SELECT EXISTS (
-            SELECT 1
-            FROM trust_journal_entry_lines AS l
-            JOIN trust_ledger_accounts AS a
-              ON a.ledger_account_id IN (l.from_account, l.to_account)
-            WHERE l.entry_id = NEW.entry_id AND a.kind = 'unapplied_cash'
-        ) INTO v_found;
-    ELSE
-        v_found := false;  -- declining moves nothing
-    END IF;
-    IF v_found THEN
+    IF EXISTS (
+        SELECT 1 FROM trust_ledger_accounts AS a
+        WHERE a.ledger_account_id IN (NEW.from_account, NEW.to_account)
+          AND a.kind = 'unapplied_cash'
+    ) THEN
         RAISE EXCEPTION 'trust: a journal entry moves no money into or out of unapplied cash'
             USING ERRCODE = 'check_violation',
                   HINT = 'Apply unapplied cash to a lease or refund it from Banking.';
@@ -48,10 +32,32 @@ END;
 $$;
 REVOKE ALL ON FUNCTION trust_refuse_unapplied_journal_line() FROM PUBLIC;
 
+-- An entry proposed before this migration, posted now; declining moves nothing.
+CREATE FUNCTION trust_refuse_posting_unapplied_journal_entry() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NEW.decision = 'posted' AND EXISTS (
+        SELECT 1
+        FROM trust_journal_entry_lines AS l
+        JOIN trust_ledger_accounts AS a
+          ON a.ledger_account_id IN (l.from_account, l.to_account)
+        WHERE l.entry_id = NEW.entry_id AND a.kind = 'unapplied_cash'
+    ) THEN
+        RAISE EXCEPTION 'trust: a journal entry moves no money into or out of unapplied cash'
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Apply unapplied cash to a lease or refund it from Banking.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION trust_refuse_posting_unapplied_journal_entry() FROM PUBLIC;
+
 CREATE TRIGGER trust_no_unapplied_cash BEFORE INSERT ON trust_journal_entry_lines
     FOR EACH ROW EXECUTE FUNCTION trust_refuse_unapplied_journal_line();
 CREATE TRIGGER trust_no_unapplied_cash BEFORE INSERT ON trust_journal_entry_decisions
-    FOR EACH ROW EXECUTE FUNCTION trust_refuse_unapplied_journal_line();
+    FOR EACH ROW EXECUTE FUNCTION trust_refuse_posting_unapplied_journal_entry();
 
 -- migrate:down
 SET LOCAL lock_timeout = '5s';
@@ -59,5 +65,7 @@ SET LOCAL statement_timeout = '60s';
 
 DROP TRIGGER trust_no_unapplied_cash ON trust_journal_entry_decisions;
 DROP TRIGGER trust_no_unapplied_cash ON trust_journal_entry_lines;
+-- squawk-ignore ban-drop-function
+DROP FUNCTION trust_refuse_posting_unapplied_journal_entry();
 -- squawk-ignore ban-drop-function
 DROP FUNCTION trust_refuse_unapplied_journal_line();
