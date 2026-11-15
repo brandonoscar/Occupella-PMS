@@ -13,7 +13,7 @@ import zlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -770,14 +770,24 @@ def charge_recurring_due(connection, pmc_id, due_on) -> int:
 
 
 def add_late_fee_policy(
-    connection, pmc_id, property_id, starts_on, grace_days, flat_fee="0", percent="0", maximum=None
+    connection,
+    pmc_id,
+    property_id,
+    starts_on,
+    grace_days,
+    flat_fee="0",
+    percent="0",
+    maximum=None,
+    entered_at=None,
 ) -> UUID:
-    """A property's late fee terms, in force from starts_on."""
+    """A property's late fee terms, in force from starts_on and on file since entered_at: the
+    start of starts_on (UTC) unless given, as terms entered when they began. Terms count for a
+    rent only once on file by the day its fee comes due (migration 20261115000200, M-049)."""
     return _one(
         connection,
         "INSERT INTO trust_late_fee_policies"
-        " (pmc_id, property_id, starts_on, grace_days, flat_fee, percent, maximum)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        " (pmc_id, property_id, starts_on, grace_days, flat_fee, percent, maximum, created_at)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (
             pmc_id,
             property_id,
@@ -786,6 +796,9 @@ def add_late_fee_policy(
             Decimal(flat_fee),
             Decimal(percent),
             None if maximum is None else Decimal(maximum),
+            entered_at
+            if entered_at is not None
+            else datetime.combine(date.fromisoformat(str(starts_on)), datetime.min.time(), UTC),
         ),
     )
 

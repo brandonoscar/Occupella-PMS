@@ -88,9 +88,12 @@ FROM (VALUES
 ) AS g (name, pct, flat, leasing)
 JOIN golden_account AS a ON a.name = g.name;
 
-INSERT INTO trust_late_fee_policies (pmc_id, property_id, starts_on, grace_days, flat_fee)
+-- On file from the day they start (late fees count terms on file by a fee's day, M-049).
+INSERT INTO trust_late_fee_policies (
+    pmc_id, property_id, starts_on, grace_days, flat_fee, created_at
+)
 VALUES ('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000032',
-        '2026-01-01', 5, 50.00);
+        '2026-01-01', 5, 50.00, '2026-01-01 00:00:00+00');
 
 -- Leases: (unit, rent, tenant).
 SELECT trust_open_lease(

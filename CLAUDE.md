@@ -863,7 +863,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   month charges the new lease its days. The run and an end wait for each other. A property's
   late fee terms (grace days, flat, percent of unpaid,
   cap) are in force from a date; `trust_assess_late_fees` charges a rent still open at the
-  end of its last grace day (UTC) one late fee under the terms in force on its due date, reaching
+  end of its last grace day (UTC) one late fee under the terms in force on its due date (among
+  those on file by the day its fee comes due, migration 20261115000200, M-049), reaching
   its rents in the order their grace ends so one run charges what a run every day would (a late
   fee is an open charge too; migration 0056), never one whose fee would fall in a closed year
   (migration 20261105000700). A payment online counts from the company's day the tenant (or

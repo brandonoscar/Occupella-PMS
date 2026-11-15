@@ -574,6 +574,15 @@ tests = [
 ]
 
 [[invariant]]
+id = "late-fee-terms-count-from-when-they-were-entered"
+statement = "A rent is judged by the late fee terms in force on its due date among those on file (the company's day they were entered) by the day its fee would come due, the day after its last day of grace (migration 20261115000200; docs/edge-cases.md M-049): terms entered with a start day in the past charge no fee on a rent whose grace had run out, as a run every day would have charged none then."
+tests = [
+  "tests/properties/test_late_fee_terms_on_file_properties.py::test_late_fees_count_only_terms_on_file_by_the_day_a_fee_comes_due",
+  "tests/test_rent_automation.py::test_terms_entered_from_a_day_gone_by_charge_no_fee_on_rents_already_past_grace",
+  "tests/test_rent_automation.py::test_a_rent_past_grace_keeps_the_terms_on_file_then",
+]
+
+[[invariant]]
 id = "lease-end-keeps-charged-months-at-their-days"
 statement = "When a lease's end is set, moved or cleared, every charge the rent run makes for it (rent, and a recurring charge's fee or credit) that, with what followed earlier ends, stood at its month's days under the old end gets a credit or a fee, due on its own day, so it stands at its month's days under the new end (a month wholly after the end at nothing); a charge standing at anything else is left as it is. Setting the same end changes nothing, and a rent run and an end wait for each other, so no charged month misses an end."
 tests = [

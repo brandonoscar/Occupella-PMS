@@ -319,12 +319,14 @@ def books(
                     approval_limit=limit,
                 ),
             )
-            setup.add_late_fees(
-                s,
+            # On file since they started, as a company on the PMS then had them (M-049).
+            setup.late_fee_terms(
                 conn,
+                s.pmc_id,
                 setup.NewLateFees(
                     property_id=property_id, starts_on=lease_start, grace_days=5, flat_fee=LATE_FEE
                 ),
+                datetime.combine(lease_start, time(0), UTC),
             )
             for unit, monthly, people in units:
                 unit_id = uid(
@@ -892,12 +894,13 @@ def new_property(
                 approval_limit=limit,
             ),
         )
-        setup.add_late_fees(
-            s,
+        setup.late_fee_terms(
             conn,
+            s.pmc_id,
             setup.NewLateFees(
                 property_id=property_id, starts_on=since, grace_days=5, flat_fee=LATE_FEE
             ),
+            datetime.combine(since, time(0), UTC),
         )
     return property_id
 

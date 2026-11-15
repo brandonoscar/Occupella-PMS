@@ -353,6 +353,56 @@ def test_the_terms_in_force_on_the_rents_due_date_apply(conn, pmc):
     ]
 
 
+@pytest.mark.parametrize(
+    ("entered_on", "march_fee"),
+    [
+        (date(2026, 3, 7), [Decimal("50.00")]),  # on file on March's fee day: it counts
+        (date(2026, 3, 8), []),  # a day after: March's grace had run out without terms
+    ],
+)
+def test_terms_entered_from_a_day_gone_by_charge_no_fee_on_rents_already_past_grace(
+    conn, pmc, entered_on, march_fee
+):
+    """docs/edge-cases.md M-049, D-082: terms entered with a start day in the past charge no
+    fee on a rent whose grace ran out before they were on file, paid late or still open; a rent
+    whose grace runs out after is charged as ever."""
+    lease = lease_on(conn, pmc, JAN_1)
+    for due_on in (FEB_1, MAR_1, date(2026, 4, 1)):
+        charge_rent_due(conn, pmc.pmc_id, due_on)
+    pay(conn, pmc, rent_due(conn, lease, FEB_1), RENT, at(date(2026, 2, 20)))  # paid late
+    add_late_fee_policy(
+        conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, 5, "50", entered_at=at(entered_on, 18)
+    )
+
+    assess_late_fees(conn, pmc.pmc_id, date(2026, 4, 30))
+
+    assert late_fees(conn, rent_due(conn, lease, FEB_1)) == []
+    assert [row[2] for row in charges(conn, lease, "fee") if row[0].month == 3] == march_fee
+    assert [row[0] for row in charges(conn, lease, "fee") if row[0].month == 4] == [
+        date(2026, 4, 7)
+    ]
+
+
+def test_a_rent_past_grace_keeps_the_terms_on_file_then(conn, pmc):
+    """Terms entered later from a day gone by don't replace, for a rent already late, the terms
+    on file when its grace ran out (M-049)."""
+    lease = lease_on(conn, pmc, JAN_1)
+    property_id = pmc.owners[0].property_id
+    add_late_fee_policy(conn, pmc.pmc_id, property_id, JAN_1, 5, "25")
+    add_late_fee_policy(
+        conn, pmc.pmc_id, property_id, FEB_1, 5, "75", entered_at=at(date(2026, 3, 15))
+    )
+    for due_on in (MAR_1, date(2026, 4, 1)):
+        charge_rent_due(conn, pmc.pmc_id, due_on)
+
+    assess_late_fees(conn, pmc.pmc_id, date(2026, 4, 30))
+
+    assert [(row[0], row[2]) for row in charges(conn, lease, "fee")] == [
+        (date(2026, 3, 7), Decimal("25.00")),  # late before the new terms were on file
+        (date(2026, 4, 7), Decimal("75.00")),
+    ]
+
+
 def test_one_run_charges_what_a_run_every_day_would(conn, pmc):
     """A late fee is open like any charge, but a credit comes off the rent first (migration
     0093), a later rent before an earlier late fee. One run reaching two rents of a lease takes

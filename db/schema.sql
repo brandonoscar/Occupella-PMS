@@ -1072,6 +1072,10 @@ BEGIN
             SELECT t.grace_days
             FROM trust_late_fee_policies AS t
             WHERE t.property_id = u.property_id AND t.starts_on <= c.due_on
+              -- On file by the day its fee comes due (docs/edge-cases.md M-049, D-082): terms
+              -- entered later, from a day in the past, charge no fee on a rent whose grace had
+              -- run out, as a run every day would have charged none then.
+              AND trust_pmc_day(t.pmc_id, t.created_at) <= c.due_on + t.grace_days + 1
             ORDER BY t.starts_on DESC
             LIMIT 1
         ) AS p ON true
@@ -1124,6 +1128,7 @@ BEGIN
             SELECT t.id, t.grace_days, t.flat_fee, t.percent, t.maximum
             FROM trust_late_fee_policies AS t
             WHERE t.property_id = u.property_id AND t.starts_on <= c.due_on
+              AND trust_pmc_day(t.pmc_id, t.created_at) <= c.due_on + t.grace_days + 1
             ORDER BY t.starts_on DESC
             LIMIT 1
         ) AS p ON true
@@ -3223,37 +3228,6 @@ BEGIN
             USING ERRCODE = 'unique_violation';
     END IF;
     RETURN NEW;
-END;
-$$;
-
-
---
--- Name: trust_check_company_advance(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.trust_check_company_advance() RETURNS trigger
-    LANGUAGE plpgsql
-    SET search_path TO 'public', 'pg_temp'
-    AS $$
-DECLARE
-    v_low numeric;
-BEGIN
-    SELECT min(e.account_current_balance) INTO v_low
-    FROM pgledger_transfers AS t
-    JOIN pgledger_entries AS e ON e.transfer_id = t.id
-    WHERE t.metadata ->> 'key' = 'bounce/' || NEW.payment_key
-      AND e.account_id = NEW.ledger_account_id;
-    IF v_low IS NULL THEN
-        RAISE EXCEPTION 'trust: the company covers a returned payment only as it bounces: % '
-            'did not bounce', NEW.payment_transfer_id
-            USING ERRCODE = 'check_violation';
-    END IF;
-    IF v_low <> 0 THEN
-        RAISE EXCEPTION 'trust: the company''s cover of % into % is not what its bounce needed '
-            '(the account held % at its lowest)', NEW.amount, NEW.ledger_account_id, v_low
-            USING ERRCODE = 'check_violation';
-    END IF;
-    RETURN NULL;
 END;
 $$;
 
@@ -5752,21 +5726,6 @@ $$;
 
 
 --
--- Name: trust_company_advance_owed(text); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.trust_company_advance_owed(p_account text) RETURNS numeric
-    LANGUAGE sql STABLE
-    SET search_path TO 'public', 'pg_temp'
-    AS $$
-    SELECT coalesce((SELECT sum(v.amount) FROM trust_company_advances AS v
-                     WHERE v.ledger_account_id = p_account), 0)
-         - coalesce((SELECT sum(r.amount) FROM trust_company_advance_repayments AS r
-                     WHERE r.ledger_account_id = p_account), 0)
-$$;
-
-
---
 -- Name: trust_complete_lease_offer(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5894,143 +5853,6 @@ BEGIN
     INSERT INTO trust_lease_offer_completions (pmc_id, offer_id, lease_id, completed_by)
     VALUES (p_pmc_id, p_offer_id, v_lease, p_completed_by);
     RETURN v_lease;
-END;
-$$;
-
-
---
--- Name: trust_cover_returned_payment(uuid, text, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.trust_cover_returned_payment(p_pmc_id uuid, p_payment text, p_request_key text, p_event_at timestamp with time zone) RETURNS numeric
-    LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'public', 'pg_temp'
-    AS $$
-DECLARE
-    v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
-    v_payment pgledger_transfers;
-    v_key text;
-    v_first text;
-    v_earlier text;
-    v_short record;
-    v_requests transfer_request[] := ARRAY[]::transfer_request[];
-    v_cash text;
-    v_total numeric := 0;
-BEGIN
-    IF v_staff IS NULL THEN
-        RAISE EXCEPTION 'trust: name the staff member who covers an owner''s shortfall'
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
-    IF NOT trust_staff_may(p_pmc_id, v_staff, 'rent') THEN
-        RAISE EXCEPTION 'trust: staff member % may not record rent work, so not a returned '
-            'payment''s cover', v_staff
-            USING ERRCODE = 'insufficient_privilege';
-    END IF;
-    IF coalesce(p_request_key, '') = '' OR length(p_request_key) > 200 THEN
-        RAISE EXCEPTION 'trust: a cover needs a request key, so a retry can''t cover twice'
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
-
-    SELECT t.* INTO v_payment
-    FROM pgledger_transfers AS t
-    JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id
-    WHERE t.id = p_payment AND a.pmc_id = p_pmc_id
-      AND t.metadata ->> 'kind' IN ('tenant payment', 'housing authority payment');
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'trust: % is not a tenant''s or housing authority''s payment in PMC %',
-            p_payment, p_pmc_id
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
-    IF v_payment.metadata ? 'unapplied_id' THEN
-        RAISE EXCEPTION 'trust: % is unapplied cash applied to a lease: it does not bounce',
-            p_payment
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
-    v_key := v_payment.metadata ->> 'key';
-    -- Covers of one payment wait for each other.
-    PERFORM pg_advisory_xact_lock(hashtextextended('company cover of ' || v_key, 0));
-
-    SELECT t.id INTO v_first
-    FROM pgledger_transfers AS t
-    WHERE t.metadata ->> 'key' = v_key
-    ORDER BY t.created_at, t.id
-    LIMIT 1;
-
-    -- A retry: the same request key returns what it advanced; another payment's key is refused.
-    SELECT min(v.payment_key) INTO v_earlier
-    FROM trust_company_advances AS v
-    WHERE v.pmc_id = p_pmc_id AND v.request_key = p_request_key;
-    IF v_earlier IS NOT NULL THEN
-        IF v_earlier <> v_key THEN
-            RAISE EXCEPTION 'trust: request key % already covered another returned payment',
-                p_request_key
-                USING ERRCODE = 'unique_violation',
-                      HINT = 'Use a new key for a new cover; resend a key only to retry.';
-        END IF;
-        RETURN (SELECT sum(v.amount) FROM trust_company_advances AS v
-                WHERE v.pmc_id = p_pmc_id AND v.request_key = p_request_key);
-    END IF;
-    IF EXISTS (SELECT 1 FROM trust_company_advances AS v
-               WHERE v.pmc_id = p_pmc_id AND v.payment_key = v_key) THEN
-        RAISE EXCEPTION 'trust: the company already covered the return of %', v_first
-            USING ERRCODE = 'unique_violation';
-    END IF;
-    IF EXISTS (SELECT 1 FROM trust_idempotency_keys AS k
-               WHERE k.pmc_id = p_pmc_id AND k.idempotency_key = 'bounce/' || v_key) THEN
-        RAISE EXCEPTION 'trust: the payment % bounced already', v_first
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
-
-    -- Each owner's account the payment paid into, locked (its ledger row too, so what it holds
-    -- holds until this commits), then what it is short.
-    PERFORM trust_lock_owner_account(p_pmc_id, s.ledger_account_id)
-    FROM trust_return_shortfall(p_pmc_id, p_payment) AS s;
-    PERFORM l.id FROM pgledger_accounts AS l
-    WHERE l.id IN (SELECT s.ledger_account_id FROM trust_return_shortfall(p_pmc_id, p_payment) AS s)
-    ORDER BY l.id
-    FOR NO KEY UPDATE;
-    FOR v_short IN
-        SELECT s.ledger_account_id, s.short, a.bank_account_id
-        FROM trust_return_shortfall(p_pmc_id, p_payment) AS s
-        JOIN trust_ledger_accounts AS a ON a.ledger_account_id = s.ledger_account_id
-        WHERE s.short > 0
-        ORDER BY s.ledger_account_id COLLATE "C"
-    LOOP
-        SELECT c.ledger_account_id INTO v_cash
-        FROM trust_ledger_accounts AS c
-        WHERE c.bank_account_id = v_short.bank_account_id AND c.kind = 'bank_cash';
-        IF NOT FOUND THEN
-            RAISE EXCEPTION 'trust: open the cash account (bank_cash) of trust bank account % first',
-                v_short.bank_account_id
-                USING ERRCODE = 'invalid_parameter_value';
-        END IF;
-        v_requests := v_requests || (v_cash, v_short.ledger_account_id, v_short.short)::transfer_request;
-        v_total := v_total + v_short.short;
-    END LOOP;
-    IF cardinality(v_requests) = 0 THEN
-        RETURN 0;  -- nothing is short: the bounce posts as it is
-    END IF;
-
-    -- One posting, one transfer into each short account (each account once).
-    INSERT INTO trust_company_advances (
-        pmc_id, request_key, payment_key, payment_transfer_id, ledger_account_id, amount,
-        transfer_id, recorded_by
-    )
-    SELECT p_pmc_id, p_request_key, v_key, v_first, p.to_account_id, p.amount, p.id, v_staff
-    FROM trust_post_transfers(
-        p_pmc_id,
-        'advance/' || v_key,
-        v_requests,
-        p_event_at,
-        jsonb_build_object(
-            'key', 'advance/' || v_key,
-            'kind', 'company advance',
-            'payment_key', v_key,
-            'request_key', p_request_key,
-            'memo', 'Covered by the company for a returned payment (owed back to the company)'
-        )
-    ) AS p;
-    RETURN v_total;
 END;
 $$;
 
@@ -9142,26 +8964,6 @@ $$;
 
 
 --
--- Name: trust_refuse_matching_an_advance(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.trust_refuse_matching_an_advance() RETURNS trigger
-    LANGUAGE plpgsql
-    SET search_path TO 'public', 'pg_temp'
-    AS $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM trust_company_advances AS v WHERE v.transfer_id = NEW.transfer_id)
-    THEN
-        RAISE EXCEPTION 'trust: transfer % is the company''s cover of a returned payment, not a '
-            'payment', NEW.transfer_id
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
-
---
 -- Name: trust_refuse_moving_closed_through(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9521,84 +9323,6 @@ CREATE FUNCTION public.trust_rent_on(p_lease_id uuid, p_day date) RETURNS numeri
         ORDER BY c.effective_on DESC
         LIMIT 1
     ), (SELECT l.monthly_rent FROM trust_leases AS l WHERE l.id = p_lease_id))
-$$;
-
-
---
--- Name: trust_repay_company_advance(uuid, text, numeric, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.trust_repay_company_advance(p_pmc_id uuid, p_account text, p_amount numeric, p_request_key text, p_event_at timestamp with time zone) RETURNS text
-    LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'public', 'pg_temp'
-    AS $$
-DECLARE
-    v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
-    v_account trust_ledger_accounts;
-    v_taken trust_company_advance_repayments;
-    v_owed numeric;
-    v_income text;
-    v_transfer text;
-BEGIN
-    IF v_staff IS NULL THEN
-        RAISE EXCEPTION 'trust: name the staff member who takes the owner''s repayment'
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
-    IF coalesce(p_request_key, '') = '' OR length(p_request_key) > 200 THEN
-        RAISE EXCEPTION 'trust: a repayment needs a request key, so a retry can''t take it twice'
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
-    v_account := trust_lock_owner_account(p_pmc_id, p_account);
-
-    SELECT r.* INTO v_taken
-    FROM trust_company_advance_repayments AS r
-    WHERE r.pmc_id = p_pmc_id AND r.request_key = p_request_key;
-    IF FOUND THEN
-        IF (v_taken.ledger_account_id, v_taken.amount) IS DISTINCT FROM (p_account, p_amount) THEN
-            RAISE EXCEPTION 'trust: request key % already repaid % from %',
-                p_request_key, round(v_taken.amount, 2), v_taken.ledger_account_id
-                USING ERRCODE = 'unique_violation',
-                      HINT = 'Use a new key for a new repayment; resend a key only to retry.';
-        END IF;
-        RETURN v_taken.transfer_id;  -- a retry: the repayment already taken
-    END IF;
-
-    IF p_amount IS NULL OR p_amount <= 0 OR p_amount <> round(p_amount, 2) THEN
-        RAISE EXCEPTION 'trust: a repayment is a positive amount in cents, not %', p_amount
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
-    v_owed := trust_company_advance_owed(p_account);
-    IF p_amount > v_owed THEN
-        RAISE EXCEPTION 'trust: % is owed back to the company from %; % is too much',
-            round(v_owed, 2), p_account, round(p_amount, 2)
-            USING ERRCODE = 'check_violation';
-    END IF;
-
-    SELECT t.ledger_account_id INTO v_income
-    FROM trust_ledger_accounts AS t
-    WHERE t.bank_account_id = v_account.bank_account_id AND t.kind = 'pmc_income';
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'trust: open the PMC''s fee account (pmc_income) in trust bank account % '
-            'first', v_account.bank_account_id
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
-    SELECT p.id INTO v_transfer
-    FROM trust_post_transfers(
-        p_pmc_id,
-        'advance repaid/' || p_request_key,
-        ARRAY[(p_account, v_income, p_amount)::transfer_request],
-        p_event_at,
-        jsonb_build_object(
-            'key', 'advance repaid/' || p_request_key,
-            'kind', 'company advance repaid',
-            'memo', 'Repaid to the company: its cover of a returned payment'
-        )
-    ) AS p;
-    INSERT INTO trust_company_advance_repayments (
-        pmc_id, request_key, ledger_account_id, amount, transfer_id, recorded_by
-    ) VALUES (p_pmc_id, p_request_key, p_account, p_amount, v_transfer, v_staff);
-    RETURN v_transfer;
-END;
 $$;
 
 
@@ -14758,37 +14482,6 @@ $$;
 
 
 --
--- Name: trust_return_shortfall(uuid, text); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.trust_return_shortfall(p_pmc_id uuid, p_payment text) RETURNS TABLE(ledger_account_id text, brought numeric, held numeric, short numeric)
-    LANGUAGE sql STABLE
-    SET search_path TO 'public', 'pg_temp'
-    AS $$
-    WITH payment AS (
-        SELECT t.metadata ->> 'key' AS key
-        FROM pgledger_transfers AS t
-        JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id
-        WHERE t.id = p_payment AND a.pmc_id = p_pmc_id
-          AND t.metadata ->> 'kind' IN ('tenant payment', 'housing authority payment')
-          AND NOT EXISTS (
-              SELECT 1 FROM pgledger_transfers AS b
-              WHERE b.metadata ->> 'key' = 'bounce/' || (t.metadata ->> 'key')
-          )
-    )
-    SELECT a.ledger_account_id, sum(t.amount), l.balance, greatest(sum(t.amount) - l.balance, 0)
-    FROM payment AS p
-    JOIN pgledger_transfers AS t ON t.metadata ->> 'key' = p.key
-    JOIN trust_ledger_accounts AS a
-        ON a.ledger_account_id = t.to_account_id AND a.pmc_id = p_pmc_id
-       AND a.kind = 'owner_property'
-    JOIN pgledger_accounts AS l ON l.id = a.ledger_account_id
-    GROUP BY a.ledger_account_id, l.balance
-    ORDER BY a.ledger_account_id COLLATE "C"
-$$;
-
-
---
 -- Name: trust_reverse_assistance_payment(uuid, uuid, text, text, numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16313,6 +16006,7 @@ CREATE TABLE public.trust_admin_alerts (
     day date NOT NULL,
     what text NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_admin_alerts_kind_check CHECK ((kind = ANY (ARRAY['nightly_failed'::text, 'deliveries_failing'::text]))),
     CONSTRAINT trust_admin_alerts_what_check CHECK (((what ~ '\S'::text) AND (length(what) <= 1000)))
 );
 
@@ -17346,45 +17040,6 @@ CREATE TABLE public.trust_charge_waivers (
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT trust_charge_waivers_reason_check CHECK (((reason ~ '\S'::text) AND (char_length(reason) <= 500)))
-);
-
-
---
--- Name: trust_company_advance_repayments; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.trust_company_advance_repayments (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    pmc_id uuid NOT NULL,
-    request_key text NOT NULL,
-    ledger_account_id text NOT NULL,
-    amount numeric NOT NULL,
-    transfer_id text NOT NULL,
-    recorded_by uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT trust_company_advance_repayments_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
-    CONSTRAINT trust_company_advance_repayments_request_key_check CHECK (((length(request_key) >= 1) AND (length(request_key) <= 200)))
-);
-
-
---
--- Name: trust_company_advances; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.trust_company_advances (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    pmc_id uuid NOT NULL,
-    request_key text NOT NULL,
-    payment_key text NOT NULL,
-    payment_transfer_id text NOT NULL,
-    ledger_account_id text NOT NULL,
-    amount numeric NOT NULL,
-    transfer_id text NOT NULL,
-    recorded_by uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT trust_company_advances_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
-    CONSTRAINT trust_company_advances_payment_key_check CHECK (((length(payment_key) >= 1) AND (length(payment_key) <= 200))),
-    CONSTRAINT trust_company_advances_request_key_check CHECK (((length(request_key) >= 1) AND (length(request_key) <= 200)))
 );
 
 
@@ -19614,23 +19269,6 @@ CREATE TABLE public.trust_payment_notes (
 
 
 --
--- Name: trust_payment_report_refusals; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.trust_payment_report_refusals (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    pmc_id uuid NOT NULL,
-    reason text NOT NULL,
-    day date NOT NULL,
-    drift_seconds integer,
-    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT trust_payment_report_refusals_check CHECK (((reason = 'clock'::text) = (drift_seconds IS NOT NULL))),
-    CONSTRAINT trust_payment_report_refusals_drift_seconds_check CHECK (((drift_seconds IS NULL) OR (abs(drift_seconds) > 300))),
-    CONSTRAINT trust_payment_report_refusals_reason_check CHECK ((reason = ANY (ARRAY['signature'::text, 'clock'::text])))
-);
-
-
---
 -- Name: trust_payment_reversals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -20946,14 +20584,6 @@ ALTER TABLE ONLY public.trust_account_signers
 
 
 --
--- Name: trust_admin_alerts trust_admin_alerts_kind_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE public.trust_admin_alerts
-    ADD CONSTRAINT trust_admin_alerts_kind_check CHECK ((kind = ANY (ARRAY['nightly_failed'::text, 'deliveries_failing'::text, 'payment_reports_refused'::text]))) NOT VALID;
-
-
---
 -- Name: trust_admin_alerts trust_admin_alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21791,54 +21421,6 @@ ALTER TABLE ONLY public.trust_charges
 
 ALTER TABLE public.trust_charges
     ADD CONSTRAINT trust_charges_work_order_fee CHECK (((work_order_id IS NULL) OR (kind = 'fee'::text))) NOT VALID;
-
-
---
--- Name: trust_company_advance_repayments trust_company_advance_repayments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advance_repayments
-    ADD CONSTRAINT trust_company_advance_repayments_pkey PRIMARY KEY (id);
-
-
---
--- Name: trust_company_advance_repayments trust_company_advance_repayments_pmc_id_request_key_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advance_repayments
-    ADD CONSTRAINT trust_company_advance_repayments_pmc_id_request_key_key UNIQUE (pmc_id, request_key);
-
-
---
--- Name: trust_company_advance_repayments trust_company_advance_repayments_transfer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advance_repayments
-    ADD CONSTRAINT trust_company_advance_repayments_transfer_id_key UNIQUE (transfer_id);
-
-
---
--- Name: trust_company_advances trust_company_advances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advances
-    ADD CONSTRAINT trust_company_advances_pkey PRIMARY KEY (id);
-
-
---
--- Name: trust_company_advances trust_company_advances_pmc_id_payment_key_ledger_account_id_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advances
-    ADD CONSTRAINT trust_company_advances_pmc_id_payment_key_ledger_account_id_key UNIQUE (pmc_id, payment_key, ledger_account_id);
-
-
---
--- Name: trust_company_advances trust_company_advances_transfer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advances
-    ADD CONSTRAINT trust_company_advances_transfer_id_key UNIQUE (transfer_id);
 
 
 --
@@ -23684,22 +23266,6 @@ ALTER TABLE ONLY public.trust_payment_notes
 
 
 --
--- Name: trust_payment_report_refusals trust_payment_report_refusals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_payment_report_refusals
-    ADD CONSTRAINT trust_payment_report_refusals_pkey PRIMARY KEY (id);
-
-
---
--- Name: trust_payment_report_refusals trust_payment_report_refusals_pmc_id_reason_day_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_payment_report_refusals
-    ADD CONSTRAINT trust_payment_report_refusals_pmc_id_reason_day_key UNIQUE (pmc_id, reason, day);
-
-
---
 -- Name: trust_payment_reversals trust_payment_reversals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25352,41 +24918,6 @@ CREATE UNIQUE INDEX trust_charges_request ON public.trust_charges USING btree (p
 --
 
 CREATE INDEX trust_charges_work_order_id ON public.trust_charges USING btree (work_order_id);
-
-
---
--- Name: trust_company_advance_repayments_account; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX trust_company_advance_repayments_account ON public.trust_company_advance_repayments USING btree (ledger_account_id);
-
-
---
--- Name: trust_company_advance_repayments_recorded_by; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX trust_company_advance_repayments_recorded_by ON public.trust_company_advance_repayments USING btree (pmc_id, recorded_by);
-
-
---
--- Name: trust_company_advances_account; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX trust_company_advances_account ON public.trust_company_advances USING btree (ledger_account_id);
-
-
---
--- Name: trust_company_advances_recorded_by; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX trust_company_advances_recorded_by ON public.trust_company_advances USING btree (pmc_id, recorded_by);
-
-
---
--- Name: trust_company_advances_request; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX trust_company_advances_request ON public.trust_company_advances USING btree (pmc_id, request_key);
 
 
 --
@@ -28169,20 +27700,6 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
--- Name: trust_company_advance_repayments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_company_advance_repayments FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
-
-
---
--- Name: trust_company_advances trust_append_only; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_company_advances FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
-
-
---
 -- Name: trust_company_profiles trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -29006,13 +28523,6 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_notes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
-
-
---
--- Name: trust_payment_report_refusals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_report_refusals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -29996,20 +29506,6 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_char
 
 
 --
--- Name: trust_company_advance_repayments trust_audit; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_company_advance_repayments FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
-
-
---
--- Name: trust_company_advances trust_audit; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_company_advances FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
-
-
---
 -- Name: trust_company_profiles trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -30822,13 +30318,6 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_paym
 
 
 --
--- Name: trust_payment_report_refusals trust_audit; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_report_refusals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
-
-
---
 -- Name: trust_payment_reversals trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -31585,13 +31074,6 @@ CREATE TRIGGER trust_check_autopay_run BEFORE INSERT ON public.trust_autopay_run
 
 
 --
--- Name: trust_company_advances trust_check_company_advance; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE CONSTRAINT TRIGGER trust_check_company_advance AFTER INSERT ON public.trust_company_advances DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_company_advance();
-
-
---
 -- Name: trust_connect_disputes trust_check_connect_dispute; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -31816,13 +31298,6 @@ CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_bill_payments FOR EA
 
 
 --
--- Name: trust_company_advance_repayments trust_disburse; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_company_advance_repayments FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'repay the company''s cover');
-
-
---
 -- Name: trust_deposit_interest_payments trust_disburse; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -32023,20 +31498,6 @@ CREATE TRIGGER trust_name_recorder BEFORE INSERT ON public.trust_messages FOR EA
 --
 
 CREATE TRIGGER trust_no_negative_balance BEFORE INSERT OR UPDATE OF balance ON public.pgledger_accounts FOR EACH ROW WHEN ((new.balance < (0)::numeric)) EXECUTE FUNCTION public.trust_refuse_negative_balance();
-
-
---
--- Name: trust_assistance_payments trust_not_an_advance; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trust_not_an_advance BEFORE INSERT ON public.trust_assistance_payments FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_matching_an_advance();
-
-
---
--- Name: trust_charge_payments trust_not_an_advance; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trust_not_an_advance BEFORE INSERT ON public.trust_charge_payments FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_matching_an_advance();
 
 
 --
@@ -34768,78 +34229,6 @@ ALTER TABLE ONLY public.trust_charges
 
 ALTER TABLE ONLY public.trust_charges
     ADD CONSTRAINT trust_charges_recurring_charge_fkey FOREIGN KEY (pmc_id, lease_id, recurring_charge_id, kind) REFERENCES public.trust_recurring_charges(pmc_id, lease_id, id, kind);
-
-
---
--- Name: trust_company_advance_repayments trust_company_advance_repayments_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advance_repayments
-    ADD CONSTRAINT trust_company_advance_repayments_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
-
-
---
--- Name: trust_company_advance_repayments trust_company_advance_repayments_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advance_repayments
-    ADD CONSTRAINT trust_company_advance_repayments_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
-
-
---
--- Name: trust_company_advance_repayments trust_company_advance_repayments_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advance_repayments
-    ADD CONSTRAINT trust_company_advance_repayments_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
-
-
---
--- Name: trust_company_advance_repayments trust_company_advance_repayments_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advance_repayments
-    ADD CONSTRAINT trust_company_advance_repayments_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
-
-
---
--- Name: trust_company_advances trust_company_advances_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advances
-    ADD CONSTRAINT trust_company_advances_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
-
-
---
--- Name: trust_company_advances trust_company_advances_payment_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advances
-    ADD CONSTRAINT trust_company_advances_payment_transfer_id_fkey FOREIGN KEY (payment_transfer_id) REFERENCES public.pgledger_transfers(id);
-
-
---
--- Name: trust_company_advances trust_company_advances_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advances
-    ADD CONSTRAINT trust_company_advances_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
-
-
---
--- Name: trust_company_advances trust_company_advances_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advances
-    ADD CONSTRAINT trust_company_advances_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
-
-
---
--- Name: trust_company_advances trust_company_advances_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_company_advances
-    ADD CONSTRAINT trust_company_advances_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
 
 
 --
@@ -37883,14 +37272,6 @@ ALTER TABLE ONLY public.trust_payment_notes
 
 
 --
--- Name: trust_payment_report_refusals trust_payment_report_refusals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.trust_payment_report_refusals
-    ADD CONSTRAINT trust_payment_report_refusals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
-
-
---
 -- Name: trust_payment_reversals trust_payment_reversals_charge_id_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39860,5 +39241,4 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261113000100'),
     ('20261113000200'),
     ('20261114000100'),
-    ('20261115000100'),
-    ('20261115000400');
+    ('20261115000200');
