@@ -4,7 +4,10 @@ import { useEffect, useRef, useState } from "react";
 // there it scrolls sideways inside its own frame, and the page doesn't. While it does, the frame
 // is a region named after its table that takes keyboard focus, so the arrow keys scroll it too
 // (WCAG 2.1.1; axe's scrollable-region-focusable, found by the phone-size browser test, q124);
-// a table that fits adds no stop to the tab order.
+// a table that fits adds no stop to the tab order. The frame is `relative`, so what a table
+// positions absolutely (a screen reader's "Action" heading, `sr-only`) stays in the frame: without
+// it that label was placed against the page and widened it on a phone, a dialog then opening
+// off-centre with its button off the screen.
 export function Wide({ children }: { children: React.ReactNode }) {
   const frame = useRef<HTMLDivElement>(null);
   const [scrolls, setScrolls] = useState(false);
@@ -25,10 +28,10 @@ export function Wide({ children }: { children: React.ReactNode }) {
     return () => watch.disconnect();
   }, []);
   return scrolls ? (
-    <div ref={frame} className="overflow-x-auto" role="region" aria-label={`${name || "Table"}, scrolls sideways`} tabIndex={0}>
+    <div ref={frame} className="relative overflow-x-auto" role="region" aria-label={`${name || "Table"}, scrolls sideways`} tabIndex={0}>
       {children}
     </div>
   ) : (
-    <div ref={frame} className="overflow-x-auto">{children}</div>
+    <div ref={frame} className="relative overflow-x-auto">{children}</div>
   );
 }

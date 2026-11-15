@@ -13,7 +13,11 @@ const seed: { features: Record<string, { owner_a: string; taylor: string }> } = 
 );
 const PASSWORD = "a long synthetic passphrase";
 
-test.use({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+// The phone's screen width. A phone browser widens its page to fit what runs off the side, so
+// the page's own width (clientWidth, innerWidth) grows with the fault and can't find it.
+const SCREEN = 390;
+
+test.use({ viewport: { width: SCREEN, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -42,12 +46,12 @@ async function join(page: Page, invite: string, heading: string): Promise<void> 
 }
 
 // What runs off the right of the screen, outside a box that scrolls sideways on its own: each as
-// "tag text", so a failure says what to fix. Nothing should.
+// "tag text", so a failure says what to fix. Nothing should. A box at or above `main` doesn't
+// count: that is the page itself scrolling sideways.
 async function offTheSide(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
-    const width = document.documentElement.clientWidth;
+  return page.evaluate((width) => {
     const scrollsOnItsOwn = (el: Element | null): boolean => {
-      for (let at = el?.parentElement; at; at = at.parentElement) {
+      for (let at = el?.parentElement; at && at.tagName !== "MAIN"; at = at.parentElement) {
         const x = getComputedStyle(at).overflowX;
         if (x === "auto" || x === "scroll") return true;
       }
@@ -59,13 +63,13 @@ async function offTheSide(page: Page): Promise<string[]> {
         return box.width > 0 && box.right > width + 1 && !scrollsOnItsOwn(el);
       })
       .map((el) => `${el.tagName.toLowerCase()} ${(el.textContent ?? "").trim().slice(0, 40)}`);
-  });
+  }, SCREEN);
 }
 
 async function looksRightOnAPhone(page: Page, info: TestInfo, name: string): Promise<void> {
   expect(await offTheSide(page), `off the side of the screen on ${name}`).toEqual([]);
   // The page itself never scrolls sideways.
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(SCREEN);
   await info.attach(`${name} on a phone`, { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
 }
 

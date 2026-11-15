@@ -18,7 +18,7 @@ from helpers import (
 )
 from people import join_as_owner, join_as_staff, join_as_tenant
 
-from pms.api.dashboard import month_before
+from pms.api.dashboard import month_before, units_on
 
 DAY = timedelta(days=1)
 
@@ -147,6 +147,17 @@ def test_an_archived_unit_counts_in_no_occupancy(client, conn, staff, pmc):
     )
 
     assert client.get("/api/dashboard").json()["occupancy"]["percent"] == "100.0"
+
+
+def test_a_unit_added_in_the_companys_evening_counts_on_its_day(conn):
+    # 9 pm in New York on 03/09 is 03/10 by UTC: the company's day is 03/09, and the unit it
+    # added that evening counts on it, vacant since then (the demo built at night said "No units").
+    pmc = make_pmc(conn, time_zone="America/New_York")
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "Unit 9")
+    conn.execute("UPDATE trust_units SET created_at = '2026-03-10 02:00+00' WHERE id = %s", (unit,))
+
+    assert units_on(conn, pmc.pmc_id, date(2026, 3, 9)) == (1, 1, 0)
+    assert units_on(conn, pmc.pmc_id, date(2026, 3, 8)) == (0, 0, None)
 
 
 def test_the_next_draw_is_the_draw_day_coming_and_what_a_draw_would_pay(client, conn, staff, pmc):

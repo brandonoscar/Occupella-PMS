@@ -197,7 +197,7 @@ export function OwnerBills() {
 
   const waiting = bills?.filter((b) => b.status === "waiting").length ?? 0;
   return (
-    <Card title="Bills waiting for you">
+    <Card title="Your bills">
       {approving && (
         <ApproveDialog bill={approving} onCancel={() => setApproving(null)} onApproved={() => {
           setDone(`Approved ${approving.vendor}'s ${approving.reference}.`);
