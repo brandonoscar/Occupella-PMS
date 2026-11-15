@@ -160,7 +160,7 @@ class FakePartner:
     def event(self, body: bytes, headers: Mapping[str, str]) -> Event | Saved | None:
         raise NotTheirs("the fake partner reports through its own page, not a webhook")
 
-    def account(self) -> str:
+    def account_id(self) -> str:
         return "fake"
 
 
@@ -360,7 +360,7 @@ class StripePartner:
         except (KeyError, TypeError, ValueError) as failed:
             raise PartnerFailed(f"Stripe's payment came without its fee: {failed}") from None
 
-    def account(self) -> str:
+    def account_id(self) -> str:
         """The Stripe account these keys act for (`acct_...`), asked once per keys in a process:
         a tenant's bank account saved at one account can be charged only by it (P-065)."""
         held = hashlib.sha256(self._key.encode()).hexdigest()
@@ -482,7 +482,7 @@ class KnowsAccount(Protocol):
 
     name: str
 
-    def account(self) -> str: ...
+    def account_id(self) -> str: ...
 
 
 @runtime_checkable

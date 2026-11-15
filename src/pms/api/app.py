@@ -53,6 +53,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from pms import (
     accounts,
+    connect,
     days,
     deployment,
     email,
@@ -60,7 +61,6 @@ from pms import (
     external,
     geocoding,
     nightly,
-    payments,
     phones,
     schema,
     webhooks,
@@ -144,6 +144,7 @@ from pms.api import (
     work_orders,
     year_close,
 )
+from pms.api import connect as connect_api
 from pms.api.deps import (
     COOKIE,
     CROSS_SITE,
@@ -203,6 +204,9 @@ class Settings:
     # The payments partner tenants pay online through (pms.payments): "stripe" (its keys from
     # the environment), "fake", or empty for none.
     payments: str = ""
+    # The hosted product's Stripe Connect platform (pms.connect, docs/adr/0014-stripe-connect.md):
+    # "stripe" (the platform's keys from the environment), "fake", or empty for none.
+    connect: str = ""
     # The nightly run (pms.nightly): rent, late fees and recurring bills post by themselves at
     # start and every day at 06:00 UTC. On unless PMS_NIGHTLY is "off".
     nightly: bool = False
@@ -247,6 +251,7 @@ class Settings:
             email_sender=env.get("PMS_EMAIL_SENDER", ""),
             geocoder=env.get("PMS_GEOCODER", ""),
             payments=env.get("PMS_PAYMENTS", ""),
+            connect=env.get("PMS_CONNECT", ""),
             nightly=env.get("PMS_NIGHTLY", "on").lower() != "off",
             webhooks=env.get("PMS_WEBHOOKS", "on").lower() != "off",
             fake_partners=env.get("PMS_FAKE_PARTNERS", ""),
@@ -431,18 +436,27 @@ def create_app(settings: Settings) -> FastAPI:
         settings.public_url,
         {
             "PMS_PAYMENTS": settings.payments,
+            "PMS_CONNECT": settings.connect,
             "PMS_SCREENING_PARTNER": settings.screening_partner,
             "PMS_GEOCODER": settings.geocoder,
             "PMS_EMAIL_SENDER": settings.email_sender,
         },
         settings.fake_partners,
     )
-    # ...and Stripe's test keys, whose payments would be booked as real money (P-048).
+    # ...and Stripe's test keys, whose payments would be booked as real money (P-048), its own
+    # and the Connect platform's.
     deployment.refuse_test_keys(
         settings.public_url,
         settings.payments,
         os.environ.get("PMS_STRIPE_SECRET_KEY", ""),
         settings.fake_partners,
+    )
+    deployment.refuse_test_keys(
+        settings.public_url,
+        settings.connect,
+        os.environ.get("PMS_STRIPE_CONNECT_SECRET_KEY", ""),
+        settings.fake_partners,
+        "PMS_STRIPE_CONNECT_SECRET_KEY",
     )
 
     def configure(conn: psycopg.Connection[Any]) -> None:
@@ -515,8 +529,12 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.geocoder = geocoding.geocoder_named(settings.geocoder)
     # Like the SMTP settings, the server's partner's keys come straight from the environment; a
     # company's own keys, entered in Settings, are sealed in the database (pms.payments.Resolver).
-    app.state.payments = payments.Resolver(
-        payments.partner_named(settings.payments, os.environ),
+    # With a Connect platform (PMS_CONNECT), a company that connected its own Stripe account pays
+    # through it (pms.connect.ConnectResolver); its keys come from the environment too.
+    app.state.payments = connect.resolver_from(
+        settings.payments,
+        settings.connect,
+        os.environ,
         live=deployment.is_live(settings.public_url, settings.fake_partners),
     )
     # The SMTP settings come straight from the environment, so a password is never part of
@@ -969,6 +987,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(rent.router)
     # Before online_payments, whose paths it shares a prefix with.
     app.include_router(payment_keys.router)
+    app.include_router(connect_api.router)
     app.include_router(online_payments.router)
     app.include_router(owner_payments.router)
     app.include_router(owner_portal.router)

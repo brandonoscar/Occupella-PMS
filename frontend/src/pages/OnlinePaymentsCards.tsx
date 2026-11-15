@@ -148,6 +148,13 @@ export function OnlinePaymentsWaiting({ refresh }: { refresh: number }) {
                   () => `Recorded ${money(item.amount)} paid online.`),
                 "Record it")}>Accept past the hold</Button>
             )}
+            {item.what === "dispute won" && (
+              <AskFirst variant="secondary"
+                says="Records the payment again if the books now take it: the money came back when the dispute was won."
+                question={`Record ${money(item.amount)} for ${item.memo} again? The dispute was won and the money came back.`}
+                onConfirm={() => record(`/api/payments/${item.payment_id}/record`, {},
+                  () => `Recorded ${money(item.amount)} again.`)}>Try again</AskFirst>
+            )}
             {item.what === "return" && (
               <AskFirst variant="secondary"
                 says={item.owner_id !== null

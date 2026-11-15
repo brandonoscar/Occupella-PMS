@@ -109,6 +109,21 @@ describe("OnlinePaymentsWaiting", () => {
     await vi.waitFor(() => expect(screen.getByRole("status").textContent).toBe("Recorded what came back."));
   });
 
+  it("asks before recording a dispute won again, and shows a dispute's fee the company owes", async () => {
+    const fetch = server([
+      { ...FEE, payment_id: "p5", what: "dispute fee", company_owes: "15.00", cover_needed: "13.75" },
+      { ...FEE, payment_id: "p6", what: "dispute won", company_owes: null, cover_needed: "13.75" },
+    ]);
+    render(<OnlinePaymentsWaiting refresh={0} />);
+    expect(await screen.findByText(/A dispute cost a \$15\.00 fee/)).toBeTruthy();
+    expect(screen.getByText(/The dispute was won and the money came back, not on the lease yet/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    const question = "Record $500.00 for Morgan Demo, Birch Flats Unit A again? The dispute was won and the money came back.";
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "Try again" }));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([path, init]) => path === "/api/payments/p6/record" && init?.method === "POST")).toBe(true));
+  });
+
   it("asks before recording an owner's payment again, never past a hold", async () => {
     const owners = { ...FEE, lease_id: null, owner_id: "o1", memo: "Demo Owner A / Birch Flats", company_owes: null };
     const fetch = server([
