@@ -80,3 +80,29 @@ def test_a_payment_starts_only_on_the_companys_account_and_only_through_connect(
         "SELECT autopay_id FROM trust_connected_payments WHERE pmc_id = %s", (pmc.pmc_id,)
     ).fetchall()
     assert rows == [(through_connect,)]
+
+
+def test_a_dispute_opens_only_on_a_payment_that_came_back_and_closes_only_once_open(conn):
+    # Whatever reads Stripe's reports, the table refuses a dispute on a payment the bank never
+    # took back, and a close (won or lost) of a dispute that never opened.
+    pmc = make_pmc(conn)
+    payment = conn.execute(
+        "INSERT INTO trust_owner_online_payments (pmc_id, ledger_account_id, amount, method,"
+        " partner, partner_ref, platform_fee)"
+        " VALUES (%s, %s, '500.00', 'ach', 'fake_connect', 'fake_connect_py_Synthetic01', '0.50')"
+        " RETURNING id",
+        (pmc.pmc_id, pmc.owners[0].account),
+    ).fetchone()[0]
+    dispute = (
+        "INSERT INTO trust_connect_disputes (pmc_id, owner_payment_id, dispute_id, kind, fee,"
+        " partner_event, happened_at) VALUES (%s, %s, 'du_Synthetic01', %s, %s, %s, now())"
+    )
+    with pytest.raises(psycopg.errors.CheckViolation, match="didn't come back, so no dispute"):
+        conn.execute(dispute, (pmc.pmc_id, payment, "opened", "15.00", "evt_Synthetic01"))
+    with pytest.raises(psycopg.errors.CheckViolation, match="isn't open, so it can't close"):
+        conn.execute(dispute, (pmc.pmc_id, payment, "won", "15.00", "evt_Synthetic02"))
+    with pytest.raises(psycopg.errors.CheckViolation, match="isn't open, so it can't close"):
+        conn.execute(dispute, (pmc.pmc_id, payment, "lost", None, "evt_Synthetic03"))
+    assert conn.execute(
+        "SELECT count(*) FROM trust_connect_disputes WHERE owner_payment_id = %s", (payment,)
+    ).fetchone() == (0,)
