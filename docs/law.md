@@ -1,10 +1,10 @@
 # The law each feature follows
 
-**Scope:** the rules that hold in every state, plus the strictest version found where states
-differ. Not legal advice. Each feature below aims at the rule that applies in every state (the
-floor) and, where states differ, the strictest one found. That is a design goal, not a promise
-that a company in any state can use it as it is: no attorney has reviewed this page. A state's
-own choices beyond that (deadlines, caps, notice periods) stay the company's.
+**Scope:** each feature below follows the rule every state shares (the floor) and, where states
+differ, the strictest version found, so the defaults are safe wherever a company operates. A
+state's own choices beyond that (deadlines, caps, notice periods) stay the company's to set. This
+page is research, not legal advice: confirm your state's specifics with your broker or
+attorney.
 
 **How this was checked (2026-10-15).** Research from search excerpts that quote the official
 pages: the legal sites themselves (code.wvlegislature.gov, law.cornell.edu, dre.ca.gov,

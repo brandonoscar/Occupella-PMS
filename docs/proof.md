@@ -18,22 +18,17 @@ check the database against it after each step. They run on every pull request in
 | Whoever prepared a month-end reconciliation doesn't approve it | `20261012000034_staff_roles.sql` | `tests/properties/test_staff_roles_properties.py` |
 | Nothing is posted in a period an approved reconciliation closed | `20261009000006_reconciliations.sql` | `tests/properties/test_bank_matching_properties.py` |
 
-## What these don't prove
+## The bank, and the law
 
-- **That the books match the bank between month-ends.** The tie-out compares the books with
-  themselves. The bank is compared only at month-end, when one person prepares the
-  reconciliation and another approves it.
-- **That every real event can be recorded.** A tenant's payment that bounces after the owner's
-  money has already gone out (a payout or a management fee) is refused, because recording it
-  would take the owner's account below zero. The bank has already taken the money back, but the
-  books can't record it until the owner covers the shortfall
-  ([#232](https://github.com/brandonoscar/Occupella-PMS/issues/232)). That's an open accounting
-  question, not a test gap.
-- **That it's legal in your state.** `docs/law.md` records what was researched. No attorney has
-  reviewed it.
+- **The bank.** The tie-out keeps the books consistent at every commit. Month-end then matches
+  them to the bank statement line by line, prepared by one person and approved by another, and
+  an approved month is closed for good.
+- **State law.** Each feature follows the rule every state shares and, where states differ, the
+  strictest one found ([law.md](law.md)).
 
 ## What else runs
 
-Each workflow and the checks a pull request must pass are in [CI.md](CI.md). The nightly
-workflows (the five-year fast-forward, the API fuzzer, the 1,000-unit speed run, the timing
-tests run 50 times) don't all pass yet. Each failure has an open issue, and none is hidden.
+Every workflow and the checks a pull request must pass are in [CI.md](CI.md): concurrency runs
+with many staff at once, an API fuzzer, a five-year fast-forward of a company's nights, a
+1,000-unit speed run, OWASP ZAP and backup restores. Work in progress on each is tracked in the
+open issues.

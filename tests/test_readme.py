@@ -53,11 +53,11 @@ def test_every_link_in_the_front_docs_leads_somewhere():
                 assert anchor in anchors(page.read_text(encoding="utf-8")), f"{doc}: no #{anchor}"
 
 
-def test_the_readme_says_what_isnt_ready_before_it_asks_anything():
-    pre_launch = README.index("**Pre-launch")
-    assert pre_launch < README.index("## Try the demo")
-    assert "issues/232" in README  # the bounce the books can't record yet
-    assert "docs/proof.md" in README
+def test_the_readme_leads_to_its_proof_and_its_status_before_the_demo():
+    demo = README.index("## Try the demo")
+    assert -1 < README.index("docs/proof.md") < demo
+    assert -1 < README.index("docs/status.md") < demo
+    assert "issues/232" in (ROOT / "docs/status.md").read_text(encoding="utf-8")
     # Written for people outside: no private repository, no model as the example client.
     assert "AgenticHelixis" not in README
     assert "(Claude, say)" not in README

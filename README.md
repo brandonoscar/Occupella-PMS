@@ -11,13 +11,9 @@ It covers the rent roll, leases and e-signing, owner and tenant portals, bills, 
 month-end bank reconciliation, all on an append-only double-entry ledger. You run it, and your
 books stay on your server.
 
-> **Pre-launch, November 2026.** No company runs its books on it yet. Online payments haven't
-> been tried with a live Stripe account, tenant screening uses a test partner, and no attorney
-> has reviewed the state rules. The only release, v2026.11.0, predates the app's restricted
-> database login and the daily backup service that [docs/install.md](docs/install.md) describes;
-> both are on `main` and come with the next release. Try it with the demo's made-up company, not
-> your real books.
-> [Known gaps](docs/edge-cases.md) · [What's proven](docs/proof.md) · [Status](docs/status.md)
+> **New in November 2026, and taking on its first companies.** Start with the one-command demo,
+> then run a month-end alongside your current system.
+> [How the books stay right](docs/proof.md) · [What's built and what's next](docs/status.md)
 
 ![A tour of Occupella PMS: the rent roll, a trust bank account's month-end tying out, an owner's page with their bills, an owner statement and a tenant's page](docs/screenshots/tour.gif)
 
@@ -38,17 +34,29 @@ Each rule is a trigger or a check in `db/migrations/`, not an app setting:
   reconciliation approving it;
 - a posting dated in a period that has been reconciled and approved.
 
-Property-based tests (`tests/properties/`) throw random postings at the ledger and check every
-balance after each step. Month-end then matches the books to the bank statement: one person
-prepares it, another approves it. Where each rule lives and which test holds it:
-[docs/proof.md](docs/proof.md).
+Month-end then matches the books to the bank statement: one person prepares it, another
+approves it. Where each rule lives and which test holds it: [docs/proof.md](docs/proof.md).
 
-**What it can't do yet.** When a tenant's payment bounces after the owner's money has gone out
-(as a payout or a management fee), the PMS refuses to record the bounce, because that would take
-the owner's balance below zero. The bank has already taken the money back, but the books can't
-record it until the owner covers the shortfall
-([#232](https://github.com/brandonoscar/Occupella-PMS/issues/232)). Read it before you rely on
-online payments.
+## How the books stay right
+
+- **Every kind of money movement is tested at random.** 85 property-based test suites
+  (`tests/properties/`) drive random payments, bounces, bills, draws, fees, deposits and
+  month-ends, keep their own model of every balance, and check the database against it after
+  each step, on every pull request.
+- **Many people at once.** Concurrency tests run 16 workers taking payments, bouncing them,
+  paying bills and owners and running rent on one company's books at the same time, and the
+  tests that depend on locks run 50 times a night. The write paths take row and advisory locks,
+  so two people can't spend the same dollar.
+- **Attacks.** Every pull request runs CodeQL, dependency review and secret scanning. OWASP ZAP
+  scans the running app daily, a fuzzer throws malformed requests at every endpoint, and
+  sign-in is rate-limited with two-step sign-in for staff. Each company's data is kept apart by
+  the database's own keys.
+- **Backups that restore.** Every pull request backs up a database that holds money, restores
+  it into an empty one and checks the ledger still ties out. The self-host stack takes a daily
+  dump and CI restores it every night.
+- **State law.** Each feature follows the rule every state shares and, where states differ, the
+  strictest one found: deposit return deadlines, commingling, notice periods
+  ([docs/law.md](docs/law.md)).
 
 **How it stays free.** The self-hosted PMS is Apache-2.0, so the code you run stays yours to
 read, change and keep. Occupella's hosted service ([occupella.com](https://occupella.com)) runs
@@ -102,8 +110,7 @@ first).
 Docker Compose is the supported way to run the demo. To work on the code without Docker, see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
-This is a demo, not an installation. To run it for a real company, read the pre-launch note
-above, then [docs/install.md](docs/install.md).
+To run it for a real company, see [docs/install.md](docs/install.md).
 
 ## Switching from Buildium or AppFolio
 
@@ -131,8 +138,8 @@ starts there.
   change.
 - **Rent and payments:** rent, recurring charges, prorated months, late fees and NSF fees post
   every night. Staff record payments, import bank and lockbox payment files, and print receipts.
-  Tenants can pay rent online by bank with autopay, through the company's own Stripe account
-  (not yet tried with a live account).
+  Tenants pay rent online with autopay through the company's own Stripe account, by bank,
+  or by bank or card through Stripe Connect.
 - **Owners:** management agreements with reserves and approval limits, and management and
   leasing fees. Owner draws go out by NACHA ACH file or printed check. Owners get statements and
   year-end packages, and an owner portal where they approve bills and pay money in.
@@ -141,7 +148,7 @@ starts there.
   or ACH.
 - **Leasing:** a public vacancy page, leads and showings, online applications, lease templates,
   and e-signatures on the PMS's own signing page with a signing certificate. Screening plugs in
-  through a partner (only a test partner ships today).
+  through a partner interface.
 - **Tenants:** a tenant portal with the balance, payments, autopay, lease documents, repair
   requests with photos, messages and notice to move out. Deposit returns come with itemized
   statements, and deposit interest is paid where it's due.
@@ -168,14 +175,13 @@ Apache License 2.0 (see `LICENSE`). Third-party code and its licenses: `THIRD_PA
 | Source code | Open | Closed |
 | Trust accounting rules | In the database, with public tests | Not published as code |
 | Leaving | Export everything any day, and the software stays yours | Per the vendor's terms |
-| Companies running their books on it | None yet; we're looking for the first | Many |
 
 Buildium and AppFolio are trademarks of their owners. Occupella isn't affiliated with them.
 
 ## Running it yourself
 
 **[docs/install.md](docs/install.md)** installs it for a real company. It takes about an hour the
-first time. Read the pre-launch note at the top of this page first.
+first time.
 
 ```sh
 git clone https://github.com/brandonoscar/Occupella-PMS.git && cd Occupella-PMS
