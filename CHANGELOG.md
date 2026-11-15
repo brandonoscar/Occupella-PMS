@@ -6,6 +6,48 @@ is made and taken: docs/release.md. Installing for the first time: docs/install.
 
 ## Unreleased
 
+- **Money: a bounce after the owner's money has gone out** (docs/edge-cases.md M-060, #232).
+  Staff can have the company cover the owner's shortfall from its own money as the bounce is
+  recorded, exactly the shortfall and once per returned payment; the owner's page and portal show
+  what they owe back, and staff take the repayment from the owner's Financials tab, never more
+  than is owed. Works for a tenant's payment, a housing authority's and an online return waiting
+  on Banking. Migration `20261115000100`.
+- **Money: move-out uses prepaid rent first** (M-072). The tenants' prepaid rent pays what the
+  lease owes before any deposit is kept, and what is left is paid back with the deposits; the
+  statement shows it. Migration `20261115000240`.
+- **Money: a renewal carries what the old lease still owes** (M-073): later payments pay it
+  first, the deposit return keeps for both leases, and the renewed lease has no return of its
+  own. Migration `20261115000230`.
+- **Late fees.** Terms entered with a start day in the past charge nothing on rents already late
+  (M-049, D-082). A rent first charged after its grace ran out takes its grace from that day
+  (D-083). A payment dated within grace and recorded after the night's fee takes the fee off by
+  itself, with a waiver saying why (D-078, D-079). Migrations `20261115000200`,
+  `20261115000310`, `20261115000320`.
+- **Rent runs.** After the server was down over a month's end or for a whole month, the next
+  night charges each missed month's rent and monthly charges once (D-016, D-017, H-089). Run rent
+  now refuses a due date after the company's today (D-026). Leases brought over by the switching
+  tool aren't charged the old system's month while the opening balances are still to come
+  (M-152, migration `20261115000220`). A journal entry can't move unapplied cash (M-154,
+  migration `20261115000210`).
+- **Payments online.** A bank failure Stripe reports after a payment was paid now undoes it as a
+  return (P-026). Disputes through a company's own keys take Stripe's dispute fee from the
+  company's fee account and put the payment back when won (P-027, P-030, P-061). Company setup
+  checks Stripe keys with Stripe before keeping them and says in words what's wrong (P-006,
+  P-007). Stripe reports refused for a changed signing secret or a server clock that's off are
+  recorded, shown in Company setup and emailed to admins (P-010, P-011, migration
+  `20261115000400`).
+- **Safety.** PDFs from tenants and applicants that carry scripts, launch actions or attachments
+  are refused (F-010). An owner whose property's ownership moved to another owner no longer sees
+  its units, tenants, repairs or files (U-085).
+- **Notices and deadlines.** A California rent increase notice served by mail is warned at 35 or
+  95 days (D-069). A fee charged after the 10-day deposit deadline no longer hides that it was
+  missed (D-128).
+- **Speed.** The Dashboard reads past due for the day and a month before in one pass, not by
+  running the delinquency report twice (#231).
+- **Errors.** A rent notice or renewal plan for a day at the calendar's ends (#228), and text with
+  a NUL character stored as JSON (#229), are refused as bad input, never a server error.
+- **CI.** dbmate and gitleaks downloads retry (#233); the nightly timing tests' 50 runs are two
+  jobs of 25 (#230); tests work out "today" as each runs (#235).
 - **A live server keeps the API's map to itself.** `/openapi.json` is served only by a server that
   isn't live (development, the tests, the fuzzer and ZAP); one at an https address other than this
   machine answers 404, so nobody gets every path for free. The browser tab reads "Occupella PMS".

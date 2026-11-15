@@ -2,7 +2,7 @@
 
 What can happen to a company on this PMS that it must be ready for, each case with what the PMS
 does about it, whether a test proves it, and how much harm it would do. Eight areas, one table
-each, 1201 cases in all, each table ranked by risk (high first), then open before guarded
+each, 1202 cases in all, each table ranked by risk (high first), then open before guarded
 before tested. The founder asked for it on 2026-11-05, toward a thousand cases and a graceful
 answer in the portal for everything that can fail.
 
@@ -25,15 +25,15 @@ answer in the portal for everything that can fail.
 
 | Area | Cases | Tested | Guarded | Open | Open, high risk |
 |---|---|---|---|---|---|
-| [Money and the ledger](#money-and-the-ledger) | 157 | 120 | 8 | 29 | 6 |
-| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 92 | 15 | 57 | 11 |
+| [Money and the ledger](#money-and-the-ledger) | 157 | 126 | 8 | 23 | 1 |
+| [Dates, time zones and calendars](#dates-time-zones-and-calendars) | 164 | 101 | 15 | 48 | 2 |
 | [Concurrency and retries](#concurrency-and-retries) | 144 | 77 | 30 | 37 | 0 |
-| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 180 | 85 | 12 | 83 | 18 |
-| [Bad files and imports](#bad-files-and-imports) | 154 | 73 | 17 | 64 | 1 |
-| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 170 | 105 | 11 | 54 | 5 |
-| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 176 | 82 | 14 | 80 | 4 |
+| [Partners and outside services down, slow or wrong](#partners-and-outside-services-down-slow-or-wrong) | 180 | 93 | 12 | 75 | 10 |
+| [Bad files and imports](#bad-files-and-imports) | 154 | 74 | 17 | 63 | 0 |
+| [People doing the unexpected, permissions and security](#people-doing-the-unexpected-permissions-and-security) | 170 | 106 | 11 | 53 | 4 |
+| [Hosting, operations and the portal's failure states](#hosting-operations-and-the-portals-failure-states) | 176 | 84 | 14 | 78 | 2 |
 | [The AI link: drafts, events, webhooks and the MCP server](#the-ai-link-drafts-events-webhooks-and-the-mcp-server) | 57 | 40 | 10 | 7 | 0 |
-| **All** | **1202** | **674** | **117** | **411** | **45** |
+| **All** | **1202** | **701** | **117** | **384** | **19** |
 
 ## Open, high risk: the work list
 
@@ -42,24 +42,10 @@ its ten most pressing, each with the test that would close it.
 
 **Money and the ledger**
 
-- M-049: Late fee terms added with a start day in the past
-- M-072: Prepaid rent left over at move-out
-- M-073: A renewal while the old lease still owes
-- M-152: The roster brought in days before the opening balances are posted, mid-month
 - M-153: A lease ends mid-month after its tenant paid a monthly fee the company keeps in full
-- M-154: A journal entry moves money out of (or into) unapplied cash
 
 **Dates, time zones and calendars**
 
-- D-016: Server down from the 28th to the month's end, lease due on the 28th
-- D-017: Server down for a whole month, back on the 2nd of the next
-- D-026: Run rent now with Rent due on next month or a later year
-- D-069: California increase notice served by mail
-- D-078: A check received on the last grace day, recorded the next morning dated back
-- D-079: A lockbox file line dated within grace brought in after the fee
-- D-082: Late fee terms added with a start day in the past
-- D-083: Rent first charged after its own grace ran out (lease entered late, an admin's catch-up)
-- D-128: A fee charged after the 10-day deadline passed
 - D-129: Tenants who moved out before the lease's last day
 - D-163: A company ahead of UTC (Europe, Asia, Australia)
 
@@ -69,16 +55,8 @@ None.
 
 **Partners and outside services down, slow or wrong**
 
-- P-006: The company's secret key was rolled or revoked in Stripe, is a restricted key without a permission, or the account was restricted
-- P-007: Keys saved that only look right: a typo'd key, or a secret key and a webhook secret from different Stripe accounts or modes
-- P-010: The server's clock drifts more than 5 minutes
-- P-011: The webhook signing secret changed in Stripe (endpoint recreated) but not in the PMS
-- P-026: A late return Stripe reports by another event than a dispute (charge.failed after success; NOT VERIFIED which Stripe sends)
-- P-027: A dispute the company won, funds reinstated (charge.dispute.closed, charge.dispute.funds_reinstated)
 - P-028: Staff refund a tenant, all or part, from Stripe's dashboard (charge.refunded)
-- P-030: Stripe takes a dispute fee from the balance (amount NOT VERIFIED)
 - P-034: A company with two operating trust bank accounts and one Stripe payout account
-- P-051: PMS_DATA_KEY lost while payments are in flight
 - P-061: An owner's payment refunded in Stripe, or a dispute on it won
 - P-115: The bank returns an owner's ACH draw (account closed, no account)
 - P-116: The bank returns a vendor's ACH payment
@@ -90,22 +68,23 @@ None.
 
 **Bad files and imports**
 
-- F-010: A PDF with JavaScript (OpenAction, /JS), uploaded by a tenant as their own lease document or by an anonymous applicant as proof of income
+None.
 
 **People doing the unexpected, permissions and security**
 
 - U-010: An owner's or tenant's login is disabled by mistake
 - U-014: A staff member uses the invite link shown on screen to become an owner or tenant who already has a password
 - U-015: An admin re-invites another staff member (an approver, the trust account's broker) and uses the link
-- U-085: A former owner (the property sold, or its ownership moved to another owner)
 - U-100: A tenant left a lease others stay on
 
 **Hosting, operations and the portal's failure states**
 
 - H-031: The daily backup fails (password changed, pg_dump error, disk)
-- H-055: PMS_DATA_KEY changed while bank payments are on their way
 - H-067: PMS_TRUSTED_PROXIES empty behind a proxy on another host or network
-- H-089: The server is down over a lease's own due day at a month's end (due the 28th, down the 28th to the 31st)
+
+**The AI link: drafts, events, webhooks and the MCP server**
+
+None.
 
 ## Money and the ledger
 
