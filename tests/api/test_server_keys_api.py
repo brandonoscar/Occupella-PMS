@@ -29,6 +29,14 @@ def keys(monkeypatch):
     monkeypatch.setenv("PMS_STRIPE_WEBHOOK_SECRET", "whsec_" + "Synthetic0000000000000Srv")
 
 
+@pytest.fixture(autouse=True)
+def stripe_takes_the_keys(monkeypatch):
+    # Keys kept are asked of Stripe first (docs/edge-cases.md P-006, P-007): it takes them here.
+    monkeypatch.setattr(
+        payments.StripePartner, "check", lambda self, url: payments.KeysChecked(True, ())
+    )
+
+
 @pytest.fixture
 def two_companies(conn):
     """The test database holds many companies; two more make sure."""

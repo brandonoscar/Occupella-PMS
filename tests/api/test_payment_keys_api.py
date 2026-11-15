@@ -21,7 +21,7 @@ from helpers import add_unit, charge, make_pmc, open_lease
 from people import join_as_owner, join_as_staff, join_as_tenant, tenant_of
 
 from pms import payments
-from pms.api import Settings, create_app
+from pms.api import Settings, create_app, payment_keys
 
 TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
@@ -37,13 +37,36 @@ def data_key(monkeypatch):
     monkeypatch.setenv("PMS_DATA_KEY", base64.b64encode(os.urandom(32)).decode())
 
 
-@pytest.fixture
-def stripe(monkeypatch):
-    """Stripe's answers, by method and path, and each call made, with the key it was made with."""
+def hooks_of(conn):
+    """A Stripe account's webhooks, one to each company's own address, sent every event: what
+    keys kept here are checked against (docs/edge-cases.md P-007) unless a test says otherwise."""
+    return {
+        "data": [
+            {
+                "url": f"http://testserver/api/payments/webhook/stripe/{pmc_id}",
+                "status": "enabled",
+                "enabled_events": list(payments.STRIPE_EVENTS),
+            }
+            for (pmc_id,) in conn.execute("SELECT pmc_id FROM trust_pmcs").fetchall()
+        ]
+    }
+
+
+@pytest.fixture(autouse=True)
+def stripe(monkeypatch, conn):
+    """Stripe's answers, by method and path, and each call made, with the key it was made with.
+    Unless a test answers them, Stripe takes the keys and their account has a webhook here."""
     answers, calls = {}, []
 
     def call(self, method, path, form, key=""):
         calls.append((self._key, method, path))
+        answer = answers.get((method, path))
+        if answer is None and (method, path) == ("GET", "/account"):
+            return {"id": "acct_Synthetic0001", "charges_enabled": True}
+        if answer is None and (method, path) == ("GET", "/webhook_endpoints"):
+            return hooks_of(conn)
+        if isinstance(answer, Exception):
+            raise answer
         return answers[(method, path)]
 
     monkeypatch.setattr(payments.StripePartner, "_call", call)
@@ -300,6 +323,73 @@ def test_keys_or_none_the_database_keeps_nothing_in_between(conn, app_conn, pmc,
         )
 
 
+# --- what Stripe says of them (docs/edge-cases.md P-006, P-007) ------------------------------
+
+
+def test_keys_stripe_doesnt_take_are_never_kept_and_say_why(client, conn, pmc, admin, stripe):
+    answers, _ = stripe
+    answers[("GET", "/account")] = payments.PartnerFailed("HTTP 401", status=401)
+    refused(keep(client), 422, payments.KEY_REFUSED)
+    answers[("GET", "/account")] = payments.PartnerFailed("HTTP 403", status=403)
+    refused(keep(client), 422, payments.KEY_LOCKED)
+    # Stripe didn't answer: not kept either, to be tried again.
+    answers[("GET", "/account")] = payments.PartnerFailed("timed out")
+    refused(keep(client), 502, payments.UNREACHABLE)
+    assert ok(client.get("/api/payments/keys"))["using"] == "none"
+    assert not conn.execute(
+        "SELECT 1 FROM trust_payment_keys WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone()
+
+
+def test_a_key_of_an_account_with_no_webhook_here_is_never_kept(client, conn, pmc, admin, stripe):
+    # A secret key and a webhook secret from two accounts: the key's account sends nothing here.
+    answers, _ = stripe
+    answers[("GET", "/webhook_endpoints")] = {
+        "data": [{"url": "https://elsewhere.example.org/hook", "status": "enabled"}]
+    }
+    url = f"http://testserver/api/payments/webhook/stripe/{pmc.pmc_id}"
+    refused(keep(client), 422, payments.NO_WEBHOOK.format(url=url))
+    assert ok(client.get("/api/payments/keys"))["using"] == "none"
+
+
+def test_company_setup_says_in_words_what_stripe_says_is_wrong_with_the_keys_in_use(
+    client, conn, pmc, admin, stripe, monkeypatch
+):
+    answers, calls = stripe
+    hooks = hooks_of(conn)
+    for hook in hooks["data"]:
+        hook["enabled_events"] = ["checkout.session.completed"]
+    answers[("GET", "/webhook_endpoints")] = hooks
+    kept = ok(keep(client))
+    # Kept, as nothing blocks payments, and the events the webhook isn't sent are named.
+    assert kept["using"] == "own"
+    assert kept["stripe_says"] == [
+        payments.MISSING_EVENTS.format(
+            events=", ".join(e for e in payments.STRIPE_EVENTS if e != "checkout.session.completed")
+        )
+    ]
+    # Later the key is rolled in Stripe: Company setup says so once it asks again, not "own" alone.
+    answers[("GET", "/account")] = payments.PartnerFailed("HTTP 401", status=401)
+    asked = len(calls)  # asked lately: not again yet
+    assert ok(client.get("/api/payments/keys"))["stripe_says"] == kept["stripe_says"]
+    assert len(calls) == asked
+    monkeypatch.setattr(payment_keys, "CHECKED_FOR", -1.0)
+    shown = ok(client.get("/api/payments/keys"))
+    assert (shown["using"], shown["stripe_says"]) == ("own", [payments.KEY_REFUSED])
+    # And an account Stripe stopped taking payments on.
+    answers[("GET", "/account")] = {"id": "acct_Synthetic0001", "charges_enabled": False}
+    answers[("GET", "/webhook_endpoints")] = hooks_of(conn)
+    assert ok(client.get("/api/payments/keys"))["stripe_says"] == [payments.CHARGES_OFF]
+
+
+def test_staff_who_arent_admins_see_what_stripe_says_too(
+    client, other_client, conn, app_conn, pmc, admin, stripe
+):
+    ok(keep(client))
+    join_as_staff(other_client, conn, app_conn, pmc)
+    assert ok(other_client.get("/api/payments/keys"))["stripe_says"] == []
+
+
 # --- paying through them -------------------------------------------------------------------
 
 
@@ -308,10 +398,12 @@ def test_the_companys_payments_go_through_its_own_account_and_its_own_webhook(
 ):
     _, calls = stripe
     ok(keep(client))
+    # Stripe was asked of the keys before they were kept (docs/edge-cases.md P-006, P-007).
+    assert calls == [(SECRET_KEY, "GET", "/account"), (SECRET_KEY, "GET", "/webhook_endpoints")]
 
     payment = start_payment(client, other_client, conn, app_conn, pmc, lease, stripe)
 
-    assert calls[0] == (SECRET_KEY, "POST", "/checkout/sessions")
+    assert calls[2] == (SECRET_KEY, "POST", "/checkout/sessions")
     # The server has no partner of its own: its webhook isn't there.
     refused(other_client.post("/api/payments/webhook/stripe", json={}), 404)
     refused(report(other_client, pmc.pmc_id, payment, OTHER_WEBHOOK), 400)
