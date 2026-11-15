@@ -1053,7 +1053,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   secret key and the webhook's signing secret each sealed under `PMS_DATA_KEY`, only the last four
   and test or live ever shown; asked of Stripe before they are kept (a key it doesn't take, or an
   account with no webhook here, is refused) and Company setup says in words what Stripe says is
-  wrong, asked at most every ten minutes, never on a fake-partner server: P-006, P-007; its webhook `POST /api/payments/webhook/stripe/<company>`, which
+  wrong, asked at most every ten minutes, never on a fake-partner server: P-006, P-007; a report
+  about its payment refused for its signature or the server's clock is kept once a day
+  (`trust_payment_report_refusals`, migration 20261115000400), said there until one lands and
+  emailed to its admins: P-010, P-011; its webhook `POST /api/payments/webhook/stripe/<company>`, which
   Company setup lists the events of (`payments.STRIPE_EVENTS`), records only its payments and
   takes every secret it used, so a payment started before a change still
   lands; keys that don't open on this server take no payment and never fall back; a live server,

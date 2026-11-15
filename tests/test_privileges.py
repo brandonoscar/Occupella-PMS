@@ -329,6 +329,9 @@ TABLES = {
     # the ledger is; what failed, told to the company's admins, which it never reads.
     "trust_reserve_events": {"SELECT", "INSERT"},
     "trust_admin_alerts": {"SELECT", "INSERT"},
+    # A payments partner's reports refused, a day a reason (migration 20261115000400, P-010,
+    # P-011): about the company's keys and the server's clock, which the AI never reads.
+    "trust_payment_report_refusals": {"SELECT", "INSERT"},
     # A unit's details (migration 0124): bedrooms, bathrooms, square feet and market rent, which
     # staff record; the latest row holds.
     "trust_unit_details": {"SELECT", "INSERT"},
@@ -494,6 +497,8 @@ AI_NEVER_READS = {
     "trust_email_deliveries",
     # What failed, told to an admin, maybe in the database's own words (migration 0150).
     "trust_admin_alerts",
+    # Payments reports refused: about the company's keys (migration 20261115000400).
+    "trust_payment_report_refusals",
     # Tenants', owners' and vendors' emails, phones and mailing addresses (ADR 0005).
     "trust_contacts",
     # What staff write about people and their homes (ADR 0006).

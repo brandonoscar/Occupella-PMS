@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from pms import payments, sealed
 from pms.api import outbox
 from pms.api.deps import Conn, Staff
-from pms.api.online_payments import resolver_of
+from pms.api.online_payments import refusals_said, resolver_of
 from pms.api.staff import roles_of
 
 router = APIRouter(prefix="/api/payments/keys")
@@ -149,7 +149,8 @@ def view(conn: psycopg.Connection[Any], request: Request, session: Any) -> KeysV
         webhook_events=list(payments.STRIPE_EVENTS),
         changed_at=None if row is None else row[3],
         changed_by=None if row is None else row[4],
-        stripe_says=stripe_says(request, own, row, webhook_url(session.pmc_id)),
+        stripe_says=stripe_says(request, own, row, webhook_url(session.pmc_id))
+        + refusals_said(conn, session.pmc_id),
         can_keep=can_keep,
         may_change=is_admin(conn, session),
     )

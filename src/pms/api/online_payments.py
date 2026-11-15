@@ -25,6 +25,7 @@ payment, and only the partner's report (or the fake partner's page) says it was 
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -33,9 +34,10 @@ from uuid import UUID, uuid4
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from pms import days, notices, payments
+from pms import days, email, notices, payments
 from pms.api import outbox, rent, tenant
 from pms.api.company import how_to_pay
 from pms.api.deps import Conn, Staff, Tenant, refusal
@@ -753,10 +755,97 @@ def read(partner: payments.Partner, body: bytes, headers: Any) -> list[Item]:
     """A partner's signed report, read; refused when its signature isn't the partner's."""
     try:
         return items_of(partner, body, headers)
-    except payments.NotTheirs as wrong:
-        raise HTTPException(400, str(wrong)) from None
     except payments.PartnerFailed:
         raise HTTPException(502, "the payments partner didn't answer: send it again") from None
+
+
+# --- reports refused (docs/edge-cases.md P-010, P-011) ------------------------------------------
+
+# How long Company setup keeps saying reports were refused, when none has landed since.
+REFUSALS_SHOWN_FOR = timedelta(days=14)
+SIGNATURE_REFUSED = (
+    "Stripe's reports to your webhook are refused since {day}: no signing secret here signed them,"
+    " so payments the bank paid aren't reaching the books. In Stripe (Developers, Webhooks), reveal"
+    " the endpoint's signing secret and enter it here with your secret key."
+)
+CLOCK_REFUSED = (
+    "Stripe's reports are refused since {day}: this server's clock is {minutes} minutes off, so"
+    " their signatures read as too old and payments the bank paid aren't reaching the books. Ask"
+    " whoever runs the server to set its clock."
+)
+
+
+def named_company(conn: psycopg.Connection[Any], body: bytes) -> UUID | None:
+    """The company whose payment or autopay an unsigned report names, if it names one: read only
+    to say whose reports are being refused, never to book anything."""
+    try:
+        subject = json.loads(body)["data"]["object"]
+        autopay = (subject.get("metadata") or {}).get("autopay_id")
+        payment = payments.payment_of(subject, None)
+        if payment is not None:
+            return company_of(conn, payments.Event(payment, "paid", "", datetime.now(UTC)))
+        if autopay:
+            found = conn.execute(
+                "SELECT pmc_id FROM trust_autopay WHERE id = %s", (UUID(str(autopay)),)
+            ).fetchone()
+            return None if found is None else found[0]
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+    return None
+
+
+def refused_report(
+    conn: psycopg.Connection[Any], pmc_id: UUID | None, why: payments.NotTheirs
+) -> JSONResponse:
+    """A refused report's 400, recorded first when it is about one of the company's payments:
+    once a day per reason, each admin emailed while the server sends email. The answer is sent
+    after the request commits, so what it recorded stays (an exception would roll it back)."""
+    late = why if isinstance(why, payments.SignedTooLongAgo) else None
+    if pmc_id is not None:
+        day = days.today(conn, pmc_id)
+        reason = "signature" if late is None else "clock"
+        made = conn.execute(
+            "INSERT INTO trust_payment_report_refusals (pmc_id, reason, day, drift_seconds)"
+            " VALUES (%s, %s, %s, %s) ON CONFLICT (pmc_id, reason, day) DO NOTHING RETURNING id",
+            (pmc_id, reason, day, None if late is None else late.drift),
+        ).fetchone()
+        if made is not None and outbox.SENDING.get():
+            words = refusal_words(reason, day, late)
+            email.write_admin_alert(
+                conn, pmc_id, "payment_reports_refused", day, words, outbox.PUBLIC_URL.get()
+            )
+    return JSONResponse(status_code=400, content={"detail": str(why)})
+
+
+def refusal_words(
+    reason: str, day: date, late: payments.SignedTooLongAgo | None = None, drift: int | None = None
+) -> str:
+    seconds = late.drift if late is not None else (drift or 0)
+    if reason == "clock":
+        return CLOCK_REFUSED.format(day=f"{day:%m/%d/%Y}", minutes=max(abs(seconds) // 60, 5))
+    return SIGNATURE_REFUSED.format(day=f"{day:%m/%d/%Y}")
+
+
+def refusals_said(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[str]:
+    """What Company setup says of the company's reports refused lately: each reason's first day
+    in the last two weeks with no report landing after its latest."""
+    rows = conn.execute(
+        "SELECT r.reason, min(r.day), max(r.created_at), max(r.drift_seconds)"
+        " FROM trust_payment_report_refusals AS r WHERE r.pmc_id = %s AND r.created_at > %s"
+        " GROUP BY r.reason ORDER BY r.reason",
+        (pmc_id, datetime.now(UTC) - REFUSALS_SHOWN_FOR),
+    ).fetchall()
+    said = []
+    for reason, first, last, drift in rows:
+        landed = conn.execute(
+            "SELECT EXISTS (SELECT 1 FROM trust_online_payment_events WHERE pmc_id = %s"
+            " AND created_at > %s UNION ALL SELECT 1 FROM trust_owner_online_payment_events"
+            " WHERE pmc_id = %s AND created_at > %s)",
+            (pmc_id, last, pmc_id, last),
+        ).fetchone()
+        if landed is None or not landed[0]:
+            said.append(refusal_words(reason, first, drift=drift))
+    return said
 
 
 def receive_all(
@@ -819,42 +908,54 @@ def company_of(conn: psycopg.Connection[Any], event: Item) -> UUID | None:
     return None if row is None else row.pmc_id
 
 
-@router.post("/webhook/{name}")
+@router.post("/webhook/{name}", response_model=Received)
 def webhook(
     request: Request, conn: Conn, name: str, body: Annotated[bytes, Depends(raw_body)]
-) -> Received:
+) -> Received | JSONResponse:
     """The server's partner's report of what the bank did (Stripe's webhook, under the server's
     keys). It carries the partner's signature, not a session; a report about a payment the PMS
     didn't start is acknowledged and ignored, so the partner stops sending it."""
     partner = server_partner(request)
     if partner is None or partner.name != name or name == "fake":
         raise HTTPException(404, "no such payments partner on this server")
-    return receive_all(conn, partner, read(partner, body, request.headers))
+    try:
+        items = read(partner, body, request.headers)
+    except payments.NotTheirs as wrong:
+        return refused_report(conn, named_company(conn, body), wrong)
+    return receive_all(conn, partner, items)
 
 
-@router.post("/webhook/{name}/{pmc_id}")
+@router.post("/webhook/{name}/{pmc_id}", response_model=Received)
 def company_webhook(
     request: Request,
     conn: Conn,
     name: str,
     pmc_id: UUID,
     body: Annotated[bytes, Depends(raw_body)],
-) -> Received:
+) -> Received | JSONResponse:
     """A company's own Stripe account's report (its webhook, signed with its own secret): it
     records only that company's payments. A report signed with a secret the company used before
     (keys since changed or taken away) still lands: a bank payment reports for days."""
     keys = [p for p in resolver_of(request).every_own(conn, pmc_id) if p.name == name]
     if not keys:
         raise HTTPException(404, "no such payments partner for this company")
+    late: payments.SignedTooLongAgo | None = None
     for partner in keys:
         try:
             items = items_of(partner, body, request.headers)
+        except payments.SignedTooLongAgo as signed:
+            late = signed  # its secret signed it, at a time the server's clock calls too old
+            continue
         except payments.NotTheirs:
             continue
         except payments.PartnerFailed:
             raise HTTPException(502, "the payments partner didn't answer: send it again") from None
         return receive_all(conn, partner, items, pmc_id)
-    raise HTTPException(400, "the report's signature isn't this company's")
+    if late is not None:
+        return refused_report(conn, pmc_id, late)
+    named = named_company(conn, body)
+    wrong = payments.NotTheirs("the report's signature isn't this company's")
+    return refused_report(conn, pmc_id if named == pmc_id else None, wrong)
 
 
 # --- the fake partner's page ------------------------------------------------------------------

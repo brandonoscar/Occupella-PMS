@@ -112,6 +112,16 @@ class NotTheirs(Exception):
     """A report that doesn't carry the partner's signature, or that can't be read."""
 
 
+class SignedTooLongAgo(NotTheirs):
+    """A report the partner signed, but at a time more than the tolerance from the server's
+    clock: `drift` seconds (the server's time less the signature's). Many of these mean the
+    server's clock is off (docs/edge-cases.md P-010)."""
+
+    def __init__(self, message: str, drift: int) -> None:
+        super().__init__(message)
+        self.drift = drift
+
+
 class Partner(Protocol):
     name: str
 
@@ -748,8 +758,9 @@ def verify_signature(
     expected = hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
     if not any(hmac.compare_digest(expected, s.strip()) for s in signatures):
         raise NotTheirs("the report's signature isn't this endpoint's")
-    if abs((time.time() if now is None else now) - int(stamps[0])) > tolerance:
-        raise NotTheirs("the report was signed too long ago")
+    drift = int((time.time() if now is None else now) - int(stamps[0]))
+    if abs(drift) > tolerance:
+        raise SignedTooLongAgo("the report was signed too long ago", drift)
 
 
 class NoPartner(Exception):

@@ -16001,7 +16001,6 @@ CREATE TABLE public.trust_admin_alerts (
     day date NOT NULL,
     what text NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT trust_admin_alerts_kind_check CHECK ((kind = ANY (ARRAY['nightly_failed'::text, 'deliveries_failing'::text]))),
     CONSTRAINT trust_admin_alerts_what_check CHECK (((what ~ '\S'::text) AND (length(what) <= 1000)))
 );
 
@@ -19264,6 +19263,23 @@ CREATE TABLE public.trust_payment_notes (
 
 
 --
+-- Name: trust_payment_report_refusals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_report_refusals (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    reason text NOT NULL,
+    day date NOT NULL,
+    drift_seconds integer,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_payment_report_refusals_check CHECK (((reason = 'clock'::text) = (drift_seconds IS NOT NULL))),
+    CONSTRAINT trust_payment_report_refusals_drift_seconds_check CHECK (((drift_seconds IS NULL) OR (abs(drift_seconds) > 300))),
+    CONSTRAINT trust_payment_report_refusals_reason_check CHECK ((reason = ANY (ARRAY['signature'::text, 'clock'::text])))
+);
+
+
+--
 -- Name: trust_payment_reversals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -20576,6 +20592,14 @@ ALTER TABLE ONLY public.trust_account_codes
 
 ALTER TABLE ONLY public.trust_account_signers
     ADD CONSTRAINT trust_account_signers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_admin_alerts trust_admin_alerts_kind_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_admin_alerts
+    ADD CONSTRAINT trust_admin_alerts_kind_check CHECK ((kind = ANY (ARRAY['nightly_failed'::text, 'deliveries_failing'::text, 'payment_reports_refused'::text]))) NOT VALID;
 
 
 --
@@ -23258,6 +23282,22 @@ ALTER TABLE ONLY public.trust_payment_keys
 
 ALTER TABLE ONLY public.trust_payment_notes
     ADD CONSTRAINT trust_payment_notes_pkey PRIMARY KEY (transfer_id);
+
+
+--
+-- Name: trust_payment_report_refusals trust_payment_report_refusals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_report_refusals
+    ADD CONSTRAINT trust_payment_report_refusals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_payment_report_refusals trust_payment_report_refusals_pmc_id_reason_day_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_report_refusals
+    ADD CONSTRAINT trust_payment_report_refusals_pmc_id_reason_day_key UNIQUE (pmc_id, reason, day);
 
 
 --
@@ -28521,6 +28561,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_payment_report_refusals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_report_refusals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_payment_reversals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -30310,6 +30357,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_paym
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_notes FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_payment_report_refusals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_report_refusals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -37267,6 +37321,14 @@ ALTER TABLE ONLY public.trust_payment_notes
 
 
 --
+-- Name: trust_payment_report_refusals trust_payment_report_refusals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_report_refusals
+    ADD CONSTRAINT trust_payment_report_refusals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
 -- Name: trust_payment_reversals trust_payment_reversals_charge_id_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39235,4 +39297,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261107000200'),
     ('20261113000100'),
     ('20261113000200'),
-    ('20261114000100');
+    ('20261114000100'),
+    ('20261115000400');
