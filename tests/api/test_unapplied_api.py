@@ -16,6 +16,7 @@ from helpers import (
     add_unit,
     approve,
     bank_sums,
+    fresh,
     make_pmc,
     open_account,
     open_lease,
@@ -25,9 +26,18 @@ from people import join_as_owner, join_as_staff, join_as_tenant
 from pms import email
 from pms.api import rent
 
-TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
-START = (TODAY.replace(day=1) - DAY).replace(day=1)
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's (#235)."""
+    global TODAY, START
+    TODAY = datetime.now(UTC).date()
+    START = (TODAY.replace(day=1) - DAY).replace(day=1)
+
+
+on_this_day()
 
 
 @pytest.fixture
@@ -60,14 +70,14 @@ def refused(answer, status, detail=None):
         assert answer.json()["detail"] == detail
 
 
-def receive(client, amount="500.00", on=TODAY - 3 * DAY, request_id=None, **more):
+def receive(client, amount="500.00", on=None, request_id=None, **more):
     return ok(
         send(
             client,
             "/api/unapplied",
             request_id=request_id or uuid.uuid4(),
             amount=amount,
-            received_on=on,
+            received_on=on or TODAY - 3 * DAY,
             payer="J. Sample",
             memo="Check with no unit written on it",
             method="check",
@@ -455,7 +465,7 @@ def test_a_refund_takes_the_disburse_role(client, other_client, conn, app_conn, 
         # Into the posting's jsonb metadata, which Postgres refuses (22P05): a 422, not a 500
         # (issue #229).
         {"payer": "J. \x00Sample"},
-        {"received_on": str(TODAY + DAY)},
+        {"received_on": lambda: str(TODAY + DAY)},
     ],
 )
 def test_bad_unapplied_cash_is_refused_and_records_nothing(client, conn, staff, pmc, change):
@@ -465,7 +475,7 @@ def test_bad_unapplied_cash_is_refused_and_records_nothing(client, conn, staff, 
         "received_on": str(TODAY),
         "payer": "J. Sample",
         "method": "check",
-    } | change
+    } | fresh(change)
 
     answer = client.post("/api/unapplied", json=body)
 
