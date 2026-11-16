@@ -24,8 +24,17 @@ from pms import look_ups, payments
 from pms.api import Settings, create_app, outbox, payment_keys
 from pms.api import online_payments as op
 
-TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
+
+
+def on_this_day():
+    """Today, worked out again before each test (tests/conftest.py), so a run that crosses
+    midnight UTC compares with the database's today, never the day the module loaded."""
+    global TODAY
+    TODAY = datetime.now(UTC).date()
+
+
+on_this_day()
 # Made-up keys, never a real account's.
 SECRET_KEY = "sk_" + "test_" + "Synthetic000000000000A1b2"
 OTHER_KEY = "sk_" + "live_" + "Synthetic000000000000Z9y8"
@@ -414,6 +423,13 @@ def signed_at(client, pmc_id, payment, secret, when):
     )
 
 
+def refused_on(conn, pmc):
+    """The company's day its first refusal was recorded on: what Company setup names."""
+    return conn.execute(
+        "SELECT min(day) FROM trust_payment_report_refusals WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone()[0]
+
+
 def refusals(conn, pmc):
     return conn.execute(
         "SELECT reason, drift_seconds FROM trust_payment_report_refusals WHERE pmc_id = %s"
@@ -434,7 +450,7 @@ def test_reports_signed_with_a_secret_the_company_doesnt_have_are_told_to_compan
     refused(report(other_client, pmc.pmc_id, payment, new_secret), 400)  # once a day
 
     assert refusals(conn, pmc) == [("signature", None)]
-    said = op.SIGNATURE_REFUSED.format(day=f"{TODAY:%m/%d/%Y}")
+    said = op.SIGNATURE_REFUSED.format(day=f"{refused_on(conn, pmc):%m/%d/%Y}")
     assert ok(client.get("/api/payments/keys"))["stripe_says"] == [said]
     # A stranger's post naming no payment of the company writes nothing.
     other = report(other_client, pmc.pmc_id, str(uuid4()), new_secret)
@@ -519,7 +535,9 @@ def test_reports_refused_because_the_servers_clock_is_off_say_so(
     ((reason, drift),) = refusals(conn, pmc)
     assert reason == "clock" and 595 <= drift <= 660
     said = ok(client.get("/api/payments/keys"))["stripe_says"]
-    assert said == [op.CLOCK_REFUSED.format(day=f"{TODAY:%m/%d/%Y}", minutes=drift // 60)]
+    assert said == [
+        op.CLOCK_REFUSED.format(day=f"{refused_on(conn, pmc):%m/%d/%Y}", minutes=drift // 60)
+    ]
     assert not paid(conn, payment)
 
 

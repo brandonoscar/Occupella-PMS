@@ -239,8 +239,9 @@ def test_a_bounce_the_owner_cant_take_is_covered_by_the_company_and_counted(app_
         " JOIN trust_ledger_accounts AS l ON l.ledger_account_id = t.to_account_id"
         " JOIN pgledger_accounts AS a ON a.id = t.to_account_id"
         " WHERE t.metadata ->> 'key' = (SELECT metadata ->> 'key' FROM pgledger_transfers"
-        "  WHERE id = %s) AND l.kind = 'owner_property'",
-        (transfer,),
+        "  WHERE id = %s) AND l.kind = 'owner_property' AND l.pmc_id = %s",
+        # Keys are unique per company only: another test's company may hold the same one.
+        (transfer, pmc),
     ).fetchall()
     assert owners
     for n, (account, held) in enumerate(owners):
