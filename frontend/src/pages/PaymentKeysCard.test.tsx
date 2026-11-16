@@ -17,6 +17,7 @@ const NONE: PaymentKeys = {
   webhook_events: ["checkout.session.async_payment_succeeded", "setup_intent.succeeded"],
   changed_at: null,
   changed_by: null,
+  stripe_says: [],
   can_keep: true,
   may_change: true,
 };
@@ -47,6 +48,14 @@ describe("PaymentKeysCard", () => {
     expect(keysLine({ ...NONE, server_partner: "stripe" })).toBe("Using this server's Stripe account.");
     expect(keysLine({ ...NONE, using: "none", server_partner: null })).toBe("Not set. Tenants and owners can't pay online.");
     expect(keysLine(OWN)).toBe("Your Stripe account, key ending in A1b2");
+  });
+
+  it("says in words what Stripe says is wrong with the keys in use", async () => {
+    const rolled = "Stripe doesn't take this secret key: it was mistyped, rolled or revoked.";
+    server({ ...OWN, stripe_says: [rolled] });
+    render(<PaymentKeysCard />);
+    expect((await screen.findByText(rolled)).textContent).toBe(rolled);
+    expect(screen.getByTestId("payment-keys").textContent).toBe("Your Stripe account, key ending in A1b2");
   });
 
   it("lets an admin enter the keys, which never come back", async () => {

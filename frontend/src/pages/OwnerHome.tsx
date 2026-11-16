@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
+import { Badge } from "../components/Badge";
 import { Button, LinkButton } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
@@ -34,7 +35,18 @@ import {
 } from "lucide-react";
 import { withBase } from "../base";
 
-type Property = { account_id: string; property_id: string; name: string; bank: string; balance: string };
+// owns_today: false for a property they no longer own (sold, docs/edge-cases.md U-085): its money
+// shows, never its units or tenants. owed_to_company: what the owner owes the company back for the
+// account, when the company covered it from its own money as a payment bounced and the account was
+// short (docs/edge-cases.md M-060).
+type Property = {
+  account_id: string; property_id: string; name: string; bank: string; balance: string;
+  owns_today: boolean; owed_to_company?: string;
+};
+
+export function youOweLine(property: string, owed: string): string {
+  return `You owe the company ${money(owed)} for ${property}: a tenant's payment came back after your money had gone out, and the company covered your account from its own money.`;
+}
 
 // Cells take the table style's padding (less of it on a phone); only their alignment is set here.
 const CELL = "text-left";
@@ -141,8 +153,12 @@ export function OwnerHome({ me, section = "overview", propertyId }: {
             {properties.map((p) => (
               <tr key={p.account_id} className="border-t border-line">
                 <td className={CELL}>
-                  <a className="font-medium text-iris hover:text-iris-hover hover:underline"
-                    href={withBase(`/properties/${p.property_id}`)}>{p.name}</a>
+                  {p.owns_today ? (
+                    <a className="font-medium text-iris hover:text-iris-hover hover:underline"
+                      href={withBase(`/properties/${p.property_id}`)}>{p.name}</a>
+                  ) : (
+                    <span className="font-medium text-ink">{p.name} <Badge tone="neutral">No longer yours</Badge></span>
+                  )}
                 </td>
                 <td className={`${CELL} text-ink-muted`}>{p.bank}</td>
                 <td className={AMOUNT}>{money(p.balance)}</td>
@@ -151,6 +167,9 @@ export function OwnerHome({ me, section = "overview", propertyId }: {
           </tbody>
         </table>
       )}
+      {(properties ?? []).filter((p) => Number(p.owed_to_company ?? "0") > 0).map((p) => (
+        <p key={p.account_id} className="mt-3 text-sm text-ink">{youOweLine(p.name, p.owed_to_company ?? "0")}</p>
+      ))}
     </Card>
   );
 

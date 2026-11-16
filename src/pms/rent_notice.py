@@ -13,6 +13,10 @@ records them; a state with none recorded gets no warning, and nothing is guessed
 - New York, Real Property Law 226-c: for an increase of 5% or more, 30 days when the tenant has
   lived there (or holds a lease) less than a year, 60 for one to two years, 90 for two or more.
 
+Served by mail, California adds 5 days to the notice (Code of Civil Procedure 1013(a), which
+Civil Code 827 names for a notice mailed; docs/edge-cases.md D-069): 35 days, or 95. No other
+state's extra days for mail are recorded, so none are added.
+
 Left out, as docs/law.md records them: Colorado's 60 days (C.R.S. 38-12-701) applies only
 without a written lease, and a renewal is one; West Virginia has no statute on increases. Rent
 control and caps (California 1947.12, Oregon 90.324, Washington's) are not checked, nor Oregon's
@@ -96,6 +100,20 @@ def needed(state: str, now: Decimal, lowest: Decimal, new: Decimal, years: int) 
         days = 30 if years < 1 else 60 if years < 2 else 90
         return Needed(state, days, "New York Real Property Law §226-c", shown(over_now))
     return None
+
+
+# The days a state adds to a notice served by mail, and the law that adds them (docs/law.md).
+MAILED = {"CA": (5, "Code of Civil Procedure §1013(a), served by mail")}
+
+
+def served(rule: Needed, served_by: str | None) -> Needed:
+    """The rule for a notice served as `served_by` ("mail", "in person"...): a state's extra days
+    for mail added to the days it asks (D-069), or the rule as it is."""
+    extra = MAILED.get(rule.state) if served_by == "mail" else None
+    if extra is None:
+        return rule
+    days, law = extra
+    return Needed(rule.state, rule.days + days, f"{rule.law} and {law}", rule.increase_percent)
 
 
 def earliest(sent_on: date, rule: Needed) -> date:

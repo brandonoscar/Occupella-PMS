@@ -33,11 +33,20 @@ from hypothesis import strategies as st
 from pms import payments
 from pms.api import online_payments as op
 
-TODAY = datetime.now(UTC).date()
-DUE = TODAY - timedelta(days=12)
 RENT = Decimal("1000.00")
 FLAT = Decimal("50.00")
 HOUR = timedelta(hours=1)
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's (#235)."""
+    global TODAY, DUE
+    TODAY = datetime.now(UTC).date()
+    DUE = TODAY - timedelta(days=12)
+
+
+on_this_day()
 
 PAYMENT = st.tuples(
     st.integers(min_value=1, max_value=1300).map(Decimal),  # dollars

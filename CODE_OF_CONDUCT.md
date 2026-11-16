@@ -1,7 +1,7 @@
 # Code of conduct
 
-Occupella PMS is built by people who manage property, people who write software, and people who
-do both. Everyone who takes part in its issues, discussions and pull requests is expected to:
+Occupella PMS is maintained by [@brandonoscar](https://github.com/brandonoscar). Everyone who
+takes part in its issues and pull requests is expected to:
 
 - be respectful and patient, with newcomers above all;
 - argue about the code and the books, never about the person;

@@ -238,9 +238,10 @@ def test_paid_is_the_owners_contribution_once_and_the_company_pays_the_fee(
         (f"owner-payment/{payment}",),
     ).fetchone()[0]
     assert memo == "Paid online by bank"
-    # A failure after it was paid changes nothing; nothing waits.
+    # A failure after it was paid is the money coming back (docs/edge-cases.md P-026): taken
+    # back out of the owner's account; nothing waits.
     assert bank_says(owner_client, payment, "failed") == {"recorded": True}
-    assert ok(owner_client.get("/api/payments/owner"))["payments"][0]["status"] == "paid"
+    assert ok(owner_client.get("/api/payments/owner"))["payments"][0]["status"] == "returned"
     assert ok(client.get("/api/payments/waiting")) == []
 
 
@@ -324,6 +325,21 @@ def test_a_return_is_taken_back_out_of_the_owners_account(
     # The partner's fee stays the company's: the bank kept it.
     assert balance(conn, pmc.pmc_income) == Decimal("6.00")
     assert ok(client.get("/api/payments/waiting")) == []
+
+
+def test_a_failure_reported_after_the_owners_payment_was_paid_takes_it_back_out(
+    client, owner_client, conn, staff, owner, pmc
+):
+    # docs/edge-cases.md P-026: a late failure is the money coming back, as a return is.
+    turn_on(client)
+    fund_company(conn, pmc, "10.00")
+    payment = pay(owner_client, pmc.owners[0].account, "500.00")["id"]
+    bank_says(owner_client, payment, "paid")
+    assert balance(conn, pmc.owners[0].account) == Decimal("500.00")
+    assert bank_says(owner_client, payment, "failed") == {"recorded": True}
+    assert balance(conn, pmc.owners[0].account) == Decimal("0.00")
+    assert f"owner-payment-back/{payment}" in keys(conn, pmc)
+    assert ok(owner_client.get("/api/payments/owner"))["payments"][0]["status"] == "returned"
 
 
 def test_a_return_the_owners_account_cant_cover_waits_for_staff(
@@ -479,6 +495,40 @@ def test_stripes_signed_report_records_an_owners_payment(stripe_app, conn, app_c
     assert balance(conn, pmc.pmc_income) == Decimal("6.00")
     # The fake partner's page is not this server's.
     refused(browser.get(f"/api/payments/fake/{payment}"), 404)
+
+
+def test_a_dispute_on_an_owners_payment_through_stripe_keys_won_is_their_contribution_again(
+    stripe_app, conn, app_conn, pmc
+):
+    # docs/edge-cases.md P-061, P-030: taken back out, its fee the company's; won, paid back in.
+    browser, owner_browser, answers = stripe_app
+    join_as_staff(browser, conn, app_conn, pmc)
+    turn_on(browser)
+    fund_company(conn, pmc, "30.00")
+    answers[("POST", "/checkout/sessions")] = {"id": "cs_owner_9", "url": "https://checkout.test/9"}
+    join_as_owner(owner_browser, app_conn, pmc)
+    payment = pay(owner_browser, pmc.owners[0].account, "500.00")["id"]
+    answers[("GET", "/payment_intents/pi_o9")] = {
+        "latest_charge": {"balance_transaction": {"fee": 400}},
+        "metadata": {"payment_id": payment},
+    }
+    subject = {"id": "cs_owner_9", "client_reference_id": payment, "payment_intent": "pi_o9"}
+    ok(stripe_report(browser, "checkout.session.async_payment_succeeded", subject))
+    assert balance(conn, pmc.owners[0].account) == Decimal("500.00")
+    dispute = {
+        "id": "du_owner_9",
+        "payment_intent": "pi_o9",
+        "status": "needs_response",
+        "balance_transactions": [{"amount": -50000, "fee": 1500}],
+    }
+    assert ok(stripe_report(browser, "charge.dispute.created", dispute)) == {"recorded": True}
+    assert balance(conn, pmc.owners[0].account) == Decimal("0.00")
+    assert balance(conn, pmc.pmc_income) == Decimal("11.00")  # 30.00 less 4.00 and 15.00
+
+    won = dispute | {"status": "won"}
+    assert ok(stripe_report(browser, "charge.dispute.closed", won)) == {"recorded": True}
+    assert balance(conn, pmc.owners[0].account) == Decimal("500.00")
+    assert ok(browser.get("/api/payments/waiting")) == []
 
 
 def test_a_payment_whose_day_month_end_closed_is_recorded_in_the_next_open_one(

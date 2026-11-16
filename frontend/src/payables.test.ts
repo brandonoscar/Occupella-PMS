@@ -18,6 +18,8 @@ import {
   similarNote,
   linesNote,
   ownerFeeSummary,
+  owedLine,
+  owedToCompany,
   evenShares,
   markupLabel,
 } from "./payables";
@@ -212,6 +214,23 @@ describe("owner fees", () => {
     expect(ownerFeeSummary("inspection", "75.00", "Property 1")).toBe("A $75.00 inspection fee is taken from Property 1.");
     expect(ownerFeeSummary("lease_up", "1200", "Property 2")).toBe("A $1,200.00 lease-up fee is taken from Property 2.");
     expect(ownerFeeSummary("other", "5.5", "Property 3")).toBe("A $5.50 other fee is taken from Property 3.");
+  });
+});
+
+// docs/edge-cases.md M-060: what an owner owes the company back for covering their shortfall.
+describe("owed to the company", () => {
+  const ACCOUNT: OwnerMoney = {
+    account: "a1", owner_id: "o1", owner: "Owner 1", property_id: "pr1", property: "Property 1",
+    bank_account: "Operating", balance: "0.00", reserve: "0.00", unpaid_bills: "0.00", available: "0.00",
+    has_agreement: true, payout_method: "check", owed_to_company: "110.00",
+  };
+  it("lists only the accounts that owe, each in a line", () => {
+    const none = { ...ACCOUNT, account: "a2", owed_to_company: "0.00" };
+    const older = { ...ACCOUNT, account: "a3", owed_to_company: undefined };
+    expect(owedToCompany([ACCOUNT, none, older]).map((a) => a.account)).toEqual(["a1"]);
+    expect(owedLine(ACCOUNT)).toBe(
+      "Property 1 owes the company $110.00: it covered the account when a payment bounced and the account was short.",
+    );
   });
 });
 

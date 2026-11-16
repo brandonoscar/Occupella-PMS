@@ -7,9 +7,13 @@ import {
   leaseLabel,
   moveOutStatus,
   needsReceipt,
+  prepaidPreview,
   preview,
   returnBy,
+  returnedLine,
+  returnQuestion,
   sentLine,
+  settledPrepaidLine,
   statementPath,
 } from "./moveout";
 
@@ -26,6 +30,35 @@ describe("moveout", () => {
     expect(preview({ ...LEASE, owed: "0.00" })).toEqual({ kept: "0.00", returned: "1200.00" });
     // What the lease its tenants moved from still owes is kept too (migration 0091).
     expect(preview({ ...LEASE, carried: "500.00" })).toEqual({ kept: "850.00", returned: "350.00" });
+  });
+
+  it("uses the tenants' prepaid rent first and pays back what is left of it (M-072)", () => {
+    const prepaid = { ...LEASE, prepaid: "100.00" };
+    expect(prepaidPreview(prepaid)).toEqual({ used: "100.00", back: "0.00" });
+    expect(preview(prepaid)).toEqual({ kept: "250.00", returned: "950.00" });
+    expect(prepaidPreview({ ...prepaid, prepaid: "500.00" })).toEqual({ used: "350.00", back: "150.00" });
+    expect(preview({ ...prepaid, prepaid: "500.00" })).toEqual({ kept: "0.00", returned: "1200.00" });
+    expect(prepaidPreview(LEASE)).toEqual({ used: "0.00", back: "0.00" });
+    expect(returnQuestion({ ...prepaid, prepaid: "500.00" }, "2026-07-05")).toBe(
+      "Return the deposit on 07/05/2026: use $350.00 of the tenants' prepaid rent and keep $0.00 of the"
+      + " deposits for what the lease owes, and pay $1,200.00 of the deposits and $150.00 of prepaid rent"
+      + " back to the tenants? This records what you paid at the bank; it sends no money or email.",
+    );
+    expect(returnQuestion(LEASE, "2026-07-05")).toBe(
+      "Return the deposit on 07/05/2026: keep $350.00 for what the lease owes and pay $850.00 back to the"
+      + " tenants? This records what you paid at the bank; it sends no money or email.",
+    );
+    expect(returnedLine({ returned: "850.00", prepaid_returned: "150.00" })).toBe(
+      "Returned $850.00 and $150.00 of prepaid rent to the tenants; the rest paid what the lease owed.",
+    );
+    expect(returnedLine({ returned: "850.00" })).toBe(
+      "Returned $850.00 to the tenants; the rest paid what the lease owed.",
+    );
+    const settled = { held: "1200.00", kept: "0.00", returned: "1200.00", returned_on: "2026-07-05" };
+    expect(settledPrepaidLine(settled)).toBe("");
+    expect(settledPrepaidLine({ ...settled, prepaid_used: "350.00", prepaid_returned: "150.00" })).toBe(
+      " Their prepaid rent paid $350.00 of what was owed, and $150.00 of it went back to them.",
+    );
   });
 
   it("reads a lease and its charges", () => {

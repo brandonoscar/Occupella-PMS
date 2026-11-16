@@ -34,24 +34,45 @@ class Property(BaseModel):
     bank: str
     # Money as text, so no float ever rounds a cent.
     balance: str
+    # Whether they own it today: false once the property's ownership shares leave their account
+    # out (sold, or moved to another owner; U-085), when only its money shows, never its units.
+    owns_today: bool = True
+    # What the owner owes the company back for this account: the company covered it from its own
+    # money when a payment bounced and the account was short (docs/edge-cases.md M-060).
+    owed_to_company: str = "0.00"
 
 
 @router.get("/properties")
 def properties(session: Owner, conn: Conn) -> list[Property]:
     """Each property the owner holds money for, with what it holds now."""
     rows = conn.execute(
-        "SELECT t.ledger_account_id, p.id, p.display_name, b.display_name, a.balance"
+        "SELECT t.ledger_account_id, p.id, p.display_name, b.display_name, g.balance,"  # noqa: S608
+        " EXISTS (SELECT 1 FROM trust_ledger_accounts AS a"
+        f"  WHERE a.ledger_account_id = t.ledger_account_id AND {documents.OWNS_TODAY}),"
+        " trust_company_advance_owed(t.ledger_account_id)"
         " FROM trust_ledger_accounts AS t"
         " JOIN trust_properties AS p ON p.id = t.property_id"
         " JOIN trust_bank_accounts AS b ON b.id = t.bank_account_id"
-        " JOIN pgledger_accounts AS a ON a.id = t.ledger_account_id"
-        " WHERE t.pmc_id = %s AND t.owner_id = %s AND t.kind = 'owner_property'"
+        " JOIN pgledger_accounts AS g ON g.id = t.ledger_account_id"
+        " WHERE t.pmc_id = %(pmc)s AND t.owner_id = %(owner)s AND t.kind = 'owner_property'"
         ' ORDER BY p.display_name COLLATE "C", p.id',
-        (session.pmc_id, session.person_id),
+        {
+            "pmc": session.pmc_id,
+            "owner": session.person_id,
+            "day": days.today(conn, session.pmc_id),
+        },
     ).fetchall()
     return [
-        Property(account_id=a, property_id=p, name=n, bank=b, balance=exports.text(balance))
-        for a, p, n, b, balance in rows
+        Property(
+            account_id=a,
+            property_id=p,
+            name=n,
+            bank=b,
+            balance=exports.text(balance),
+            owns_today=owns,
+            owed_to_company=f"{owed:.2f}",
+        )
+        for a, p, n, b, balance, owns, owed in rows
     ]
 
 
@@ -232,7 +253,14 @@ ORDER BY d.created_at DESC, d.id
 def owner_documents(session: Owner, conn: Conn) -> list[OwnerDocument]:
     """What this owner sees of the files, newest first: their own documents, their properties'
     and units' documents, and their bills' receipts (q046)."""
-    rows = conn.execute(DOCUMENTS, {"pmc": session.pmc_id, "owner": session.person_id})
+    rows = conn.execute(
+        DOCUMENTS,
+        {
+            "pmc": session.pmc_id,
+            "owner": session.person_id,
+            "day": days.today(conn, session.pmc_id),
+        },
+    )
     return [
         OwnerDocument(
             id=i, title=t, content_type=c, size=n, uploaded_at=at, about=about, about_name=name

@@ -95,7 +95,7 @@ describe("the owner portal's second version", () => {
 
   it("has a section per kind of thing in the sidebar, and links each property to its page", async () => {
     server({
-      "GET /api/owner/properties": [{ account_id: "a1", property_id: "pr1", name: "Property 1", bank: "Operating", balance: "1500.00" }],
+      "GET /api/owner/properties": [{ account_id: "a1", property_id: "pr1", name: "Property 1", bank: "Operating", balance: "1500.00", owns_today: true, owed_to_company: "0.00" }],
     });
     render(<OwnerHome me={OWNER} section="properties" />);
     const nav = screen.getByRole("navigation", { name: "Sections" });

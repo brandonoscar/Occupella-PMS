@@ -14,6 +14,11 @@ PNGs, at most twelve a unit, which the public vacancy page shows while it is lis
 (src/pms/api/listings.py). An applicant's proof of income (migration 0155) comes with their
 application (src/pms/api/applicant_details.py) and shows on their application's page and, once
 they are a tenant, on theirs; no list of files shows it.
+
+A PDF a tenant or an anonymous applicant sends is refused when it carries anything a desktop
+reader runs or opens by itself (`scripted`: JavaScript, a launch, a form that submits, an embedded
+file; docs/edge-cases.md F-010): staff and co-tenants open those files outside the browser, where
+the download's sandbox doesn't reach. Its objects are read for that alone.
 """
 
 from __future__ import annotations
@@ -21,6 +26,8 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import io
+import logging
 import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
@@ -31,6 +38,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from psycopg import sql
 from pydantic import BaseModel, Field, StringConstraints
 
+from pms import days
 from pms.api import scope
 from pms.api.deps import Conn, Staff
 from pms.api.rentals import Page, Paged, PerPage
@@ -349,16 +357,82 @@ def upload(session: Staff, conn: Conn, new: NewDocument) -> Created:
     return Created(id=keep(conn, session.pmc_id, new))
 
 
+log = logging.getLogger(__name__)
+
+# What a PDF names that a desktop reader runs or opens by itself: a script, a program, a form
+# sent somewhere, a file inside it, media with its own player, an XML form.
+ACTIVE_KEYS = frozenset(
+    {"/JS", "/JavaScript", "/Launch", "/EmbeddedFile", "/EmbeddedFiles", "/RichMedia", "/XFA"}
+)
+ACTIVE_ACTIONS = frozenset(
+    {"/JavaScript", "/Launch", "/SubmitForm", "/ImportData", "/GoToE", "/RichMediaExecute"}
+)
+# At most this many of its objects are read; a PDF with more isn't taken from outside.
+MOST_OBJECTS = 50_000
+SCRIPTED = (
+    "This PDF has scripts or attachments in it, which we can't take. Open it and print it to a new"
+    " PDF (Print, Save as PDF), then send that."
+)
+LOCKED = "This PDF is locked with a password. Send one without a password."
+UNREADABLE = "This PDF can't be read. Print it to a new PDF (Print, Save as PDF) and send that."
+# In a PDF whose objects can't be read, what might hide or name what runs by itself: an active
+# key or action, objects packed where its bytes don't show them, a name spelled in #hex.
+HIDING = re.compile(
+    rb"/(?:JS|JavaScript|Launch|EmbeddedFiles?|RichMedia|XFA|SubmitForm|ImportData|ObjStm)\b"
+    rb"|/[A-Za-z0-9]*#[0-9A-Fa-f]{2}"
+)
+
+
+def scripted(content: bytes) -> str | None:
+    """Why a PDF from outside the company is refused, in words, or None: it runs or opens
+    something by itself (a key of ACTIVE_KEYS anywhere in it, or an action of ACTIVE_ACTIONS),
+    or it is locked. Every object reachable from its trailer is read, those packed in object
+    streams too, and names written in #hex read as themselves. One whose objects can't be read is
+    refused when its bytes show anything that could run or hide (HIDING)."""
+    from pypdf import PdfReader
+    from pypdf.errors import PdfReadError
+    from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject
+
+    try:
+        reader = PdfReader(io.BytesIO(content), strict=False)
+        if reader.is_encrypted and not reader.decrypt(""):
+            return LOCKED
+        seen: set[tuple[int, int]] = set()
+        waiting: list[Any] = [reader.trailer]
+        while waiting:
+            item = waiting.pop()
+            if isinstance(item, IndirectObject):
+                if (item.idnum, item.generation) in seen:
+                    continue
+                seen.add((item.idnum, item.generation))
+                if len(seen) > MOST_OBJECTS:
+                    return UNREADABLE
+                item = item.get_object()
+            if isinstance(item, DictionaryObject):
+                if ACTIVE_KEYS & set(item.keys()) or item.get("/S") in ACTIVE_ACTIONS:
+                    return SCRIPTED
+                waiting.extend(item.values())
+            elif isinstance(item, ArrayObject):
+                waiting.extend(item)
+    except (PdfReadError, ValueError, KeyError, TypeError, AttributeError, RecursionError) as bad:
+        log.info("a PDF sent from outside couldn't be read: %s", type(bad).__name__)
+        return UNREADABLE if HIDING.search(content) else None
+    return None
+
+
 def keep(
     conn: psycopg.Connection[Any],
     pmc_id: UUID,
     new: NewDocument,
     transfer_id: str | None = None,
     uploaded_by_tenant: UUID | None = None,
+    sent_by_outsider: bool = False,
 ) -> UUID:
     """Keeps a file as a document of the PMC, checked: its type, its size and what it is
     about. A bill's invoice comes this way too, with the bill (src/pms/api/payables.py), and a
-    tenant's own document of their lease from the portal (src/pms/api/tenant.py)."""
+    tenant's own document of their lease from the portal (src/pms/api/tenant.py). A PDF someone
+    outside the company sends (`sent_by_outsider`: a tenant, an applicant) that runs anything by
+    itself is refused (F-010)."""
     try:
         content = base64.b64decode(new.content_base64, validate=True)
     except (binascii.Error, ValueError):
@@ -367,6 +441,10 @@ def keep(
         raise HTTPException(422, "a document is a file of at most 5 MB")
     if not content.startswith(MAGIC[new.content_type]):
         raise HTTPException(422, f"the file isn't a {EXTENSION[new.content_type].upper()}")
+    if sent_by_outsider and new.content_type == "application/pdf":
+        refused = scripted(content)
+        if refused is not None:
+            raise HTTPException(422, refused)
     subjects = conn.execute(SUBJECTS[new.kind], {"pmc": pmc_id}).fetchall()
     if new.about_id not in {i for i, _ in subjects}:
         raise HTTPException(404, "nothing of this PMC for the document to be about")
@@ -422,23 +500,32 @@ def file_name(title: str, content_type: str) -> str:
     return f"{stem}.{EXTENSION[content_type]}"
 
 
+# An owner's property account (a) is the owner's today unless the property's ownership shares in
+# force on %(day)s leave it out (docs/edge-cases.md U-085: the property sold, or its ownership
+# moved to another owner, recorded as shares from that day).
+OWNS_TODAY = """
+(NOT EXISTS (SELECT 1 FROM trust_ownership_on(a.property_id, %(day)s))
+ OR a.ledger_account_id IN (
+     SELECT o.ledger_account_id FROM trust_ownership_on(a.property_id, %(day)s) AS o))
+"""
 # What an owner sees of the documents (d) in the portal (the founder's review q046): their own
-# owner documents, the documents of each property they hold an account for and of its units, and
-# the receipts of the bills of their accounts. Never a tenant's, a lease's or a vendor's.
-OWNER_SEES = """
+# owner documents, the documents of each property they own today (an account the shares in force
+# on %(day)s don't leave out, U-085) and of its units, and the receipts of the bills of their
+# accounts. Never a tenant's, a lease's or a vendor's.
+OWNER_SEES: str = f"""
 (   (d.kind = 'owner_document' AND d.owner_id = %(owner)s)
  OR (d.kind = 'property_document' AND d.property_id IN (
         SELECT a.property_id FROM trust_ledger_accounts AS a
-        WHERE a.kind = 'owner_property' AND a.owner_id = %(owner)s))
+        WHERE a.kind = 'owner_property' AND a.owner_id = %(owner)s AND {OWNS_TODAY}))
  OR (d.kind = 'unit_document' AND d.unit_id IN (
         SELECT u.id FROM trust_units AS u
         JOIN trust_ledger_accounts AS a ON a.property_id = u.property_id
-        WHERE a.kind = 'owner_property' AND a.owner_id = %(owner)s))
+        WHERE a.kind = 'owner_property' AND a.owner_id = %(owner)s AND {OWNS_TODAY}))
  OR (d.kind = 'receipt' AND d.bill_id IN (
         SELECT b.id FROM trust_bills AS b
         JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id
         WHERE a.kind = 'owner_property' AND a.owner_id = %(owner)s)))
-"""
+"""  # noqa: S608
 
 
 SERVED = f"""
@@ -455,7 +542,10 @@ def served(
 ) -> Response:
     """A document's file as a download, or 404: another PMC's, removed, or (for an owner) not
     one they see (OWNER_SEES)."""
-    row = conn.execute(SERVED, {"pmc": pmc_id, "document": document_id, "owner": owner}).fetchone()
+    day = None if owner is None else days.today(conn, pmc_id)
+    row = conn.execute(
+        SERVED, {"pmc": pmc_id, "document": document_id, "owner": owner, "day": day}
+    ).fetchone()
     if row is None:
         raise HTTPException(404, "no such document")
     title, content_type, content = row

@@ -192,6 +192,29 @@ describe("HousingAuthorityPage", () => {
     expect(posted(fetch)).toEqual([["/api/assistance/payments/t1/bounce", { on: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) }]]);
   });
 
+  it("asks before the company covers what the owners are short of a payment that bounced (M-060)", async () => {
+    const payments = [
+      { transfer_id: "t1", received_on: "2026-10-03", amount: "800.00", reference: "HAP 7", method: "EFT" as const, bounced_on: null, short_by: "800.00" },
+    ];
+    const fetch = server({ "/api/assistance/authorities/h1": { ...PAGE, payments } });
+    render(<HousingAuthorityPage me={ME} id="h1" />);
+    const table = await screen.findByRole("table", { name: "Payments" });
+    fireEvent.click(within(table).getByRole("button", { name: "Actions for 10/03/2026 payment of $800.00" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "It bounced" }));
+    const asking = screen.getByRole("alertdialog");
+    expect(asking.textContent).toContain(
+      "Cover the owner's $800.00 shortfall with the company's own money and record the $800.00 bounce?",
+    );
+    fireEvent.click(within(asking).getByRole("button", { name: "It bounced" }));
+
+    expect(await screen.findByText(
+      "The $800.00 payment bounced; the company covered the owner's $800.00 shortfall, which they owe back.",
+    )).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/assistance/payments/t1/bounce", {
+      on: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), cover_shortfall: true, request_id: expect.any(String),
+    }]]);
+  });
+
   it("marks a lease on a payment hold and takes a payment past it only when asked", async () => {
     const held = { ...PAGE, leases: [{ ...PAGE.leases[0]!, hold_since: "2026-10-02", hold_reason: "Eviction filed" }] };
     const fetch = server({ "/api/assistance/authorities/h1": held, "/api/assistance/authorities": ROWS });

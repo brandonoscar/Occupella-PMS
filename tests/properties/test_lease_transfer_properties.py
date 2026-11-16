@@ -1,17 +1,22 @@
 """Property-based tests for a lease's tenants moving to another unit (migration
 20261018000091).
 
-Hypothesis makes a tenant's lease at Property 1 and moves it one to three times, each move to a
-unit of another owner's property (the last maybe back at Property 1). It charges each lease rent,
+Hypothesis makes a tenant's lease at Property 1 and moves it or renews it one to three times, each
+move to a unit of another owner's property (the last maybe back at Property 1), each renewal at
+the same unit (migration 20261115000230, docs/edge-cases.md M-073). It charges each lease rent,
 fees and credits, some while the tenant lives elsewhere, takes payments on the last lease, and at
 the end returns the deposit. A model works out what each lease owes; the database must agree:
-  - a payment pays the rent each lease the tenant moved from still owes first, oldest lease
-    first, then the last lease's rent, then their other charges in the same order (rent first,
-    migration 0093), each part into that lease's owner's account; the rest is prepaid rent;
+  - a payment pays the rent each lease the tenant moved from or renewed still owes first,
+    oldest lease first, then the last lease's rent, then their other charges in the same
+    order (rent first, migration 0093), each part into that lease's owner's account; the rest
+    is prepaid rent;
   - every payment matched to a charge went into the owner's account of the charge's own
     property, so each owner is paid what was owed to them and no more;
-  - the deposit's return keeps what every lease still owes, the same way, each for its own
-    owner, or the whole deposit if that is less, and returns the rest;
+  - the deposit's return takes the tenant's prepaid rent first for what every lease still owes
+    (migration 20261115000240, M-072; a fee charged at move-out after the payments makes them
+    owe), then keeps what is still owed from the deposit, the same way, each for its own owner,
+    or the whole deposit if that is less, and returns the rest of both;
+  - no lease before the last has a return of its own: the last returns the deposit;
   - every trust bank account ties out after every step.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
@@ -22,7 +27,20 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import psycopg
-from helpers import add_unit, balance, bank_sums, charge, make_pmc, open_lease, transfer_batch
+from helpers import (
+    add_staff,
+    add_unit,
+    balance,
+    bank_sums,
+    charge,
+    complete_offer,
+    make_pmc,
+    offer_lease,
+    open_lease,
+    send_offer,
+    sign_offer,
+    transfer_batch,
+)
 from hypothesis import event, given
 from hypothesis import strategies as st
 
@@ -37,7 +55,7 @@ MONEY = st.integers(min_value=1, max_value=200_000).map(lambda c: Decimal(c) / 1
 
 
 @given(
-    moves=st.integers(min_value=1, max_value=3),
+    steps=st.lists(st.sampled_from(["move", "renew"]), min_size=1, max_size=3),
     charges=st.lists(
         st.tuples(
             st.integers(min_value=0, max_value=3),  # which lease (the last if past it)
@@ -48,33 +66,56 @@ MONEY = st.integers(min_value=1, max_value=200_000).map(lambda c: Decimal(c) / 1
         max_size=8,
     ),
     payments=st.lists(MONEY, max_size=3),
+    move_out_fee=st.none() | MONEY,
     deposit=st.one_of(st.just(Decimal(0)), MONEY),
 )
-def check(conn, app, moves, charges, payments, deposit):
+def check(conn, app, steps, charges, payments, move_out_fee, deposit):
     pmc = make_pmc(conn, owners=3)
+    staff = add_staff(conn, pmc.pmc_id, "Leasing 1")
     tenant = conn.execute(
         "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
         (pmc.tenant_deposit,),
     ).fetchone()[0]
-    # Each lease's property: 1, 2, 3, then back at 1.
-    homes = [pmc.owners[n % 3] for n in range(moves + 1)]
-    units = [
-        add_unit(conn, pmc.pmc_id, home.property_id, f"Unit {n}") for n, home in enumerate(homes)
-    ]
+    # Each lease's property: a move goes on to the next of 1, 2, 3, then back at 1; a renewal
+    # stays at its unit.
+    moves = len(steps)
+    homes, units, at = [pmc.owners[0]], [], 0
+    for step in steps:
+        at += step == "move"
+        homes.append(pmc.owners[at % 3])
+    for n, home in enumerate(homes):
+        if n and steps[n - 1] == "renew":
+            units.append(units[-1])
+        else:
+            units.append(add_unit(conn, pmc.pmc_id, home.property_id, f"Unit {n}"))
     if deposit:
         transfer_batch(
             conn, [(pmc.deposit_cash, pmc.tenant_deposit, deposit)], RETURNED.replace(month=1)
         )
     leases = [open_lease(conn, pmc.pmc_id, units[0], STARTS[0], None, "1000.00", [tenant])]
     for n in range(1, moves + 1):
-        leases.append(
-            app.execute(
-                "SELECT trust_transfer_lease(%s, %s, %s, %s, NULL, 1000.00, NULL, %s)",
-                (pmc.pmc_id, leases[-1], units[n], STARTS[n], AGREED),
-            ).fetchone()[0]
-        )
+        if steps[n - 1] == "renew":
+            offer = offer_lease(
+                conn,
+                pmc.pmc_id,
+                units[n],
+                staff,
+                STARTS[n],
+                rent="1000.00",
+                renews_lease_id=leases[-1],
+            )
+            send_offer(conn, pmc.pmc_id, offer, staff)
+            sign_offer(conn, pmc.pmc_id, offer, 1)
+            leases.append(complete_offer(app, pmc.pmc_id, offer, staff))
+        else:
+            leases.append(
+                app.execute(
+                    "SELECT trust_transfer_lease(%s, %s, %s, %s, NULL, 1000.00, NULL, %s)",
+                    (pmc.pmc_id, leases[-1], units[n], STARTS[n], AGREED),
+                ).fetchone()[0]
+            )
         assert set(bank_sums(conn, pmc.pmc_id).values()) == {0}
-    event(f"{moves} moves")
+    event(" then ".join(steps))
 
     # What each lease charged of rent and of other charges, and its credits; rent once per due
     # date.
@@ -136,12 +177,30 @@ def check(conn, app, moves, charges, payments, deposit):
         assert set(bank_sums(conn, pmc.pmc_id).values()) == {0}
     event("payments: " + ("none" if not payments else "some prepaid" if prepaid else "all owed"))
 
-    if deposit:
+    if move_out_fee is not None:  # charged after the payments: prepaid rent may pay it
+        charge(conn, pmc.pmc_id, leases[-1], LAST_DAY, move_out_fee, "fee")
+        charged[-1][1] += move_out_fee
+
+    if deposit or prepaid:
         app.execute("SELECT trust_end_lease(%s, %s, %s)", (pmc.pmc_id, leases[-1], LAST_DAY))
+        used = min(sum(owing(), Decimal(0)), prepaid)
+        assert pay(used) == 0
         keep = min(sum(owing(), Decimal(0)), deposit)
         assert pay(keep) == 0
         event("kept all" if keep == deposit else "kept none" if keep == 0 else "kept some")
+        event("prepaid rent used" if used else "no prepaid rent used")
 
+        for earlier in leases[:-1]:  # moved from or renewed: its deposit went with its tenants
+            try:
+                with app.transaction():
+                    app.execute(
+                        "SELECT trust_return_deposit(%s, %s, NULL, 'early', %s)",
+                        (pmc.pmc_id, earlier, RETURNED),
+                    )
+            except psycopg.errors.CheckViolation as refused:
+                assert "moved to lease" in str(refused) or "was renewed as lease" in str(refused)
+            else:
+                raise AssertionError("an earlier lease's deposit was returned")
         back = app.execute(
             "SELECT trust_return_deposit(%s, %s, NULL, 'back', %s)",
             (pmc.pmc_id, leases[-1], RETURNED),
@@ -149,6 +208,12 @@ def check(conn, app, moves, charges, payments, deposit):
 
         assert back == deposit - keep
         assert balance(conn, pmc.tenant_deposit) == 0
+        assert balance(conn, pmc.prepaid_rent) == 0
+        assert app.execute(
+            "SELECT kept, prepaid_used, prepaid_returned FROM trust_deposit_returns"
+            " WHERE lease_id = %s",
+            (leases[-1],),
+        ).fetchone() == (keep, used, prepaid - used)
         assert [
             app.execute("SELECT trust_lease_owed(%s)", (lease,)).fetchone()[0] for lease in leases
         ] == owing()
@@ -169,6 +234,7 @@ def check(conn, app, moves, charges, payments, deposit):
 
 
 def test_a_moved_tenant_s_money_pays_each_owner_what_was_owed_to_them(database_url):
+    """Moves and renewals alike (M-073)."""
     with (
         psycopg.connect(database_url, autocommit=True) as conn,
         psycopg.connect(database_url, autocommit=True) as app,

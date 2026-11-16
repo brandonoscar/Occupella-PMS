@@ -1,7 +1,7 @@
 // Staff's move-outs as the API sends them (src/pms/api/moveout.py), and how they read.
 import type { OwnerHeld } from "./ownerHeld";
 import { fromCents, toCents } from "./reconcile";
-import { usDate, usDatesIn } from "./money";
+import { money, usDate, usDatesIn } from "./money";
 
 // home: the home of a lease the tenants moved from ("Birch Flats, Unit A"); null for the lease's own.
 export type OpenCharge = {
@@ -9,7 +9,12 @@ export type OpenCharge = {
 };
 // percent: their share when the property's ownership shares split what is kept (migration 0094).
 export type OwnerAccount = { id: string; owner: string; percent: string | null };
-export type Settled = { held: string; kept: string; returned: string; returned_on: string };
+// prepaid_used, prepaid_returned: what the tenants' prepaid rent paid of what was owed, and what
+// of it went back to them (migration 20261115000240, M-072).
+export type Settled = {
+  held: string; kept: string; returned: string; returned_on: string;
+  prepaid_used?: string; prepaid_returned?: string;
+};
 // A fee charged at move-out (or with a receipt on file), and its receipts (migration 0120).
 export type ReceiptFile = { id: string; title: string };
 export type Fee = { id: string; due_on: string; memo: string | null; amount: string; receipts: ReceiptFile[] };
@@ -26,6 +31,9 @@ export type MoveOut = {
   // What the leases its tenants moved from still owe (migration 0091): the deposits pay it first.
   carried: string;
   held: string;
+  // The prepaid rent its tenants hold: the return uses it first for what is owed, then pays back
+  // the rest (M-072).
+  prepaid?: string;
   open_charges: OpenCharge[];
   owner_accounts: OwnerAccount[];
   settled: Settled | null;
@@ -71,11 +79,36 @@ export function sentLine(sent: StatementSent): string {
   return `Emailed ${to}${none ? `; no email on file for ${none}` : ""}.`;
 }
 
-// What returning the deposits now would keep for what the lease owes, and give back.
+// What returning the deposits now would use of the tenants' prepaid rent for what the lease owes
+// (first, M-072), and give back of it.
+export function prepaidPreview(lease: MoveOut): { used: string; back: string } {
+  const prepaid = toCents(lease.prepaid ?? "0.00");
+  const used = Math.min(toCents(lease.owed) + toCents(lease.carried), prepaid);
+  return { used: fromCents(used), back: fromCents(prepaid - used) };
+}
+
+// What returning the deposits now would keep of them for what the lease owes once its tenants'
+// prepaid rent paid what it could, and give back.
 export function preview(lease: MoveOut): { kept: string; returned: string } {
   const held = toCents(lease.held);
-  const kept = Math.min(toCents(lease.owed) + toCents(lease.carried), held);
+  const owing = toCents(lease.owed) + toCents(lease.carried) - toCents(prepaidPreview(lease).used);
+  const kept = Math.min(owing, held);
   return { kept: fromCents(kept), returned: fromCents(held - kept) };
+}
+
+// The question asked before a return: what it keeps and pays back, prepaid rent included.
+export function returnQuestion(lease: MoveOut, on: string): string {
+  const next = preview(lease);
+  const prepaid = prepaidPreview(lease);
+  const after = " This records what you paid at the bank; it sends no money or email.";
+  if (toCents(lease.prepaid ?? "0.00") === 0) {
+    return `Return the deposit on ${usDate(on)}: keep ${money(next.kept)} for what the lease owes and`
+      + ` pay ${money(next.returned)} back to the tenants?${after}`;
+  }
+  return `Return the deposit on ${usDate(on)}: use ${money(prepaid.used)} of the tenants' prepaid rent`
+    + ` and keep ${money(next.kept)} of the deposits for what the lease owes, and pay`
+    + ` ${money(next.returned)} of the deposits and ${money(prepaid.back)} of prepaid rent back to the`
+    + ` tenants?${after}`;
 }
 
 export function leaseLabel(lease: MoveOut): string {
@@ -101,4 +134,20 @@ export function moveOutStatus(
   if (hasEnded(lease, today)) return { label: "Ended, deposit to return", tone: "caution" };
   if (lease.ends_on !== null) return { label: `Ends ${usDate(lease.ends_on)}`, tone: "info" };
   return { label: "In effect", tone: "neutral" };
+}
+
+// What a return said it paid back, prepaid rent included (M-072).
+export function returnedLine(done: { returned: string; prepaid_returned?: string }): string {
+  const prepaid = toCents(done.prepaid_returned ?? "0.00");
+  const back = prepaid > 0 ? ` and ${money(fromCents(prepaid))} of prepaid rent` : "";
+  return `Returned ${money(done.returned)}${back} to the tenants; the rest paid what the lease owed.`;
+}
+
+// What a settled return did with the tenants' prepaid rent, when it held any; "" otherwise.
+export function settledPrepaidLine(settled: Settled): string {
+  const used = toCents(settled.prepaid_used ?? "0.00");
+  const back = toCents(settled.prepaid_returned ?? "0.00");
+  if (used + back === 0) return "";
+  return ` Their prepaid rent paid ${money(fromCents(used))} of what was owed, and`
+    + ` ${money(fromCents(back))} of it went back to them.`;
 }

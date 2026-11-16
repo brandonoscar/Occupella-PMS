@@ -5,7 +5,7 @@ import type { Owner, OwnerRow } from "../directory";
 import { holdBack } from "../holdBack";
 import type { OwnerMoney } from "../payables";
 import type { Paged } from "../rentals";
-import { OwnerPage, OwnersPage, agreementLine, lastTwelveMonths } from "./OwnersPage";
+import { OwnerPage, OwnersPage, RepaymentForm, agreementLine, lastTwelveMonths } from "./OwnersPage";
 import { drawTotal, nextDrawOn } from "./OwnerTop";
 
 afterEach(() => {
@@ -480,5 +480,28 @@ describe("the top of an owner's page", () => {
     expect(nextDrawOn(5, "2026-12-20")).toBe("2027-01-05");
     expect(drawTotal({ accounts: [{ ...ACCOUNTS[0]!, available: "800.10" }, { ...ACCOUNTS[1]!, available: "-5.00" }] }))
       .toBe("800.10");
+  });
+});
+
+// docs/edge-cases.md M-060: the owner pays back what the company covered of their shortfall.
+describe("RepaymentForm", () => {
+  it("offers only the accounts that owe, starting at what is owed, and takes the repayment once", async () => {
+    const owing = { ...ACCOUNTS[0]!, owed_to_company: "110.00" };
+    const owner = { id: "o1", name: "Owner 1", accounts: [owing, ACCOUNTS[1]!] } as unknown as Owner;
+    const record = vi.fn(async (_path: string, _body: unknown, _done: (answer: never) => string) => true);
+    render(<RepaymentForm owner={owner} record={record} />);
+
+    const from = screen.getByLabelText("From") as HTMLSelectElement;
+    expect([...from.options].map((o) => o.textContent)).toEqual(["Property 1"]);
+    expect(screen.getByText("Owed to the company: $110.00")).toBeTruthy();
+    expect((screen.getByLabelText("Amount") as HTMLInputElement).value).toBe("110.00");
+    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "60.00" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Take repayment of \$60\.00/ }));
+
+    await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(1));
+    const [path, body] = record.mock.calls[0]!;
+    expect(path).toBe("/api/payables/advance-repayments");
+    expect(body).toMatchObject({ account: "a1", amount: "60.00" });
+    expect(typeof (body as { request_id: unknown }).request_id).toBe("string");
   });
 });

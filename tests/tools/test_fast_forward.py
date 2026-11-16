@@ -219,3 +219,66 @@ def test_the_company_keeps_utcs_day_as_the_nights_count_it(app_conn):
         (life.built.pmc_id, life.built.pmc_id),
     ).fetchone()
     assert (zone, day) == ("UTC", today)
+
+
+def test_a_bounce_the_owner_cant_take_is_covered_by_the_company_and_counted(app_conn):
+    """docs/edge-cases.md M-060: a payment comes back after its owner's money went out. The
+    bounce is refused saying how much is short, so the run has the company cover it, as staff
+    now would, bounces it and counts both; a refusal of any other kind stops the run."""
+    life, day = few_nights(app_conn)
+    pmc = life.built.pmc_id
+    lease = next(
+        lease for lease in sorted(life.habits) if fast_forward.owed(app_conn, pmc, lease, day) > 0
+    )
+    transfer = fast_forward.pay(
+        app_conn, life, lease, fast_forward.owed(app_conn, pmc, lease, day), day
+    )
+    # Everything but a dollar of each account the payment went to leaves it as a fee.
+    owners = app_conn.execute(
+        "SELECT t.to_account_id, a.balance FROM pgledger_transfers AS t"
+        " JOIN trust_ledger_accounts AS l ON l.ledger_account_id = t.to_account_id"
+        " JOIN pgledger_accounts AS a ON a.id = t.to_account_id"
+        " WHERE t.metadata ->> 'key' = (SELECT metadata ->> 'key' FROM pgledger_transfers"
+        "  WHERE id = %s) AND l.kind = 'owner_property' AND l.pmc_id = %s",
+        # Keys are unique per company only: another test's company may hold the same one.
+        (transfer, pmc),
+    ).fetchall()
+    assert owners
+    for n, (account, held) in enumerate(owners):
+        with fast_forward.as_manager(app_conn, life):
+            app_conn.execute(
+                "SELECT trust_take_owner_fee(%s, %s, 'other', %s, 'Inspection', %s, %s)",
+                (
+                    pmc,
+                    account,
+                    held - 1,
+                    f"fee-{n}",
+                    datetime.combine(day, datetime.min.time(), UTC),
+                ),
+            )
+    before = dict(life.totals)
+    life.bounces = [(day, transfer)]
+
+    fast_forward.bounces_come_back(app_conn, life, day)
+
+    assert life.totals["shortfalls covered"] == before.get("shortfalls covered", 0) + 1
+    assert life.totals["bounces"] == before.get("bounces", 0) + 1
+    assert life.bounces == []
+    covered = app_conn.execute(
+        "SELECT count(*), sum(amount) FROM trust_company_advances WHERE pmc_id = %s", (pmc,)
+    ).fetchone()
+    assert covered[0] == len(owners) and covered[1] > 0
+    for account, _ in owners:
+        assert app_conn.execute(
+            "SELECT balance FROM pgledger_accounts WHERE id = %s", (account,)
+        ).fetchone()[0] == Decimal("0.00")
+
+    # The same payment due back again the next day is refused for another reason: that stops the
+    # run. (Sent again for the same day, a bounce is the same posting: it records nothing new.)
+    life.bounces = [(day + timedelta(days=1), transfer)]
+    with pytest.raises(HTTPException) as refused:
+        fast_forward.bounces_come_back(app_conn, life, day + timedelta(days=1))
+    assert (refused.value.status_code, refused.value.detail) == (
+        409,
+        "this payment bounced already",
+    )

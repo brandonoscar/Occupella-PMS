@@ -11,12 +11,21 @@ from decimal import Decimal
 
 import psycopg
 import pytest
-from helpers import add_unit, bank_sums, make_pmc, open_lease
+from helpers import add_unit, bank_sums, fresh, make_pmc, open_lease
 from people import join_as_owner, join_as_staff, join_as_tenant
 
-TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
-START = TODAY - 60 * DAY
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's (#235)."""
+    global TODAY, START
+    TODAY = datetime.now(UTC).date()
+    START = TODAY - 60 * DAY
+
+
+on_this_day()
 
 
 @pytest.fixture
@@ -120,14 +129,14 @@ def test_one_of_each_kind_per_tenant_and_only_a_tenant_on_the_lease(
         {"amount": "-1.00"},
         {"amount": "1.001"},
         {"kind": "cleaning"},
-        {"held_since": str(TODAY + DAY)},
+        {"held_since": lambda: str(TODAY + DAY)},
         {"memo": ""},
     ],
 )
 def test_a_bad_deposit_the_owner_holds_is_refused_and_records_nothing(
     client, conn, staff, pmc, lease, change
 ):
-    answer = record(client, lease, first_tenant(conn, pmc), **change)
+    answer = record(client, lease, first_tenant(conn, pmc), **fresh(change))
 
     assert answer.status_code == 422, answer.text
     assert conn.execute(

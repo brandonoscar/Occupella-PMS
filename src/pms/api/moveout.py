@@ -93,6 +93,10 @@ class Settled(BaseModel):
     kept: str
     returned: str
     returned_on: date
+    # What the tenants' prepaid rent paid of what was owed, and what of it went back to them
+    # (migration 20261115000240, docs/edge-cases.md M-072).
+    prepaid_used: str = "0.00"
+    prepaid_returned: str = "0.00"
 
 
 class MoveOut(BaseModel):
@@ -110,6 +114,9 @@ class MoveOut(BaseModel):
     # first, each lease's for its own owner.
     carried: str
     held: str
+    # The prepaid rent its tenants hold now: the return uses it first for what is owed and pays
+    # back the rest (M-072).
+    prepaid: str = "0.00"
     open_charges: list[Charge]
     # The owner's accounts kept money may go to: staff choose when there are several and no
     # ownership shares split it.
@@ -132,35 +139,69 @@ NOTHING_KEPT_WITHIN = timedelta(days=10)
 
 def return_by(ends_on: date | None, owes: Decimal) -> date | None:
     """The day a lease's deposit is due back by the strictest deadline found, counted from its
-    last day: none until it has one."""
+    last day: none until it has one. `owes` is what it owes of the charges made by the tenth day
+    after it (owing_in_time), so a fee charged once the ten days had run out never moves a
+    deadline already missed to fourteen (docs/edge-cases.md D-128)."""
     if ends_on is None:
         return None
     return ends_on + (RETURN_WITHIN if owes > 0 else NOTHING_KEPT_WITHIN)
 
 
+# What a lease, and the leases its tenants moved from, still owe of the charges made (the
+# company's day each was charged) by a day: the tenth after its last day, when the ten days
+# nothing kept allows run out (D-128).
+OWING_IN_TIME = """
+SELECT coalesce(sum(o.open), 0)
+FROM (SELECT %(lease)s::uuid AS id
+      UNION ALL SELECT m.lease_id FROM trust_lease_moved_from(%(lease)s) AS m) AS each
+CROSS JOIN LATERAL trust_open_charges(%(pmc)s, each.id, 'infinity') AS o
+JOIN trust_charges AS c ON c.id = o.charge_id
+WHERE o.open > 0 AND trust_pmc_day(c.pmc_id, c.created_at) <= %(by)s
+"""
+
+
+def owing_in_time(
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID, ends_on: date | None
+) -> Decimal:
+    """What the lease owes now of what was charged by the tenth day after its last day: a fee
+    charged after that keeps nothing it could have kept in time (D-128)."""
+    if ends_on is None:
+        return Decimal(0)
+    row = conn.execute(
+        OWING_IN_TIME, {"pmc": pmc_id, "lease": lease_id, "by": ends_on + NOTHING_KEPT_WITHIN}
+    ).fetchone()
+    return Decimal(0) if row is None else Decimal(row[0])
+
+
 # Each lease of the PMC past its last day on the day whose tenants' deposits are still held, not
-# a lease its tenants moved from: what it and the leases they moved from owe, and what is held.
+# a lease its tenants moved from or renewed: what it and the leases they moved from or renewed
+# owe (M-073), and what is held.
 DUE_BACK = """
 SELECT l.id, p.display_name, u.display_name, l.ends_on,
        array(SELECT t.display_name FROM trust_lease_tenants AS lt
              JOIN trust_tenants AS t ON t.id = lt.tenant_id WHERE lt.lease_id = l.id
              ORDER BY t.display_name COLLATE "C", t.id),
        trust_lease_owed(l.id) + coalesce((SELECT sum(trust_lease_owed(m.lease_id))
-                                          FROM trust_lease_moved_from(l.id) AS m), 0),
+                                          FROM trust_lease_carried_from(l.id) AS m), 0),
        h.held
 FROM trust_leases AS l
 JOIN trust_units AS u ON u.id = l.unit_id
 JOIN trust_properties AS p ON p.id = u.property_id
 CROSS JOIN LATERAL (
-    SELECT coalesce(sum(b.balance), 0) AS held
+    SELECT coalesce(sum(b.balance) FILTER (WHERE a.kind = 'tenant_deposit'), 0) AS held,
+           coalesce(sum(b.balance) FILTER (WHERE a.kind = 'prepaid_rent'), 0) AS prepaid
     FROM trust_lease_tenants AS lt
-    JOIN trust_ledger_accounts AS a ON a.tenant_id = lt.tenant_id AND a.kind = 'tenant_deposit'
+    JOIN trust_ledger_accounts AS a
+      ON a.tenant_id = lt.tenant_id AND a.kind IN ('tenant_deposit', 'prepaid_rent')
     JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
     WHERE lt.lease_id = l.id
 ) AS h
-WHERE l.pmc_id = %(pmc)s AND l.ends_on < %(day)s AND h.held > 0
+WHERE l.pmc_id = %(pmc)s AND l.ends_on < %(day)s AND h.held + h.prepaid > 0
   AND NOT EXISTS (SELECT 1 FROM trust_deposit_returns AS r WHERE r.lease_id = l.id)
   AND NOT EXISTS (SELECT 1 FROM trust_lease_transfers AS t WHERE t.from_lease_id = l.id)
+  AND NOT EXISTS (SELECT 1 FROM trust_lease_offers AS o
+                  JOIN trust_lease_offer_completions AS c ON c.offer_id = o.id
+                  WHERE o.renews_lease_id = l.id)
 """
 
 
@@ -190,7 +231,7 @@ def due_back(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> list[Due
     for lease, prop, unit, ends, tenants, owes, held in conn.execute(
         DUE_BACK, {"pmc": pmc_id, "day": day}
     ).fetchall():
-        due = return_by(ends, owes)
+        due = return_by(ends, owing_in_time(conn, pmc_id, lease, ends) if owes > 0 else owes)
         assert due is not None
         found.append(
             DueBack(
@@ -250,21 +291,30 @@ SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on, trust_lease
                  JOIN trust_ledger_accounts AS a ON a.tenant_id = lt.tenant_id
                  JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
                  WHERE lt.lease_id = l.id AND a.kind = 'tenant_deposit'), 0),
-       u.property_id, r.held, r.kept, r.returned, r.returned_at
+       coalesce((SELECT sum(b.balance) FROM trust_lease_tenants AS lt
+                 JOIN trust_ledger_accounts AS a ON a.tenant_id = lt.tenant_id
+                 JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+                 WHERE lt.lease_id = l.id AND a.kind = 'prepaid_rent'), 0),
+       u.property_id, r.held, r.kept, r.returned, r.returned_at, r.prepaid_used,
+       r.prepaid_returned
 FROM trust_leases AS l
 JOIN trust_units AS u ON u.id = l.unit_id
 JOIN trust_properties AS p ON p.id = u.property_id
 LEFT JOIN trust_deposit_returns AS r ON r.lease_id = l.id
 WHERE l.pmc_id = %s
-  -- A lease its tenants moved from has no return of its own: their deposits went with them.
+  -- A lease its tenants moved from or renewed has no return of its own: their deposits went
+  -- with them (M-073).
   AND NOT EXISTS (SELECT 1 FROM trust_lease_transfers AS t WHERE t.from_lease_id = l.id)
+  AND NOT EXISTS (SELECT 1 FROM trust_lease_offers AS o
+                  JOIN trust_lease_offer_completions AS c ON c.offer_id = o.id
+                  WHERE o.renews_lease_id = l.id)
 ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.starts_on, l.id
 """
 
-# The leases a lease's tenants moved from, oldest first, each with its home.
+# The leases a lease's tenants moved from or renewed, oldest first, each with its home.
 MOVED_FROM = """
 SELECT m.lease_id, p.display_name || ', ' || u.display_name, trust_lease_owed(m.lease_id)
-FROM trust_lease_moved_from(%s) WITH ORDINALITY AS m (lease_id, owner_account, n)
+FROM trust_lease_carried_from(%s) WITH ORDINALITY AS m (lease_id, owner_account, n)
 JOIN trust_leases AS l ON l.id = m.lease_id
 JOIN trust_units AS u ON u.id = l.unit_id
 JOIN trust_properties AS p ON p.id = u.property_id
@@ -303,10 +353,24 @@ def move_outs(session: Staff, conn: Conn) -> list[MoveOut]:
     since = rent.today(conn, session.pmc_id) - RECENT
     owners_hold = held_by_owner(conn, session.pmc_id)
     for row in conn.execute(LEASES, (session.pmc_id,)).fetchall():
-        lease, prop, unit, starts, ends, owed, tenants, tenant_ids, held, prop_id, *done = row
+        (
+            lease,
+            prop,
+            unit,
+            starts,
+            ends,
+            owed,
+            tenants,
+            tenant_ids,
+            held,
+            prepaid,
+            prop_id,
+            *done,
+        ) = row
         unsettled = any(h.settled is None for h in owners_hold.get(lease, []))
         if (
             held <= 0
+            and prepaid <= 0
             and done[0] is None
             and (ends is None or ends < since)
             and not (ends is not None and unsettled)
@@ -326,6 +390,7 @@ def move_outs(session: Staff, conn: Conn) -> list[MoveOut]:
                 owed=cents(owed),
                 carried=cents(carried),
                 held=cents(held),
+                prepaid=cents(prepaid),
                 open_charges=[
                     Charge(id=i, due_on=d, kind=k, memo=m, open=cents(o), home=home)
                     for each, home in [*((e, h) for e, h, _ in earlier), (lease, None)]
@@ -343,8 +408,17 @@ def move_outs(session: Staff, conn: Conn) -> list[MoveOut]:
                     kept=cents(done[1]),
                     returned=cents(done[2]),
                     returned_on=done[3].astimezone(UTC).date(),
+                    prepaid_used=cents(done[4]),
+                    prepaid_returned=cents(done[5]),
                 ),
-                return_by=None if done[0] is not None else return_by(ends, owed + carried),
+                return_by=None
+                if done[0] is not None
+                else return_by(
+                    ends,
+                    owing_in_time(conn, session.pmc_id, lease, ends)
+                    if owed + carried > 0
+                    else owed + carried,
+                ),
                 fees=fees_of(conn, lease, ends),
                 owner_held=owners_hold.get(lease, []),
             )
@@ -686,12 +760,15 @@ class Return(BaseModel):
 
 class Returned(BaseModel):
     returned: str
+    # The tenants' prepaid rent paid back with it, after it paid what was owed (M-072).
+    prepaid_returned: str = "0.00"
 
 
 @router.post("/{lease_id}/return", status_code=201)
 def return_deposit(session: Staff, conn: Conn, lease_id: UUID, body: Return) -> Returned:
-    """Keeps what the lease owes from its tenants' deposits and returns the rest, recorded on
-    the day the bank paid it."""
+    """Pays what the lease owes from its tenants' prepaid rent first, then keeps what is still
+    owed from their deposits, and returns the rest of both (M-072), recorded on the day the bank
+    paid it."""
     returned(conn, session.pmc_id, lease_id)
     if body.on > rent.today(conn, session.pmc_id):
         raise HTTPException(422, "money is recorded on the day it moved, not a later one")
@@ -711,7 +788,11 @@ def return_deposit(session: Staff, conn: Conn, lease_id: UUID, body: Return) -> 
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
         raise HTTPException(409, refusal(refused)) from None
     assert back is not None
-    return Returned(returned=cents(back[0]))
+    prepaid = conn.execute(
+        "SELECT prepaid_returned FROM trust_deposit_returns WHERE lease_id = %s", (lease_id,)
+    ).fetchone()
+    assert prepaid is not None
+    return Returned(returned=cents(back[0]), prepaid_returned=cents(prepaid[0]))
 
 
 # --- receipts for what is kept, and the statement ---------------------------------------------

@@ -232,7 +232,9 @@ def test_the_rent_run_charges_a_lease_starting_later_that_month_its_part_month_o
     ]
 
 
-def test_the_rent_run_charges_a_recurring_charge_with_the_rent_until_it_stops(client, staff, home):
+def test_the_rent_run_charges_a_recurring_charge_with_the_rent_until_it_stops(
+    client, conn, staff, home
+):
     pet_rent = ok(recur(client, home))["id"]
     ok(recur(client, home, "100.00", "Concession", kind="credit"))
 
@@ -276,7 +278,8 @@ def test_the_rent_run_charges_a_recurring_charge_with_the_rent_until_it_stops(cl
 
     # Stopped from next month's first day: next month's run charges the rent and the concession,
     # not the pet rent. (A run for another day of this month charges nothing more: each month
-    # once, tests/test_rent_once_a_month.py.)
+    # once, tests/test_rent_once_a_month.py.) Days still to come are the nightly run's, as Run
+    # rent now charges none (D-026), so the database's own run stands in for those nights.
     next_month = (TODAY.replace(day=1) + 32 * DAY).replace(day=1)
     ok(call(client, f"recurring-charges/{pet_rent}/stop", ends_on=next_month))
     assert [r["ends_on"] for r in lease_row(client, home)["recurring"]] == [
@@ -284,17 +287,17 @@ def test_the_rent_run_charges_a_recurring_charge_with_the_rent_until_it_stops(cl
         str(next_month),
     ]
     another_day = TODAY.replace(day=27 if TODAY.day == 28 else 28)
-    assert ok(run(client, another_day, TODAY), 200)["rents"] == 0
-    assert ok(run(client, next_month, TODAY), 200) == {
-        "rents": 1,
-        "recurring": 1,
-        "late_fees": 0,
-        "emails": 0,
-        "authority_late_fees": 0,
-        "prepaid_used": 0,
-        "autopay": 0,
-        "leases_rolled_over": 0,
-    }
+
+    def nightly_run(due_on):
+        made = conn.execute(
+            "SELECT trust_run_rent(%s, %s, %s)", (home.pmc.pmc_id, due_on, due_on)
+        ).fetchone()[0]
+        return conn.execute(
+            "SELECT rents, recurring, late_fees FROM trust_rent_runs WHERE id = %s", (made,)
+        ).fetchone()
+
+    assert nightly_run(another_day)[0] == 0
+    assert nightly_run(next_month) == (1, 1, 0)
     refused(
         call(client, f"recurring-charges/{pet_rent}/stop", ends_on=TODAY),
         409,
@@ -615,7 +618,14 @@ def test_a_payment_the_owner_was_paid_out_of_cannot_bounce_into_the_negative(
 
     answer = call(client, f"payments/{payment}/bounce", on=TODAY)
 
-    refused(answer, 409, "not enough money: the owner's account would be $1,500.00 short")
+    # Refused, saying how much, unless staff have the company cover it (M-060,
+    # tests/api/test_company_covers_api.py).
+    refused(
+        answer,
+        409,
+        "not enough money: the owner's account would be $1,500.00 short. The company can cover it"
+        " from its own money, and the owner owes it back",
+    )
     assert lease_row(client, home)["owed"] == "0.00"
 
 
@@ -740,6 +750,23 @@ def test_a_deposit_needs_a_deposit_account_and_one_chosen_among_several(
     assert len(chosen["transfers"]) == 1
     refused(elsewhere, 409, "set up a security deposit trust bank account first")
     refused(unknown, 404, "no such tenant")
+
+
+def test_rent_is_charged_for_today_or_an_earlier_day(client, conn, staff, home, pmc):
+    """Run rent now with a due date still to come (next month's first, or a later year's) is
+    refused, never next month's rent charged today (docs/edge-cases.md D-026)."""
+    next_month = (TODAY.replace(day=1) + timedelta(days=32)).replace(day=1)
+    later_year = TODAY.replace(year=TODAY.year + 1, day=1)
+
+    for day in (TODAY + DAY, next_month, later_year):
+        refused(run(client, day), 422, "rent is charged for today or an earlier day")
+    assert conn.execute(
+        "SELECT count(*) FROM trust_charges WHERE lease_id = %s", (home.lease,)
+    ).fetchone() == (0,)
+    assert conn.execute(
+        "SELECT count(*) FROM trust_rent_runs WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone() == (0,)
+    assert ok(run(client, TODAY), 200)["rents"] == 1  # today's is charged
 
 
 def test_late_fees_are_assessed_up_to_today(client, conn, staff, home, pmc):

@@ -248,9 +248,11 @@ test("staff charge this month's rent and its late fees, and the Dashboard shows 
   await expect(monthEnd.filter({ hasText: "Demo operating trust account" })).toHaveCount(1);
   await expect(monthEnd.filter({ hasText: "Demo security deposit account" })).toHaveCount(1);
 
-  // Rent posts by itself every night (off for these tests); an admin runs it by hand from the
-  // rent roll's ⋯ menu: this month's rent and recurring charges, and rent unpaid past five
-  // days' grace takes a $50.00 late fee.
+  // Rent posts by itself every night (off for these tests): the night of this month's first day
+  // posted its rent and recurring charges then (e2e/seed.py plays it). An admin runs the night by
+  // hand from the rent roll's ⋯ menu: everything is charged already, and rent unpaid past five
+  // days' grace takes a $50.00 late fee. (Rent Run rent now charges itself takes its grace from
+  // today, D-083: the journey and the prepaid rent test below show that.)
   await section(page, "Rent roll");
   const runRent = async () => {
     await page.getByRole("button", { name: "Actions for the rent roll" }).click();
@@ -264,16 +266,20 @@ test("staff charge this month's rent and its late fees, and the Dashboard shows 
   const late = dayOfMonth() > 6;
   await runRent();
   await expect(page.getByRole("main")).toContainText(
-    `6 rents, 1 recurring charge and ${late ? 6 : 0} late fees charged.`,
+    `0 rents, 0 recurring charges and ${late ? 6 : 0} late fees charged.`,
   );
   // Once per lease and due date: the same run again charges nothing, and it is listed.
   await runRent();
   await expect(page.getByRole("main")).toContainText("0 rents, 0 recurring charges and 0 late fees charged.");
   await page.getByRole("button", { name: "Actions for the rent roll" }).click();
   await page.getByRole("menuitem", { name: "Run rent now" }).click();
-  // The demo's own four (two a month), then these two, newest first.
+  // The demo's own six (three a month: the rent on its first day, Run rent now, the late fees),
+  // the night of this month's first day, then these two, newest first.
   const runs = page.getByRole("list", { name: "Latest rent runs" }).getByRole("listitem");
-  await expect(runs).toHaveCount(6);
+  await expect(runs).toHaveCount(9);
+  await expect(runs.nth(2)).toContainText(
+    "nightly: 6 rents, 1 recurring charge and 0 late fees charged.",
+  );
   await expect(runs.first()).toContainText("Demo Manager: 0 rents, 0 recurring charges and 0 late fees charged.");
   await page.getByRole("dialog", { name: "Run rent now" }).getByRole("button", { name: "Close" }).click();
   const lease = (name: string) => page.getByRole("row", { name, exact: true });
@@ -2684,18 +2690,23 @@ test("staff move a tenant in mid-month on a year's lease and the rent run charge
   const people = seed.features["rent-terms"]!;
   await joinAsStaff(page, people.manager);
 
-  // Birch Flats' late fees from this month: no grace, $25.00 and 10% of what is unpaid, up to
-  // $60.00 (the cap a state's law may set; the PMS knows none, so staff type it).
+  // Birch Flats' late fees from this month: $25.00 and 10% of what is unpaid, up to $60.00 (the
+  // cap a state's law may set; the PMS knows none, so staff type it). Entered today, they count
+  // for a rent whose fee comes due today or later (M-049): grace to yesterday, so the rent due on
+  // the 1st, which the night of the 1st posted then (e2e/seed.py), is late today from the 2nd on.
+  const grace = Math.max(dayOfMonth() - 2, 0);
   await openProperty(page, "Birch Flats");
   const fees = await setupPanel(page, "Set late fees");
   await fees.getByLabel("Late fees from").fill(firstOfThisMonth());
-  await fees.getByLabel("Grace days").fill("0");
+  await fees.getByLabel("Grace days").fill(String(grace));
   await fees.getByLabel("Flat fee").fill("25.00");
   await fees.getByLabel("Percent of unpaid").fill("10");
   await fees.getByLabel("Up to").fill("60.00");
   await fees.getByRole("button", { name: "Set late fees" }).click();
   await expect(page.getByTestId("late-fees")).toContainText(
-    /After 0 days' grace: \$25\.00 and 10(\.0+)?% of what is unpaid, up to \$60\.00/,
+    new RegExp(
+      `After ${grace === 1 ? "1 day's" : `${grace} days'`} grace: \\$25\\.00 and 10(\\.0+)?% of what is unpaid, up to \\$60\\.00`,
+    ),
   );
 
   // A year's lease on Aspen Row's vacant unit, from the 16th of this month.
@@ -2716,8 +2727,9 @@ test("staff move a tenant in mid-month on a year's lease and the rent run charge
   await adding.getByRole("button", { name: "Add lease" }).click();
   await expect(page.getByRole("row", { name: "Avery Sample" })).toContainText(`${us(starts)} – ${us(ends)}`);
 
-  // The month's run charges the six leases in effect and the new one its days from the 16th, due
-  // that day; Birch Flats' rents are late from the 2nd, each fee capped at $60.00.
+  // The month's run charges the new lease its days from the 16th, due that day (the six leases
+  // in effect had theirs on the 1st); Birch Flats' two rents are late from the 2nd, each fee
+  // capped at $60.00.
   await section(page, "Rent roll");
   await page.getByRole("button", { name: "Actions for the rent roll" }).click();
   await page.getByRole("menuitem", { name: "Run rent now" }).click();
@@ -2725,7 +2737,12 @@ test("staff move a tenant in mid-month on a year's lease and the rent run charge
   await run.getByLabel("Late fees as of").fill(today());
   await run.getByRole("button", { name: "Run rent now" }).click();
   await expect(run).toHaveCount(0);
-  await expect(page.getByRole("main")).toContainText(/7 rents, 1 recurring charge and \d+ late fees? charged\./);
+  // Late fees: Birch Flats' two rents from the 2nd, the other four properties' leases (five days'
+  // grace on file since the demo began) from the 7th.
+  const lateFees = (dayOfMonth() > 1 ? 2 : 0) + (dayOfMonth() > 6 ? 4 : 0);
+  await expect(page.getByRole("main")).toContainText(
+    `1 rent, 0 recurring charges and ${lateFees} late fees charged.`,
+  );
   const unitB = await openLease(page, "Birch Flats, Unit B");
   const lateFee = `Late fee, rent due ${us(firstOfThisMonth())}`;
   if (dayOfMonth() > 1) {
@@ -3377,6 +3394,79 @@ test("a company has its management fees taken each month, staff set a flat fee a
   await expect((await ownerProperty(page, "Demo Owner A", "Birch Flats")).getByRole("cell").nth(2)).toHaveText("$210.00");
 });
 
+// docs/edge-cases.md M-060 (GitHub issue #232; the founder, 2026-11-15): a tenant's $2,250.00
+// payment comes back after the owner's money went out, so Cedar House's account would be $110.00
+// short. Staff have the company cover that from its own money as the bounce is recorded; the owner
+// owes it back, which their page says until staff take the repayment.
+test("the company covers an owner's shortfall when a payment bounces, and the owner pays it back", async ({
+  page,
+}) => {
+  const people = seed.features["company-covers"]!;
+  await joinAsStaff(page, people.manager);
+
+  // A $2,250.00 repair charge, paid by check: all of it the owner's.
+  let lease = await openLease(page, "Cedar House, House");
+  const charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Add a").selectOption("fee");
+  await charge.getByLabel("Amount", { exact: true }).fill("2250.00");
+  await charge.getByLabel("What for").fill("Deck repair");
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(lease).toContainText("Fee of $2,250.00 added.");
+  const pay = await leasePanel(page, "Receive payment");
+  await pay.getByLabel("Payment received").fill("2250.00");
+  await pay.getByLabel("Check or reference").fill("Check 2250");
+  await pay.getByRole("button", { name: "Record payment" }).click();
+  await expect(lease).toContainText("$2,250.00 paid what is owed.");
+
+  // The owner's money goes out: a fee leaves Cedar House holding $2,140.00.
+  const held = (await ownerProperty(page, "Demo Owner A", "Cedar House")).getByRole("cell").nth(2);
+  const fee = (Number((await held.textContent())!.replace(/[$,]/g, "")) - 2140).toFixed(2);
+  await page.getByRole("tab", { name: "Financials", exact: true }).click();
+  await page.getByRole("button", { name: "Take a fee" }).click();
+  const taking = page.getByRole("dialog", { name: "Take a fee" });
+  await taking.getByLabel("From").selectOption({ label: "Cedar House" });
+  await taking.getByLabel("Amount").fill(fee);
+  await taking.getByLabel("What it is for").fill("Inspection");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await taking.getByRole("button", { name: "Take fee" }).click();
+  await expect(taking).toHaveCount(0);
+  await expect((await ownerProperty(page, "Demo Owner A", "Cedar House")).getByRole("cell").nth(2)).toHaveText("$2,140.00");
+
+  // The check bounces: the row says how much the owner is short, and asks before the company
+  // covers it.
+  lease = await openLease(page, "Cedar House, House");
+  await leaseTab(page, "Ledger");
+  const payment = lease.getByRole("table", { name: "Payments received" }).getByRole("row", { name: /Check 2250/ });
+  await payment.getByRole("button", { name: /^Actions for / }).click();
+  await page.getByRole("menuitem", { name: "It bounced" }).click();
+  await expect(payment).toContainText(
+    "The owner's account is $110.00 short. The company covers it from its own money and the owner owes it back.",
+  );
+  await payment.getByRole("button", { name: /^Cover \$110\.00 and record the bounce/ }).click();
+  const asking = page.getByRole("alertdialog");
+  await expect(asking).toContainText(
+    "Cover the owner's $110.00 shortfall with the company's own money and record the $2,250.00 bounce?",
+  );
+  await asking.getByRole("button", { name: "Cover $110.00 and record" }).click();
+  await expect(lease).toContainText("The company covered the owner's $110.00 shortfall; the owner owes it back.");
+  await expect(payment.getByText("Bounced")).toBeVisible();
+
+  // The owner's page says what they owe the company; staff take it back once the owner sends money.
+  const account = await ownerProperty(page, "Demo Owner A", "Cedar House");
+  await expect(account.getByRole("cell").nth(2)).toHaveText("$0.00");
+  const owes = "Cedar House owes the company $110.00: it covered the account when a payment bounced and the account was short.";
+  await expect(page.getByRole("main")).toContainText(owes);
+  await recordContribution(page, "Demo Owner A", "Cedar House", "200.00");
+  await page.getByRole("button", { name: "Take repayment" }).click();
+  const repaying = page.getByRole("dialog", { name: "Take repayment" });
+  await expect(repaying).toContainText("Owed to the company: $110.00");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await repaying.getByRole("button", { name: /^Take repayment of \$110\.00/ }).click();
+  await expect(page.getByRole("main")).toContainText("$110.00 repaid to the company from Cedar House.");
+  await expect(page.getByRole("main")).not.toContainText(owes);
+  await expect((await ownerProperty(page, "Demo Owner A", "Cedar House")).getByRole("cell").nth(2)).toHaveText("$90.00");
+});
+
 test("a company has tenants' prepaid rent pay their new rent by itself, and Run rent now uses it", async ({ page }) => {
   const people = seed.features["prepaid-rent"]!;
   await joinAsStaff(page, people.manager);
@@ -3399,8 +3489,9 @@ test("a company has tenants' prepaid rent pay their new rent by itself, and Run 
   await pay.getByRole("button", { name: "Record payment" }).click();
   await expect(aspen).toContainText("$500.00 held as prepaid rent.");
 
-  // Run rent now charges this month's $1,180.00 rent, then the prepaid rent pays $500.00 of it
-  // (a rent past its five days' grace took its $50.00 late fee first).
+  // Run rent now charges this month's $1,180.00 rent, then the prepaid rent pays $500.00 of it.
+  // Rent it charges now takes its five days' grace from today (D-083), so no late fee, whatever
+  // the day of the month.
   await section(page, "Rent roll");
   await page.getByRole("button", { name: "Actions for the rent roll" }).click();
   await page.getByRole("menuitem", { name: "Run rent now" }).click();
@@ -3408,10 +3499,11 @@ test("a company has tenants' prepaid rent pay their new rent by itself, and Run 
   await run.getByLabel("Late fees as of").fill(today());
   await run.getByRole("button", { name: "Run rent now" }).click();
   await expect(run).toHaveCount(0);
-  await expect(page.getByRole("main")).toContainText("Prepaid rent paid what 1 lease owed.");
-  const late = dayOfMonth() > 6;
+  await expect(page.getByRole("main")).toContainText(
+    "6 rents, 1 recurring charge and 0 late fees charged. Prepaid rent paid what 1 lease owed.",
+  );
   await expect(page.getByRole("row", { name: "Aspen Row, Unit 1", exact: true }).getByTestId("balance")).toHaveText(
-    late ? "$730.00" : "$680.00",
+    "$680.00",
   );
 });
 

@@ -9,6 +9,8 @@ rent increase (src/pms/rent_notice.py), so it can warn before sending. Nothing h
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
@@ -26,6 +28,9 @@ from pms.api.offers import Rent
 from pms.api.rent import cents, today
 
 router = APIRouter(prefix="/api/leasing/renewals")
+
+# How a rent change's written notice was served, as the rent page records it (migration 0061).
+ServedBy = Literal["in person", "mail", "posted", "email", "other"]
 
 
 class Expiring(BaseModel):
@@ -182,6 +187,7 @@ def notice_of(
     new_rent: Decimal,
     starts_on: date,
     sent_on: date,
+    served_by: str | None = None,
 ) -> RenewalNotice | None:
     """The written notice the property's state asks before a new rent of `new_rent` (over `now`)
     starts on `starts_on`, the notice going out on `sent_on`; None without an increase or without
@@ -206,6 +212,7 @@ def notice_of(
     rule = rent_notice.needed(address.state, now, lowest, new_rent, max(lived, term))
     if rule is None:
         return None
+    rule = rent_notice.served(rule, served_by)
     return RenewalNotice(
         state=rule.state,
         days=rule.days,
@@ -214,6 +221,17 @@ def notice_of(
         earliest=rent_notice.earliest(sent_on, rule),
         warning=rent_notice.warning(rule, sent_on, starts_on),
     )
+
+
+@contextmanager
+def days_counted() -> Iterator[None]:
+    """A notice is counted in days before and after the days asked (the day before a new rent, the
+    year before it, the notice's days after it): a day so near 0001-01-01 or 9999-12-31 that one
+    of them falls outside the calendar is bad input, never a server error (issue #228)."""
+    try:
+        yield
+    except OverflowError:
+        raise HTTPException(422, "that day is too far out to count a notice from") from None
 
 
 @router.get("/{lease_id}/plan")
@@ -239,7 +257,8 @@ def renewal_plan(
         for t, name in conn.execute(SIGNERS, {"lease": lease_id, "day": day}).fetchall()
     ]
     home = Home(lease_id, unit, property_id, began, ends_on)
-    notice = notice_of(conn, pmc, home, Decimal(now), new_rent, new_starts, day)
+    with days_counted():
+        notice = notice_of(conn, pmc, home, Decimal(now), new_rent, new_starts, day)
     return RenewalPlan(
         lease_id=lease_id,
         property=prop,
@@ -262,24 +281,29 @@ def rent_change_notice(
     effective_on: Annotated[date, Query()],
     monthly_rent: Annotated[Rent, Query()],
     notice_given_on: Annotated[date, Query()],
+    served_by: Annotated[ServedBy | None, Query()] = None,
 ) -> RenewalNotice | None:
     """The written notice the property's state asks before a rent change recorded on the rent page
-    (docs/edge-cases.md D-065, D-066), counted from the day notice was given: the Change rent panel
-    warns before it is recorded when the new rent starts sooner. A warning only, as every state
-    rule here is (q142); the database still asks a full month."""
-    found = conn.execute(
-        LEASE, {"pmc": session.pmc_id, "lease": lease_id, "day": effective_on - timedelta(days=1)}
-    ).fetchone()
-    if found is None:
-        raise HTTPException(404, "no such lease")
-    unit, property_id, _, _, began, ends_on, now = found
-    home = Home(lease_id, unit, property_id, began, ends_on)
-    return notice_of(
-        conn,
-        session.pmc_id,
-        home,
-        Decimal(now),
-        Decimal(monthly_rent),
-        effective_on,
-        notice_given_on,
-    )
+    (docs/edge-cases.md D-065, D-066), counted from the day notice was given, with a state's extra
+    days for a notice served by mail (D-069): the Change rent panel warns before it is recorded
+    when the new rent starts sooner. A warning only, as every state rule here is (q142); the
+    database still asks a full month."""
+    with days_counted():
+        found = conn.execute(
+            LEASE,
+            {"pmc": session.pmc_id, "lease": lease_id, "day": effective_on - timedelta(days=1)},
+        ).fetchone()
+        if found is None:
+            raise HTTPException(404, "no such lease")
+        unit, property_id, _, _, began, ends_on, now = found
+        home = Home(lease_id, unit, property_id, began, ends_on)
+        return notice_of(
+            conn,
+            session.pmc_id,
+            home,
+            Decimal(now),
+            Decimal(monthly_rent),
+            effective_on,
+            notice_given_on,
+            served_by,
+        )

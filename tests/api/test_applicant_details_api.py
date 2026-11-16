@@ -16,6 +16,7 @@ from helpers import (
     add_tenant,
     add_unit,
     open_lease,
+    pdf_with_script,
     record_decision,
     submit_application,
 )
@@ -23,6 +24,7 @@ from people import join_as_owner, join_as_staff
 from test_offers import sign, terms
 
 from pms import accounts
+from pms.api import documents
 
 PROOF = b"%PDF-1.4 synthetic pay stub"
 
@@ -464,6 +466,27 @@ def test_bad_emergency_contacts_and_strangers_are_refused(client, conn, app_conn
         ).status_code
         == 404
     )
+
+
+def test_a_proof_of_income_that_runs_a_script_by_itself_is_refused(client, conn, pmc, link):
+    # docs/edge-cases.md F-010: anyone may apply, and staff open what they send.
+    scripted = {"content_type": "application/pdf", "content_base64": b64(pdf_with_script())}
+    applicants = [
+        {"name": "Applicant A", "email": "a@example.com", "details": details(1)},
+        {
+            "name": "Applicant B",
+            "email": "b@example.com",
+            "details": details(2, income_proof=scripted),
+        },
+    ]
+
+    answer = apply(client, link, applicants)
+
+    assert answer.status_code == 422
+    assert answer.json()["detail"] == documents.SCRIPTED
+    assert not conn.execute(
+        "SELECT 1 FROM trust_applications WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone()
 
 
 def test_staff_never_upload_an_applicants_proof_of_income_as_a_file(

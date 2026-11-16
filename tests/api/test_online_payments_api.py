@@ -23,10 +23,12 @@ from helpers import (
     approve_bank,
     balance,
     charge,
+    contribute,
     import_statement,
     in_background,
     open_account,
     open_lease,
+    post,
     set_ownership,
     staff_named,
     wait_until_blocked,
@@ -34,7 +36,7 @@ from helpers import (
 from people import join_as_staff, join_as_tenant, tenant_of
 
 from pms import email, payments
-from pms.api import Settings, create_app
+from pms.api import Settings, create_app, rent
 from pms.api import online_payments as op
 
 TODAY = datetime.now(UTC).date()
@@ -279,10 +281,12 @@ def test_paid_is_recorded_as_staff_record_a_payment_and_only_once(
     assert [(p["amount"], p["method"]) for p in mine["payments"]] == [("1000.00", "online")]
     staff_view = ok(client.get(f"/api/leases/{lease}"))
     assert [(p["amount"], p["method"]) for p in staff_view["payments"]] == [("1000.00", "online")]
-    # A failure after it was paid changes nothing.
+    # A failure after it was paid is the money coming back (docs/edge-cases.md P-026): a return,
+    # its tenant's fee back out of the company's account, which holds nothing yet, so it waits.
     assert bank_says(tenant_client, payment, "failed") == {"recorded": True}
-    assert ok(tenant_client.get(f"/api/payments/leases/{lease}"))["payments"][0]["status"] == "paid"
-    assert ok(client.get("/api/payments/waiting")) == []
+    status = ok(tenant_client.get(f"/api/payments/leases/{lease}"))["payments"][0]["status"]
+    assert status == "returned"
+    assert [w["what"] for w in ok(client.get("/api/payments/waiting"))] == ["fee refund"]
 
 
 def test_a_payment_made_online_emails_its_receipt_once(
@@ -523,6 +527,30 @@ def test_a_return_is_a_bounce_and_the_tenants_fee_goes_back_out(
     assert ok(tenant_client.get(f"/api/payments/leases/{lease}"))["owed"] == "1200.00"
 
 
+def test_a_failure_reported_after_the_payment_was_paid_is_a_return(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    """docs/edge-cases.md P-026: a bank's late failure, by whichever report the partner sends it,
+    undoes the payment as a return does, never ignored with the money still in the books; and a
+    return reported for it too moves nothing twice."""
+    turn_on(client)
+    payment = pay(tenant_client, lease, "1000.00")["id"]
+    owner_before = balance(conn, pmc.owners[0].account)
+    bank_says(tenant_client, payment, "paid")
+    assert balance(conn, pmc.owners[0].account) == owner_before + Decimal("1000.00")
+
+    assert bank_says(tenant_client, payment, "failed") == {"recorded": True}
+    bank_says(tenant_client, payment, "returned")
+
+    assert balance(conn, pmc.owners[0].account) == owner_before
+    assert f"bounce/payment/{payment}" in keys(conn, pmc)
+    assert conn.execute(
+        "SELECT kind FROM trust_online_payment_events WHERE payment_id = %s ORDER BY kind",
+        (payment,),
+    ).fetchall() == [("paid",), ("returned",)]
+    assert ok(tenant_client.get(f"/api/payments/leases/{lease}"))["owed"] == "1200.00"
+
+
 def test_a_payment_paid_during_a_hold_waits_even_when_it_would_all_be_prepaid_rent(
     client, tenant_client, conn, staff, tenant, pmc
 ):
@@ -564,6 +592,68 @@ def test_a_payment_paid_during_a_hold_waits_for_staff_to_accept_it(
     ok(client.post(f"/api/payments/{payment}/record", json={"past_hold": True}), 204)
     assert f"payment/{payment}" in keys(conn, pmc)
     assert [w["what"] for w in ok(client.get("/api/payments/waiting"))] == ["partner fee"]
+
+
+def test_a_payment_not_in_the_books_leaves_no_owner_short(
+    client, tenant_client, conn, app_conn, staff, tenant, lease, pmc
+):
+    # M-060: a payment held back by a payment hold moved nothing, so nothing of it can be short.
+    turn_on(client)
+    payment = pay(tenant_client, lease, "300.00")["id"]
+    conn.execute(
+        "INSERT INTO trust_payment_holds (pmc_id, lease_id, starts_on, reason)"
+        " VALUES (%s, %s, %s, 'filed')",
+        (pmc.pmc_id, lease, TODAY - DAY),
+    )
+    bank_says(tenant_client, payment, "paid")
+    assert f"payment/{payment}" not in keys(conn, pmc)
+
+    assert op.owner_short(app_conn, op.row_of(app_conn, payment)) is None
+
+
+def test_a_cover_is_refused_for_a_payment_that_didnt_come_back_or_one_the_books_refuse(
+    client, tenant_client, conn, staff, tenant, lease, pmc, monkeypatch
+):
+    turn_on(client)
+    payment = pay(tenant_client, lease, "1000.00")["id"]
+    bank_says(tenant_client, payment, "paid")
+    record = f"/api/payments/{payment}/record"
+    cover = {"cover_shortfall": True, "request_id": str(uuid4())}
+
+    refused(
+        client.post(record, json=cover),
+        409,
+        "the payments partner hasn't said this payment came back",
+    )
+
+    owner = pmc.owners[0].account
+    conn.execute("SELECT trust_draw_owner(%s, %s, 'draw-9', 100.00, now())", (pmc.pmc_id, owner))
+    bank_says(tenant_client, payment, "returned")
+
+    def refused_by_the_books(*_, **__):
+        raise psycopg.errors.CheckViolation("trust: the books refuse this cover")
+
+    monkeypatch.setattr(rent, "bounce", refused_by_the_books)
+    refused(client.post(record, json=cover), 409, "the books refuse this cover")
+    assert f"bounce/payment/{payment}" not in keys(conn, pmc)
+
+
+def test_a_partner_that_reads_one_thing_a_report_is_read_through_its_event():
+    # A partner without `items` (not Stripe's): its one event, or nothing.
+    payment = uuid4()
+    said = payments.Event(payment, "paid", "evt_1", datetime.now(UTC), Decimal("1.00"))
+
+    class OneThing:
+        name = "one"
+
+        def __init__(self, event):
+            self.answer = event
+
+        def event(self, body, headers):
+            return self.answer
+
+    assert op.items_of(OneThing(said), b"{}", {}) == [said]
+    assert op.items_of(OneThing(None), b"{}", {}) == []
 
 
 def second_owner_account(conn, pmc):
@@ -815,6 +905,68 @@ def test_stripes_signed_report_records_the_payment(stripe_app, conn, app_conn, p
     assert staff  # signed in as staff to turn it on
 
 
+def test_a_dispute_through_stripe_keys_takes_its_fee_from_the_company_and_once_won_puts_it_back(
+    stripe_app, conn, app_conn, pmc, lease
+):
+    """docs/edge-cases.md P-027, P-030: a dispute on a payment through Stripe keys (not Connect)
+    is a return whose dispute fee leaves trust from the company's fee account, never an owner's,
+    and once won (funds reinstated) the payment is in the books again with the fee back."""
+    browser, tenant_browser, answers = stripe_app
+    join_as_staff(browser, conn, app_conn, pmc)
+    turn_on(browser)
+    answers[("POST", "/checkout/sessions")] = {"id": "cs_test_9", "url": "https://checkout.test/9"}
+    join_as_tenant(tenant_browser, conn, app_conn, pmc)
+    payment = pay(tenant_browser, lease, "1000.00")["id"]
+    answers[("GET", "/payment_intents/pi_9")] = {
+        "latest_charge": {"balance_transaction": {"fee": 500}},
+        "metadata": {"payment_id": payment},
+    }
+    subject = {"id": "cs_test_9", "client_reference_id": payment, "payment_intent": "pi_9"}
+    ok(stripe_report(browser, "checkout.session.async_payment_succeeded", subject))
+    owner_before = balance(conn, pmc.owners[0].account)
+    # The company's earned fees, enough for the partner's fee and the dispute's.
+    contribute(conn, pmc.pmc_id, pmc.owners[1].account, f"fund/{uuid4()}", "50.00")
+    post(conn, pmc.pmc_id, f"fee/{uuid4()}", [(pmc.owners[1].account, pmc.pmc_income, "50.00")])
+    company_before = balance(conn, pmc.pmc_income)
+
+    dispute = {
+        "id": "du_test_9",
+        "payment_intent": "pi_9",
+        "status": "needs_response",
+        "balance_transactions": [{"amount": -100000, "fee": 1500}],
+    }
+    assert ok(stripe_report(browser, "charge.dispute.created", dispute)) == {"recorded": True}
+    assert ok(stripe_report(browser, "charge.dispute.created", dispute)) == {"recorded": True}
+
+    assert balance(conn, pmc.owners[0].account) == owner_before - Decimal("1000.00")
+    assert f"bounce/payment/{payment}" in keys(conn, pmc)
+    # The partner's 5.00, waiting until the company's account held it, and the dispute's 15.00.
+    assert balance(conn, pmc.pmc_income) == company_before - Decimal("20.00")
+    assert conn.execute(
+        "SELECT kind, fee FROM trust_connect_disputes WHERE online_payment_id = %s", (payment,)
+    ).fetchall() == [("opened", Decimal("15.00"))]
+
+    won = dispute | {
+        "status": "won",
+        "balance_transactions": [
+            {"amount": -100000, "fee": 1500},
+            {"amount": 100000, "fee": -1500},
+        ],
+    }
+    assert ok(stripe_report(browser, "charge.dispute.funds_reinstated", won)) == {"recorded": True}
+    ok(stripe_report(browser, "charge.dispute.closed", won))  # its close says the same
+
+    assert balance(conn, pmc.owners[0].account) == owner_before
+    assert balance(conn, pmc.pmc_income) == company_before - Decimal("5.00")
+    assert sorted(
+        kind
+        for (kind,) in conn.execute(
+            "SELECT kind FROM trust_connect_disputes WHERE online_payment_id = %s", (payment,)
+        ).fetchall()
+    ) == ["opened", "won"]
+    assert ok(browser.get("/api/payments/waiting")) == []
+
+
 def test_a_payment_whose_day_month_end_closed_is_recorded_in_the_next_open_one(
     stripe_app, conn, app_conn, pmc, lease
 ):
@@ -896,3 +1048,42 @@ def test_a_server_without_a_partner_takes_no_payment_online(
             "Online payments aren't available.",
         )
         refused(browser.post("/api/payments/webhook/stripe", json={}), 404)
+
+
+def test_a_return_the_owner_cant_take_waits_until_the_company_covers_it(
+    client, tenant_client, conn, staff, tenant, lease, pmc
+):
+    """docs/edge-cases.md M-060: the owner was paid part of the payment before it came back; the
+    return waits on Banking, saying how much the owner's account is short, until staff have the
+    company cover it from its own money (the owner owes it back)."""
+    turn_on(client)
+    payment = pay(tenant_client, lease, "1000.00")["id"]
+    bank_says(tenant_client, payment, "paid")
+    owner = pmc.owners[0].account
+    conn.execute("SELECT trust_draw_owner(%s, %s, 'draw-1', 100.00, now())", (pmc.pmc_id, owner))
+    bank_says(tenant_client, payment, "returned")
+    [waits] = [w for w in ok(client.get("/api/payments/waiting")) if w["what"] == "return"]
+    assert waits["owner_short"] == "100.00"
+    record = f"/api/payments/{payment}/record"
+    refused(client.post(record, json={"cover_shortfall": True}), 422)
+    # Trying again without the cover leaves it waiting.
+    ok(client.post(record, json={}), 204)
+    assert f"bounce/payment/{payment}" not in keys(conn, pmc)
+
+    request = str(uuid4())
+    ok(client.post(record, json={"cover_shortfall": True, "request_id": request}), 204)
+
+    assert f"bounce/payment/{payment}" in keys(conn, pmc)
+    assert balance(conn, owner) == Decimal("0.00")
+    assert "return" not in [w["what"] for w in ok(client.get("/api/payments/waiting"))]
+    ok(client.post(record, json={"cover_shortfall": True, "request_id": request}), 204)
+    covered = conn.execute(
+        "SELECT amount FROM trust_company_advances WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchall()
+    assert covered == [(Decimal("100.00"),)]
+    # A cover of a payment whose return is in the books already covers nothing.
+    refused(
+        client.post(record, json={"cover_shortfall": True, "request_id": str(uuid4())}),
+        409,
+        "this payment's return is in the books already",
+    )

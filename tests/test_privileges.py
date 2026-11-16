@@ -65,6 +65,9 @@ TABLES = {
     "trust_work_order_details": {"SELECT", "INSERT"},
     "trust_late_fee_policies": {"SELECT", "INSERT"},
     "trust_late_fees": {"SELECT"},  # written only by trust_assess_late_fees
+    # Rents a rent run charged after their due day (D-083): written only by
+    # trust_note_rents_charged_late, as the owner.
+    "trust_rents_charged_late": {"SELECT"},
     "trust_nsf_fee_policies": {"SELECT", "INSERT"},
     "trust_nsf_fees": {"SELECT"},  # written only by trust_charge_nsf_fee
     "trust_opening_balances": {"SELECT"},  # written only by trust_post_opening_balances
@@ -128,6 +131,11 @@ TABLES = {
     # with each at move-out: records the app writes; no money moves.
     "trust_owner_held_deposits": {"SELECT", "INSERT"},
     "trust_owner_held_deposit_outcomes": {"SELECT", "INSERT"},
+    # The company's cover of an owner's shortfall when a payment bounced, and the owner paying it
+    # back (migration 20261115000100): written only by trust_cover_returned_payment and
+    # trust_repay_company_advance.
+    "trust_company_advances": {"SELECT"},
+    "trust_company_advance_repayments": {"SELECT"},
     # QuickBooks names (migration 0102): staff name a ledger account for QuickBooks; the latest
     # row holds, so a change is an insert. The ids order the rows.
     "trust_quickbooks_accounts": {"SELECT", "INSERT"},
@@ -285,6 +293,8 @@ TABLES = {
     "trust_tenant_links": {"SELECT", "INSERT"},
     # A link taken back (docs/edge-cases.md U-099): staff insert it; it names who.
     "trust_tenant_unlinks": {"SELECT", "INSERT"},
+    # Each lease the switching tool brought in, the day it came (migration 20261115000220, M-152).
+    "trust_switched_leases": {"SELECT", "INSERT"},
     # A login linked to the person a host app signs in (docs/adr/0013-sign-in-through-a-host.md):
     # the app inserts it at that sign-in, through an owner's or a tenant's invite or a staff
     # member's first sign-in.
@@ -329,6 +339,9 @@ TABLES = {
     # the ledger is; what failed, told to the company's admins, which it never reads.
     "trust_reserve_events": {"SELECT", "INSERT"},
     "trust_admin_alerts": {"SELECT", "INSERT"},
+    # A payments partner's reports refused, a day a reason (migration 20261115000400, P-010,
+    # P-011): about the company's keys and the server's clock, which the AI never reads.
+    "trust_payment_report_refusals": {"SELECT", "INSERT"},
     # A unit's details (migration 0124): bedrooms, bathrooms, square feet and market rent, which
     # staff record; the latest row holds.
     "trust_unit_details": {"SELECT", "INSERT"},
@@ -494,6 +507,8 @@ AI_NEVER_READS = {
     "trust_email_deliveries",
     # What failed, told to an admin, maybe in the database's own words (migration 0150).
     "trust_admin_alerts",
+    # Payments reports refused: about the company's keys (migration 20261115000400).
+    "trust_payment_report_refusals",
     # Tenants', owners' and vendors' emails, phones and mailing addresses (ADR 0005).
     "trust_contacts",
     # What staff write about people and their homes (ADR 0006).
@@ -593,6 +608,13 @@ FUNCTIONS = {
     # read only by trust_assess_late_fees, which runs as the owner.
     "trust_online_started_by(pgledger_transfers,date)": set(),
     "trust_online_on_its_way(uuid,date)": set(),
+    # A rent charged after its grace takes its grace from that day (D-083): the run notes its
+    # own rents charged late; the grace is read only by the late fee functions, as the owner.
+    "trust_note_rents_charged_late(uuid,date,date)": {"trust_app"},
+    "trust_late_fee_grace_ends(uuid,date,integer)": set(),
+    # A payment dated within grace that reaches the books after its late fee waives what the
+    # night would not have charged (D-078, D-079): a trigger, as the owner.
+    "trust_waive_late_fee_paid_in_grace()": set(),
     # Where a charge comes in the order money pays them: rent first (migration 0093).
     "trust_pay_rank(trust_charges)": {"trust_app"},
     # The chart of accounts (migrations 20261106000205 to 20261106000220): its fixed lines, each
@@ -623,6 +645,16 @@ FUNCTIONS = {
     "trust_check_unapplied_use()": set(),
     "trust_refund_unapplied_cash(uuid,uuid,numeric,text,text,text,timestamptz)": {"trust_app"},
     "trust_check_owner_held_deposit()": set(),
+    # The company covers an owner's shortfall when a payment bounces, and the owner pays it back
+    # (migration 20261115000100): what a bounce would leave short, what is owed back, the two
+    # write paths, the commit check that a cover was the shortfall, and that no charge is paid
+    # by one.
+    "trust_return_shortfall(uuid,text)": {"trust_app"},
+    "trust_company_advance_owed(text)": {"trust_app"},
+    "trust_cover_returned_payment(uuid,text,text,timestamptz)": {"trust_app"},
+    "trust_repay_company_advance(uuid,text,numeric,text,timestamptz)": {"trust_app"},
+    "trust_check_company_advance()": set(),
+    "trust_refuse_matching_an_advance()": set(),
     "trust_check_owner_held_outcome()": set(),
     # A company's time zone and its day (migration 20261104000900): read from its profile, which
     # the AI role never reads.
@@ -689,6 +721,7 @@ FUNCTIONS = {
     "trust_lease_owed(uuid)": {"trust_app"},
     # The leases a lease's tenants moved from: the rent and move-out pages read them.
     "trust_lease_moved_from(uuid)": {"trust_app"},
+    "trust_lease_carried_from(uuid)": {"trust_app"},
     # The app approves only month-end preparations, which another staff member made: this one
     # is the owner's, called by trust_approve_bank_reconciliation.
     "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)": set(),
@@ -760,6 +793,9 @@ FUNCTIONS = {
     "trust_check_tenant_login()": set(),
     "trust_check_tenant_unlink()": set(),
     "trust_refuse_closed_year()": set(),
+    # A journal entry moves no unapplied cash (migration 20261115000210, M-154).
+    "trust_refuse_unapplied_journal_line()": set(),
+    "trust_refuse_posting_unapplied_journal_entry()": set(),
     "trust_check_history_line()": set(),
     "trust_check_reserve_event()": set(),
     "trust_check_assistance_record()": set(),
@@ -949,6 +985,7 @@ SECURITY_DEFINER = {
     "trust_roll_over_leases(uuid,date)",
     "trust_pay_bill_amount(trust_bills,numeric,text,timestamptz)",
     "trust_assess_late_fees(uuid,date)",
+    "trust_note_rents_charged_late(uuid,date,date)",
     "trust_charge_nsf_fee(uuid,text)",
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",
     "trust_analyze_after_import()",  # ANALYZE needs the tables' owner; it writes no record
@@ -974,6 +1011,9 @@ SECURITY_DEFINER = {
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
     "trust_check_bill_decision()",  # locks the bill's owner account, which the app can't
     "trust_check_charge_waiver()",  # locks the waived charge, which the app can't
+    # Waives a late fee a payment dated within grace shows was never owed (D-078): it writes the
+    # waiver credit and locks the fee whichever role the payment came in as.
+    "trust_waive_late_fee_paid_in_grace()",
     # Takes a lock on the vendor's reference, and sees a vendor's bills and shared invoices
     # whatever the caller reads.
     "trust_check_bill_reference()",
@@ -998,6 +1038,10 @@ SECURITY_DEFINER = {
     "trust_refund_unapplied_cash(uuid,uuid,numeric,text,text,text,timestamptz)",
     # Locks the receipt an application or a refund takes from, which the app can't.
     "trust_check_unapplied_use()",
+    # The company's cover of a returned payment's shortfall, and its repayment (migration
+    # 20261115000100): each posts and writes a record only it writes.
+    "trust_cover_returned_payment(uuid,text,text,timestamptz)",
+    "trust_repay_company_advance(uuid,text,numeric,text,timestamptz)",
     # Reads the chart of accounts for the AI role through the app's helpers (codes, names today,
     # archivals, payees), returning only the chart (migration 20261106000230).
     "trust_report_chart_of_accounts(uuid)",

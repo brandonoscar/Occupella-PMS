@@ -83,6 +83,46 @@ def test_the_first_night_after_a_mid_month_switch_charges_the_old_systems_month_
     ]
 
 
+def came_over(conn, pmc, lease, on):
+    """The lease brought in by the switching tool on `on` (migration 20261115000220)."""
+    conn.execute(
+        "INSERT INTO trust_switched_leases (pmc_id, lease_id, switched_on) VALUES (%s, %s, %s)",
+        (pmc.pmc_id, lease, on),
+    )
+
+
+@pytest.mark.parametrize("cutover", [date(2026, 3, 1), CUTOVER, date(2026, 3, 20)])
+def test_nights_between_the_roster_and_the_opening_balances_charge_the_old_systems_month_nothing(
+    conn, app_conn, pmc, cutover
+):
+    """docs/edge-cases.md M-152: the roster comes over on the 12th and the opening balances days
+    later. The nights between, with no cutover on file, charge nothing of March, nor late fees:
+    the old system's books hold its money up to the day the lease came. Then the cutover rules,
+    as M-144 has it: one on the first gives March to the PMS."""
+    lease = lease_of(conn, pmc)
+    add_recurring_charge(conn, pmc.pmc_id, lease, "35.00", date(2025, 6, 1))
+    add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2025, 1, 1), 5, "50.00")
+    came_over(conn, pmc, lease, date(2026, 3, 12))
+    by_hand = lease_of(conn, pmc, name="Unit by hand")  # added by staff, not the switching tool
+
+    for night in (date(2026, 3, 12), date(2026, 3, 13), date(2026, 3, 14)):
+        run(app_conn, pmc, night)
+    assert charges(conn, lease) == []
+    assert [c[:2] for c in charges(conn, by_hand) if c[1] == "rent"] == [(date(2026, 3, 1), "rent")]
+
+    switched(conn, pmc, opened_on=cutover)
+    run(app_conn, pmc, date(2026, 3, 31))
+    run(app_conn, pmc, date(2026, 4, 1))
+
+    march = [(date(2026, 3, 1), "rent"), (date(2026, 3, 1), "fee")] if cutover.day == 1 else []
+    # The month's rent and pet rent, each due on the first (a late fee aside).
+    assert [c[:2] for c in charges(conn, lease) if c[0].day == 1] == [
+        *march,
+        (date(2026, 4, 1), "rent"),
+        (date(2026, 4, 1), "fee"),
+    ]
+
+
 def test_a_rent_carried_over_as_unpaid_stays_the_months_only_rent(conn, app_conn, pmc):
     lease = lease_of(conn, pmc)
     charge(conn, pmc.pmc_id, lease, date(2026, 3, 1), "1200.00", memo="Rent carried over")

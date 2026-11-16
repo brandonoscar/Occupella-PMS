@@ -520,7 +520,16 @@ def create_app(settings: Settings) -> FastAPI:
                 runs.stop()
             pool.close()
 
-    app = FastAPI(title="Occupella PMS", lifespan=lifespan, docs_url=None, redoc_url=None)
+    # The API's map (/openapi.json) serves development, the browser and API tests, the fuzzer and
+    # ZAP; a live server keeps it to itself, so nobody gets every path for free.
+    live = deployment.is_live(settings.public_url, settings.fake_partners)
+    app = FastAPI(
+        title="Occupella PMS",
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None if live else "/openapi.json",
+    )
     if settings.trusted_proxies:
         # uvicorn's own: from a trusted proxy only, the visitor's address (and the scheme) come
         # from X-Forwarded-For (and -Proto); from anyone else the headers are ignored.
@@ -541,7 +550,7 @@ def create_app(settings: Settings) -> FastAPI:
         settings.payments,
         settings.connect,
         os.environ,
-        live=deployment.is_live(settings.public_url, settings.fake_partners),
+        live=live,
     )
     # The SMTP settings come straight from the environment, so a password is never part of
     # Settings (which a log or an error could print).
@@ -665,10 +674,14 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.exception_handler(psycopg.DataError)
     async def unstorable(request: Request, error: psycopg.DataError) -> JSONResponse:
-        # Text with a NUL character, which Postgres can't store and psycopg refuses before it is
-        # sent: refused as bad input (the transaction is rolled back). Any other data error is
-        # still a server error, to be found and fixed.
-        if "NUL (0x00)" not in str(error):
+        # Text with a NUL character, which Postgres can't store: psycopg refuses it in a text
+        # parameter before it is sent, and Postgres refuses it as \u0000 in a jsonb one (22P05,
+        # a payer in a posting's metadata; issue #229). Refused as bad input (the transaction is
+        # rolled back). Any other data error is still a server error, to be found and fixed.
+        jsonb_nul = isinstance(error, psycopg.errors.UntranslatableCharacter) and "\\u0000" in (
+            error.diag.message_detail or ""
+        )
+        if "NUL (0x00)" not in str(error) and not jsonb_nul:
             raise error
         return JSONResponse({"detail": "text can't contain a NUL character"}, 422)
 

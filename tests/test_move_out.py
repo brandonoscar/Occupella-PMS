@@ -272,6 +272,91 @@ def test_when_nothing_is_owed_all_goes_back(conn, app_conn, pmc, lease):
     assert lines(conn, lease) == [(1, "Tenant 1", None, Decimal("1500.00"))]
 
 
+def prepaid_rent(conn, pmc, amount):
+    """Tenant 1's prepaid rent, held in the operating trust bank account."""
+    transfer_batch(conn, [(pmc.operating_cash, pmc.prepaid_rent, amount)], at(JUN_1))
+
+
+def prepaid_returns(conn, lease_id):
+    return conn.execute(
+        "SELECT prepaid_used, prepaid_returned FROM trust_deposit_returns WHERE lease_id = %s",
+        (lease_id,),
+    ).fetchone()
+
+
+def test_prepaid_rent_pays_what_is_owed_before_the_deposit_and_the_rest_goes_back(
+    conn, app_conn, pmc, lease
+):
+    """docs/edge-cases.md M-072 (migration 20261115000240): Tenant 1 holds 300.00 of prepaid rent
+    and owes a 200.00 cleaning fee. The prepaid rent pays it, the whole deposit goes back, and so
+    do the 100.00 of prepaid rent left, out of the operating account's cash."""
+    prepaid_rent(conn, pmc, "300.00")
+    charge(conn, pmc.pmc_id, lease, JUL_1, "200.00", "fee", "Cleaning")
+    cash = balance(conn, pmc.operating_cash)
+
+    back = return_deposit(app_conn, pmc.pmc_id, lease, "move-out-1", at(JUL_5))
+
+    assert back == Decimal("1500.00")
+    assert returned(conn, lease) == (Decimal("1500.00"), Decimal("0.00"), Decimal("1500.00"))
+    assert prepaid_returns(conn, lease) == (Decimal("200.00"), Decimal("100.00"))
+    assert lines(conn, lease) == [
+        (1, "Tenant 1", "Cleaning", Decimal("200.00")),
+        (2, "Tenant 1", None, Decimal("100.00")),
+        (3, "Tenant 1", None, Decimal("1500.00")),
+    ]
+    assert balance(conn, pmc.prepaid_rent) == 0
+    assert balance(conn, pmc.tenant_deposit) == 0
+    assert balance(conn, pmc.owners[0].account) == Decimal("200.00")
+    assert balance(conn, pmc.operating_cash) == cash + Decimal("100.00")  # 100.00 left trust
+    assert open_amounts(conn, lease) == [("Cleaning", Decimal("0.00"))]
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {0}
+    assert [
+        row[0]
+        for row in conn.execute(
+            "SELECT t.metadata ->> 'memo' FROM trust_deposit_return_lines AS x"
+            " JOIN pgledger_transfers AS t ON t.id = x.transfer_id"
+            " WHERE x.lease_id = %s ORDER BY x.line_no",
+            (lease,),
+        ).fetchall()
+    ] == ["Prepaid rent used", "Prepaid rent returned", "Security deposit returned"]
+
+
+def test_prepaid_rent_short_of_what_is_owed_leaves_the_rest_to_the_deposit(
+    conn, app_conn, pmc, lease
+):
+    prepaid_rent(conn, pmc, "300.00")
+    charge(conn, pmc.pmc_id, lease, JUN_1, "1000.00", "rent", "June rent")
+
+    back = return_deposit(app_conn, pmc.pmc_id, lease, "move-out-1", at(JUL_5))
+
+    assert back == Decimal("800.00")
+    assert returned(conn, lease) == (Decimal("1500.00"), Decimal("700.00"), Decimal("800.00"))
+    assert prepaid_returns(conn, lease) == (Decimal("300.00"), Decimal("0.00"))
+    assert balance(conn, pmc.owners[0].account) == Decimal("1000.00")
+    assert balance(conn, pmc.prepaid_rent) == 0
+
+
+def test_a_lease_holding_prepaid_rent_but_no_deposit_returns_it(conn, app_conn, pmc, tenant):
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id)
+    lease = open_lease(conn, pmc.pmc_id, unit, JAN_1, JUN_30, "1000.00", [tenant])
+    prepaid_rent(conn, pmc, "250.00")
+
+    assert return_deposit(app_conn, pmc.pmc_id, lease, "move-out-1", at(JUL_5)) == 0
+    assert returned(conn, lease) == (Decimal(0), Decimal(0), Decimal(0))
+    assert prepaid_returns(conn, lease) == (Decimal("0.00"), Decimal("250.00"))
+    assert balance(conn, pmc.prepaid_rent) == 0
+    assert conn.execute(
+        "SELECT item, detail, amount FROM trust_report_deposit_return(%s, %s)"
+        " WHERE item LIKE 'prepaid%%' OR item = 'returned to'",
+        (pmc.pmc_id, lease),
+    ).fetchall() == [
+        ("prepaid rent held", "Tenant 1 (prepaid rent)", Decimal("250.00")),
+        ("prepaid rent used, total", None, Decimal("0.00")),
+        ("returned to", "Tenant 1 (prepaid rent)", Decimal("250.00")),
+        ("prepaid rent returned, total", None, Decimal("250.00")),
+    ]
+
+
 def test_co_tenants_deposits_are_kept_from_in_name_order_and_each_gets_their_rest(
     conn, app_conn, pmc, tenant
 ):

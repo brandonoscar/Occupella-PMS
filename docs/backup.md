@@ -123,25 +123,25 @@ With `compose.yaml`, whose database publishes no port, run the script inside the
 which carries pg_dump 16:
 
 ```sh
-docker compose run --rm --no-deps -T -v "$PWD/scripts:/scripts:ro" \
+docker compose -f compose.yaml run --rm --no-deps -T -v "$PWD/scripts:/scripts:ro" \
   -e PGHOST=db -e PGUSER=postgres -e PGDATABASE=pms --entrypoint /scripts/backup.sh \
   db dump - | age -r age1yourpublickey >pms.dump.age
 ```
 
 ## Getting the books back
 
-1. Stop the app (`docker compose stop app`), so nothing is posted while you restore.
+1. Stop the app (`docker compose -f compose.selfhost.yaml stop app`), so nothing is posted while you restore.
 2. Make a new, empty database on Postgres 16: `createdb pms_restored`. The script never restores
    over books that are running.
 3. Restore the latest good backup into it:
    `age -d -i pms-backup-key.txt pms-2026-10-21.dump.age | PGDATABASE=pms_restored scripts/backup.sh restore -`.
    It ends with `restored: ... the ledger ties out.` or says what doesn't. With `compose.yaml`,
-   make the database with `docker compose exec db createdb -U postgres pms_restored` and pipe the
-   backup into the same `docker compose run ... db restore -` as above, with
+   make the database with `docker compose -f compose.yaml exec db createdb -U postgres pms_restored`
+   and pipe the backup into the same `docker compose -f compose.yaml run ... db restore -` as above, with
    `PGDATABASE=pms_restored`.
 4. Point the app at it (`DATABASE_URL`), or swap the names
    (`ALTER DATABASE pms RENAME TO pms_lost; ALTER DATABASE pms_restored RENAME TO pms;`).
-5. Run the migrations of the release you run (`docker compose run --rm migrate`). If the backup
+5. Run the migrations of the release you run (`docker compose -f compose.selfhost.yaml run --rm migrate`). If the backup
    was taken before an upgrade, this applies that release's migrations to it, as the upgrade did.
 6. Start the app, then enter again what happened after the backup was taken, from the bank's
    records, and reconcile.

@@ -482,6 +482,8 @@ def main() -> None:
         seeded["features"] = {name: feature_pmc(app, tag, name) for name in FEATURES}
         autopay_saved_before(app, seeded["features"]["autopay"]["pmc_id"])
         draws_prepared(app, seeded["features"]["payouts"]["pmc_id"])
+        for name in ("rent", "rent-terms"):
+            rent_posted_on_the_first(app, seeded["features"][name]["pmc_id"])
         rent_past_due(app, seeded["features"]["reminders"]["pmc_id"])
         seeded["features"]["drafts"]["ids"] = drafts_named(
             app, seeded["features"]["drafts"]["pmc_id"]
@@ -524,6 +526,15 @@ def autopay_saved_before(app: psycopg.Connection[Any], pmc_id: str) -> None:
         " 'Test bank ••••0000', 'fake_saved_seed', %s)",
         (pmc_id, autopay, datetime.now(UTC) - timedelta(days=40)),
     )
+
+
+def rent_posted_on_the_first(app: psycopg.Connection[Any], pmc_id: str) -> None:
+    """The night of this month's first day posted the month's rent and monthly charges then, as
+    the nightly run does (PMS_NIGHTLY is off for the tests), naming nobody. So Run rent now in the
+    rent features charges the late fees of rents whose grace really ran out: a rent it charges
+    itself takes its grace from today (docs/edge-cases.md D-083)."""
+    first = datetime.now(UTC).date().replace(day=1)
+    app.execute("SELECT trust_run_rent(%s, %s, %s)", (pmc_id, first, first))
 
 
 def draws_prepared(app: psycopg.Connection[Any], pmc_id: str) -> None:
@@ -633,6 +644,7 @@ FEATURES = (
     "lease-people",
     "rent-due-day",
     "owner-fees",
+    "company-covers",
     "prepaid-rent",
     "shared-bills",
     "ownership",

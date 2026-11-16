@@ -1,10 +1,10 @@
 # The law each feature follows
 
-Founder, 2026-10-15: "make sure what we are doing is by law like ones that apply in all states,
-like commingling is in wv too". Each feature below meets the rule that applies in every state
-(the floor) and, where states differ, the strictest one found, so a company in any state can use
-it as it is. A state's own choices beyond that (deadlines, caps, notice periods) stay the
-company's, as CLAUDE.md keeps state rules out of the PMS unless the founder adds one here.
+**Scope:** each feature below follows the rule every state shares (the floor) and, where states
+differ, the strictest version found, so the defaults are safe wherever a company operates. A
+state's own choices beyond that (deadlines, caps, notice periods) stay the company's to set. This
+page is research, not legal advice: confirm your state's specifics with your broker or
+attorney.
 
 **How this was checked (2026-10-15).** Research from search excerpts that quote the official
 pages: the legal sites themselves (code.wvlegislature.gov, law.cornell.edu, dre.ca.gov,
@@ -191,9 +191,17 @@ it only as its own terms allow. Some states ask for more:
   mid-month keeps its days at the rent in force, the reports show it, and the tenant sees the
   change coming in the portal with the day notice was given.
 
+- California adds five days to a notice served by mail (Code of Civil Procedure 1013(a), the
+  service by mail Civil Code 827 names): the Change rent panel warns at 35 days (95 over 10%) when
+  the notice was mailed, counted from the day it was given (docs/edge-cases.md D-069). Read on
+  2026-11-15 from search excerpts (california.public.law's text of Civil Code 827, which names
+  service by mail under 1013; ezel.ai and alleastbayproperties.com for the five days on 30 and 90):
+  the statutes were not read in full, NOT VERIFIED. 1013's longer periods for mail addressed
+  outside California (10 days) or the United States (20) are not applied.
+
 **Left to the company.** Longer notice where its state or city asks (up to 90 days), rent caps,
-the first-year and once-a-year limits, extra days for notice served by mail, and the notice
-itself, which the PMS records but does not write or send.
+the first-year and once-a-year limits, other states' extra days for notice served by mail, and the
+notice itself, which the PMS records but does not write or send.
 
 ## Renters insurance on file (migration 0062)
 
@@ -349,8 +357,10 @@ did not resolve from the container, so no statute was read in full.
 **What the PMS does.**
 - Each lease past its last day whose deposit is still held shows the day it is due back: 14 days
   after its last day, 10 while the lease owes nothing (so nothing would be kept), the strictest
-  found. The Move-outs page shows it on each lease, past due once the day has passed, and the
-  Dashboard lists every one until the deposit is returned.
+  found. Only what was charged by the tenth day counts: a fee charged once the ten days had run out
+  never moves a deadline already missed to fourteen (docs/edge-cases.md D-128). The Move-outs
+  page shows it on each lease, past due once the day has passed, and the Dashboard lists every
+  one until the deposit is returned.
 - Staff keep a receipt or invoice for each fee a deposit keeps (one of the lease's documents,
   linked to the fee), before or after the return; a fee over $125 with none on file is marked.
 - Each tenant's statement is a letter on the company's letterhead to their forwarding address
@@ -964,6 +974,23 @@ a payment by bank counts as received (NOT VERIFIED; a lease may say). How Buildi
 not checked: its help pages weren't reachable from where this was built, and search excerpts say
 only that it keeps pending bank payments apart until they clear (NOT VERIFIED). The books still
 date the money on the day the bank paid it, so statements and month-end follow the bank.
+
+**When a payment dated within grace reaches the books after its late fee** (migration
+20261115000320, docs/edge-cases.md D-078, D-079). A check received on the last day of grace and
+recorded the next morning, dated the day it came, or a lockbox file's line dated within grace
+brought in after the night: the tenant paid on time, so the fee is not owed. As the payment is
+matched to the rent, the PMS works the fee out again as the night would have with the payment in
+the books, and waives by itself what it would not have charged (all of it when the rent was paid,
+part of a percent fee when part was), a credit linked to the fee saying why, as a waiver staff
+make by hand; nothing is deleted. What of the fee was already paid stays paid (staff refund or
+credit it as they choose). No statute was read on this; it is what a payment dated in time means.
+
+**Late fee terms and a rent charged late** (migrations 20261115000200 and 20261115000310, M-049,
+D-082, D-083). Terms entered with a start day in the past count only for a rent whose fee comes
+due once they are on file: a tenant is not charged under terms nobody had on file when the rent
+was late. A rent the PMS first charges after its grace had run out (a lease entered late, a month
+caught up after the server was down) gets its grace from the day it was charged, so it is never
+charged a late fee before the tenant could see it.
 
 **A payment the partner never reported** (docs/edge-cases.md C-090). Stripe stops sending a report
 after about three days of failed deliveries (NOT VERIFIED). A week after a payment online started

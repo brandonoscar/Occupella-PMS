@@ -113,8 +113,9 @@ def test_a_move_out_ends_the_lease_charges_damage_and_returns_the_rest(
     assert shown["carried"] == "0.00"  # no lease moved into it
 
     request = uuid.uuid4()
-    assert ok(give_back(client, lease, request_id=request), 201) == {"returned": "850.00"}
-    assert ok(give_back(client, lease, request_id=request), 201) == {"returned": "850.00"}
+    back = {"returned": "850.00", "prepaid_returned": "0.00"}
+    assert ok(give_back(client, lease, request_id=request), 201) == back
+    assert ok(give_back(client, lease, request_id=request), 201) == back
     refused(give_back(client, lease), 409, "was returned already")
 
     shown = listed(client)[str(lease)]
@@ -123,6 +124,8 @@ def test_a_move_out_ends_the_lease_charges_damage_and_returns_the_rest(
         "kept": "350.00",
         "returned": "850.00",
         "returned_on": str(TODAY),
+        "prepaid_used": "0.00",
+        "prepaid_returned": "0.00",
     }
     assert (shown["held"], shown["owed"], shown["open_charges"]) == ("0.00", "0.00", [])
     letter = client.get(f"/api/reports/trust_report_deposit_return?arg={lease}&format=pdf")
@@ -160,6 +163,44 @@ def test_an_end_staff_give_is_a_notice_naming_them_and_never_goes_month_to_month
         conn.execute("SELECT ends_on FROM trust_leases WHERE id = %s", (lease,)).fetchone()[0]
         == ends
     )
+
+
+def test_a_return_uses_the_tenants_prepaid_rent_first_and_pays_back_the_rest(
+    client, conn, staff, pmc, lease
+):
+    """docs/edge-cases.md M-072: Tenant 1 holds 500.00 of prepaid rent and owes 350.00 for
+    damage at move-out. The page shows the prepaid rent; the return pays the damage from it and
+    pays back the deposit whole and the 150.00 of prepaid rent left."""
+    transfer_batch(
+        conn,
+        [(pmc.operating_cash, pmc.prepaid_rent, "500.00")],
+        datetime.combine(ENDED, datetime.min.time(), UTC),
+    )
+    ok(client.post(f"/api/move-out/{lease}/end", json={"ends_on": str(ENDED)}), 204)
+    ok(
+        client.post(
+            f"/api/move-out/{lease}/deductions",
+            json={"amount": "350.00", "due_on": str(ENDED), "memo": "Damage"},
+        ),
+        201,
+    )
+    assert listed(client)[str(lease)]["prepaid"] == "500.00"
+
+    assert ok(give_back(client, lease), 201) == {
+        "returned": "1200.00",
+        "prepaid_returned": "150.00",
+    }
+
+    shown = listed(client)[str(lease)]
+    assert shown["settled"] == {
+        "held": "1200.00",
+        "kept": "0.00",
+        "returned": "1200.00",
+        "returned_on": str(TODAY),
+        "prepaid_used": "350.00",
+        "prepaid_returned": "150.00",
+    }
+    assert (shown["prepaid"], shown["owed"]) == ("0.00", "0.00")
 
 
 def test_a_deposit_goes_back_once_the_lease_has_ended_and_not_ahead_of_time(

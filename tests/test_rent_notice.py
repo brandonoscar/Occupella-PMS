@@ -72,6 +72,26 @@ def test_the_warning_says_the_rule_and_the_first_day_that_gives_it():
     assert rent_notice.earliest(sent, rule) == date(2027, 1, 23)
 
 
+@pytest.mark.parametrize(("days", "mailed"), [(30, 35), (90, 95)])
+def test_california_adds_five_days_for_notice_served_by_mail(days, mailed):
+    """Code of Civil Procedure 1013(a), which Civil Code 827 names for a notice mailed: a notice
+    served by mail asks five days more (docs/edge-cases.md D-069); served any other way, or in
+    another state, the days stay as they are."""
+    rule = Needed("CA", days, "California Civil Code §827", d("5.0"))
+    by_mail = rent_notice.served(rule, "mail")
+
+    assert by_mail == Needed(
+        "CA",
+        mailed,
+        "California Civil Code §827 and Code of Civil Procedure §1013(a), served by mail",
+        d("5.0"),
+    )
+    for other in ("in person", "posted", "email", "other", None):
+        assert rent_notice.served(rule, other) == rule
+    oregon = Needed("OR", 90, "ORS 90.323", d("5.0"))
+    assert rent_notice.served(oregon, "mail") == oregon
+
+
 def test_no_warning_once_the_new_rent_starts_late_enough():
     rule = Needed("OR", 90, "ORS 90.323", d("5.0"))
     sent = date(2026, 10, 25)

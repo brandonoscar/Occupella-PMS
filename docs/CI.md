@@ -238,8 +238,9 @@ their PR seconds, fit in three quarters of that, and that every property test ha
 (`python -m tools.property_times` adds a new one's). Run one part by hand from Actions
 (ledger-invariants, Run workflow, `rotation`). A failing case is
 uploaded as an artifact with the seed and the shortest failing sequence. Nightly also runs every `@pytest.mark.timing` test (threads, lock waits, timeouts) 50
-times on GitHub's runners. One failure fails the job, because a flaky test teaches everyone to
-ignore red. Measured before adding it: 100 of 100 local runs passed, 50 of them with every CPU
+times on GitHub's runners, in two jobs of 25 runs each (`timing`, parts 1 and 2: 50 in one job
+reached its 40-minute limit, issue #230). One failure fails its job, because a flaky test teaches
+everyone to ignore red. Measured before adding it: 100 of 100 local runs passed, 50 of them with every CPU
 core busy, and the slowest took 2.2 s against limits of 20 s and more. Random sequences find the
 overdraft or double-post that nobody thought to write an example for. Run it with
 `HYPOTHESIS_PROFILE=pr pytest tests/properties` (or `nightly`).
@@ -279,7 +280,8 @@ page's request id, twice), tonight's rent run (it ends the same as a company who
 whole), Pay owners (each owner paid once) and an import of 200 tenants (each brought in once).
 Measured locally: 4 tests in 7.7 s, 20 of 20 runs passed in random order. They add about 6 s to
 each of the 50 timing runs (the job took 19 min 22 s on 10/24), so its limit went from 30 to 40
-minutes.
+minutes; once 50 runs no longer fit in 40, they were split into two jobs of 25, each with the
+same 40 minutes (issue #230).
 
 Nightly too, every test runs as if its run had begun the day before (`tools/started_yesterday.py`,
 two jobs): the modules load with the clock at 23:59 UTC the day before (time-machine, MIT, tests
@@ -611,7 +613,7 @@ now get.
 `frontend/playwright.config.ts` or the workflow): `scripts/simulate.ps1`, the browser tests played
 against a fresh synthetic company in Docker (`compose.e2e.yaml`: the API with e2e.yml's settings,
 on 127.0.0.1:8123) in each browser and time zone picked, by PowerShell (`pwsh`, on GitHub's
-runners) as on a Windows machine (README, "Simulate people using it"). The e2e job runs the tests
+runners) as on a Windows machine (CONTRIBUTING.md, "Simulate people using it"). The e2e job runs the tests
 in Chromium in UTC only; a date that is a day off for someone in Los Angeles or Kiritimati, or a
 page that breaks in Firefox or Edge, shows here. On a PR it runs once, Chromium in UTC, to show
 the script works; by hand it takes any browsers and time zones (default nine runs). What fails
@@ -691,9 +693,9 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   `deps-and-secrets`, a job of seconds, has finished), so a PR never has more than 8 jobs
   running at once.
 - Nightly runs are staggered, though the property jobs now run into the later ones' hours:
-  - 03:17 UTC ledger-invariants (8 property jobs of up to 4.5 hours; 6 API fuzz jobs, timing,
+  - 03:17 UTC ledger-invariants (8 property jobs of up to 4.5 hours; 6 API fuzz jobs, 2 timing,
     many-staff, fast-forward, speed and the 2 jobs begun the day before, all done within the
-    hour: 20 at first, 8 after 04:17).
+    hour: 21 at first, GitHub queuing the one past 20 until a job ends, and 8 after 04:17).
     The property jobs overlap mutation (2 to 3 hours from 04:17, measured 10/21 to 10/23), so up
     to 18 jobs run at once, and on a Monday the security jobs can bring that to 22: GitHub queues what is
     past 20 until one ends, and a PR's checks then wait too;

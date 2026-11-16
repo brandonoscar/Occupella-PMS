@@ -873,26 +873,39 @@ class NewLateFees(BaseModel):
 
 @router.post("/late-fees", status_code=201)
 def add_late_fees(session: Staff, conn: Conn, new: NewLateFees) -> Created:
-    """A property's late fee terms, in force from a day."""
-    found(conn, "property", session.pmc_id, new.property_id)
+    """A property's late fee terms, in force from a day. They count for a rent only once on file
+    by the day its fee comes due (migration 20261115000200, M-049): terms from a day gone by
+    charge no rent already past its grace."""
+    return Created(id=late_fee_terms(conn, session.pmc_id, new))
+
+
+def late_fee_terms(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    new: NewLateFees,
+    entered_at: datetime | None = None,
+) -> UUID:
+    """The terms written, on file from now, or from `entered_at` for a demo's books built as
+    they would have been then (src/pms/demo.py)."""
+    found(conn, "property", pmc_id, new.property_id)
     with refusals("this property has late fee terms starting that day already"):
-        return Created(
-            id=insert(
-                conn,
-                "INSERT INTO trust_late_fee_policies (pmc_id, property_id, starts_on,"
-                " grace_days, flat_fee, percent, maximum) VALUES (%s, %s, %s, %s, %s, %s, %s)"
-                " RETURNING id",
-                (
-                    session.pmc_id,
-                    new.property_id,
-                    new.starts_on,
-                    new.grace_days,
-                    new.flat_fee,
-                    new.percent,
-                    new.maximum,
-                ),
-            )
+        made: UUID = insert(
+            conn,
+            "INSERT INTO trust_late_fee_policies (pmc_id, property_id, starts_on,"
+            " grace_days, flat_fee, percent, maximum, created_at)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, coalesce(%s, now())) RETURNING id",
+            (
+                pmc_id,
+                new.property_id,
+                new.starts_on,
+                new.grace_days,
+                new.flat_fee,
+                new.percent,
+                new.maximum,
+                entered_at,
+            ),
         )
+    return made
 
 
 class NewNsfFee(BaseModel):

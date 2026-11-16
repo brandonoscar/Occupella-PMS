@@ -36,6 +36,7 @@ from types import SimpleNamespace
 
 import psycopg
 from fastapi import HTTPException
+from fastapi.responses import JSONResponse
 from helpers import add_unit, charge, give_roles, make_pmc, open_lease, staff_named
 from hypothesis import event
 from hypothesis import strategies as st
@@ -210,12 +211,14 @@ class PaymentKeysMachine(RuleBasedStateMachine):
             with self.conn.transaction():
                 answer = op.company_webhook(request, self.conn, "stripe", target.pmc_id, body)
         except HTTPException as refused:
-            if not usable:
-                assert refused.status_code == 404
-                event("a webhook of a company with no keys it may use")
-            else:
-                assert signed_with not in usable and refused.status_code == 400
-                event("a report signed with a secret the company can't take one with")
+            assert not usable and refused.status_code == 404
+            event("a webhook of a company with no keys it may use")
+            return
+        if isinstance(answer, JSONResponse):
+            # Refused for its signature: answered 400 once the refusal is recorded (P-010), so
+            # what it recorded commits rather than rolling back with an exception.
+            assert usable and signed_with not in usable and answer.status_code == 400
+            event("a report signed with a secret the company can't take one with")
             return
         assert signed_with in usable
         same_mode = livemode is live(signed_with)

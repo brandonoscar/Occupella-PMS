@@ -205,6 +205,15 @@ tests = [
 ]
 
 [[invariant]]
+id = "switched-leases-wait-for-the-cutover"
+statement = "A lease the switching tool brought in counts the company's day it came as its cutover until opening balances are on file for its property's owners' trust bank account (trust_switched_leases, migration 20261115000220; docs/edge-cases.md M-152): the nights between the roster and the opening balances charge nothing due before that day; from then on the opening balances' cutover rules as before."
+tests = [
+  "tests/properties/test_rent_from_the_cutover_properties.py::test_rent_is_charged_from_the_cutover_and_never_for_the_old_systems_days",
+  "tests/test_rent_from_the_cutover.py::test_nights_between_the_roster_and_the_opening_balances_charge_the_old_systems_month_nothing",
+  "tests/api/test_switch.py::test_a_lease_brought_over_waits_for_the_cutover",
+]
+
+[[invariant]]
 id = "payment-alike-waits-for-staff"
 statement = "Staff's Receive payment refuses a tenant's payment like one recorded to the lease under another request id (the same amount received the same day, by the same way and with the same check or reference where both say one; rent.refuse_alike, docs/edge-cases.md H-008, U-138), recording nothing, unless staff say it is another payment; read under the lease's lock, so the same check from two tabs at once is recorded once. The same request id again returns the payment as recorded; a payment alike to one on another lease is its own; every trust bank account ties out."
 tests = [
@@ -574,6 +583,15 @@ tests = [
 ]
 
 [[invariant]]
+id = "late-fee-terms-count-from-when-they-were-entered"
+statement = "A rent is judged by the late fee terms in force on its due date among those on file (the company's day they were entered) by the day its fee would come due, the day after its last day of grace (migration 20261115000200; docs/edge-cases.md M-049): terms entered with a start day in the past charge no fee on a rent whose grace had run out, as a run every day would have charged none then."
+tests = [
+  "tests/properties/test_late_fee_terms_on_file_properties.py::test_late_fees_count_only_terms_on_file_by_the_day_a_fee_comes_due",
+  "tests/test_rent_automation.py::test_terms_entered_from_a_day_gone_by_charge_no_fee_on_rents_already_past_grace",
+  "tests/test_rent_automation.py::test_a_rent_past_grace_keeps_the_terms_on_file_then",
+]
+
+[[invariant]]
 id = "lease-end-keeps-charged-months-at-their-days"
 statement = "When a lease's end is set, moved or cleared, every charge the rent run makes for it (rent, and a recurring charge's fee or credit) that, with what followed earlier ends, stood at its month's days under the old end gets a credit or a fee, due on its own day, so it stands at its month's days under the new end (a month wholly after the end at nothing); a charge standing at anything else is left as it is. Setting the same end changes nothing, and a rent run and an end wait for each other, so no charged month misses an end."
 tests = [
@@ -657,6 +675,21 @@ tests = [
   "tests/test_owner_contributions.py::test_the_same_request_again_returns_the_original",
   "tests/test_owner_contributions.py::test_a_different_contribution_under_a_used_key_is_refused",
   "tests/test_owner_contributions.py::test_a_contribution_is_never_matched_to_a_tenants_charge",
+]
+
+[[invariant]]
+id = "company-covers-an-owners-shortfall"
+statement = "A tenant's or housing authority's payment whose bounce would take an owner's property account below zero is refused, moving nothing, unless staff have the company cover it (migration 20261115000100, M-060): then the company's own money goes from the trust bank account's cash into each short account, exactly what it is short and no more, once per returned payment and safe to retry with the same request key, by a named staff member whose roles allow rent work, and at commit the payment's bounce posted and took each account to exactly zero. The owner owes it back; a repayment into the company's fee account takes disburse and never exceeds what is owed. No account but cash goes below zero, every trust bank account ties out, an advance is never a payment of a charge, and both records are append-only."
+tests = [
+  "tests/properties/test_company_advance_properties.py::test_a_bounce_the_owner_cant_take_is_refused_or_covered_by_exactly_the_shortfall",
+  "tests/test_company_advances.py::test_a_bounce_the_owner_cannot_take_is_refused_saying_how_much_and_moves_nothing",
+  "tests/test_company_advances.py::test_the_company_covers_exactly_the_shortfall_and_the_bounce_posts",
+  "tests/test_company_advances.py::test_a_cover_without_its_bounce_is_refused_at_commit",
+  "tests/test_company_advances.py::test_a_cover_larger_than_its_bounce_needed_is_refused_at_commit",
+  "tests/test_company_advances.py::test_the_same_cover_again_records_nothing_new_and_a_used_key_covers_nothing_else",
+  "tests/test_company_advances.py::test_a_cover_is_never_a_payment_of_a_charge",
+  "tests/test_company_advances.py::test_the_owner_repays_no_more_than_is_owed_into_the_companys_fee_account",
+  "tests/api/test_company_covers_api.py::test_the_company_covers_the_shortfall_and_the_payment_bounces",
 ]
 
 [[invariant]]
@@ -1307,6 +1340,17 @@ tests = [
 ]
 
 [[invariant]]
+id = "prepaid-rent-at-move-out"
+statement = "A deposit's return takes the tenants' prepaid rent first for what the lease and the leases it carries owe, rent first, each part for its own owners, then keeps what is still owed from the deposits, and pays back what is left of both, so no prepaid rent stays held for a lease returned (migration 20261115000240; docs/edge-cases.md M-072)."
+tests = [
+  "tests/properties/test_lease_transfer_properties.py::test_a_moved_tenant_s_money_pays_each_owner_what_was_owed_to_them",
+  "tests/test_move_out.py::test_prepaid_rent_pays_what_is_owed_before_the_deposit_and_the_rest_goes_back",
+  "tests/test_move_out.py::test_prepaid_rent_short_of_what_is_owed_leaves_the_rest_to_the_deposit",
+  "tests/test_move_out.py::test_a_lease_holding_prepaid_rent_but_no_deposit_returns_it",
+  "tests/api/test_moveout.py::test_a_return_uses_the_tenants_prepaid_rent_first_and_pays_back_the_rest",
+]
+
+[[invariant]]
 id = "a-document-is-its-file-and-its-bytes-stay-out-of-the-log"
 statement = "A document is a PDF, a JPEG or a PNG of at most 5 MB about one record of its own PMC (a vendor's W-9, a bill's receipt, a lease's move-out photo, an owner's document), and has its file at commit: bytes of the type, size and SHA-256 its row says. Documents and removals are append-only; the bytes are never copied into the audit log and trust_ai_agent never reads them. An owner downloads only their own owner documents, the files about the properties they hold an account for and those properties' units, and their accounts' bills' receipts (q046)."
 tests = [
@@ -1358,6 +1402,15 @@ tests = [
   "tests/test_journal_entries.py::test_an_entry_dated_after_today_waits_for_its_day_to_post",
   "tests/api/test_journal.py::test_proposing_again_with_the_same_request_id_leaves_one_entry_waiting",
   "tests/api/test_journal.py::test_an_entry_is_dated_no_later_than_the_companys_today",
+]
+
+[[invariant]]
+id = "a-journal-entry-moves-no-unapplied-cash"
+statement = "No journal entry moves money into or out of unapplied cash (migration 20261115000210; docs/edge-cases.md M-154): what is left of each receipt stays what the account holds, so a refund pays out only its own receipt's money and month-end is never held up by money no receipt can apply or refund. A line naming unapplied cash is refused when proposed, and an entry proposed before the rule when posted."
+tests = [
+  "tests/properties/test_journal_properties.py::test_journal_entries_move_money_only_when_another_approver_posts_them",
+  "tests/test_journal_entries.py::test_an_entry_moves_no_unapplied_cash",
+  "tests/api/test_journal.py::test_an_entry_moves_no_unapplied_cash",
 ]
 
 [[report]]
@@ -1490,6 +1543,16 @@ tests = [
 ]
 
 [[invariant]]
+id = "no-night-missed"
+statement = "A night after the server was down over a month's end (the company's last run in an earlier month) charges each missed month as its last night would have, before the new month: a rent or monthly charge due on a night nobody ran is charged all the same, once, and the books match a company that ran every night (docs/edge-cases.md D-016, D-017, H-089). A company that never ran reaches back into no earlier month."
+tests = [
+  "tests/properties/test_rent_catch_up_properties.py::test_a_night_after_the_server_was_down_charges_what_every_night_would",
+  "tests/test_nightly.py::test_a_night_after_the_server_was_down_over_a_months_end_charges_the_rent_due_then",
+  "tests/test_nightly.py::test_a_night_after_a_whole_month_down_charges_that_months_rent",
+  "tests/test_nightly.py::test_a_companys_first_night_reaches_back_into_no_earlier_month",
+]
+
+[[invariant]]
 id = "every-night-over-years"
 statement = "Night after night for months (tools/fast_forward.py; five years nightly), with everything the PMS does by itself turned on and tenants paying late, in part, ahead or with a bounce: what each night posts is dated by that night, never later; no rent is charged twice for a due date; the delinquency report is what is open of the leases' charges; the trial balance balances and every trust bank account's book cash is what it holds; each owner's statement ends at their accounts' balances; and every account under an agreement has each month's management fee taken by the month after's end."
 tests = [
@@ -1535,6 +1598,16 @@ tests = [
   "tests/test_lease_transfers.py::test_a_lease_moved_from_has_no_return_of_its_own",
   "tests/test_lease_transfers.py::test_the_tenants_agree_in_writing_to_their_deposit_staying_held",
   "tests/api/test_lease_transfers_api.py::test_staff_move_a_lease_and_its_payments_pay_the_old_owner_first",
+]
+
+[[invariant]]
+id = "renewals-carry-what-the-old-lease-owes"
+statement = "A renewal carries what the lease it renews still owes, as a move does (trust_lease_carried_from, migration 20261115000230; docs/edge-cases.md M-073): the renewal's payments pay every earlier lease's rent first, oldest first, then their other charges, each part into the owners' accounts of that lease's own property; its deposit's return keeps for every one of them the same way; and a lease renewed has no return of its own."
+tests = [
+  "tests/properties/test_lease_transfer_properties.py::test_a_moved_tenant_s_money_pays_each_owner_what_was_owed_to_them",
+  "tests/test_lease_transfers.py::test_a_payment_after_a_renewal_pays_what_the_old_lease_still_owes_first",
+  "tests/test_lease_transfers.py::test_the_renewals_return_keeps_for_both_leases_and_the_old_one_has_none",
+  "tests/test_lease_transfers.py::test_a_renewal_then_a_move_keeps_for_the_renewed_lease_under_the_moves_owner",
 ]
 
 [[invariant]]
@@ -2016,6 +2089,24 @@ tests = [
 ]
 
 [[invariant]]
+id = "late-fee-grace-from-a-late-charge"
+statement = "A rent a rent run (the nightly run, a month it catches up, an admin's Run rent now) first charges after its own grace had run out takes its grace from the day it was charged, the night's own day in a catch-up (migration 20261115000310; docs/edge-cases.md D-083): no late fee the night it is charged, and one only once that grace runs out with its own payments by then leaving it open, due the day after. A rent charged on or before the end of its grace keeps its grace."
+tests = [
+  "tests/properties/test_late_charge_grace_properties.py::test_a_rent_charged_after_its_grace_takes_its_grace_from_that_day",
+  "tests/test_nightly.py::test_a_rent_first_charged_after_its_grace_takes_its_grace_from_that_night",
+  "tests/test_nightly.py::test_a_month_caught_up_after_the_server_was_down_takes_its_grace_from_the_night_back",
+]
+
+[[invariant]]
+id = "late-fee-undone-by-a-payment-in-grace"
+statement = "A payment dated within a rent's grace (or online and started by then) that reaches the books after the night charged its late fee leaves the lease owing exactly the fee the night would have charged with it in the books, nothing when the rent was paid (migration 20261115000320; docs/edge-cases.md D-078, D-079): the rest is waived by itself, a credit of the company's day linked to the fee saying why, never past what is left of the fee once its payments and earlier waivers count; nothing is deleted, and a run again charges nothing."
+tests = [
+  "tests/properties/test_paid_in_grace_properties.py::test_a_payment_dated_in_grace_leaves_the_late_fee_the_night_would_have_charged",
+  "tests/test_rent_automation.py::test_a_check_dated_on_the_last_grace_day_recorded_after_the_fee_takes_the_fee_off",
+  "tests/api/test_payment_files_api.py::test_a_line_dated_within_grace_brought_in_after_the_late_fee_takes_the_fee_off",
+]
+
+[[invariant]]
 id = "payments-stripe-never-reported-recorded-once"
 statement = "A payment online Stripe sent no report of reaches the books (docs/edge-cases.md C-090): once a company's day the nightly run asks the partner about each one with no report a week to 60 days after it started and records what it says through the report's own apply, once per payment and kind and under the payment's own posting keys, so a report before or after it records nothing twice. A payment of the same amount staff record by hand while one online is not in the books is refused until staff say it is another."
 tests = [
@@ -2035,4 +2126,14 @@ tests = [
   "tests/test_autopay_homes.py::test_a_partner_that_cant_say_its_account_stops_and_notes_nothing",
   "tests/api/test_autopay_api.py::test_run_rent_now_first_stops_an_autopay_saved_at_another_account",
   "tests/api/test_today.py::test_an_autopay_stopped_as_the_payments_account_changed_is_noted_until_set_up_again",
+]
+
+[[invariant]]
+id = "dashboard-past-due-is-the-delinquency-report"
+statement = "The Dashboard's past due figures (issue #231) are the delinquency report's for each day it shows, the day and the same day a month before, read in one pass instead of the report once a day: each day's total is the report's total, and its tenants are those on the report's lease lines, each counted once. For random charges, monthly fees of every payee, lease end credits, credits, waivers, payments in full or in part at any time of day and bounces, any days asked together or alone."
+tests = [
+  "tests/properties/test_dashboard_past_due_properties.py::test_the_dashboards_past_due_is_the_delinquency_reports_for_every_day_asked",
+  "tests/api/test_dashboard.py::test_each_figure_now_and_a_month_before",
+  "tests/api/test_dashboard.py::test_rent_paid_in_full_after_a_day_was_past_due_on_it",
+  "tests/api/test_dashboard.py::test_a_tenant_whose_name_has_a_comma_counts_once",
 ]

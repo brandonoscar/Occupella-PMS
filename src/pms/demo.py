@@ -319,12 +319,14 @@ def books(
                     approval_limit=limit,
                 ),
             )
-            setup.add_late_fees(
-                s,
+            # On file since they started, as a company on the PMS then had them (M-049).
+            setup.late_fee_terms(
                 conn,
+                s.pmc_id,
                 setup.NewLateFees(
                     property_id=property_id, starts_on=lease_start, grace_days=5, flat_fee=LATE_FEE
                 ),
+                datetime.combine(lease_start, time(0), UTC),
             )
             for unit, monthly, people in units:
                 unit_id = uid(
@@ -892,12 +894,13 @@ def new_property(
                 approval_limit=limit,
             ),
         )
-        setup.add_late_fees(
-            s,
+        setup.late_fee_terms(
             conn,
+            s.pmc_id,
             setup.NewLateFees(
                 property_id=property_id, starts_on=since, grace_days=5, flat_fee=LATE_FEE
             ),
+            datetime.combine(since, time(0), UTC),
         )
     return property_id
 
@@ -949,7 +952,7 @@ def this_months_rent(b: Builder, demo: Demo, today: date) -> None:
         if (prop, unit) == ("Harbor Tower", HARBOR_BOUNCED):
             with b.as_staff(demo.manager) as s:
                 rent.bounced(
-                    s, conn, paid.transfers[0], rent.Day(on=on_or_before(day + 2 * DAY, today))
+                    s, conn, paid.transfers[0], rent.Return(on=on_or_before(day + 2 * DAY, today))
                 )
 
 
@@ -1615,6 +1618,11 @@ def collect_rent(
     """The month's rent run and each lease paying what it owes: one late (a late fee, then
     paid), one bounced and paid again."""
     conn = b.conn
+    # The month's rent was posted on its first day then, as its manager's run of that day: rent
+    # Run rent now charges today takes its grace from today (D-083), so the history's late fee
+    # needs its rent charged on its day.
+    with b.as_staff(manager):
+        conn.execute("SELECT trust_run_rent(%s, %s, %s)", (b.pmc_id, month, month))
     with b.as_staff(manager) as s:
         rent.run_rent(s, conn, rent.RunRent(due_on=month, late_fees_as_of=month))
     for n, (key, lease) in enumerate(demo.leases.items()):
@@ -1624,7 +1632,7 @@ def collect_rent(
             paid = rent.pay(s, conn, lease, payment(conn, lease, month + (1 + n % 4) * DAY))
         if key == bounced:
             with b.as_staff(manager) as s:
-                rent.bounced(s, conn, paid.transfers[0], rent.Day(on=month + 7 * DAY))
+                rent.bounced(s, conn, paid.transfers[0], rent.Return(on=month + 7 * DAY))
             with b.as_staff(manager) as s:
                 rent.pay(s, conn, lease, payment(conn, lease, month + 12 * DAY))
     with b.as_staff(manager) as s:

@@ -148,6 +148,7 @@ def keep(
                     title=INCOME_PROOF,
                     **given.income_proof.model_dump(),
                 ),
+                sent_by_outsider=True,
             )
     if household is None:
         return

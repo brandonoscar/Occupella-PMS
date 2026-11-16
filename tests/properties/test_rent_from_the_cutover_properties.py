@@ -11,7 +11,9 @@ Invariants (ci/registry.toml maps them to this test):
     month is the old system's;
   - no month is missed: a lease in effect in a month a run was run for, whose rent comes due by
     that run on or after the cutover, has its rent in that month, once;
-  - a company with no opening balances is charged as before;
+  - a company with no opening balances is charged as before, unless the switching tool brought
+    its leases in: then nothing is charged due before the day they came (M-152), until the
+    opening balances give the cutover;
   - running every day again charges nothing new.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
@@ -49,6 +51,8 @@ LEASES = st.lists(
     max_size=4,
 )
 CUTOVER = st.none() | st.integers(min_value=0, max_value=60)  # days from March 1, or no switch
+# The day the switching tool brought the leases in (migration 20261115000220, M-152), or by hand.
+CAME = st.none() | st.integers(min_value=0, max_value=60)
 DAYS = st.lists(st.integers(min_value=0, max_value=60), min_size=1, max_size=6)
 
 
@@ -56,8 +60,8 @@ def month_of(day):
     return (day.year, day.month)
 
 
-@given(leases=LEASES, cutover=CUTOVER, days=DAYS)
-def check(conn, app_conn, leases, cutover, days):
+@given(leases=LEASES, cutover=CUTOVER, came=CAME, days=DAYS)
+def check(conn, app_conn, leases, cutover, came, days):
     pmc = make_pmc(conn)
     prop = pmc.owners[0].property_id
     made = []
@@ -76,15 +80,26 @@ def check(conn, app_conn, leases, cutover, days):
         if lease["monthly"]:
             add_recurring_charge(conn, pmc.pmc_id, lease_id, "25.00", starts)
         made.append((lease_id, lease["due_day"]))
+        if came is not None:
+            conn.execute(
+                "INSERT INTO trust_switched_leases (pmc_id, lease_id, switched_on)"
+                " VALUES (%s, %s, %s)",
+                (pmc.pmc_id, lease_id, START + timedelta(days=came)),
+            )
 
-    opened = None if cutover is None else START + timedelta(days=cutover)
-    event("no switch" if opened is None else "a switch")
-    if opened is not None:
+    balances = None if cutover is None else START + timedelta(days=cutover)
+    event("no opening balances" if balances is None else "opening balances")
+    event("added by hand" if came is None else "brought in by the switching tool")
+    # Where the PMS's books start: the opening balances' cutover, else the day the leases came.
+    opened = (
+        balances if balances is not None else None if came is None else START + timedelta(days=came)
+    )
+    if balances is not None:
         open_with_balances(
             conn,
             pmc.pmc_id,
             pmc.operating_bank_id,
-            opened,
+            balances,
             {pmc.owners[0].account: "500.00"},
             "500.00",
         )

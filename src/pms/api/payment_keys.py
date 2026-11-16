@@ -15,6 +15,7 @@ the Stripe account it was saved at, so after a change the tenant sets autopay up
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
@@ -26,7 +27,7 @@ from pydantic import BaseModel
 from pms import payments, sealed
 from pms.api import outbox
 from pms.api.deps import Conn, Staff
-from pms.api.online_payments import resolver_of
+from pms.api.online_payments import refusals_said, resolver_of
 from pms.api.staff import roles_of
 
 router = APIRouter(prefix="/api/payments/keys")
@@ -51,6 +52,9 @@ class KeysView(BaseModel):
     webhook_events: list[str]
     changed_at: datetime | None
     changed_by: str | None
+    # What Stripe says is wrong with the company's own keys now, in words (docs/edge-cases.md
+    # P-006, P-007): empty when it takes them and its webhook here is sent every event.
+    stripe_says: list[str] = []
     # Whether this server can keep keys at all (it has a PMS_DATA_KEY), and whether the staff
     # member asking may change them (an admin).
     can_keep: bool
@@ -66,7 +70,7 @@ class NewKeys(BaseModel):
 def latest(conn: psycopg.Connection[Any], pmc_id: UUID) -> Any:
     return conn.execute(
         "SELECT k.secret_key_sealed IS NOT NULL, k.mode, k.secret_key_last4, k.created_at,"
-        " s.display_name FROM trust_payment_keys AS k"
+        " s.display_name, k.id FROM trust_payment_keys AS k"
         " JOIN trust_staff AS s ON s.id = k.recorded_by"
         " WHERE k.pmc_id = %s ORDER BY k.created_at DESC, k.id DESC LIMIT 1",
         (pmc_id,),
@@ -75,6 +79,43 @@ def latest(conn: psycopg.Connection[Any], pmc_id: UUID) -> Any:
 
 def is_admin(conn: psycopg.Connection[Any], session: Any) -> bool:
     return "admin" in roles_of(conn, session)
+
+
+# What Stripe said of each kept keys (by their row), and when: asked again after this many seconds,
+# so Company setup doesn't call Stripe on every look and a key revoked since shows within minutes.
+CHECKED_FOR = 600.0
+CHECKED: dict[UUID, tuple[float, payments.KeysChecked]] = {}
+
+
+def webhook_url(pmc_id: UUID) -> str:
+    return f"{outbox.PUBLIC_URL.get()}/api/payments/webhook/stripe/{pmc_id}"
+
+
+def checked(
+    request: Request, secret_key: str, webhook_secret: str, url: str
+) -> payments.KeysChecked:
+    """What Stripe says of keys an admin entered; nothing is asked on a server whose partner is
+    the fake one (development and the browser tests), where they are taken as they are."""
+    server = resolver_of(request).server
+    if server is not None and server.name == "fake":
+        return payments.KeysChecked(True, ())
+    return payments.StripePartner(secret_key, webhook_secret, timeout=10.0).check(url)
+
+
+def stripe_says(request: Request, own: Any, row: Any, url: str) -> list[str]:
+    """What Stripe says is wrong with the company's keys in use (P-006), asked at most every ten
+    minutes; nothing on a server whose partner is the fake one."""
+    server = resolver_of(request).server
+    if not isinstance(own, payments.StripePartner) or row is None:
+        return []
+    if server is not None and server.name == "fake":
+        return []
+    now = time.monotonic()
+    kept = CHECKED.get(row[5])
+    if kept is None or now - kept[0] > CHECKED_FOR:
+        kept = (now, own.check(url))
+        CHECKED[row[5]] = kept
+    return [problem.says for problem in kept[1].problems]
 
 
 def view(conn: psycopg.Connection[Any], request: Request, session: Any) -> KeysView:
@@ -104,10 +145,12 @@ def view(conn: psycopg.Connection[Any], request: Request, session: Any) -> KeysV
         server_partner=None if server is None else server.name,
         mode=row[1] if has else None,
         ends_in=row[2] if has else None,
-        webhook_url=f"{outbox.PUBLIC_URL.get()}/api/payments/webhook/stripe/{session.pmc_id}",
+        webhook_url=webhook_url(session.pmc_id),
         webhook_events=list(payments.STRIPE_EVENTS),
         changed_at=None if row is None else row[3],
         changed_by=None if row is None else row[4],
+        stripe_says=stripe_says(request, own, row, webhook_url(session.pmc_id))
+        + refusals_said(conn, session.pmc_id),
         can_keep=can_keep,
         may_change=is_admin(conn, session),
     )
@@ -145,9 +188,17 @@ def save_keys(session: Staff, conn: Conn, request: Request, new: NewKeys) -> Key
         key = sealed.key_from(os.environ, "payments keys")
     except sealed.NoKey:
         raise HTTPException(409, NO_DATA_KEY) from None
+    # Asked of Stripe before they are kept (docs/edge-cases.md P-006, P-007): keys that only
+    # look right, or a key of an account with no webhook here, would take payments that never
+    # reach the books. What doesn't block (a webhook missing an event) shows in Company setup.
+    said = checked(request, secret_key, webhook_secret, webhook_url(session.pmc_id))
+    blocking = [problem.says for problem in said.problems if problem.blocks]
+    if blocking:
+        raise HTTPException(422 if said.reached else 502, " ".join(blocking))
     made = conn.execute("SELECT gen_random_uuid()").fetchone()
     assert made is not None
     row: UUID = made[0]
+    CHECKED[row] = (time.monotonic(), said)
     sealed_secret, sealed_webhook = payments.seal_keys(row, secret_key, webhook_secret, key)
     conn.execute(
         "INSERT INTO trust_payment_keys (id, pmc_id, secret_key_sealed, webhook_secret_sealed,"

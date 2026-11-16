@@ -322,7 +322,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
     insured = rent_api.renters_insurance(conn, session.pmc_id, on)
     paid: dict[UUID, list[rent_api.Paid]] = {}
     # What staff wrote about a payment and its files stay with staff.
-    for lease, transfer, event_at, amount, reference, method, bounced, _note, _files in (
+    for lease, transfer, event_at, amount, reference, method, bounced, _note, _files, _short in (
         found
         for row in rows
         for found in conn.execute(
@@ -496,6 +496,7 @@ def file_document(session: Tenant, conn: Conn, lease_id: UUID, new: NewLeaseDocu
         session.pmc_id,
         documents.NewDocument(kind="lease_document", about_id=lease_id, **new.model_dump()),
         uploaded_by_tenant=tenant,
+        sent_by_outsider=True,
     )
     return LeaseFile(
         kind="lease document",
@@ -729,6 +730,7 @@ def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Re
             conn,
             session.pmc_id,
             documents.NewDocument(kind="request_photo", about_id=created[0], **photo.model_dump()),
+            sent_by_outsider=True,
         )
     if new.emergency and outbox.SENDING.get():
         notices.write_emergency(conn, session.pmc_id, created[0], outbox.PUBLIC_URL.get())

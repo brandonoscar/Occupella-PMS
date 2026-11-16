@@ -1,9 +1,21 @@
 # Contributing to Occupella PMS
 
 Thanks for helping. Occupella PMS keeps the books for property management companies that hold
-other people's money in trust, so it is strict about tests, data and licenses. This page is the
-short version; [CLAUDE.md](CLAUDE.md) holds every rule in full, and [docs/CI.md](docs/CI.md)
-explains each check a pull request runs.
+other people's money in trust, so it is strict about tests, data and licenses. This page is all a
+person needs. [docs/CI.md](docs/CI.md) explains each check a pull request runs, and
+[docs/proof.md](docs/proof.md) where each money rule lives and which test holds it.
+[CLAUDE.md](CLAUDE.md) is the long rule book the coding agent reads; you don't need it to send a
+fix.
+
+## Where things are
+
+- `db/migrations/`: the schema and every money rule, as plain SQL (the trust ledger, its
+  triggers and the `trust_*` functions that are the only way to post).
+- `src/pms/`: the Python app; `src/pms/api/` is the FastAPI server, which runs every request in
+  one transaction as the database role `trust_app`.
+- `frontend/`: the portals (React, Vite, Tailwind), served by the API.
+- `tests/`: pytest against a real Postgres; `tests/properties/` holds the property-based tests of
+  the ledger. `frontend/src/**/*.test.tsx` are vitest; `frontend/e2e/` are Playwright.
 
 ## Ways to help
 
@@ -12,7 +24,7 @@ explains each check a pull request runs.
 - **Ask for what's missing.** Open a feature request saying what you do today and what the PMS
   should do instead. State rules (a deposit deadline, a notice period) need the statute's
   citation.
-- **Fix something.** Issues labeled `good first issue` are a place to start. For anything bigger,
+- **Fix something.** Pick an open issue and say in it that you're on it. For anything bigger,
   open an issue first so the approach can be agreed before you write it.
 - **Report a security problem privately**, never in an issue: [SECURITY.md](SECURITY.md).
 
@@ -41,7 +53,38 @@ scripts/check.sh
 ```
 
 `scripts/check.sh` runs every check a pull request runs that can run on your machine, and lists
-the rest as NOT RUN. CLAUDE.md, "Run the checks", has each one on its own.
+the rest as NOT RUN. One test file at a time: `pytest tests/<file>`; the portal:
+`cd frontend && npm ci && npm test`.
+
+To run the app from source (no Docker), on a database with the migrations applied (`dbmate up`)
+and the portal built (`cd frontend && npm ci && npm run build`):
+
+```sh
+export PYTHONPATH=src PMS_PUBLIC_URL=http://localhost:8000
+python -m pms.demo     # a synthetic company, and its sign-in links
+PMS_STATIC_DIR=frontend/dist PMS_COOKIE_SECURE=false PMS_PAYMENTS=fake PMS_CONNECT=fake \
+  PMS_EMAIL_SENDER=fake PMS_SCREENING_PARTNER=fake PMS_GEOCODER=fake python -m pms.api
+```
+
+## Simulate people using it
+
+The browser tests (`frontend/e2e`) sign in as staff, an owner, a tenant and an applicant and use
+every feature. CI runs them in Chromium, in UTC, on Linux. `scripts/simulate.ps1` runs them in
+Edge, Firefox and Chromium, each in UTC, Los Angeles and Kiritimati time (a day that starts 14
+hours before UTC's), every run on fresh synthetic books in Docker (`compose.e2e.yaml`), and ends
+with a table of what passed and failed. With Docker Desktop running and Node 22, from the
+repository's folder in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\simulate.ps1 -Quick   # Edge, your time zone: one run
+powershell -ExecutionPolicy Bypass -File scripts\simulate.ps1          # all nine runs: a few hours
+scripts\simulate.ps1 -Plan                                              # list the runs, run nothing
+```
+
+Each failure has a report with every step, the page and a trace:
+`cd frontend; npx playwright show-report playwright-report\simulate\<run>`. A failure is a lead to
+look at, not yet a bug. Excel opening an export, a screen reader, QuickBooks importing its file,
+a printer and check stock, and an authenticator app on a phone still need a person.
 
 ## Pull requests
 

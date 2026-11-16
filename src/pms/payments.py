@@ -100,11 +100,26 @@ class Saved:
 
 
 class PartnerFailed(Exception):
-    """The partner could not be reached or answered with something it shouldn't."""
+    """The partner could not be reached or answered with something it shouldn't; `status` is the
+    HTTP status it refused with, when it answered at all."""
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class NotTheirs(Exception):
     """A report that doesn't carry the partner's signature, or that can't be read."""
+
+
+class SignedTooLongAgo(NotTheirs):
+    """A report the partner signed, but at a time more than the tolerance from the server's
+    clock: `drift` seconds (the server's time less the signature's). Many of these mean the
+    server's clock is off (docs/edge-cases.md P-010)."""
+
+    def __init__(self, message: str, drift: int) -> None:
+        super().__init__(message)
+        self.drift = drift
 
 
 class Partner(Protocol):
@@ -217,7 +232,9 @@ class StripePartner:
             with urllib.request.urlopen(request, timeout=self.timeout) as answer:  # noqa: S310
                 return json.load(answer)
         except urllib.error.HTTPError as refused:
-            raise PartnerFailed(f"Stripe refused {method} {path}: HTTP {refused.code}") from None
+            raise PartnerFailed(
+                f"Stripe refused {method} {path}: HTTP {refused.code}", status=refused.code
+            ) from None
         except (OSError, ValueError) as failed:
             raise PartnerFailed(f"Stripe did not answer {method} {path}: {failed}") from None
 
@@ -300,6 +317,12 @@ class StripePartner:
             raise PartnerFailed(f"Stripe's saved account can't be read: {failed}") from None
 
     def event(self, body: bytes, headers: Mapping[str, str]) -> Event | Saved | None:
+        """The payment or saved account a report is about (a dispute's fee and close aside)."""
+        return next((i for i in self.items(body, headers) if not isinstance(i, Dispute)), None)
+
+    def items(self, body: bytes, headers: Mapping[str, str]) -> list[Event | Saved | Dispute]:
+        """What a signed report says: a payment's report, an autopay's saved account, or a
+        dispute's (the payment returned with its fee, won or lost; P-027, P-030)."""
         verify_signature(body, headers.get("stripe-signature", ""), self._webhook_secret)
         try:
             report = json.loads(body)
@@ -318,34 +341,42 @@ class StripePartner:
                 "live" if report.get("livemode") is True else "test or unstated",
                 "live" if self.live else "test",
             )
-            return None
+            return []
         if kind_of == "checkout.session.completed" and subject.get("mode") == "setup":
             if not subject.get("setup_intent"):
-                return None
-            return self.saved(str(subject["setup_intent"]), event_id, happened)
+                return []
+            saved = self.saved(str(subject["setup_intent"]), event_id, happened)
+            return [] if saved is None else [saved]
         if kind_of == "setup_intent.succeeded":
             if not (subject.get("metadata") or {}).get("autopay_id"):
-                return None  # not an account the PMS asked to save
-            return self.saved(str(subject["id"]), event_id, happened)
+                return []  # not an account the PMS asked to save
+            saved = self.saved(str(subject["id"]), event_id, happened)
+            return [] if saved is None else [saved]
+        if kind_of.startswith("charge.dispute."):
+            if not subject.get("payment_intent"):
+                return []  # a charge the PMS didn't start through a payment
+            intent = self._call("GET", f"/payment_intents/{subject['payment_intent']}", [])
+            return list(dispute_items(kind_of, subject, intent, event_id, happened))
         kind = STRIPE_KINDS.get(kind_of)
         if kind is None:
-            return None
+            return []
         if kind_of == "checkout.session.completed" and subject.get("payment_status") != "paid":
-            return None  # a bank payment is still clearing; the async events say how it ends
-        if kind_of == "charge.dispute.created":
+            return []  # a bank payment is still clearing; the async events say how it ends
+        if kind_of.startswith("charge.") and subject.get("payment_intent"):
+            # A charge's report names its payment only through its PaymentIntent.
             intent = self._call("GET", f"/payment_intents/{subject.get('payment_intent')}", [])
         else:
             intent = None
         payment = payment_of(subject, intent)
         if payment is None:
-            return None  # not a payment the PMS started
+            return []  # not a payment the PMS started
         if kind == "paid":
             # A payment's own report names itself; a session's names its payment.
             is_intent = subject.get("object") == "payment_intent"
             fee = self.fee_of(subject["id"] if is_intent else subject["payment_intent"])
         else:
             fee = None
-        return Event(payment, kind, event_id, happened, fee)
+        return [Event(payment, kind, event_id, happened, fee)]
 
     def fee_of(self, payment_intent: str) -> Decimal:
         """Stripe's fee on a payment, from its charge's balance transaction."""
@@ -372,6 +403,44 @@ class StripePartner:
                 raise PartnerFailed(f"Stripe's account came without {failed}") from None
         return ACCOUNTS[held]
 
+    def check(self, webhook_url: str) -> KeysChecked:
+        """What Stripe says of these keys now (docs/edge-cases.md P-006, P-007), in words: whether
+        it takes the secret key and lets payments be taken on its account, and whether that account
+        has a webhook to `webhook_url`, sent every event the PMS reads. A webhook secret Stripe
+        never shows again can't be checked; a secret key of another account than the webhook's is
+        found by its account having no webhook here."""
+        try:
+            account = self._call("GET", "/account", [])
+        except PartnerFailed as failed:
+            if failed.status == 401:
+                return KeysChecked(True, (Problem(KEY_REFUSED, True),))
+            if failed.status == 403:
+                return KeysChecked(True, (Problem(KEY_LOCKED, True),))
+            return KeysChecked(False, (Problem(UNREACHABLE, True),))
+        found: list[Problem] = []
+        if isinstance(account, dict) and account.get("charges_enabled") is False:
+            found.append(Problem(CHARGES_OFF, False))
+        try:
+            listed = self._call("GET", "/webhook_endpoints", [("limit", "100")])
+        except PartnerFailed as failed:
+            found.append(Problem(HOOKS_LOCKED if failed.status == 403 else UNREACHABLE, False))
+            return KeysChecked(failed.status is not None, tuple(found))
+        hooks = [
+            hook
+            for hook in (listed.get("data") or [] if isinstance(listed, dict) else [])
+            if isinstance(hook, dict)
+            and hook.get("url") == webhook_url
+            and hook.get("status", "enabled") == "enabled"
+        ]
+        if not hooks:
+            found.append(Problem(NO_WEBHOOK.format(url=webhook_url), True))
+            return KeysChecked(True, tuple(found))
+        sent = {str(kind) for hook in hooks for kind in hook.get("enabled_events") or []}
+        missing = [] if "*" in sent else [kind for kind in STRIPE_EVENTS if kind not in sent]
+        if missing:
+            found.append(Problem(MISSING_EVENTS.format(events=", ".join(missing)), False))
+        return KeysChecked(True, tuple(found))
+
     def look_up(self, payment_id: UUID, ref: str, now: datetime) -> Event | None:
         """What became of a payment Stripe sent no report of (docs/edge-cases.md C-090), asked of
         its Checkout Session (`cs_...`) or, an autopay's, its PaymentIntent (`pi_...`): None while
@@ -390,6 +459,118 @@ class StripePartner:
         return looked_up(payment_id, ref, session, intent, now)
 
 
+DisputeKind = Literal["opened", "won", "lost"]
+
+
+@dataclass(frozen=True)
+class Dispute:
+    """A card dispute (or a bank's late return, as Stripe reports one) on a payment."""
+
+    payment_id: UUID
+    dispute_id: str
+    kind: DisputeKind
+    # Opened: the dispute fee Stripe took. Won: what of it came back. Lost: None.
+    fee: Decimal | None
+    event_id: str
+    happened_at: datetime
+
+
+def cents_of(value: Any) -> Decimal:
+    return (Decimal(int(value)) / 100).quantize(CENT)
+
+
+def dispute_fees(subject: Mapping[str, Any]) -> tuple[Decimal, Decimal]:
+    """A dispute's fee as its balance transactions say: what was taken when funds were withdrawn,
+    and what of it came back when they were reinstated."""
+    taken, back = Decimal(0), Decimal(0)
+    for moved in subject.get("balance_transactions") or []:
+        if not isinstance(moved, dict):
+            continue
+        fee = cents_of(moved.get("fee") or 0)
+        if int(moved.get("amount") or 0) < 0:
+            taken += fee
+        else:
+            back -= fee  # a reinstatement's fee is negative when the fee comes back
+    return taken, max(back, Decimal(0))
+
+
+def dispute_items(
+    kind: str, subject: Mapping[str, Any], intent: Any, event_id: str, at: datetime
+) -> list[Event | Dispute]:
+    """What a dispute's report says of the PMS's payment (`intent`, its PaymentIntent): created,
+    the payment came back and the dispute fee was taken; closed won or lost; funds reinstated,
+    won. Nothing for a payment the PMS didn't start."""
+    payment = payment_of(None, intent)
+    if payment is None:
+        return []
+    dispute_id = str(subject.get("id") or "")[:200] or event_id
+    taken, back = dispute_fees(subject)
+    if kind == "charge.dispute.created":
+        return [
+            Event(payment, "returned", event_id, at),
+            Dispute(payment, dispute_id, "opened", taken, event_id, at),
+        ]
+    status = subject.get("status")
+    if kind == "charge.dispute.funds_reinstated" or (
+        kind == "charge.dispute.closed" and status == "won"
+    ):
+        return [Dispute(payment, dispute_id, "won", back, event_id, at)]
+    if kind == "charge.dispute.closed" and status == "lost":
+        return [Dispute(payment, dispute_id, "lost", None, event_id, at)]
+    return []
+
+
+@runtime_checkable
+class ReadsAll(Protocol):
+    """A partner whose one report may say more than one thing: a dispute opened is the payment
+    returned and the dispute's fee (docs/edge-cases.md P-027, P-030)."""
+
+    name: str
+
+    def items(self, body: bytes, headers: Mapping[str, str]) -> list[Event | Saved | Dispute]: ...
+
+
+@dataclass(frozen=True)
+class Problem:
+    """Something wrong with a company's keys, in words staff can act on; `blocks` when keys with
+    it take no payment that reaches the books, so they are never kept."""
+
+    says: str
+    blocks: bool
+
+
+@dataclass(frozen=True)
+class KeysChecked:
+    """What Stripe said of a company's keys: whether it answered, and what is wrong."""
+
+    reached: bool
+    problems: tuple[Problem, ...]
+
+
+KEY_REFUSED = (
+    "Stripe doesn't take this secret key: it was mistyped, rolled or revoked. Copy the key from"
+    " Stripe's dashboard (Developers, API keys) and enter it again."
+)
+KEY_LOCKED = (
+    "This restricted key may not read your Stripe account. Give it read access to the account and"
+    " webhook endpoints, or enter the secret key."
+)
+UNREACHABLE = "Stripe didn't answer, so the keys couldn't be checked. Try again in a few minutes."
+CHARGES_OFF = (
+    "Stripe has turned off payments on this account, so tenants and owners can't pay online."
+    " Stripe's dashboard says what it needs."
+)
+HOOKS_LOCKED = "This key may not read your account's webhooks, so they couldn't be checked."
+NO_WEBHOOK = (
+    "Your Stripe account has no webhook sending to {url}, so no payment would reach the books."
+    " Add one there (Developers, Webhooks) and enter its signing secret here."
+)
+MISSING_EVENTS = (
+    "Your Stripe webhook isn't sent every event the PMS reads, so some payments would never"
+    " reach the books. Add these in Stripe: {events}."
+)
+
+
 # Stripe's reports the PMS reads, and what each says happened.
 STRIPE_KINDS: dict[str, Kind] = {
     "checkout.session.completed": "paid",
@@ -399,6 +580,9 @@ STRIPE_KINDS: dict[str, Kind] = {
     # each kind counts once).
     "payment_intent.succeeded": "paid",
     "payment_intent.payment_failed": "failed",
+    # A charge that failed: before it was paid, the payment failed; after, it came back (P-026;
+    # NOT VERIFIED which of these Stripe sends for a bank's late return).
+    "charge.failed": "failed",
     # A bank payment that comes back after it succeeded (NOT VERIFIED: Stripe's word for an ACH
     # return after success).
     "charge.dispute.created": "returned",
@@ -410,7 +594,17 @@ STRIPE_KINDS: dict[str, Kind] = {
 # Every event the PMS reads from Stripe, which the company's webhook endpoint must be sent
 # (docs/edge-cases.md P-012): one not subscribed to the bank's async reports never sees a bank
 # payment paid. Settings, Company setup lists them.
-STRIPE_EVENTS = tuple(sorted({*STRIPE_KINDS, "setup_intent.succeeded"}))
+STRIPE_EVENTS = tuple(
+    sorted(
+        {
+            *STRIPE_KINDS,
+            "setup_intent.succeeded",
+            # A dispute that closes: won, the money comes back (P-027).
+            "charge.dispute.closed",
+            "charge.dispute.funds_reinstated",
+        }
+    )
+)
 
 
 def checkout_form(
@@ -564,8 +758,9 @@ def verify_signature(
     expected = hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
     if not any(hmac.compare_digest(expected, s.strip()) for s in signatures):
         raise NotTheirs("the report's signature isn't this endpoint's")
-    if abs((time.time() if now is None else now) - int(stamps[0])) > tolerance:
-        raise NotTheirs("the report was signed too long ago")
+    drift = int((time.time() if now is None else now) - int(stamps[0]))
+    if abs(drift) > tolerance:
+        raise SignedTooLongAgo("the report was signed too long ago", drift)
 
 
 class NoPartner(Exception):

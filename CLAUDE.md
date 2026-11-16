@@ -443,7 +443,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   in its sidebar (`TENANT_SECTIONS` in `pages/TenantHome.tsx`, `OWNER_SECTIONS` in
   `pages/OwnerHome.tsx`). An owner's: Overview, Properties (each at `/properties/<id>`,
   `src/pms/api/owner_portal.py`: its units, who rents each by name only, the rent, what each lease
-  owes today, what is vacant since when and who gave notice), Statements and reports, Bills,
+  owes today, what is vacant since when and who gave notice), only of a property they own today: once its ownership shares leave
+  their account out (sold), its money and statements stay theirs and its units, tenants, repairs and
+  files don't (U-085), Statements and reports, Bills,
   Repairs (`/api/owner/work-orders`: the work orders at their properties), Documents, Messages and
   Profile (their own contact details, `/api/owner/contact`, which staff see they changed). A
   tenant's: Overview (announcements, the lease and its balance), Payments, Lease (its files,
@@ -601,7 +603,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `trust_prepare_bank_reconciliation`, `trust_approve_bank_reconciliation`,
   `trust_match_cutover_opening`, `trust_return_deposit`, `trust_pay_deposit_interest`, `trust_transfer_lease`, `trust_open_deposit_account`, `trust_propose_journal_entry`,
   `trust_post_journal_entry`, `trust_decline_journal_entry`, `trust_apply_assistance_payment`,
-  `trust_bill_back_utility`, `trust_refund_unapplied_cash` and `trust_close_year`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
+  `trust_bill_back_utility`, `trust_refund_unapplied_cash`, `trust_cover_returned_payment`,
+  `trust_repay_company_advance` and `trust_close_year`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
   `trust_run_rent` run with the app's own grants). It can't call pgledger's posting functions: every posting it makes goes through
   `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
   retry: the same key returns the original transfers, and a different posting under it is
@@ -860,10 +863,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   month charges the new lease its days. The run and an end wait for each other. A property's
   late fee terms (grace days, flat, percent of unpaid,
   cap) are in force from a date; `trust_assess_late_fees` charges a rent still open at the
-  end of its last grace day (UTC) one late fee under the terms in force on its due date, reaching
+  end of its last grace day (UTC) one late fee under the terms in force on its due date (among
+  those on file by the day its fee comes due, migration 20261115000200, M-049), reaching
   its rents in the order their grace ends so one run charges what a run every day would (a late
   fee is an open charge too; migration 0056), never one whose fee would fall in a closed year
-  (migration 20261105000700). A payment online counts from the company's day the tenant (or
+  (migration 20261105000700); a rent a rent run first charged after its grace had run out takes
+  its grace from the day it was charged (`trust_rents_charged_late`, `trust_late_fee_grace_ends`,
+  the night's own day in a catch-up, `trust.charged_on`; migration 20261115000310, D-083). A
+  payment online counts from the company's day the tenant (or
   autopay) started it (migration 20261113000100, `trust_online_started_by`, D-080, D-081): while
   one started by the end of the grace is on its way (`trust_online_on_its_way`: reported paid, or
   started in the last 14 days, and neither failed, expired, returned nor in the books) the fee
@@ -876,7 +883,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   it waives, with why, naming who: it comes off that charge first, never past what is left of it
   once payments and earlier waivers count (its trigger takes the charge's lock, as a match does);
   `trust_apply_payment` never matches past what was paid and waived, and `trust_return_deposit`
-  keeps nothing for what was waived. A property's NSF fee is in force from a date too (migration 0044, 0 charges
+  keeps nothing for what was waived; a payment dated within a rent's grace that reaches the books
+  after its late fee waives by itself what the night would not have charged, saying why
+  (`trust_waive_late_fee_paid_in_grace`, migration 20261115000320, D-078, D-079). A property's NSF fee is in force from a date too (migration 0044, 0 charges
   none); `trust_charge_nsf_fee` charges the lease of a returned payment (postings under one key
   moving money back to a trust bank account's cash) the fee in force the day it came back
   (UTC), due that day, once per returned payment. Neither fee counts toward the other.
@@ -887,7 +896,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   month already charged keeps its rent. `trust_rent_on` is the rent in force on a day: the rent
   run charges it, `trust_end_lease` adjusts at it, the rent roll, lease expirations, tenant
   directory and vacancy reports show it. Staff record one on the rent page, which warns of the
-  written notice the property's state asks, counted from the day notice was given
+  written notice the property's state asks, counted from the day notice was given, with
+  California's five days more for a notice served by mail (`served_by`; CCP 1013(a), D-069)
   (`GET /api/leasing/renewals/<lease>/rent-change-notice`, `src/pms/rent_notice.py`; a warning,
   never a refusal; D-065); the tenant sees it coming in the portal.
 - Rent due day (migration 0081, the founder's review q013): a lease's rent is due on the first
@@ -934,7 +944,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   starts there. Tenants' unpaid charges carry over as charges with their own due dates, and the
   rent run charges no rent or monthly charge due before the cutover of the trust bank account
   holding the lease's property's owners' money (`trust_lease_cutover`, migration 20261106100000,
-  M-144): that month is the old system's.
+  M-144): that month is the old system's; a lease the switching tool brought in counts the day
+  it came until the opening balances give a cutover (`trust_switched_leases`, migration
+  20261115000220, M-152).
 - Audit: every write to a trust table or `pgledger_transfers` is logged in `trust_audit_log`
   (append-only, written only by the `trust_audit` trigger): when, the row (and the row before an
   update), the database role, and the staff member the app names with
@@ -953,6 +965,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Owner contributions: `trust_record_owner_contribution` moves cash into an owner's property
   account as its own kind (`trust_owner_contributions`), once per request key, and
   `trust_apply_payment` never matches one to a tenant's charge.
+- The company covers an owner's shortfall (migration 20261115000100, docs/edge-cases.md M-060,
+  the founder, 2026-11-15): a payment (a tenant's, a housing authority's, one online) whose bounce
+  would take an owner's property account below zero is refused saying how much is short
+  (`trust_return_shortfall`), unless staff have the company cover it: `trust_cover_returned_payment`
+  posts the company's own money from the cash into each short account, exactly the shortfall,
+  once per returned payment and request key, by a named staff member whose roles allow rent work
+  (money comes in, so not disburse), and at commit the bounce posted and took the account to
+  exactly zero (`trust_company_advances`). The owner owes it back (`trust_company_advance_owed`,
+  on their page and portal) until staff who hold disburse take it from their account into the
+  company's fee account, never more than is owed (`trust_repay_company_advance`,
+  `trust_company_advance_repayments`); draws don't hold it back. No charge is matched to an
+  advance. Append-only, audited; the AI role reads both tables.
 - Recurring bills: a bill that comes every month (`trust_recurring_bills`: vendor, owner's
   property account, amount, day of the month 1 to 28, first day; an end row stops it).
   `trust_enter_recurring_bills` enters each month's bill through a day, under the vendor
@@ -1051,7 +1075,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   Company setup (migration 20261104000800, `src/pms/api/payment_keys.py`, the founder's review of
   11/03, item 4: `trust_payment_keys`, append-only, the latest holding, naming the admin; the
   secret key and the webhook's signing secret each sealed under `PMS_DATA_KEY`, only the last four
-  and test or live ever shown; its webhook `POST /api/payments/webhook/stripe/<company>`, which
+  and test or live ever shown; asked of Stripe before they are kept (a key it doesn't take, or an
+  account with no webhook here, is refused) and Company setup says in words what Stripe says is
+  wrong, asked at most every ten minutes, never on a fake-partner server: P-006, P-007; a report
+  about its payment refused for its signature or the server's clock is kept once a day
+  (`trust_payment_report_refusals`, migration 20261115000400), said there until one lands and
+  emailed to its admins: P-010, P-011; its webhook `POST /api/payments/webhook/stripe/<company>`, which
   Company setup lists the events of (`payments.STRIPE_EVENTS`), records only its payments and
   takes every secret it used, so a payment started before a change still
   lands; keys that don't open on this server take no payment and never fall back; a live server,
@@ -1070,7 +1099,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   payment hold takes none. Nothing reaches the books until the partner reports the bank paid
   (`trust_online_payment_events`: paid with the partner's fee, failed, returned once paid, or
   expired when the tenant left the partner's page without paying, each kind once a payment; a
-  return reported before paid is refused for now, 409, so the partner sends it again; `POST /api/payments/webhook/stripe`, signed): then the payment is
+  return reported before paid is refused for now, 409, so the partner sends it again, and a failure
+  reported once paid is a return, P-026; `POST /api/payments/webhook/stripe`, signed): then the payment is
   recorded as Receive payment records one (request id the payment's, method "online"), the
   tenant's fee goes to the company's fee account, the partner's fee leaves trust from that
   account once it holds it (never from an owner's), a return is a bounce and the tenant's fee
@@ -1136,7 +1166,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   property's state allows a surcharge, not on autopay, at most 3% or the state's cap, by credit card
   only (`connect.card_fee_terms`); an owner never pays one. A card payment is $10,000.00 at most. A
   dispute is a return with its dispute fee from the company's fee account, and one won puts the
-  payment back (`trust_connect_disputes`). The platform's one webhook (`POST
+  payment back (`trust_connect_disputes`), as through a company's own keys or the server's (P-027). The platform's one webhook (`POST
   /api/payments/connect/webhook`) maps each report's `account` to its company (404 for none),
   books nothing from another account or the other mode, and a live server refuses the platform's
   test key. Disconnecting stops the autopays saved at the account ('account changed', emailed).
@@ -1185,7 +1215,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   lease's lock, until staff say it is another (`not_a_duplicate`, which Receive payment asks
   first; H-008). The page lists each payment as it came in (its whole amount, prepaid rent
   included), and a bounce moves back what the payment moved, reverses its matches and charges
-  the property's NSF fee, once. A
+  the property's NSF fee, once (`cover_shortfall`: the company first covers what the owner's
+  account is short, above). A
   lease's rent work takes an advisory lock on the lease, before it reads the lease's tenants and
   owners, so a departure or a share change waited for counts (C-014). The PMS records what the bank did;
   it sends no money. A payment came by check, cashier's check, money order, EFT or cash. Each has
@@ -1294,9 +1325,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   to what is open of its charges rent first, the cash moving to the owner's trust bank account;
   the rest goes back to each tenant from the security-deposit account. A tenant still on another lease keeps
   their deposit with it. It takes the disburse role. `trust_report_deposit_return` is the
-  itemized statement for the tenants. READ COMMITTED; append-only. Since migration 0120 (q040,
+  itemized statement for the tenants. READ COMMITTED; append-only. Since migration
+  20261115000240 (M-072) the tenants' prepaid rent pays what is owed first, and what is left
+  of it goes back with the deposits (`prepaid_used`, `prepaid_returned`). Since migration 0120 (q040,
   q039, `docs/law.md`) each lease past its last day shows the day its deposit is due back, 14 days
-  after it, 10 while it owes nothing (the strictest found; Move-outs and the Dashboard), staff keep
+  after it, 10 while it owes nothing of what was charged by the tenth day (the strictest found, a
+  later fee never moving a missed deadline, D-128; Move-outs and the Dashboard), staff keep
   receipts for the fees a deposit keeps (`trust_deduction_receipts`: a lease document linked to
   one of its fees, once, append-only, naming who), and each tenant's statement is a letter to
   their forwarding address (their contact mailing address) carrying the receipts and the lease's
@@ -1334,8 +1368,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   a payment hold or whose owner's account staff choose (`rent.use_prepaid_by_itself`; Run rent now
   too). Rent and late
   fees go through `trust_run_rent`, which records the run (`trust_rent_runs`, append-only, naming
-  nobody); an admin runs it by hand from the rent roll (Run rent now), and a named staff member
+  nobody); an admin runs it by hand from the rent roll (Run rent now, never for rent or late fees
+  after the company's today, D-026), and a named staff member
   without admin is refused. Each part charges once per date, so a run again charges nothing new.
+  A night after the company's last run fell in an earlier month first runs each month since as its
+  last night would have (`nightly.catch_up`, twelve months at most; D-016, H-089).
   Each company's run is for its own day (its time zone, below): the API runs every company at
   start, then looks a minute past each hour and runs each company whose day has begun since (just
   after its midnight), unless `PMS_NIGHTLY` is "off" (e2e turns it off); `python -m pms.nightly`
@@ -1393,7 +1430,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   PDF, JPEG or PNG of at most 5 MB. Its bytes sit apart (`trust_document_files`, checked at
   insert against the type's first bytes, the size and SHA-256 its row says, and there at
   commit): never audited and never read by `trust_ai_agent`. A removal is a row
-  (`trust_document_removals`); nothing is deleted. The PMS reads nothing out of a file. An
+  (`trust_document_removals`); nothing is deleted. The PMS reads nothing out of a file, but a PDF a
+  tenant or an applicant sends is read for what runs or opens by itself (a script, a launch, a form
+  that submits, an attachment) and refused with it (`documents.scripted`, F-010). An
   owner downloads their own owner documents in the portal, and since q046 the files about the
   properties they hold an account for and those properties' units, and the receipts of their
   accounts' bills (`OWNER_SEES` in `src/pms/api/documents.py`), each named with what it is about. The company's logo is a document too
@@ -1555,7 +1594,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   entry, with another entry it is refused; C-065, M-135); another who holds approve posts it
   (`trust_post_journal_entry`: once, on its day or later, its lines as ledger transfers dated its
   day, and the same call again returns them), never whoever proposed it; anyone declines it, with
-  why, before it is posted. Posting keeps every trust rule above or moves nothing. Every step names a staff
+  why, before it is posted. Posting keeps every trust rule above or moves nothing, and no line
+  moves unapplied cash (migration 20261115000210, M-154). Every step names a staff
   member (the command line can't take one); entries, lines and decisions are append-only, and the
   AI only reads them. Entries waiting show on the Dashboard.
 - More reports (migration 0054), each read only and on Reports: the balance
@@ -1629,7 +1669,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   rent of every one before any of their other charges), into the account each move names
   (`trust_lease_moved_from`), and `trust_return_deposit` keeps it the same way, each lease's for
   its own owner; a lease moved from has no return of its own and leaves
-  Move-outs. The lease page's ⋯ menu has Move to another unit (`POST /api/move-out/<id>/transfer`,
+  Move-outs. A renewal carries what the lease it renews owes the same way, into the property's
+  owners' accounts (`trust_lease_carried_from`, migration 20261115000230, M-073), and the lease
+  it renews has no return of its own and leaves Move-outs. The lease page's ⋯ menu has Move to another unit (`POST /api/move-out/<id>/transfer`,
   area move-out); a lease shows what it carries and where its tenants went.
 - Deposit kinds (migration 0092, `docs/law.md`, the founder's review q043): a tenant's pet or key
   deposit is held in a deposit account of its own beside their security deposit
@@ -1705,5 +1747,5 @@ python -m tools.check_synthetic_data                 # no real-looking personal 
 
 Mutation testing and the rest: `docs/CI.md`. On Windows (or anywhere with Docker and Node),
 `scripts/simulate.ps1` plays every browser test against a fresh synthetic company in Edge, Firefox
-and Chromium, in UTC, Los Angeles and Kiritimati time, and says what failed (README, "Simulate
+and Chromium, in UTC, Los Angeles and Kiritimati time, and says what failed (CONTRIBUTING.md, "Simulate
 people using it").

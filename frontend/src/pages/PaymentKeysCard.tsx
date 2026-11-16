@@ -24,6 +24,8 @@ export type PaymentKeys = {
   webhook_events: string[];
   changed_at: string | null;
   changed_by: string | null;
+  // What Stripe says is wrong with the keys in use, in words (docs/edge-cases.md P-006, P-007).
+  stripe_says: string[];
   can_keep: boolean;
   may_change: boolean;
 };
@@ -69,6 +71,7 @@ export function PaymentKeysCard() {
       ) : (
         <>
           {keysRefused(keys) && <Notice tone="error">{keysLine(keys)}</Notice>}
+          {keys.stripe_says.map((says) => <Notice key={says} tone="error">{says}</Notice>)}
           <div className="flex flex-wrap items-center gap-2">
             {!keysRefused(keys) && <p className="text-base text-ink" data-testid="payment-keys">{keysLine(keys)}</p>}
             {keys.using === "own" && keys.mode !== null && (

@@ -27,10 +27,19 @@ from helpers import (
 from pms import autopay, payments
 from pms.api import online_payments as op
 
-TODAY = datetime.now(UTC).date()
 DAY = timedelta(days=1)
-DUE = TODAY - 12 * DAY
 RENT = Decimal("1200.00")
+
+
+def on_this_day() -> None:
+    """Today's dates (UTC), worked out again before each test (tests/conftest.py,
+    pytest_runtest_setup), so a run past midnight compares them with the database's (#235)."""
+    global TODAY, DUE
+    TODAY = datetime.now(UTC).date()
+    DUE = TODAY - 12 * DAY
+
+
+on_this_day()
 
 
 @pytest.fixture
@@ -46,9 +55,10 @@ def tenant(conn, pmc):
     ).fetchone()[0]
 
 
-def lease_owing(conn, pmc, tenant, due=DUE, grace=3):
-    """A lease with a 1,200.00 rent due on `due`, its property's late fee 50.00 after `grace`
-    days."""
+def lease_owing(conn, pmc, tenant, due=None, grace=3):
+    """A lease with a 1,200.00 rent due on `due` (DUE unless given), its property's late fee
+    50.00 after `grace` days."""
+    due = due or DUE
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, due - 60 * DAY, grace, "50")
     unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id)
     lease = open_lease(conn, pmc.pmc_id, unit, due - 30 * DAY, None, "1200.00", [tenant])

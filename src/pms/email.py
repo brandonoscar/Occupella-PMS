@@ -510,12 +510,20 @@ SELECT s.id FROM trust_staff AS s
 WHERE s.pmc_id = %s AND trust_staff_holds(s.pmc_id, s.id, 'admin')
 ORDER BY s.display_name COLLATE "C", s.id
 """
-Alert = Literal["nightly_failed", "deliveries_failing"]
+Alert = Literal["nightly_failed", "deliveries_failing", "payment_reports_refused"]
 SUPPORT = "Whoever runs the server finds what to do in the PMS's docs/support.md."
 
 
 def alert_text(kind: Alert, company: str, day: date, what: str, public_url: str) -> tuple[str, str]:
     """An alert's subject and what it says, below the admin's name."""
+    if kind == "payment_reports_refused":
+        # What a payments partner's reports refused say (src/pms/api/online_payments.py, P-010,
+        # P-011): until it is fixed, rent the bank paid doesn't reach the books.
+        return (
+            f"{company}: payments aren't reaching the books",
+            f"{what}\n\nSettings, Company setup, Stripe keys says the same until a report lands:"
+            f"\n{public_url.rstrip('/')}/settings/setup\n\n{SUPPORT}\n",
+        )
     if kind == "nightly_failed":
         return (
             f"{company}: the nightly run of {day:%m/%d/%Y} failed",

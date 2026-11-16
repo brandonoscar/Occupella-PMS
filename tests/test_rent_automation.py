@@ -256,6 +256,46 @@ def test_a_payment_counts_only_if_dated_before_the_grace_runs_out(conn, pmc, lat
     assert [row[2] for row in charges(conn, lease, "fee")] == fee
 
 
+def test_a_check_dated_on_the_last_grace_day_recorded_after_the_fee_takes_the_fee_off(
+    conn, pmc, late
+):
+    """A check received on the last day of grace and recorded the next morning, dated back: the
+    night's late fee is waived by itself, a credit linked to it saying why, nothing deleted; one
+    dated after the grace leaves the fee; one paying part leaves the fee on what was left
+    (docs/edge-cases.md D-078)."""
+    lease, rent = late
+    assert assess_late_fees(conn, pmc.pmc_id, date(2026, 2, 7)) == 1  # 200.00 on 1500.00
+    fee = conn.execute(
+        "SELECT fee_charge_id FROM trust_late_fees WHERE rent_charge_id = %s", (rent,)
+    ).fetchone()[0]
+
+    def waived():
+        return conn.execute(
+            "SELECT k.amount, k.kind, w.reason FROM trust_charge_waivers AS w"
+            " JOIN trust_charges AS k ON k.id = w.credit_charge_id"
+            " WHERE w.waived_charge_id = %s ORDER BY w.created_at",
+            (fee,),
+        ).fetchall()
+
+    pay(conn, pmc, rent, Decimal("100.00"), at(date(2026, 2, 7), 9))  # after the grace
+    assert waived() == []
+    pay(conn, pmc, rent, Decimal("1000.00"), at(date(2026, 2, 6), 0))  # the last grace day
+    # 50.00 + 10% of the 500.00 then left is 100.00: the other 100.00 comes off.
+    assert waived() == [
+        (
+            Decimal("100.00"),
+            "credit",
+            "Paid within its grace: a payment dated 02/06/2026 came into the books after the"
+            " late fee was charged",
+        )
+    ]
+    # 400.00 more on that day leaves 100.00 open then: a fee of 60.00, so 40.00 more comes off.
+    pay(conn, pmc, rent, Decimal("400.00"), at(date(2026, 2, 6), 0))
+    assert [row[0] for row in waived()] == [Decimal("100.00"), Decimal("40.00")]
+    assert assess_late_fees(conn, pmc.pmc_id, date(2026, 3, 1)) == 0
+    assert len(charges(conn, lease, "fee")) == 1  # the fee stays, waived
+
+
 def test_the_percent_is_of_what_is_left_unpaid(conn, pmc, late):
     lease, rent = late
     pay(conn, pmc, rent, "1000.00", at(date(2026, 2, 3)))
@@ -350,6 +390,56 @@ def test_the_terms_in_force_on_the_rents_due_date_apply(conn, pmc):
     assert [(row[0], row[2]) for row in charges(conn, lease, "fee")] == [
         (date(2026, 2, 7), Decimal("50.00")),  # February's rent: January's terms
         (date(2026, 3, 2), Decimal("99.00")),  # March's rent: the new terms, no grace
+    ]
+
+
+@pytest.mark.parametrize(
+    ("entered_on", "march_fee"),
+    [
+        (date(2026, 3, 7), [Decimal("50.00")]),  # on file on March's fee day: it counts
+        (date(2026, 3, 8), []),  # a day after: March's grace had run out without terms
+    ],
+)
+def test_terms_entered_from_a_day_gone_by_charge_no_fee_on_rents_already_past_grace(
+    conn, pmc, entered_on, march_fee
+):
+    """docs/edge-cases.md M-049, D-082: terms entered with a start day in the past charge no
+    fee on a rent whose grace ran out before they were on file, paid late or still open; a rent
+    whose grace runs out after is charged as ever."""
+    lease = lease_on(conn, pmc, JAN_1)
+    for due_on in (FEB_1, MAR_1, date(2026, 4, 1)):
+        charge_rent_due(conn, pmc.pmc_id, due_on)
+    pay(conn, pmc, rent_due(conn, lease, FEB_1), RENT, at(date(2026, 2, 20)))  # paid late
+    add_late_fee_policy(
+        conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, 5, "50", entered_at=at(entered_on, 18)
+    )
+
+    assess_late_fees(conn, pmc.pmc_id, date(2026, 4, 30))
+
+    assert late_fees(conn, rent_due(conn, lease, FEB_1)) == []
+    assert [row[2] for row in charges(conn, lease, "fee") if row[0].month == 3] == march_fee
+    assert [row[0] for row in charges(conn, lease, "fee") if row[0].month == 4] == [
+        date(2026, 4, 7)
+    ]
+
+
+def test_a_rent_past_grace_keeps_the_terms_on_file_then(conn, pmc):
+    """Terms entered later from a day gone by don't replace, for a rent already late, the terms
+    on file when its grace ran out (M-049)."""
+    lease = lease_on(conn, pmc, JAN_1)
+    property_id = pmc.owners[0].property_id
+    add_late_fee_policy(conn, pmc.pmc_id, property_id, JAN_1, 5, "25")
+    add_late_fee_policy(
+        conn, pmc.pmc_id, property_id, FEB_1, 5, "75", entered_at=at(date(2026, 3, 15))
+    )
+    for due_on in (MAR_1, date(2026, 4, 1)):
+        charge_rent_due(conn, pmc.pmc_id, due_on)
+
+    assess_late_fees(conn, pmc.pmc_id, date(2026, 4, 30))
+
+    assert [(row[0], row[2]) for row in charges(conn, lease, "fee")] == [
+        (date(2026, 3, 7), Decimal("25.00")),  # late before the new terms were on file
+        (date(2026, 4, 7), Decimal("75.00")),
     ]
 
 

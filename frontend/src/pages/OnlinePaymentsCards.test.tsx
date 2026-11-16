@@ -187,3 +187,35 @@ describe("OnlinePaymentsWaiting", () => {
     expect(screen.getByRole("status").textContent).toBe("Recorded the company's $4.00.");
   });
 });
+
+// docs/edge-cases.md M-060: a return the owner's account can't take; the company covers it.
+describe("OnlinePaymentsWaiting, an owner short of a return", () => {
+  it("says how much is short and covers it once staff confirm the amount", async () => {
+    const fetch = server([
+      { ...FEE, payment_id: "p7", what: "return", company_owes: null, cover_needed: "0.00", owner_short: "110.00" },
+    ]);
+    render(<OnlinePaymentsWaiting refresh={0} />);
+    expect(await screen.findByText(
+      "The owner's account is $110.00 short. The company covers it from its own money and the owner owes it back.",
+    )).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Cover the shortfall/ }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog.textContent).toContain(
+      "Cover the owner's $110.00 shortfall with the company's own money and record the $500.00 bounce?",
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cover $110.00 and record" }));
+    await vi.waitFor(() => expect(fetch.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
+    const post = fetch.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(post?.[0]).toBe("/api/payments/p7/record");
+    const sent = JSON.parse(String(post?.[1]?.body));
+    expect(sent.cover_shortfall).toBe(true);
+    expect(typeof sent.request_id).toBe("string");
+  });
+
+  it("offers no cover for a return the owner's account can take", async () => {
+    server([{ ...FEE, payment_id: "p8", what: "return", company_owes: null, cover_needed: "0.00", owner_short: null }]);
+    render(<OnlinePaymentsWaiting refresh={0} />);
+    await screen.findByRole("button", { name: "Try again" });
+    expect(screen.queryByRole("button", { name: /^Cover the shortfall/ })).toBeNull();
+  });
+});

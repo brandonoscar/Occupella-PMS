@@ -6,7 +6,8 @@ some ended, some to come), monthly charges on some, and late fee terms or none. 
 (`trust_run_rent` through `nightly.run_pmc`) on a random day of a random month runs in one; in the
 other, the runs it stands for are called one by one: fixed-term leases whose term ran out within
 the week going month to month (migration 0154), rent and recurring charges due on the month's
-first day, and late fees as of the day. Then:
+first day, and late fees as of the day, in one transaction (a rent charged after its grace ran
+out takes its grace from the day: migration 20261115000310, D-083). Then:
   - the run charges exactly what the three runs charge, lease for lease, and says so in its
     record, which names nobody;
   - run again on the same day, it charges nothing new;
@@ -130,10 +131,16 @@ def check(conn, app_conn, months, day, leases, late_fees, by_hand_first):
         assert charged(conn, our_leases) == []
 
     ran = nightly.run_pmc(app_conn, ours.pmc_id, on, URL)
-    rolled = one(app_conn, "SELECT trust_roll_over_leases(%s, %s)", (twin.pmc_id, on))
-    rents = one(app_conn, "SELECT trust_charge_rent_due(%s, %s)", (twin.pmc_id, month))
-    recurring = one(app_conn, "SELECT trust_charge_recurring_due(%s, %s)", (twin.pmc_id, month))
-    late = one(app_conn, "SELECT trust_assess_late_fees(%s, %s)", (twin.pmc_id, on))
+    # One transaction, as the run's: a rent it charges after its grace ran out takes its grace
+    # from the day (D-083), noted before the late fees.
+    with app_conn.transaction():
+        rolled = one(app_conn, "SELECT trust_roll_over_leases(%s, %s)", (twin.pmc_id, on))
+        rents = one(app_conn, "SELECT trust_charge_rent_due(%s, %s)", (twin.pmc_id, month))
+        recurring = one(app_conn, "SELECT trust_charge_recurring_due(%s, %s)", (twin.pmc_id, month))
+        app_conn.execute(
+            "SELECT trust_note_rents_charged_late(%s, %s, %s)", (twin.pmc_id, month, on)
+        )
+        late = one(app_conn, "SELECT trust_assess_late_fees(%s, %s)", (twin.pmc_id, on))
 
     assert (ran.rents, ran.recurring, ran.late_fees, ran.bills) == (rents, recurring, late, 0)
     assert ran.leases_rolled_over == rolled

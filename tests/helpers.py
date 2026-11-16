@@ -13,7 +13,7 @@ import zlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -287,6 +287,25 @@ def open_lease(connection, pmc_id, unit_id, starts_on, ends_on, rent, tenant_ids
 
 # Synthetic files of each type a document may be: just their first bytes and a few more.
 PDF = b"%PDF-1.4\n% synthetic\n"
+
+
+def pdf_with_script() -> bytes:
+    """A real one-page PDF that runs a (synthetic) script when opened (docs/edge-cases.md F-010)."""
+    import io
+    import warnings
+
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(72, 72)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        writer.add_js("app.alert('synthetic')")
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
 PNG = b"\x89PNG\r\n\x1a\n synthetic"
 JPEG = b"\xff\xd8\xff\xe0 synthetic"
 
@@ -751,14 +770,24 @@ def charge_recurring_due(connection, pmc_id, due_on) -> int:
 
 
 def add_late_fee_policy(
-    connection, pmc_id, property_id, starts_on, grace_days, flat_fee="0", percent="0", maximum=None
+    connection,
+    pmc_id,
+    property_id,
+    starts_on,
+    grace_days,
+    flat_fee="0",
+    percent="0",
+    maximum=None,
+    entered_at=None,
 ) -> UUID:
-    """A property's late fee terms, in force from starts_on."""
+    """A property's late fee terms, in force from starts_on and on file since entered_at: the
+    start of starts_on (UTC) unless given, as terms entered when they began. Terms count for a
+    rent only once on file by the day its fee comes due (migration 20261115000200, M-049)."""
     return _one(
         connection,
         "INSERT INTO trust_late_fee_policies"
-        " (pmc_id, property_id, starts_on, grace_days, flat_fee, percent, maximum)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        " (pmc_id, property_id, starts_on, grace_days, flat_fee, percent, maximum, created_at)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (
             pmc_id,
             property_id,
@@ -767,6 +796,9 @@ def add_late_fee_policy(
             Decimal(flat_fee),
             Decimal(percent),
             None if maximum is None else Decimal(maximum),
+            entered_at
+            if entered_at is not None
+            else datetime.combine(date.fromisoformat(str(starts_on)), datetime.min.time(), UTC),
         ),
     )
 

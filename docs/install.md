@@ -10,8 +10,8 @@ company with synthetic books on your own computer (README, "Try the demo").
 ## What you need
 
 - **A Linux server** you control, with [Docker](https://docs.docker.com/engine/install/) and its
-  compose plugin, and `git`. A small one is enough to start; the PMS was measured serving a
-  1,000-unit company to ten staff at once (README, "Simulate people using it").
+  compose plugin, and `git`. A small one is enough to start; how fast it serves a 1,000-unit
+  company to ten staff at once is timed every night (`tools/speed.py`).
 - **A web address** (say `pms.example.com`) pointing at the server, so staff, owners and
   tenants can reach it over HTTPS.
 - **Your keys**, from the table below.

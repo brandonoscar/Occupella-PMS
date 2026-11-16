@@ -105,6 +105,48 @@ class Ran:
     leases_rolled_over: int = 0
 
 
+# How many months back a night catches up on (a server down longer is a restore, docs/support.md).
+CATCH_UP_MONTHS = 12
+
+
+def catch_up(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> tuple[int, int, int]:
+    """The rent runs a night stands in for when the company's last run was in an earlier month
+    (the server down over a month's end; docs/edge-cases.md D-016, D-017, H-089): each month from
+    the last run's through the one before `day`'s, run as its last night would have run it, so a
+    rent or monthly charge due on a day nobody ran is charged all the same. A company that never
+    ran catches up on nothing: the books never reach back before the PMS ran them. What it
+    charged: rents, recurring charges, late fees."""
+    last = conn.execute(
+        "SELECT max(late_fees_as_of) FROM trust_rent_runs WHERE pmc_id = %s"
+        " AND late_fees_as_of <= %s",
+        (pmc_id, day),
+    ).fetchone()
+    first = day.replace(day=1)
+    if last is None or last[0] is None or last[0] >= first:
+        return 0, 0, 0
+    month = max(last[0].replace(day=1), months_before(first, CATCH_UP_MONTHS))
+    charged = [0, 0, 0]
+    while month < first:
+        following = months_before(month, -1)
+        made = conn.execute(
+            "SELECT trust_run_rent(%s, %s, %s)", (pmc_id, month, following - timedelta(days=1))
+        ).fetchone()
+        assert made is not None
+        run = conn.execute(
+            "SELECT rents, recurring, late_fees FROM trust_rent_runs WHERE id = %s", (made[0],)
+        ).fetchone()
+        assert run is not None
+        charged = [charged[n] + run[n] for n in range(3)]
+        month = following
+    return charged[0], charged[1], charged[2]
+
+
+def months_before(first: date, months: int) -> date:
+    """The first of the month `months` before `first`'s (after it, for a negative count)."""
+    index = first.year * 12 + first.month - 1 - months
+    return date(index // 12, index % 12 + 1, 1)
+
+
 def run_pmc(
     conn: psycopg.Connection[Any],
     pmc_id: UUID,
@@ -126,6 +168,11 @@ def run_pmc(
         # (migration 0154), so the month's rent below charges it.
         rolled = conn.execute("SELECT trust_roll_over_leases(%s, %s)", (pmc_id, day)).fetchone()
         assert rolled is not None
+        # A rent this night charges after its grace ran out takes its grace from this day, the
+        # catch-up's months run as of their own last days included (D-083, migration
+        # 20261115000310).
+        conn.execute("SELECT set_config('trust.charged_on', %s, true)", (day.isoformat(),))
+        missed = catch_up(conn, pmc_id, day)
         made = conn.execute(
             "SELECT trust_run_rent(%s, %s, %s)", (pmc_id, day.replace(day=1), day)
         ).fetchone()
@@ -159,9 +206,9 @@ def run_pmc(
     emails = moved.emails + started.emails + (0 if written is None else sum(vars(written).values()))
     return Ran(
         pmc_id,
-        run[0],
-        run[1],
-        run[2],
+        run[0] + missed[0],
+        run[1] + missed[1],
+        run[2] + missed[2],
         entered,
         emails,
         fees[0],

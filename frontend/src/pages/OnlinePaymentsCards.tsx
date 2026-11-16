@@ -11,7 +11,7 @@ import { SidePanel } from "../components/SidePanel";
 import { money } from "../money";
 import type { FeePayer, PaymentSettings, Waiting } from "../payments";
 import { PAYMENT_SETTINGS, settingsLine, waitingLine } from "../payments";
-import { requestId } from "../rent";
+import { coverQuestion, requestId, shortLine } from "../rent";
 import { useRecord } from "./useRecord";
 import { AskFirst } from "../components/Confirm";
 
@@ -165,6 +165,20 @@ export function OnlinePaymentsWaiting({ refresh }: { refresh: number }) {
                   : `Record that ${money(item.amount)} for ${item.memo} came back? The payment comes off the lease, and the property's NSF fee, if any, is charged.`}
                 onConfirm={() => record(`/api/payments/${item.payment_id}/record`, {},
                 () => "Recorded what came back.")}>Try again</AskFirst>
+            )}
+            {item.what === "return" && item.owner_id === null && item.owner_short && (
+              <span className="flex w-full flex-wrap items-center justify-end gap-2">
+                <span className="text-sm text-ink">{shortLine(item.owner_short)}</span>
+                <Button variant="secondary"
+                  says="The company's own money goes into trust for the owner's shortfall, and the owner owes it back."
+                  onClick={() => ask(coverQuestion(item.owner_short ?? "0", item.amount),
+                    () => record(`/api/payments/${item.payment_id}/record`,
+                      { cover_shortfall: true, request_id: requestId() },
+                      () => `Covered the owner's ${money(item.owner_short ?? "0")} shortfall and recorded what came back.`),
+                    `Cover ${money(item.owner_short ?? "0")} and record`)}>
+                  Cover the shortfall
+                </Button>
+              </span>
             )}
           </li>
         ))}

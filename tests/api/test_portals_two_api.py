@@ -9,10 +9,22 @@ import base64
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from helpers import PDF, add_tenant, add_unit, add_work_order, make_pmc, open_lease, step_work_order
+from helpers import (
+    PDF,
+    add_document,
+    add_tenant,
+    add_unit,
+    add_work_order,
+    make_pmc,
+    open_account,
+    open_lease,
+    pdf_with_script,
+    set_ownership,
+    step_work_order,
+)
 from people import join_as, join_as_owner, join_as_staff, join_as_tenant, tenant_of
 
-from pms.api import messages
+from pms.api import documents, messages
 from pms.api import tenant as tenant_api
 
 
@@ -72,6 +84,35 @@ def test_another_owners_property_reads_as_not_found(other_client, app_conn, pmc,
 
     assert answer.status_code == 404
     assert answer.json()["detail"] == "no such property of yours"
+
+
+def test_a_former_owner_sees_the_propertys_money_but_not_its_units_tenants_repairs_or_files(
+    other_client, conn, app_conn, pmc, home
+):
+    """docs/edge-cases.md U-085: the property sold to another owner, recorded as ownership shares
+    from the sale day naming the new owner's account alone."""
+    prop = pmc.owners[0].property_id
+    add_work_order(conn, pmc.pmc_id, prop, home["unit"], "Leak", datetime.now(UTC))
+    deed = add_document(conn, pmc.pmc_id, "property_document", prop, title="Deed")
+    join_as_owner(other_client, app_conn, pmc)
+    assert ok(other_client.get(f"/api/owner/properties/{prop}"))["units"]  # theirs, for now
+    buyer = open_account(
+        conn, pmc.pmc_id, pmc.operating_bank_id, "owner_property", pmc.owners[1].owner_id, prop
+    )
+    set_ownership(conn, pmc.pmc_id, prop, today(), [(buyer, "100")])
+
+    page = other_client.get(f"/api/owner/properties/{prop}")
+    repairs = ok(other_client.get("/api/owner/work-orders"))
+    files = ok(other_client.get("/api/owner/documents"))
+    deed_file = other_client.get(f"/api/owner/documents/{deed}/file")
+    listed = ok(other_client.get("/api/owner/properties"))
+
+    assert page.status_code == 404
+    assert repairs == []
+    assert [f["title"] for f in files] == []
+    assert deed_file.status_code == 404
+    # Their money there, and their statements, stay theirs to read.
+    assert [(p["property_id"], p["owns_today"]) for p in listed] == [(str(prop), False)]
 
 
 def test_an_owner_sees_the_work_orders_at_their_properties_only(
@@ -516,6 +557,22 @@ def test_a_tenants_file_must_be_what_it_says_and_of_their_lease(
     assert not_a_pdf.status_code == 422
     assert not_mine.status_code == 404
     assert no_title.status_code == 422
+
+
+def test_a_tenants_pdf_that_runs_a_script_by_itself_is_refused(
+    other_client, conn, app_conn, pmc, home
+):
+    # docs/edge-cases.md F-010: staff and co-tenants open it in a desktop reader.
+    join_as_tenant(other_client, conn, app_conn, pmc)
+    scripted = pdf_with_script()
+
+    sent = other_client.post(
+        f"/api/tenant/leases/{home['lease']}/documents", json=document(content=scripted)
+    )
+
+    assert sent.status_code == 422
+    assert sent.json()["detail"] == documents.SCRIPTED
+    assert ok(other_client.get("/api/tenant/leases"))[0]["files"] == []
 
 
 def test_a_lease_takes_so_many_files_a_day_from_its_tenants(

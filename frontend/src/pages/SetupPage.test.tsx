@@ -40,7 +40,7 @@ const FULL: Company = {
 const KEYS = {
   using: "server", server_partner: "fake", mode: null, ends_in: null,
   webhook_url: "http://localhost:8000/api/payments/webhook/stripe/c1",
-  webhook_events: ["checkout.session.async_payment_succeeded"], changed_at: null, changed_by: null,
+  webhook_events: ["checkout.session.async_payment_succeeded"], changed_at: null, changed_by: null, stripe_says: [],
   can_keep: true, may_change: true,
 };
 

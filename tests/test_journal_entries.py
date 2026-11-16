@@ -442,6 +442,41 @@ def test_money_moves_to_another_trust_bank_account_only_with_its_cash(
     ] == [Decimal("700.00"), Decimal("-700.00"), Decimal("-300.00"), Decimal("300.00")]
 
 
+def test_an_entry_moves_no_unapplied_cash(conn, app_conn, pmc, bookkeeper, manager):
+    """docs/edge-cases.md M-154 (migration 20261115000210): unapplied cash is held receipt by
+    receipt, so an entry into or out of it is refused when proposed, and one proposed before the
+    rule (its line written as it was then) is refused when posted, moving nothing."""
+    unapplied = app_conn.execute(
+        "SELECT trust_open_ledger_account(%s, %s, 'unapplied_cash')",
+        (pmc.pmc_id, pmc.operating_bank_id),
+    ).fetchone()[0]
+    transfer_batch(conn, [(pmc.operating_cash, unapplied, "200.00")], at(JAN_15))
+    for line in ((unapplied, pmc.owners[0].account), (pmc.owners[0].account, unapplied)):
+        with refused("moves no money into or out of unapplied cash"):
+            propose_entry(app_conn, pmc.pmc_id, bookkeeper, FEB_10, MEMO, [(*line, "50.00")])
+
+    entry = propose_entry(app_conn, pmc.pmc_id, bookkeeper, FEB_10, MEMO, move(pmc))
+    conn.execute("SET session_replication_role = replica")  # as a line written before the rule
+    try:
+        conn.execute(
+            "INSERT INTO trust_journal_entry_lines"
+            " (entry_id, pmc_id, line, from_account, to_account, amount)"
+            " VALUES (%s, %s, 2, %s, %s, 50.00)",
+            (entry, pmc.pmc_id, unapplied, pmc.owners[1].account),
+        )
+    finally:
+        conn.execute("SET session_replication_role = DEFAULT")
+    before = balances(conn, pmc)
+
+    with refused("moves no money into or out of unapplied cash"):
+        post_entry(app_conn, pmc.pmc_id, entry, manager)
+
+    assert balances(conn, pmc) == before
+    assert balance(conn, unapplied) == Decimal("200.00")
+    assert decision(conn, entry) is None
+    decline_entry(app_conn, pmc.pmc_id, entry, manager, "Unapplied cash is applied or refunded")
+
+
 def test_journal_entries_are_append_only(conn, app_conn, pmc, bookkeeper, manager):
     entry = propose_entry(app_conn, pmc.pmc_id, bookkeeper, FEB_10, MEMO, move(pmc))
     post_entry(app_conn, pmc.pmc_id, entry, manager)

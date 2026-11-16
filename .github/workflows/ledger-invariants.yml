@@ -5,7 +5,7 @@ name: ledger-invariants
 # Nightly: nightly_examples per property, each twice with a seed of its own; the tests rotate,
 # a part of them each night (ci/property-times.toml), shared out over 4 shards (8 jobs). Any
 # failing case is uploaded as an artifact (synthetic data only). Nightly also runs the timing
-# tests 50 times, the API fuzz deeper, the many-staff soak (tools/contention.py), five years of
+# tests 50 times (two jobs of 25), the API fuzz deeper, the many-staff soak (tools/contention.py), five years of
 # a company's nights (tools/fast_forward.py) and the speed test (tools/speed.py).
 on:
   pull_request:
@@ -65,7 +65,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
@@ -143,7 +143,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
@@ -184,11 +184,16 @@ jobs:
   timing:
     # Tests that depend on threads, lock waits or timeouts (@pytest.mark.timing) pass once per
     # PR; a flaky one only shows up over many runs. Fifty runs a night on GitHub's runners, and
-    # one failure fails the job: a flake gets fixed, never retried away.
-    name: timing tests (nightly, 50 runs)
+    # one failure fails the job: a flake gets fixed, never retried away. Fifty in one job reached
+    # its 40 minutes (issue #230), so two jobs run 25 each, together the 50.
+    name: timing tests (nightly, part ${{ matrix.part }}/2, 25 runs)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -213,22 +218,25 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: pip install -r requirements-dev.txt
-      - name: Every timing test, 50 times (pytest exits non-zero if none are marked)
+      - name: Every timing test, 25 times (pytest exits non-zero if none are marked)
+        env:
+          PART: ${{ matrix.part }}
         run: |
           failed=0
-          for run in $(seq 1 50); do
+          for run in $(seq 1 25); do
             if ! pytest -q -p no:cacheprovider -m timing tests; then
               failed=$((failed + 1))
-              echo "::error::run $run of 50 failed"
+              echo "::error::run $run of 25 (part $PART of 2) failed"
             fi
           done
-          echo "Timing tests: $failed of 50 runs failed." | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Timing tests, part $PART of 2: $failed of 25 runs failed." \
+            | tee -a "$GITHUB_STEP_SUMMARY"
           test "$failed" -eq 0
 
   fuzz:
@@ -271,7 +279,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
@@ -343,7 +351,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
@@ -388,7 +396,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
@@ -437,7 +445,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"
@@ -486,7 +494,7 @@ jobs:
       - name: Install dbmate
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/bin/dbmate" \
             "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
           echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
           chmod +x "$RUNNER_TEMP/bin/dbmate"

@@ -1725,6 +1725,9 @@ class OwnerMoney(BaseModel):
     # an ACH file has a bank account of theirs to pay into.
     payout_method: PayoutMethod = "check"
     bank_on_file: bool = False
+    # What the account owes the company back: its cover of a shortfall when a payment bounced
+    # (docs/edge-cases.md M-060), less what was repaid.
+    owed_to_company: str = "0.00"
 
 
 OWNERS = """
@@ -1748,7 +1751,10 @@ SELECT a.ledger_account_id, o.id, o.display_name, p.id, p.display_name, b.displa
                  WHERE m.pmc_id = a.pmc_id AND m.owner_id = o.id
                  ORDER BY m.created_at DESC, m.id DESC LIMIT 1), 'check'),
        EXISTS (SELECT 1 FROM trust_payee_bank_accounts AS k
-               WHERE k.pmc_id = a.pmc_id AND k.owner_id = o.id)
+               WHERE k.pmc_id = a.pmc_id AND k.owner_id = o.id),
+       -- What the company covered of the account's shortfall when a payment bounced, not yet
+       -- paid back (migration 20261115000100).
+       trust_company_advance_owed(a.ledger_account_id)
 FROM trust_ledger_accounts AS a
 JOIN trust_owners AS o ON o.id = a.owner_id
 JOIN trust_properties AS p ON p.id = a.property_id
@@ -1815,6 +1821,7 @@ def owner_money(
             has_agreement=row[9],
             payout_method=row[10],
             bank_on_file=row[11],
+            owed_to_company=cents(row[12]),
         )
         for row in rows
     ]
@@ -2061,6 +2068,39 @@ def take_owner_fee(session: Staff, conn: Conn, new: OwnerFee) -> Moved:
                 new.amount,
                 new.memo,
                 f"owner-fee/{new.request_id}",
+                at(new.on),
+            ),
+        )
+    except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
+        raise HTTPException(409, refusal(refused)) from None
+    return Moved(transfer_id=moved)
+
+
+class AdvanceRepayment(BaseModel):
+    request_id: UUID
+    account: Account
+    amount: Amount
+    on: date
+
+
+@router.post("/advance-repayments", status_code=201)
+def repay_advance(session: Staff, conn: Conn, new: AdvanceRepayment) -> Moved:
+    """The owner pays back what the company covered of their account's shortfall when a payment
+    bounced (migration 20261115000100, docs/edge-cases.md M-060): from their property account to
+    the company's fee account in the same trust bank account (trust_repay_company_advance, staff
+    who hold disburse), never more than is owed, once per request id. The money stays in trust
+    until the company takes its fees out."""
+    not_after_today(conn, session.pmc_id, new.on)
+    owner_account(conn, session.pmc_id, new.account)
+    try:
+        moved = one(
+            conn,
+            "SELECT trust_repay_company_advance(%s, %s, %s, %s, %s)",
+            (
+                session.pmc_id,
+                new.account,
+                new.amount,
+                f"advance-repayment/{new.request_id}",
                 at(new.on),
             ),
         )
