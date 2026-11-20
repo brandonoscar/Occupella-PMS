@@ -9,7 +9,7 @@
 # publishes no port, and has no TLS and no backups.
 services:
   db:
-    image: mirror.gcr.io/library/postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+    image: mirror.gcr.io/library/postgres:19@sha256:bb6e70add742cd868fb62cb3b2f67d1dd2bdd2b65a521e778420748753687c60
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
     healthcheck:

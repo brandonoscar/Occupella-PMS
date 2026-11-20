@@ -8,7 +8,7 @@
 # selfhost.yml starts it in CI on every PR and every night, with test values.
 services:
   db:
-    image: mirror.gcr.io/library/postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+    image: mirror.gcr.io/library/postgres:19@sha256:bb6e70add742cd868fb62cb3b2f67d1dd2bdd2b65a521e778420748753687c60
     environment:
       POSTGRES_DB: pms
       POSTGRES_PASSWORD: ${PMS_DB_PASSWORD:?set PMS_DB_PASSWORD in .env}
@@ -71,7 +71,7 @@ services:
   # ./backups on this server, readable by root only; 35 days kept, and each month's first.
   # Postgres's own image, for its pg_dump 16.
   backup:
-    image: mirror.gcr.io/library/postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+    image: mirror.gcr.io/library/postgres:19@sha256:bb6e70add742cd868fb62cb3b2f67d1dd2bdd2b65a521e778420748753687c60
     entrypoint: ["bash", "/scripts/backup-daily.sh"]
     # Unhealthy in `docker compose ps` once no good dump is less than 26 hours old (H-031).
     healthcheck:
