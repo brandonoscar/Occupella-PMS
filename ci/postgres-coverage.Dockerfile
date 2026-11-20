@@ -5,7 +5,7 @@
 # plpgsql_check is built from source at a pinned commit (tag v2.7.2), not taken from apt: its
 # profiler output changed in 2.10 (no parent_note), and tools/sql_coverage.py counts branches
 # from that column. tools/sql_coverage.py refuses any other extension version.
-FROM mirror.gcr.io/library/postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+FROM mirror.gcr.io/library/postgres:19@sha256:bb6e70add742cd868fb62cb3b2f67d1dd2bdd2b65a521e778420748753687c60
 
 ARG PLPGSQL_CHECK_TAG=v2.7.2
 ARG PLPGSQL_CHECK_COMMIT=35de2769e3b4c26d4b324e48093c55afffec5ad0
